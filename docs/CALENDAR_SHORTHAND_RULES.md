@@ -84,3 +84,5 @@ Every candidate includes:
 Service mode aliases such as `Phone`, `Call`, `FaceTime`, `FT`, `Office`, `In Person`, `House`, `House Call`, and `Home Visit` normalize to `phone`, `facetime`, `office`, or `house_call`.
 
 Ambiguous records must stay reversible. A future UI should show the raw event alongside the proposed interpretation.
+
+Multi-person shorthand such as `Fred + Bobsy` is only a participant candidate. It must not automatically create a permanent shared account or bill-to record without review.

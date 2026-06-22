@@ -31,6 +31,7 @@ Columns:
 - `is_weekend`
 - `suggested_rate`
 - `approved_rate`
+- `rate_source`
 - `payment_status`
 - `review_status`
 - `review_reasons`
@@ -55,4 +56,4 @@ Columns:
 - `outstanding_amount`
 - `last_session_date`
 
-Exports are written atomically: temporary file first, validation second, replacement last.
+Exports are written atomically: temporary file first, validation second, replacement last. Approved historical amounts come from `sessions.approved_rate_cents` or `sessions.rate_cents_snapshot`, not from recomputing current rate rules.

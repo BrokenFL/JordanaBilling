@@ -27,7 +27,7 @@ Use direct AirDrop, an encrypted external drive, or an encrypted archive over an
 1. Stop the local app.
 2. Create a SQLite backup.
 3. Run `PRAGMA integrity_check`.
-4. Record schema version or table list.
+4. Record schema version or table list, including `rate_rule_participants` if present.
 5. Record row counts.
 6. Calculate SHA256 checksums.
 7. Fill out `scripts/TRANSFER_MANIFEST_TEMPLATE.txt`.
@@ -42,3 +42,5 @@ Use direct AirDrop, an encrypted external drive, or an encrypted archive over an
 5. Compare manifest row counts.
 6. Run a manual sync or open the review UI.
 7. Create a fresh backup.
+
+After transfer, review `docs/SCHEMA_AUDIT.md` before attempting any legacy table cleanup.

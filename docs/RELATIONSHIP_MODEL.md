@@ -3,30 +3,32 @@
 The review UI separates four ideas that may look similar in a calendar title:
 
 - `people`: actual humans, such as Fred Colin, Bobsey Colin, or Simon
-- `client_accounts`: the relationship or billing group, such as Fred Household or Simon Family Account
 - `session_participants`: who attended one session
 - `billing_parties`: who should receive/pay the bill
+- `client_accounts`: optional backend relationship or shared-billing groups, such as a household, family, or couple
 
 One session can have multiple participants and still be one charge.
+
+Routine review shows Participants and Bill to. It does not require a visible household or family account.
 
 ## Examples
 
 `Fred 830`
 
 - participant: Fred Colin
-- account: Fred Household
 - billing party: Fred Colin
+- account: optional backend relationship record only
 
 `Bobsey and Fred 6`
 
 - participants: Fred Colin and Bobsey Colin
-- account: Fred Household
 - billing party: Fred Colin
+- account: optional backend relationship record only
 
 `Simon 2`
 
 - participant: Simon
-- account: Simon Family Account
 - billing party: parent or family payer
+- account: optional backend relationship record only
 
 The payer does not need to be a participant.

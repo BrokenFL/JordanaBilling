@@ -15,7 +15,6 @@ from .util import json_dumps, new_id, now_iso, text
 
 REQUIRED_APPROVAL_FIELDS = {
     "participants",
-    "account_id",
     "billing_party_id",
     "approved_duration_minutes",
     "service_mode",
@@ -344,6 +343,8 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
     rate_override_reason = payload.get("rate_override_reason") or None
+    rate_scope = payload.get("rate_scope") or "session_only"
+    approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
 
     conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session_id,))
     for index, participant in enumerate(participants):
@@ -387,7 +388,6 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
         )
     unresolved = unresolved_from_values(
         participants=participants,
-        account_id=account_id,
         billing_party_id=billing_party_id,
         duration=duration,
         service_mode=service_mode,
@@ -408,6 +408,8 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             time_category = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
             approved_rate_cents = ?,
+            approved_rate_source = ?,
+            approved_rate_rule_id = CASE WHEN ? = 'manual_override' THEN NULL ELSE approved_rate_rule_id END,
             rate_needs_review = ?,
             rate_override_reason = ?,
             payment_status = ?,
@@ -426,6 +428,8 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             time_category,
             suggested_rate_cents,
             approved_rate_cents,
+            approved_source,
+            approved_source,
             0 if approved_rate_cents is not None else 1,
             rate_override_reason,
             payment_status,
@@ -435,6 +439,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             session_id,
         ),
     )
+    maybe_save_rate_scope(conn, session, payload, approved_rate_cents)
     conn.execute(
         "UPDATE calendar_event_candidates SET review_status = ?, updated_at = ? WHERE id = ?",
         (review_status, now, candidate_id),
@@ -457,7 +462,6 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
     participants = get_session_participants(conn, session["id"])
     unresolved = unresolved_from_values(
         participants=participants,
-        account_id=session["account_id"],
         billing_party_id=session["billing_party_id"],
         duration=session["approved_duration_minutes"] or session["duration_minutes"],
         service_mode=session["service_mode"],
@@ -474,6 +478,8 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
         SET review_status = 'approved',
             billable_status = 'approved',
             rate_cents_snapshot = approved_rate_cents,
+            approved_rate_rule_id = COALESCE(approved_rate_rule_id, rate_rule_id),
+            approved_rate_source = COALESCE(approved_rate_source, rate_source, 'manual_override'),
             updated_at = ?
         WHERE id = ?
         """,
@@ -546,6 +552,11 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
             "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
             (payload["default_billing_party_id"], now, account_id),
         )
+    if payload.get("billing_party_id"):
+        conn.execute(
+            "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
+            (payload["billing_party_id"], now, session["id"]),
+        )
     refresh_candidate_suggestions(conn, candidate_id)
     record_audit(conn, "session", session["id"], "relationship_section_saved", {"payload": safe_payload(payload)})
     conn.commit()
@@ -592,6 +603,8 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
+    rate_scope = payload.get("rate_scope") or "session_only"
+    approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
     conn.execute(
         """
         UPDATE sessions
@@ -602,6 +615,8 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             time_category = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
             approved_rate_cents = ?,
+            approved_rate_source = ?,
+            approved_rate_rule_id = CASE WHEN ? = 'manual_override' THEN NULL ELSE approved_rate_rule_id END,
             rate_needs_review = ?,
             rate_override_reason = ?,
             payment_status = ?,
@@ -617,6 +632,8 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             time_category,
             suggested_rate_cents,
             approved_rate_cents,
+            approved_source,
+            approved_source,
             0 if approved_rate_cents is not None else 1,
             payload.get("rate_override_reason") or None,
             payment_status,
@@ -625,6 +642,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             session["id"],
         ),
     )
+    maybe_save_rate_scope(conn, session, payload, approved_rate_cents)
     refresh_candidate_suggestions(conn, candidate_id, preserve_approved_rate=True)
     record_audit(conn, "session", session["id"], "session_draft_saved", {"payload": safe_payload(payload)})
     conn.commit()
@@ -730,7 +748,8 @@ def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any
     sessions = conn.execute(
         """
         SELECT s.session_date, s.start_at, s.duration_minutes, s.service_mode, s.time_category,
-               s.approved_rate_cents, s.payment_status, s.review_status, s.raw_calendar_title
+               s.approved_rate_cents, s.approved_rate_source, s.rate_source,
+               s.payment_status, s.review_status, s.raw_calendar_title
         FROM session_participants sp
         JOIN sessions s ON s.id = sp.session_id
         WHERE sp.person_id = ?
@@ -747,18 +766,55 @@ def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any
         "SELECT * FROM billing_parties WHERE person_id = ? ORDER BY billing_name",
         (person_id,),
     ).fetchall()
+    person_rates = conn.execute(
+        """
+        SELECT *
+        FROM rate_rules
+        WHERE active = 1
+          AND person_id = ?
+          AND rate_rule_id NOT IN (SELECT rate_rule_id FROM rate_rule_participants)
+        ORDER BY effective_from DESC, priority ASC
+        """,
+        (person_id,),
+    ).fetchall()
+    joint_rates = conn.execute(
+        """
+        SELECT rr.*, GROUP_CONCAT(p.display_name, ' + ') AS participant_names
+        FROM rate_rules rr
+        JOIN rate_rule_participants rrp ON rrp.rate_rule_id = rr.rate_rule_id
+        JOIN people p ON p.person_id = rrp.person_id
+        WHERE rr.active = 1
+          AND rr.rate_rule_id IN (
+            SELECT rate_rule_id FROM rate_rule_participants WHERE person_id = ?
+          )
+        GROUP BY rr.rate_rule_id
+        HAVING COUNT(*) > 1
+        ORDER BY rr.effective_from DESC, rr.priority ASC
+        """,
+        (person_id,),
+    ).fetchall()
     return {
         "person": dict(person),
         "accounts": [dict(row) for row in accounts],
         "sessions": [dict(row) for row in sessions],
         "aliases": [dict(row) for row in aliases],
         "billing_parties": [dict(row) for row in billing],
+        "active_rate_exceptions": [dict(row) for row in person_rates],
+        "joint_rate_exceptions": [dict(row) for row in joint_rates],
         "audit": audit_history_for_entity(conn, "person", person_id),
     }
 
 
-def create_person(conn: sqlite3.Connection, display_name: str) -> dict[str, Any]:
+def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
+    data = display_name if isinstance(display_name, dict) else {"display_name": display_name}
+    display_name = text(
+        data.get("display_name")
+        or " ".join(part for part in [data.get("first_name"), data.get("last_name")] if part)
+        or data.get("preferred_name")
+    )
+    if not display_name:
+        raise ValueError("Display name is required.")
     existing = conn.execute(
         "SELECT * FROM people WHERE lower(display_name) = lower(?) AND active = 1 LIMIT 1",
         (display_name,),
@@ -767,16 +823,31 @@ def create_person(conn: sqlite3.Connection, display_name: str) -> dict[str, Any]
         return dict(existing)
     now = now_iso()
     person_id = new_id()
-    first, last = split_name(display_name)
+    first = text(data.get("first_name") or split_name(display_name)[0])
+    last = text(data.get("last_name") or split_name(display_name)[1])
+    preferred = text(data.get("preferred_name") or first)
     person_code = generate_person_code(conn, first, last) if first and last else None
     conn.execute(
         """
         INSERT INTO people (
           person_id, display_name, first_name, last_name, preferred_name,
-          person_code, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          person_code, billing_email, billing_phone, administrative_notes,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (person_id, display_name, first, last, first, person_code, now, now),
+        (
+            person_id,
+            display_name,
+            first,
+            last,
+            preferred,
+            person_code,
+            data.get("billing_email") or data.get("email"),
+            data.get("billing_phone") or data.get("phone"),
+            data.get("administrative_notes"),
+            now,
+            now,
+        ),
     )
     record_audit(conn, "person", person_id, "created_inline", {"display_name": display_name, "person_code": person_code})
     conn.commit()
@@ -1328,10 +1399,18 @@ def refresh_candidate_suggestions(
                 "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
                 (billing_party_id, now, session["id"]),
             )
+    if not billing_party_id:
+        billing_party_id = default_billing_party_for_participants(conn, participants)
+        if billing_party_id:
+            conn.execute(
+                "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
+                (billing_party_id, now, session["id"]),
+            )
 
     duration = session["approved_duration_minutes"] or session["duration_minutes"]
     service_mode = normalize_service_mode(session["service_mode"])
     time_category = normalize_time_category(session["time_category"])
+    participant_person_ids = [p["person_id"] for p in participants if p.get("person_id")]
     suggestion = suggest_rate(
         conn,
         session_date=session["session_date"] or text(session["start_at"])[:10],
@@ -1341,6 +1420,7 @@ def refresh_candidate_suggestions(
         time_category=time_category,
         account_id=account_id,
         person_id=primary_person_id,
+        participant_person_ids=participant_person_ids,
     )
     approved_rate = session["approved_rate_cents"] if preserve_approved_rate else session["approved_rate_cents"]
     if suggestion.suggested_rate_cents is not None:
@@ -1351,6 +1431,7 @@ def refresh_candidate_suggestions(
                 rate_rule_id = ?,
                 rate_source = ?,
                 rate_needs_review = ?,
+                rate_override_reason = COALESCE(rate_override_reason, ?),
                 updated_at = ?
             WHERE id = ?
             """,
@@ -1359,6 +1440,7 @@ def refresh_candidate_suggestions(
                 suggestion.rate_rule_id,
                 suggestion.rate_source,
                 1 if suggestion.rate_needs_review and approved_rate is None else 0,
+                suggestion.explanation,
                 now,
                 session["id"],
             ),
@@ -1367,7 +1449,6 @@ def refresh_candidate_suggestions(
     refreshed = session_for_candidate(conn, candidate_id)
     unresolved = unresolved_from_values(
         participants=get_session_participants(conn, refreshed["id"]),
-        account_id=refreshed["account_id"],
         billing_party_id=refreshed["billing_party_id"],
         duration=refreshed["approved_duration_minutes"] or refreshed["duration_minutes"],
         service_mode=refreshed["service_mode"],
@@ -1568,11 +1649,64 @@ def get_billing_party(conn: sqlite3.Connection, billing_party_id: str | None) ->
     return dict(row) if row else None
 
 
+def default_billing_party_for_participants(
+    conn: sqlite3.Connection,
+    participants: list[dict[str, Any]],
+) -> str | None:
+    person_ids = [p["person_id"] for p in participants if p.get("person_id")]
+    if not person_ids:
+        return None
+    placeholders = ",".join("?" for _ in person_ids)
+    prior = conn.execute(
+        f"""
+        SELECT s.billing_party_id
+        FROM sessions s
+        JOIN session_participants sp ON sp.session_id = s.id
+        WHERE sp.person_id IN ({placeholders})
+          AND s.billing_party_id IS NOT NULL
+          AND s.review_status = 'approved'
+        ORDER BY s.start_at DESC
+        LIMIT 1
+        """,
+        tuple(person_ids),
+    ).fetchone()
+    if prior and prior["billing_party_id"]:
+        return prior["billing_party_id"]
+    if len(person_ids) == 1:
+        person = conn.execute(
+            "SELECT display_name FROM people WHERE person_id = ?",
+            (person_ids[0],),
+        ).fetchone()
+        if not person:
+            return None
+        existing = conn.execute(
+            """
+            SELECT billing_party_id
+            FROM billing_parties
+            WHERE person_id = ? AND active = 1
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (person_ids[0],),
+        ).fetchone()
+        if existing:
+            return existing["billing_party_id"]
+        created = create_billing_party(
+            conn,
+            {
+                "billing_party_type": "person",
+                "person_id": person_ids[0],
+                "billing_name": person["display_name"],
+            },
+        )
+        return created["billing_party_id"]
+    return None
+
+
 def checklist_for(row: sqlite3.Row, participants: list[dict[str, Any]]) -> list[dict[str, Any]]:
     checks = [
         ("Participants identified", bool(participants)),
-        ("Account connected", bool(row["account_id"])),
-        ("Billing party selected", bool(row["billing_party_id"])),
+        ("Bill to selected", bool(row["billing_party_id"])),
         ("Duration confirmed", bool(row["approved_duration_minutes"] or row["duration_minutes"])),
         ("Service mode confirmed", bool(row["service_mode"] and row["service_mode"] != "unknown")),
         ("Time category confirmed", bool(row["time_category"])),
@@ -1586,8 +1720,6 @@ def unresolved_from_values(**values: Any) -> list[str]:
     unresolved = []
     if not values["participants"]:
         unresolved.append("participants")
-    if not values["account_id"]:
-        unresolved.append("account_id")
     if not values["billing_party_id"]:
         unresolved.append("billing_party_id")
     if not values["duration"]:
@@ -1606,8 +1738,6 @@ def unresolved_from_values(**values: Any) -> list[str]:
 def status_from_unresolved(unresolved: list[str]) -> str:
     if "participants" in unresolved:
         return "needs_participants"
-    if "account_id" in unresolved:
-        return "needs_account"
     if "billing_party_id" in unresolved:
         return "needs_billing_party"
     if "service_mode" in unresolved:
@@ -1875,6 +2005,209 @@ def money_payload_to_cents(value: Any) -> int | None:
     return dollars_to_cents(text(value))
 
 
+def approved_rate_source_for(
+    session: sqlite3.Row,
+    approved_rate_cents: int | None,
+    rate_scope: str,
+) -> str | None:
+    if approved_rate_cents is None:
+        return None
+    if rate_scope in {"future_person", "future_joint"}:
+        return "person_exception" if rate_scope == "future_person" else "participant_combination_exception"
+    suggested = session["suggested_rate_cents"]
+    if suggested is not None and int(suggested) == approved_rate_cents:
+        return session["rate_source"] or "default"
+    return "manual_override"
+
+
+def maybe_save_rate_scope(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row,
+    payload: dict[str, Any],
+    approved_rate_cents: int | None,
+) -> None:
+    if approved_rate_cents is None:
+        return
+    scope = payload.get("rate_scope") or "session_only"
+    if scope == "session_only":
+        record_audit(
+            conn,
+            "session",
+            session["id"],
+            "rate_override_session_only",
+            {"approved_rate_cents": approved_rate_cents},
+        )
+        return
+
+    participants = get_session_participants(conn, session["id"])
+    person_ids = [p["person_id"] for p in participants if p.get("person_id")]
+    duration = int(payload.get("approved_duration_minutes") or payload.get("duration_minutes") or session["duration_minutes"])
+    service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
+    time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
+    effective_from = session["session_date"] or text(session["start_at"])[:10]
+
+    if scope == "future_person":
+        person_id = payload.get("rate_scope_person_id")
+        if not person_id and len(person_ids) == 1:
+            person_id = person_ids[0]
+        if not person_id:
+            raise ValueError("Select which participant should receive this future rate.")
+        rule_id = upsert_person_rate_exception(
+            conn,
+            person_id,
+            approved_rate_cents,
+            effective_from,
+            duration,
+            service_mode,
+            time_category,
+        )
+        source = "person_exception"
+    elif scope == "future_joint":
+        joint_ids = sorted(set(person_ids))
+        if len(joint_ids) < 2:
+            raise ValueError("Joint rate exceptions require at least two confirmed participants.")
+        rule_id = upsert_joint_rate_exception(
+            conn,
+            joint_ids,
+            approved_rate_cents,
+            effective_from,
+            duration,
+            service_mode,
+            time_category,
+        )
+        source = "participant_combination_exception"
+    else:
+        return
+
+    conn.execute(
+        """
+        UPDATE sessions
+        SET approved_rate_rule_id = ?,
+            approved_rate_source = ?,
+            rate_override_reason = COALESCE(rate_override_reason, ?),
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (rule_id, source, payload.get("rate_override_reason") or "Saved future rate memory.", now_iso(), session["id"]),
+    )
+    record_audit(
+        conn,
+        "session",
+        session["id"],
+        "rate_scope_saved",
+        {"scope": scope, "rate_rule_id": rule_id, "approved_rate_cents": approved_rate_cents},
+    )
+    record_audit(
+        conn,
+        "rate_rule",
+        rule_id,
+        "rate_memory_saved",
+        {"scope": scope, "session_id": session["id"], "amount_cents": approved_rate_cents},
+    )
+
+
+def upsert_person_rate_exception(
+    conn: sqlite3.Connection,
+    person_id: str,
+    amount_cents: int,
+    effective_from: str,
+    duration_minutes: int,
+    service_mode: str,
+    time_category: str,
+) -> str:
+    row = conn.execute(
+        """
+        SELECT rate_rule_id
+        FROM rate_rules
+        WHERE active = 1
+          AND person_id = ?
+          AND client_account_id IS NULL
+          AND COALESCE(duration_minutes, -1) = ?
+          AND COALESCE(service_mode, '') = ?
+          AND time_category = ?
+          AND rate_rule_id NOT IN (SELECT rate_rule_id FROM rate_rule_participants)
+        ORDER BY effective_from DESC
+        LIMIT 1
+        """,
+        (person_id, duration_minutes, service_mode, time_category),
+    ).fetchone()
+    if row:
+        conn.execute(
+            """
+            UPDATE rate_rules
+            SET amount_cents = ?, effective_from = ?, updated_at = ?
+            WHERE rate_rule_id = ?
+            """,
+            (amount_cents, effective_from, now_iso(), row["rate_rule_id"]),
+        )
+        return row["rate_rule_id"]
+    return seed_rate_rule(
+        conn,
+        amount_cents=amount_cents,
+        effective_from=effective_from,
+        duration_minutes=duration_minutes,
+        service_mode=service_mode,
+        rate_group=rate_group_for(service_mode),
+        time_category=time_category,
+        person_id=person_id,
+        priority=10,
+    )
+
+
+def upsert_joint_rate_exception(
+    conn: sqlite3.Connection,
+    person_ids: list[str],
+    amount_cents: int,
+    effective_from: str,
+    duration_minutes: int,
+    service_mode: str,
+    time_category: str,
+) -> str:
+    placeholders = ",".join("?" for _ in person_ids)
+    row = conn.execute(
+        f"""
+        SELECT rr.rate_rule_id
+        FROM rate_rules rr
+        JOIN rate_rule_participants rrp ON rrp.rate_rule_id = rr.rate_rule_id
+        WHERE rr.active = 1
+          AND COALESCE(rr.duration_minutes, -1) = ?
+          AND COALESCE(rr.service_mode, '') = ?
+          AND rr.time_category = ?
+          AND rrp.person_id IN ({placeholders})
+        GROUP BY rr.rate_rule_id
+        HAVING COUNT(DISTINCT rrp.person_id) = ?
+           AND (
+             SELECT COUNT(*) FROM rate_rule_participants exact
+             WHERE exact.rate_rule_id = rr.rate_rule_id
+           ) = ?
+        ORDER BY rr.effective_from DESC
+        LIMIT 1
+        """,
+        (duration_minutes, service_mode, time_category, *person_ids, len(person_ids), len(person_ids)),
+    ).fetchone()
+    if row:
+        conn.execute(
+            """
+            UPDATE rate_rules
+            SET amount_cents = ?, effective_from = ?, updated_at = ?
+            WHERE rate_rule_id = ?
+            """,
+            (amount_cents, effective_from, now_iso(), row["rate_rule_id"]),
+        )
+        return row["rate_rule_id"]
+    return seed_rate_rule(
+        conn,
+        amount_cents=amount_cents,
+        effective_from=effective_from,
+        duration_minutes=duration_minutes,
+        service_mode=service_mode,
+        rate_group=rate_group_for(service_mode),
+        time_category=time_category,
+        participant_person_ids=person_ids,
+        priority=5,
+    )
+
+
 def list_rate_rules(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     init_db(conn)
     rows = conn.execute(
@@ -1891,6 +2224,17 @@ def list_rate_rules(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for row in rows:
         item = dict(row)
         item["amount"] = cents_to_dollars(row["amount_cents"])
+        participants = conn.execute(
+            """
+            SELECT p.display_name
+            FROM rate_rule_participants rrp
+            JOIN people p ON p.person_id = rrp.person_id
+            WHERE rrp.rate_rule_id = ?
+            ORDER BY p.display_name
+            """,
+            (row["rate_rule_id"],),
+        ).fetchall()
+        item["participant_names"] = " + ".join(p["display_name"] for p in participants)
         output.append(item)
     return output
 
@@ -1907,6 +2251,7 @@ def create_rate_rule_from_payload(conn: sqlite3.Connection, data: dict[str, Any]
         time_category=normalize_time_category(data.get("time_category") or "standard"),
         client_account_id=data.get("client_account_id"),
         person_id=data.get("person_id"),
+        participant_person_ids=data.get("participant_person_ids") or None,
         priority=int(data.get("priority") or 100),
     )
     record_audit(conn, "rate_rule", rule_id, "created_inline", data)

@@ -16,6 +16,9 @@ This project is a local-first billing normalization app for Jordana.
 - Preserve the CSV importer for testing and recovery.
 - Do not create permanent people/accounts from multi-person titles without review.
 - Suggested rates are not approved rates.
+- Routine review should use Participants and Bill to; backend accounts are advanced relationship support.
+- Every approved session must preserve the actual charged rate.
+- Joint participant rate exceptions must use person UUIDs, not display names.
 - Before any GitHub push, run `scripts/git_safety_check.sh`.
 - Do not commit live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, or credentials.
 
@@ -36,6 +39,7 @@ Read these files before making changes:
 11. `docs/PEOPLE.md`
 12. `docs/PRIVATE_DATA_TRANSFER.md`
 13. `docs/HANDOFF_TO_JORDANA_MAC.md`
+14. `docs/SCHEMA_AUDIT.md`
 
 ## Verification
 

@@ -98,7 +98,7 @@ Review decisions are stored in SQLite. CSV exports are not the review system of 
 
 Likely client sessions are written to `sessions` as `proposed` and `needs_review`. They are not final invoice rows.
 
-Sessions can point to a client account, billing party, one or more participant rows, suggested rate rule, and later an approved rate snapshot.
+Sessions can point to an optional client account, billing party, one or more participant rows, suggested rate rule, and later an approved actual-rate snapshot.
 
 ## 10. Local Reports
 
@@ -115,7 +115,7 @@ Phase 2 adds backend support for people, accounts, account members, billing part
 
 The importer does not create permanent people or accounts from ambiguous titles. Multi-person titles remain reviewable until Jordana confirms the relationship.
 
-Suggested rates come from effective-dated rules and remain separate from approved rates.
+Suggested rates come from effective-dated rules and remain separate from approved/actual charged rates. Manual review can save a rate for this session only, future sessions for one participant, or future joint sessions for the exact participant set.
 
 ## 12. Future Phases
 

@@ -1,6 +1,8 @@
 # Clients & Accounts
 
-Clients & Accounts is the permanent CRM-style home for households, families, individual accounts, billing parties, rates, aliases, administrative notes, and session history.
+Clients & Accounts is the CRM-style home for backend relationship and shared-billing structures: households, families, individual accounts, billing parties, rates, aliases, administrative notes, and session history.
+
+Routine session review should not force Jordana to choose a Client / Family Account. Use Participants and Bill to first. Open account records only when a family/couple/default-payer/shared-rate relationship needs maintenance.
 
 The list shows account code, name, type, primary person, members, billing party, default rate, outstanding balance, last session, and active status.
 
@@ -15,3 +17,5 @@ Account records show:
 - Audit history through the backend service
 
 Quick corrections can be made in the Review Queue inspector. Deeper editing belongs here.
+
+Do not automatically create a permanent shared account merely because two names appear in one calendar title.

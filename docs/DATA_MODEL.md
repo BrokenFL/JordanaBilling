@@ -6,7 +6,7 @@ The database is local SQLite. Internal UUIDs are primary keys. Human-readable pe
 
 The app separates actual people, client accounts, account members, session participants, billing parties, calendar aliases, and rate rules.
 
-This lets Simon attend a session while a parent or family account receives the invoice. It also lets Fred and Bobsey share a household account without creating a permanent combined flat client.
+This lets Simon attend a session while a parent receives the invoice. It also lets Fred and Bobsey attend together with one bill-to party and one charge without creating a visible household account during routine review.
 
 ## `sync_state`
 
@@ -50,6 +50,8 @@ Actual humans with permanent UUIDs. Person codes are optional human-readable hel
 
 Billing and relationship units such as an individual, household, family, couple, or organization. Account codes use the separate `ACCT-####` sequence and never imitate person codes.
 
+Accounts are backend relationship support. Routine session review does not require Jordana to select a Client / Family Account.
+
 ## `account_members`
 
 Join table connecting people to accounts with roles such as primary, spouse, child, parent, family member, payer, or other.
@@ -64,7 +66,11 @@ Reusable reviewed aliases for client names, household aliases, or personal/admin
 
 ## `rate_rules`
 
-Effective-dated suggested-rate rules. Rules can be global, account-specific, person-specific, duration-specific, service-mode-specific, rate-group-specific, or time-category-specific.
+Effective-dated suggested-rate rules. Rules can be global, account-specific, person-specific, duration-specific, service-mode-specific, rate-group-specific, time-category-specific, or an exact participant-combination exception.
+
+## `rate_rule_participants`
+
+Join table connecting a rate rule to the exact set of people required for a joint-session exception. Matching is order-independent; Fred + Bobsy equals Bobsy + Fred. The rule does not apply when only one member attends.
 
 ## `clients`
 
@@ -82,7 +88,7 @@ Time-bound rates for clients. Rates are copied into finalized invoice/session hi
 
 Proposed normalized billable sessions. In Phase 1 these remain `proposed` and `needs_review`.
 
-Phase 2 sessions store account, billing party, date, parsed and approved duration, service mode, rate group, time category, suggested rate, approved rate, rate rule, payment status, and raw calendar title.
+Phase 2 sessions store optional account, billing party, date, parsed and approved duration, service mode, rate group, time category, suggested rate, approved/actual charged rate, suggested and approved rate provenance, payment status, and raw calendar title.
 
 ## `session_participants`
 
@@ -100,7 +106,7 @@ Structured review-state records for the future dashboard. Review decisions persi
 
 The review UI uses backend service functions and local API routes for candidate listing, retrieval, save, approval, inline person/account/billing-party creation, alias learning, and audit history. Frontend code must not write SQLite directly.
 
-Section-level review APIs save people, relationships, billing details, and session drafts independently. After each section save, `refresh_candidate_suggestions` recomputes payer, rate, checklist, unresolved fields, and review status.
+Section-level review APIs save participants, bill-to, person corrections, and session drafts independently. After each section save, `refresh_candidate_suggestions` recomputes payer, rate, checklist, unresolved fields, and review status.
 
 ## `audit_log`
 

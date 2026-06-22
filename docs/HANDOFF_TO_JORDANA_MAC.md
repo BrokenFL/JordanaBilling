@@ -98,6 +98,8 @@ Open the generated report and focus on:
 - Missing account or billing-party relationships
 - Missing suggested or approved rates
 - Multi-person titles such as Fred and Bobsey
+- Participants versus Bill to decisions
+- Any changed rate that should become session-only, a future-person exception, or a future joint-session exception
 
 ## Do Not Do Yet
 
@@ -105,24 +107,26 @@ Open the generated report and focus on:
 - Do not mark sessions invoice-ready without Jordana review.
 - Do not add clinical notes.
 - Do not infer rates from memory or calendar notes.
+- Do not create visible household accounts just because multiple people attended one session.
 
 ## Next Development Steps
 
-1. Add a small review UI or CLI for accepting/rejecting candidates.
-2. Add confirmed clients and aliases.
-3. Add rate management.
-4. Re-run June imports and review until clean.
-5. Build invoice generation only after normalized sessions are trusted.
+1. Finish the one-click launcher and synchronization experience.
+2. Re-run June imports and review until clean.
+3. Confirm rate exceptions and bill-to defaults with Jordana.
+4. Build invoice generation only after normalized sessions are trusted.
 
 ## Phase 2 Backend Pieces Now Present
 
 - People, account, account-member, billing-party, alias, rate-rule, session-participant, and review-item tables
 - Service-mode and time-category parsing
 - Effective-dated suggested-rate rules
+- Participant-combination rate exceptions through `rate_rule_participants`
+- Simplified Participants and Bill-to review workflow
 - Developer commands for rate seeding, rate policy, and review decisions
 - Phase 2 CSV exports
 
-The next Codex session should build the review dashboard on top of these services, not PDF invoicing.
+The next Codex session should build the launcher/sync experience on top of these services, not PDF invoicing.
 
 ## Start Review UI
 

@@ -27,6 +27,8 @@ Rules:
 - If a prefix collides, increment the suffix.
 - Code regeneration must be explicit and audited.
 
+Participant and bill-to workflows do not change these rules. A provisional parser candidate still does not receive a code until a real person is confirmed with first and last name.
+
 ## Account Codes
 
 Accounts use a separate sequence:

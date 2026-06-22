@@ -119,7 +119,7 @@ def make_handler(database_path: str):
             data = self.read_json()
             try:
                 if parsed.path == "/api/people":
-                    self.send_json(create_person(self.conn(), data["display_name"]))
+                    self.send_json(create_person(self.conn(), data))
                     return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/merge"):
                     survivor_id = parsed.path.strip("/").split("/")[2]

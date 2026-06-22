@@ -6,7 +6,7 @@ Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot r
 
 Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
 
-Phase 2 strengthens the normalization layer. It separates people, client accounts, account members, session participants, billing parties, aliases, rate rules, sessions, review items, raw snapshots, and audit records. The local review UI now includes section-level saves plus first CRM-style People and Clients & Accounts views. It still does not generate invoices.
+Phase 2 strengthens the normalization layer. It separates people, client accounts, account members, session participants, billing parties, aliases, rate rules, sessions, review items, raw snapshots, and audit records. The local review UI now uses Jordana's routine confirmation model: Participants, Bill to, duration, session type, time category, suggested/editable rate, payment status, and approval. Backend accounts remain available under advanced relationships and shared billing. It still does not generate invoices.
 
 ## Current Scope
 
@@ -19,8 +19,11 @@ Phase 2 strengthens the normalization layer. It separates people, client account
 - Event classification
 - People/account/billing-party data model
 - Session participant modeling
+- Simplified Participants and Bill-to review workflow
 - Service mode, rate group, evening, and weekend categorization
 - Effective-dated rate rules
+- Person-specific and exact participant-combination rate exceptions
+- Historical approved-rate snapshots
 - Structured review-state engine
 - Section-level saves for people, relationships, billing, and session drafts
 - Human-readable person codes and account codes
@@ -97,7 +100,7 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 - `/clients`
 - `/people`
 
-The inspector has independent saves for person, relationship, billing details, and session draft. None of those saves approve a session automatically.
+The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 
 ## Important Guardrails
 
@@ -110,6 +113,8 @@ The inspector has independent saves for person, relationship, billing details, a
 - No polished production dashboard is built yet.
 - Do not store clinical notes beyond the raw calendar evidence already imported.
 - Do not rewrite historical finalized invoice values when rates change later.
+- Every approved session must store the actual charged amount; future rate rules must not rewrite it.
+- Do not expose household/account labels as routine review fields when Participants and Bill to are enough.
 - Store secrets only in `.env`; never paste the real API key into source files or docs.
 - Do not make a permanent new client account just because two names appear in one calendar title.
 - Do not generate a person code for a provisional parser-only name.
@@ -141,6 +146,10 @@ Expected output:
 2. Likely personal/admin/nonbillable events are listed separately.
 3. Ambiguous rows are in the review section.
 4. No invoices are generated.
+
+## Schema Audit
+
+See `docs/SCHEMA_AUDIT.md` for the current authoritative tables, legacy compatibility tables, known overlaps, and prerequisites before any destructive migration.
 
 ## Downloadable Report Link
 

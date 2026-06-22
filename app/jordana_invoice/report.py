@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 
@@ -18,7 +19,7 @@ def acceptance_report(conn: sqlite3.Connection, import_run_id: str) -> str:
             lines.extend(["No records.", ""])
             continue
         for row in rows:
-            fields = row["fields_requiring_review"] or "[]"
+            fields = report_fields(row["fields_requiring_review"])
             proposed = row["proposed_client_name"] or ""
             start = row["proposed_start_at"] or row["start_at"] or ""
             duration = row["proposed_duration_minutes"] or row["calendar_duration_minutes"] or ""
@@ -43,6 +44,16 @@ def acceptance_report(conn: sqlite3.Connection, import_run_id: str) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def report_fields(raw_fields: str | None) -> str:
+    try:
+        fields = json.loads(raw_fields or "[]")
+    except json.JSONDecodeError:
+        return raw_fields or "[]"
+    if not isinstance(fields, list):
+        return raw_fields or "[]"
+    return json.dumps([field for field in fields if field != "client_account"])
 
 
 def query_section(

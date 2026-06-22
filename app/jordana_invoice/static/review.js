@@ -46,7 +46,7 @@ function renderRows(items, total) {
       <td>${fmt(item.date)}</td>
       <td>${fmt(item.time)}</td>
       <td>${fmt(item.raw_title)}</td>
-      <td><span class="primary">${fmt(item.suggested_client)}</span><span class="secondary">${fmt(item.account_name)}</span></td>
+      <td><span class="primary">${fmt(item.suggested_client)}</span></td>
       <td>${fmt(item.duration_minutes)}</td>
       <td>${serviceLabel(item.service_mode)}</td>
       <td>${timeLabel(item.time_category)}</td>
@@ -88,7 +88,8 @@ function renderInspector(data) {
     </div>
 
     <section class="section">
-      <div class="section-title-row"><h3>Calendar Evidence</h3></div>
+      <details>
+      <summary class="section-summary">View Calendar Evidence</summary>
       <div class="kv">
         <label>Raw Title</label><strong>${fmt(s.raw_calendar_title || s.title)}</strong>
         <label>Calendar</label><span>${fmt(s.calendar_name)}</span>
@@ -99,56 +100,75 @@ function renderInspector(data) {
         <label>Captured</label><span>${fmt(s.captured_at)}</span>
       </div>
       <details><summary>Raw payload</summary><pre class="evidence-raw">${escapeHtml(s.raw_json || "")}</pre></details>
+      </details>
     </section>
 
     <section class="section">
-      <div class="section-title-row"><h3>People and Relationship</h3><span class="save-state" id="relationshipState">Needs review</span></div>
-      <label class="field wide">Who attended?</label>
-      <div class="help">Select everyone who participated in this session. This may be one person or multiple people, such as Fred Colin + Bobsey Colin.</div>
+      <div class="section-title-row"><h3>Participants</h3><span class="save-state" id="relationshipState">Needs review</span></div>
+      <div class="help">Clients in this session</div>
       <div class="chips" id="participantChips"></div>
-      <div class="combobox"><input id="personInput" placeholder="Search, create, or correct a person" list="peopleList"><button class="mini" id="addPerson">+</button></div>
+      <div class="combobox"><input id="personInput" placeholder="Search existing person or add a new one" list="peopleList"><button class="mini" id="addPerson">+</button></div>
       <datalist id="peopleList"></datalist>
       <div id="personWarning"></div>
       <div id="personEditor" class="drawer" hidden></div>
-      <div class="field-grid">
-        <label class="field wide">Client / Family Account
-          <span class="help">The individual, couple, household, or family group this session belongs to.</span>
-          <div class="combobox"><input id="accountInput" placeholder="Search or create a client/family account" value="${data.account ? data.account.account_name : ""}" list="accountList"><button class="mini" id="addAccount">+</button></div>
-        </label>
-        <datalist id="accountList"></datalist>
-        <label class="field wide">Who should be billed?
-          <span class="help">The person or organization responsible for payment. This does not have to be someone who attended.</span>
-          <div class="combobox"><input id="billingInput" placeholder="Search or create the person or organization to bill" value="${data.billing_party ? data.billing_party.billing_name : ""}" list="billingList"><button class="mini" id="addBilling">+</button></div>
-        </label>
-        <datalist id="billingList"></datalist>
-      </div>
       <div class="inline-actions">
-        <button id="savePersonBtn" class="save">Save Person</button>
-        <button id="saveRelationshipBtn" class="save">Save Relationship</button>
-        <button id="saveBillingBtn" class="save">Save Billing Details</button>
-        <button id="sameAsPrimary">Same as primary participant</button>
-        <button id="editAccount">Quick Edit Account</button>
-        <button id="editBilling">Edit Billing Party</button>
+        <button id="saveRelationshipBtn" class="save">Save Participants</button>
         <button id="openPersonRecord">Open Person Record</button>
-        <button id="openAccountRecord">Open Client Account</button>
       </div>
-      <div id="relationshipEditor" class="drawer"></div>
-      <div class="hint">Suggestion reasons: ${(safeList(s.review_reasons).join(" ") || s.explanation || "Calendar title matched the parser pattern.")}</div>
+    </section>
+
+    <section class="section">
+      <div class="section-title-row"><h3>Bill to</h3><span class="save-state" id="billingState">Needs review</span></div>
+      <div class="help">Person or organization responsible for receiving and paying the invoice. This does not add them as a participant.</div>
+      <div class="combobox"><input id="billingInput" placeholder="Search or create a bill-to contact" value="${data.billing_party ? data.billing_party.billing_name : ""}" list="billingList"><button class="mini" id="addBilling">+</button></div>
+      <datalist id="billingList"></datalist>
+      <div id="billingEditor" class="drawer" hidden></div>
+      <div class="inline-actions">
+        <button id="saveBillingBtn" class="save">Save Bill To</button>
+        <button id="sameAsPrimary">Same as sole participant</button>
+        <button id="editBilling">Edit Bill To</button>
+      </div>
     </section>
 
     <section class="section">
       <div class="section-title-row"><h3>Session Details</h3><span class="save-state" id="sessionState">Needs review</span></div>
       <div class="field-grid">
         <label class="field">Duration (min)<input id="durationInput" type="number" value="${s.approved_duration_minutes || s.duration_minutes || ""}"></label>
-        <label class="field">Service Mode<select id="serviceInput">${optionSet(["phone","facetime","office","house_call","unknown"], s.service_mode)}</select></label>
+        <label class="field">Session Type<select id="serviceInput">${optionSet(["phone","facetime","office","house_call","unknown"], s.service_mode)}</select></label>
         <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend","weekend_evening"], s.time_category)}</select></label>
-        <label class="field">Suggested Rate<span class="help">Calculated from the Rate Card. Jordana can override it.</span><input id="suggestedRateInput" value="${centString(s.suggested_rate_cents)}"></label>
-        <label class="field">Approved Rate<span class="help">The final amount that will be used for this session.</span><input id="approvedRateInput" value="${centString(s.approved_rate_cents)}"></label>
+        <label class="field">Suggested Rate<span class="help">${rateSourceDescription(s, data.participants)}</span><input id="suggestedRateInput" value="${centString(s.suggested_rate_cents)}"></label>
+        <label class="field">Suggested/editable rate<span class="help">The final amount saved for this session.</span><input id="approvedRateInput" value="${centString(s.approved_rate_cents || s.suggested_rate_cents)}"></label>
         <label class="field">Payment Status<span class="help">Whether payment has already been received.</span><select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
         <label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label>
         <label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>
       </div>
+      <div class="rate-scope" id="rateScope">
+        <strong>Apply this rate to:</strong>
+        <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
+        <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this participant</label>
+        <select id="rateScopePerson">${state.participants.map(p => `<option value="${p.person_id || ""}">${p.display_name || p.participant_name || ""}</option>`).join("")}</select>
+        <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these participants</label>
+      </div>
       <div class="inline-actions"><button id="saveSessionBtn" class="save">Save Session Draft</button></div>
+    </section>
+
+    <section class="section">
+      <details>
+        <summary class="section-summary">Advanced relationships and shared billing</summary>
+        <div class="field-grid">
+          <label class="field wide">Related Account
+            <span class="help">Optional backend relationship support for families, couples, shared billing, default payer, or special joint rates.</span>
+            <div class="combobox"><input id="accountInput" placeholder="Search or create an account" value="${data.account ? data.account.account_name : ""}" list="accountList"><button class="mini" id="addAccount">+</button></div>
+          </label>
+          <datalist id="accountList"></datalist>
+        </div>
+        <div class="inline-actions">
+          <button id="editAccount">Quick Edit Account</button>
+          <button id="openAccountRecord">Open Account Record</button>
+        </div>
+        <div id="relationshipEditor" class="drawer"></div>
+      </details>
+      <div class="hint">Suggestion reasons: ${(safeList(s.review_reasons).join(" ") || s.explanation || "Calendar title matched the parser pattern.")}</div>
     </section>
 
     <section class="section">
@@ -176,7 +196,6 @@ function wireInspector() {
   $("addAccount").onclick = createAccountFromInput;
   $("addBilling").onclick = createBillingFromInput;
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
-  $("savePersonBtn").onclick = savePersonSection;
   $("saveRelationshipBtn").onclick = saveRelationshipSection;
   $("saveBillingBtn").onclick = saveBillingSection;
   $("saveSessionBtn").onclick = saveSessionSection;
@@ -189,7 +208,8 @@ function wireInspector() {
   $("duplicateBtn").onclick = () => mark("duplicate");
   $("excludeBtn").onclick = () => mark("nonbillable");
   ["durationInput","serviceInput","timeCategoryInput","suggestedRateInput","approvedRateInput","paymentInput","billableInput","overrideReasonInput"].forEach(id => $(id).addEventListener("input", () => markDirty("session")));
-  ["accountInput","billingInput"].forEach(id => $(id).addEventListener("input", () => markDirty("relationship")));
+  $("accountInput").addEventListener("input", () => markDirty("relationship"));
+  $("billingInput").addEventListener("input", () => markDirty("billing"));
 }
 
 function markDirty(section) {
@@ -202,11 +222,15 @@ function markDirty(section) {
     $("relationshipState").textContent = "Unsaved changes";
     $("relationshipState").className = "save-state dirty";
   }
+  if (section === "billing" && $("billingState")) {
+    $("billingState").textContent = "Unsaved changes";
+    $("billingState").className = "save-state dirty";
+  }
 }
 
 function markSaved(section, message = "Saved") {
   state.dirty.delete(section);
-  const id = section === "session" ? "sessionState" : "relationshipState";
+  const id = section === "session" ? "sessionState" : section === "billing" ? "billingState" : "relationshipState";
   if ($(id)) {
     $(id).textContent = message;
     $(id).className = "save-state saved";
@@ -214,7 +238,7 @@ function markSaved(section, message = "Saved") {
 }
 
 function renderParticipantChips() {
-  $("participantChips").innerHTML = state.participants.map((p, i) => `<span class="chip">${p.display_name || p.participant_name}${i === 0 ? " (Primary)" : ""}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
+  $("participantChips").innerHTML = state.participants.map((p, i) => `<span class="chip">${p.display_name || p.participant_name}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
   document.querySelectorAll("#participantChips button[data-i]").forEach(btn => btn.onclick = () => { state.participants.splice(Number(btn.dataset.i), 1); renderParticipantChips(); renderRelationshipEditor(state.detail); });
   document.querySelectorAll("#participantChips button[data-edit]").forEach(btn => btn.onclick = () => showPersonEditor(Number(btn.dataset.edit)));
 }
@@ -222,12 +246,55 @@ function renderParticipantChips() {
 async function createPersonFromInput() {
   const name = $("personInput").value.trim();
   if (!name) return;
-  const person = await findOrCorrectPerson(name);
+  const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
+  const exact = rows.find(row => String(row.display_name).toLowerCase() === name.toLowerCase());
+  if (!exact) {
+    showNewPersonForm(name);
+    return;
+  }
+  const person = exact;
   state.participants.push({ person_id: person.person_id, display_name: person.display_name, is_primary: state.participants.length === 0 });
   $("personInput").value = "";
   renderParticipantChips();
   renderRelationshipEditor(state.detail);
   markDirty("relationship");
+}
+
+function showNewPersonForm(name = "") {
+  const firstLast = name.split(/\s+/);
+  $("personEditor").hidden = false;
+  $("personEditor").innerHTML = `
+    <h4>New Person</h4>
+    <div class="field-grid">
+      <label class="field">First Name<input id="newPersonFirst" value="${firstLast[0] || ""}"></label>
+      <label class="field">Last Name<input id="newPersonLast" value="${firstLast.slice(1).join(" ")}"></label>
+      <label class="field">Preferred Name<input id="newPersonPreferred" value="${firstLast[0] || ""}"></label>
+      <label class="field">Display Name<input id="newPersonDisplay" value="${name}"></label>
+      <label class="field">Email<input id="newPersonEmail"></label>
+      <label class="field">Phone<input id="newPersonPhone"></label>
+      <label class="field wide">Administrative Notes<input id="newPersonNotes"></label>
+    </div>
+    <div class="inline-actions"><button id="saveNewPerson" class="save">Save Person</button><button id="cancelNewPerson">Cancel</button></div>
+  `;
+  $("saveNewPerson").onclick = async () => {
+    const display = $("newPersonDisplay").value.trim() || `${$("newPersonFirst").value.trim()} ${$("newPersonLast").value.trim()}`.trim();
+    const person = await api("/api/people", { method: "POST", body: JSON.stringify({
+      first_name: $("newPersonFirst").value.trim(),
+      last_name: $("newPersonLast").value.trim(),
+      preferred_name: $("newPersonPreferred").value.trim(),
+      display_name: display,
+      billing_email: $("newPersonEmail").value.trim(),
+      billing_phone: $("newPersonPhone").value.trim(),
+      administrative_notes: $("newPersonNotes").value.trim()
+    }) });
+    state.participants.push({ person_id: person.person_id, display_name: person.display_name, is_primary: state.participants.length === 0 });
+    $("personInput").value = "";
+    $("personEditor").hidden = true;
+    renderParticipantChips();
+    renderRelationshipEditor(state.detail);
+    markDirty("relationship");
+  };
+  $("cancelNewPerson").onclick = () => $("personEditor").hidden = true;
 }
 
 async function createAccountFromInput() {
@@ -241,9 +308,15 @@ async function createAccountFromInput() {
 async function createBillingFromInput() {
   const name = $("billingInput").value.trim();
   if (!name) return;
-  state.billingParty = await findOrCreate("/api/billing-parties", "billing_name", name, { billing_name: name, billing_party_type: "person" });
-  $("billingInput").value = state.billingParty.billing_name;
-  markDirty("relationship");
+  const rows = await api(`/api/billing-parties?q=${encodeURIComponent(name)}`);
+  const exact = rows.find(row => String(row.billing_name).toLowerCase() === name.toLowerCase());
+  if (exact) {
+    state.billingParty = exact;
+    $("billingInput").value = state.billingParty.billing_name;
+    markDirty("billing");
+    return;
+  }
+  showBillingForm({ billing_name: name });
 }
 
 async function findOrCorrectPerson(name) {
@@ -359,12 +432,46 @@ function showAccountEditor() {
 }
 
 function showBillingEditor() {
-  if (!state.billingParty) return alert("Select or create a billing party first.");
-  const name = prompt("Billing name", state.billingParty.billing_name);
-  if (!name) return;
-  const email = prompt("Billing email", state.billingParty.billing_email || "") || "";
-  api(`/api/billing-parties/${state.billingParty.billing_party_id}`, { method: "POST", body: JSON.stringify({ billing_name: name, billing_email: email }) })
-    .then(updated => { state.billingParty = updated; $("billingInput").value = updated.billing_name; renderRelationshipEditor(state.detail); });
+  if (!state.billingParty) return showBillingForm({ billing_name: $("billingInput").value.trim() });
+  showBillingForm(state.billingParty);
+}
+
+function showBillingForm(billing = {}) {
+  $("billingEditor").hidden = false;
+  $("billingEditor").innerHTML = `
+    <h4>${billing.billing_party_id ? "Edit Bill To" : "New Bill-To Contact"}</h4>
+    <div class="field-grid">
+      <label class="field">Type<select id="billToType">${optionSet(["person","organization"], billing.billing_party_type || "person")}</select></label>
+      <label class="field">Organization Name<input id="billToOrg" value="${billing.organization_name || ""}"></label>
+      <label class="field">First Name<input id="billToFirst" value=""></label>
+      <label class="field">Last Name<input id="billToLast" value=""></label>
+      <label class="field">Display Name<input id="billToDisplay" value="${billing.billing_name || ""}"></label>
+      <label class="field">Billing Email<input id="billToEmail" value="${billing.billing_email || ""}"></label>
+      <label class="field">Billing Phone<input id="billToPhone" value="${billing.billing_phone || ""}"></label>
+      <label class="field wide">Billing Address<input id="billToAddress" value="${billing.billing_address_line_1 || ""}"></label>
+      <label class="field wide">Administrative Billing Notes<input id="billToNotes" value="${billing.administrative_notes || ""}"></label>
+    </div>
+    <div class="inline-actions"><button id="saveBillToForm" class="save">Save Bill To</button><button id="cancelBillToForm">Cancel</button></div>
+  `;
+  $("saveBillToForm").onclick = async () => {
+    const display = $("billToDisplay").value.trim() || `${$("billToFirst").value.trim()} ${$("billToLast").value.trim()}`.trim() || $("billToOrg").value.trim();
+    const payload = {
+      billing_party_type: $("billToType").value,
+      organization_name: $("billToOrg").value.trim(),
+      billing_name: display,
+      billing_email: $("billToEmail").value.trim(),
+      billing_phone: $("billToPhone").value.trim(),
+      billing_address_line_1: $("billToAddress").value.trim(),
+      administrative_notes: $("billToNotes").value.trim()
+    };
+    state.billingParty = billing.billing_party_id
+      ? await api(`/api/billing-parties/${billing.billing_party_id}`, { method: "POST", body: JSON.stringify(payload) })
+      : await api("/api/billing-parties", { method: "POST", body: JSON.stringify(payload) });
+    $("billingInput").value = state.billingParty.billing_name;
+    $("billingEditor").hidden = true;
+    markDirty("billing");
+  };
+  $("cancelBillToForm").onclick = () => $("billingEditor").hidden = true;
 }
 
 async function savePersonSection() {
@@ -390,7 +497,8 @@ async function saveRelationshipSection() {
       participants: collectParticipants(),
       account_id: state.account ? state.account.account_id : null,
       primary_person_id: state.participants.find(p => p.is_primary)?.person_id || state.participants[0]?.person_id || null,
-      default_billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null
+      default_billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null,
+      billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null
     })
   });
   state.detail = updated;
@@ -414,7 +522,7 @@ async function saveBillingSection() {
   state.billingParty = updated.billing_party;
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
-  markSaved("relationship", "Billing details saved");
+  markSaved("billing", "Bill to saved");
   await loadList();
 }
 
@@ -491,7 +599,9 @@ function collectPayload() {
     approved_rate: $("approvedRateInput").value,
     payment_status: $("paymentInput").value,
     billable_status: $("billableInput").value,
-    rate_override_reason: $("overrideReasonInput").value
+    rate_override_reason: $("overrideReasonInput").value,
+    rate_scope: document.querySelector("input[name='rateScope']:checked")?.value || "session_only",
+    rate_scope_person_id: $("rateScopePerson")?.value || null
   };
 }
 
@@ -626,7 +736,7 @@ async function loadRateRules() {
       <td>${row.duration_minutes || "Any"}</td>
       <td>${serviceLabel(row.service_mode || row.rate_group || "Any")}</td>
       <td>${timeLabel(row.time_category)}</td>
-      <td>${row.account_name || row.display_name || "Everyone"}</td>
+      <td>${row.participant_names || row.account_name || row.display_name || "Everyone"}</td>
       <td>${row.effective_from}</td>
       <td>${ruleExplanation(row)}</td>
     </tr>
@@ -669,7 +779,9 @@ async function openAccountRecord(accountId) {
     <h4>Members</h4><div class="compact-list">${data.members.map(m => `<div><span>${fmt(m.display_name)} ${m.is_primary ? "(Primary)" : ""}</span><span>${fmt(m.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No members yet.</span>"}</div>
     <h4>Billing</h4><div class="kv"><label>Default payer</label><span>${fmt(data.billing_party?.billing_name)}</span><label>Email</label><span>${fmt(data.billing_party?.billing_email)}</span><label>Phone</label><span>${fmt(data.billing_party?.billing_phone)}</span></div>
     <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No account-specific rates.</span>"}</div>
-    <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.raw_calendar_title)}</span><span>${money(centString(s.approved_rate_cents))}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.duration_minutes)} min ${serviceLabel(s.service_mode)} ${timeLabel(s.time_category)}</span><span>${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    <h4>Active Rate Exceptions</h4><div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${fmt(r.effective_from)} ${fmt(r.duration_minutes || "Any")} min ${serviceLabel(r.service_mode || r.rate_group || "Any")}</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No person-specific rate exceptions.</span>"}</div>
+    <h4>Shared Rate Exceptions</h4><div class="compact-list">${(data.joint_rate_exceptions || []).map(r => `<div><span>${fmt(r.participant_names)} ${fmt(r.duration_minutes || "Any")} min</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No joint-session exceptions.</span>"}</div>
     <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
   `;
   if ($("returnFromAccount")) $("returnFromAccount").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
@@ -777,8 +889,23 @@ window.addEventListener("beforeunload", event => {
 });
 
 function ruleExplanation(row) {
-  const scope = row.account_name ? `account ${row.account_name}` : row.display_name ? `person ${row.display_name}` : "everyone";
+  const scope = row.participant_names ? row.participant_names : row.account_name ? `account ${row.account_name}` : row.display_name ? `person ${row.display_name}` : "everyone";
   return `Applies to ${scope}; ${row.duration_minutes || "any"} minutes; ${serviceLabel(row.service_mode || row.rate_group || "any")}; ${timeLabel(row.time_category)}.`;
+}
+
+function rateSourceDescription(session, participants = []) {
+  const names = participants.map(p => p.display_name || p.participant_name).filter(Boolean);
+  const first = names[0] || "Participant";
+  const joined = names.join(" + ");
+  const source = session.approved_rate_source || session.rate_source;
+  if (source === "person_exception") return `${first} exception`;
+  if (source === "participant_combination_exception") return `${joined} joint-session exception`;
+  if (source === "evening_rule") return "Evening rate";
+  if (source === "weekend_rule") return "Weekend rate";
+  if (source === "service_rule") return `${serviceLabel(session.service_mode)} rate`;
+  if (source === "manual_override") return "Manually changed for this session";
+  if (session.duration_minutes) return `Default ${session.duration_minutes}-minute rate`;
+  return "Default rate";
 }
 
 function escapeHtml(value) {

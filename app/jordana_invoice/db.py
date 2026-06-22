@@ -219,6 +219,17 @@ CREATE TABLE IF NOT EXISTS rate_rules (
 CREATE INDEX IF NOT EXISTS idx_rate_rules_match
   ON rate_rules(active, client_account_id, person_id, duration_minutes, service_mode, rate_group, time_category);
 
+CREATE TABLE IF NOT EXISTS rate_rule_participants (
+  rate_rule_participant_id TEXT PRIMARY KEY,
+  rate_rule_id TEXT NOT NULL REFERENCES rate_rules(rate_rule_id),
+  person_id TEXT NOT NULL REFERENCES people(person_id),
+  created_at TEXT NOT NULL,
+  UNIQUE(rate_rule_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_rule_participants_person
+  ON rate_rule_participants(person_id, rate_rule_id);
+
 CREATE TABLE IF NOT EXISTS rate_policy (
   policy_name TEXT PRIMARY KEY,
   policy_value TEXT NOT NULL,
@@ -281,6 +292,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   approved_rate_cents INTEGER,
   rate_rule_id TEXT REFERENCES rate_rules(rate_rule_id),
   rate_source TEXT,
+  approved_rate_rule_id TEXT REFERENCES rate_rules(rate_rule_id),
+  approved_rate_source TEXT,
   rate_needs_review INTEGER NOT NULL DEFAULT 1,
   rate_override_reason TEXT,
   billable_status TEXT NOT NULL DEFAULT 'proposed',
@@ -451,6 +464,8 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "approved_rate_cents": "INTEGER",
             "rate_rule_id": "TEXT",
             "rate_source": "TEXT",
+            "approved_rate_rule_id": "TEXT",
+            "approved_rate_source": "TEXT",
             "rate_needs_review": "INTEGER NOT NULL DEFAULT 1",
             "rate_override_reason": "TEXT",
             "payment_status": "TEXT NOT NULL DEFAULT 'unresolved'",

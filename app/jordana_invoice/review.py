@@ -16,8 +16,6 @@ def review_status_for_parse(result: ParseResult, rate_needs_review: bool = True)
         return "needs_participants"
     if "client_full_name" in fields:
         return "needs_person_match"
-    if "client_account" in fields:
-        return "needs_account"
     if "billing_party" in fields:
         return "needs_billing_party"
     if "duration_discrepancy" in fields:
@@ -33,6 +31,7 @@ def review_status_for_parse(result: ParseResult, rate_needs_review: bool = True)
 
 def unresolved_fields_for_session(result: ParseResult, rate_needs_review: bool = True) -> list[str]:
     fields = set(result.unresolved_fields or result.fields_requiring_review)
+    fields.discard("client_account")
     if rate_needs_review and result.classification == "client_session":
         fields.add("rate")
     fields.add("payment_status")

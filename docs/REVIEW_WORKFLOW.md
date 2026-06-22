@@ -19,6 +19,21 @@ Calendar data is evidence. Review decisions are stored in SQLite and are intende
 
 Each candidate can have multiple unresolved fields. Those fields are stored as structured JSON in `calendar_event_candidates`, `review_queue`, and `review_items`.
 
+## Routine Confirmation Model
+
+Routine review uses Jordana's normal mental model:
+
+1. Participants
+2. Bill to
+3. Duration
+4. Session type
+5. Time category
+6. Suggested/editable rate
+7. Payment status
+8. Approve
+
+Participants are people connected to one session. The bill-to party is the person or organization responsible for receiving and paying the invoice, and does not have to be a participant. A separate client/account field is not required for routine approval.
+
 ## Relationship Review
 
 Titles with multiple names or relationship phrases stay reviewable.
@@ -29,7 +44,7 @@ Examples:
 - `Fred + Bobsey | 60 | Office`
 - `Caitlin Schneider 530 for Sage`
 
-The system must not create a new permanent flat client from a combined title. Review should decide whether the extra name is a participant, billing party, parent, child, spouse, family member, unrelated note, or unknown.
+The system must not create a new permanent flat client or visible household account from a combined title. Review should decide whether each name is a participant, bill-to party, parent, child, spouse, family member, unrelated note, or unknown.
 
 ## Decisions
 
@@ -53,14 +68,17 @@ It supports save without approval, approval validation, inline person/account/bi
 
 ## Section-Level Saves
 
-The inspector order is:
+The routine inspector order is:
 
-1. Calendar Evidence
-2. People and Relationship
+1. Participants
+2. Bill to
 3. Session Details
-4. Review Checklist
-5. Session Actions
+4. Advanced relationships and shared billing
+5. Review Checklist
+6. Session Actions
 
-Save Person, Save Relationship, Save Billing Details, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
+Save Participants, Save Bill To, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
 
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.
+
+Calendar evidence remains read-only under View Calendar Evidence.

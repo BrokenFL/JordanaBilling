@@ -32,25 +32,27 @@ http://127.0.0.1:8765/review
 
 ## Implemented Editing
 
-The inspector supports:
+The routine inspector supports:
 
-- participant search/create/reuse/correction/merge
-- account search/create/reuse
-- billing-party search/create/reuse
+- Participants search/create/reuse/correction/merge
+- Bill-to search/create/reuse
 - duration edits
 - service mode edits
 - time category edits
-- suggested and approved rate edits
+- suggested/editable rate edits with a visible explanation
+- rate-change scope: this session only, future sessions for one participant, or future joint sessions for the exact participant set
 - payment status edits
 - save without approval
 - approval with validation
 - personal/admin/nonbillable/duplicate marking
-- relationship editor for account members, roles, primary participant, and default payer
+- collapsed Advanced relationships and shared billing controls for account members, roles, default payer, shared-rate setup, and opening account records
 - functional Rate Card section
-- independent Save Person, Save Relationship, Save Billing Details, and Save Session Draft buttons
+- independent Save Participants, Save Bill To, and Save Session Draft buttons
 - Clients & Accounts list and account record
 - People list and person record
 - return link from CRM record back to the originating review item
+
+Routine review should not display Client / Family Account, Primary Client, Household Name, Account Name, Relationship Role, or Account Membership as required fields.
 
 ## Future UI Work
 
