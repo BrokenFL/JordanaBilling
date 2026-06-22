@@ -11,6 +11,7 @@ from .calendar_preferences import upsert_calendar_preference
 from .csv_reports import write_reports
 from .db import init_db
 from .rates import cents_to_dollars, dollars_to_cents, seed_rate_rule, suggest_rate
+from .service_catalog import learn_service
 from .util import json_dumps, new_id, now_iso, text
 
 
@@ -405,6 +406,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     suggested_rate_cents = money_payload_to_cents(payload.get("suggested_rate"))
     duration = int(payload.get("approved_duration_minutes") or payload.get("duration_minutes") or session["duration_minutes"])
     service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
+    service = learn_service(conn, service_mode, increment_usage=False)
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
@@ -473,6 +475,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             approved_duration_minutes = ?,
             duration_minutes = ?,
             service_mode = ?,
+            service_catalog_id = ?,
             rate_group = ?,
             time_category = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
@@ -494,6 +497,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             duration,
             duration,
             service_mode,
+            service["service_catalog_id"],
             rate_group_for(service_mode),
             time_category,
             suggested_rate_cents,
@@ -545,18 +549,20 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
     if unresolved:
         raise ValueError("Cannot approve until required fields are complete: " + ", ".join(unresolved))
     now = now_iso()
+    service = learn_service(conn, session["service_mode"] or "other", increment_usage=True)
     conn.execute(
         """
         UPDATE sessions
         SET review_status = 'approved',
             billable_status = 'approved',
+            service_catalog_id = ?,
             rate_cents_snapshot = approved_rate_cents,
             approved_rate_rule_id = COALESCE(approved_rate_rule_id, rate_rule_id),
             approved_rate_source = COALESCE(approved_rate_source, rate_source, 'manual_override'),
             updated_at = ?
         WHERE id = ?
         """,
-        (now, session["id"]),
+        (service["service_catalog_id"], now, session["id"]),
     )
     conn.execute(
         "UPDATE calendar_event_candidates SET review_status = 'approved', updated_at = ? WHERE id = ?",
@@ -1272,15 +1278,20 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
     now = now_iso()
     billing_party_id = new_id()
     billing_name = data.get("billing_name") or data.get("display_name") or data.get("name")
+    if not billing_name:
+        raise ValueError("Billing name is required.")
+    delivery_method = data.get("preferred_delivery_method") or "unresolved"
+    if delivery_method not in {"email", "mail", "both", "unresolved"}:
+        raise ValueError("Invalid preferred delivery method.")
     conn.execute(
         """
         INSERT INTO billing_parties (
           billing_party_id, billing_party_type, person_id, organization_name,
           billing_name, billing_email, billing_address_line_1, billing_address_line_2,
           billing_city, billing_state, billing_postal_code, billing_phone,
-          administrative_notes,
+          preferred_delivery_method, administrative_notes,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             billing_party_id,
@@ -1295,6 +1306,7 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
             data.get("billing_state"),
             data.get("billing_postal_code"),
             data.get("billing_phone"),
+            delivery_method,
             data.get("administrative_notes"),
             now,
             now,
@@ -1311,6 +1323,9 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     if not existing:
         raise ValueError("Billing party not found.")
     now = now_iso()
+    delivery_method = data.get("preferred_delivery_method") or existing["preferred_delivery_method"]
+    if delivery_method not in {"email", "mail", "both", "unresolved"}:
+        raise ValueError("Invalid preferred delivery method.")
     conn.execute(
         """
         UPDATE billing_parties
@@ -1325,6 +1340,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
             billing_state = ?,
             billing_postal_code = ?,
             billing_phone = ?,
+            preferred_delivery_method = ?,
             administrative_notes = ?,
             active = ?,
             updated_at = ?
@@ -1342,6 +1358,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
             data.get("billing_state") or existing["billing_state"],
             data.get("billing_postal_code") or existing["billing_postal_code"],
             data.get("billing_phone") or existing["billing_phone"],
+            delivery_method,
             data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
             1 if data.get("active", True) else 0,
             now,

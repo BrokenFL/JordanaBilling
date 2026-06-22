@@ -47,6 +47,7 @@ class ReviewServiceTests(unittest.TestCase):
         self.candidate_id = first["candidate_id"]
 
     def tearDown(self):
+        self.conn.close()
         self.temp.cleanup()
 
     def test_inline_create_records_and_select_immediately(self):

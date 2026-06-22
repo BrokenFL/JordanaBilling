@@ -56,3 +56,5 @@ Historical approved session rates are preserved in `sessions.rate_cents_snapshot
 Rates are not read from calendar titles. Structured titles may include participants, optional title time, duration, session type, and optional `Cancelled` or `No Show` status only.
 
 Cancelled/no-show appointment status does not itself create a payment status. If the reviewed billing treatment is `billable`, the approved/actual charged rate is preserved on the session exactly like any other approved session. If the treatment is `not_billable` or `waived`, the event remains preserved without becoming an ordinary billable completed session.
+
+Invoice amounts copy `approved_rate_cents`/`rate_cents_snapshot`; they are never reconstructed from current rate rules. Finalized line amounts remain unchanged after future rate changes.

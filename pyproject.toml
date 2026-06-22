@@ -3,7 +3,12 @@ name = "jordana-invoice"
 version = "0.1.0"
 description = "Local-first calendar snapshot importer and review workflow for Jordana billing."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "reportlab>=4.2,<5",
+]
+
+[project.optional-dependencies]
+test = ["pypdf>=6,<7"]
 
 [project.scripts]
 jordana-invoice = "jordana_invoice.cli:main"

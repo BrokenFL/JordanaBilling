@@ -1,5 +1,9 @@
 # Review UI Spec
 
+## Invoice Workspace
+
+`/invoices` keeps the dense desktop shell and adds one status-filtered invoice list with a focused builder/preview pane. Eligibility and totals come from the backend. Draft descriptions and delivery may be edited; finalization requires explicit confirmation. Finalized records allow history and void-with-reason, not silent editing.
+
 Approved mockup is stored locally at `docs/review-ui-approved-mockup.png` when available. It is intentionally ignored by Git because screenshots may contain client-style data.
 
 ## Implemented Route

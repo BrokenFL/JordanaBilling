@@ -103,7 +103,8 @@ Open the generated report and focus on:
 
 ## Do Not Do Yet
 
-- Do not generate PDFs.
+The local prototype now supports invoice drafts, finalization, PDF history, and void/reissue. Configure private identity/branding with `docs/BUSINESS_PROFILE.md` before any private trial. Generated PDFs default to ignored `Invoices/<year>/`; this application does not send them.
+
 - Do not mark sessions invoice-ready without Jordana review.
 - Do not add clinical notes.
 - Do not infer rates from memory or calendar notes.
@@ -114,7 +115,7 @@ Open the generated report and focus on:
 1. Finish the one-click launcher and synchronization experience.
 2. Re-run June imports and review until clean.
 3. Confirm rate exceptions and bill-to defaults with Jordana.
-4. Build invoice generation only after normalized sessions are trusted.
+4. Keep invoice eligibility tied to reviewed normalized sessions.
 
 ## Phase 2 Backend Pieces Now Present
 
@@ -126,7 +127,7 @@ Open the generated report and focus on:
 - Developer commands for rate seeding, rate policy, and review decisions
 - Phase 2 CSV exports
 
-The next Codex session should build the launcher/sync experience on top of these services, not PDF invoicing.
+The next product round should add payment tracking, invoice delivery workflow, and dashboard integration without weakening snapshot immutability.
 
 ## Start Review UI
 

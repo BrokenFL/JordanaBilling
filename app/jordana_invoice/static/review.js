@@ -1,4 +1,4 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, invoice: null, eligibleSessions: [] };
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
@@ -670,14 +670,19 @@ document.getElementById("peopleNav").onclick = (event) => {
   location.hash = "people";
   showPeople();
 };
+document.getElementById("invoicesNav").onclick = (event) => {
+  event.preventDefault();
+  history.pushState({}, "", "/invoices");
+  showInvoices();
+};
 document.getElementById("reviewNav").onclick = () => {
   location.hash = "";
   showReviewWorkbench();
 };
 
 function hideViews() {
-  ["reviewWorkbench","rateCardView","clientsView","peopleView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","rateCardNav","clientsNav","peopleNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","rateCardView","clientsView","peopleView","invoicesView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","rateCardNav","clientsNav","peopleNav","invoicesNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -691,6 +696,9 @@ function showReviewWorkbench() {
   hideViews();
   document.getElementById("reviewWorkbench").hidden = false;
   document.getElementById("reviewNav").classList.add("active");
+  $("pageTitle").textContent = "Session Review";
+  $("pageSubtitle").textContent = "Review calendar events and confirm details";
+  document.title = "Jordana Billing - Session Review";
   if (state.returnCandidate) {
     selectCandidate(state.returnCandidate);
     state.returnCandidate = null;
@@ -701,6 +709,8 @@ async function showClients() {
   hideViews();
   document.getElementById("clientsView").hidden = false;
   document.getElementById("clientsNav").classList.add("active");
+  $("pageTitle").textContent = "Clients & Accounts";
+  $("pageSubtitle").textContent = "Relationship and shared billing records";
   await loadClients();
 }
 
@@ -708,8 +718,135 @@ async function showPeople() {
   hideViews();
   document.getElementById("peopleView").hidden = false;
   document.getElementById("peopleNav").classList.add("active");
+  $("pageTitle").textContent = "People";
+  $("pageSubtitle").textContent = "Permanent people and billing relationships";
   await loadPeople();
 }
+
+async function showInvoices() {
+  hideViews();
+  $("invoicesView").hidden = false;
+  $("invoicesNav").classList.add("active");
+  $("pageTitle").textContent = "Invoices";
+  $("pageSubtitle").textContent = "Draft, finalize, and preserve invoice history";
+  document.title = "Jordana Billing - Invoices";
+  await loadInvoices();
+}
+
+async function loadInvoices() {
+  const rows = await api(`/api/invoices?status=${encodeURIComponent($("invoiceStatusFilter").value || "")}`);
+  $("invoiceRows").innerHTML = rows.map(row => `
+    <tr data-invoice="${row.invoice_id}">
+      <td><span class="primary">${row.invoice_number || "Draft"}</span></td>
+      <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
+      <td>${fmt(row.billing_period_start)} - ${fmt(row.billing_period_end)}</td>
+      <td>${fmt(row.invoice_date)}</td><td>${row.line_count}</td><td>${money(centString(row.total_cents))}</td>
+      <td><span class="status-pill ${row.status}">${row.status}</span></td><td>${fmt(row.delivery_method)}</td>
+    </tr>`).join("") || `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
+  document.querySelectorAll("#invoiceRows tr[data-invoice]").forEach(row => row.onclick = () => openInvoice(row.dataset.invoice));
+}
+
+async function startInvoiceBuilder() {
+  const parties = await api("/api/billing-parties?q=");
+  const today = new Date().toISOString().slice(0, 10);
+  const monthStart = `${today.slice(0,7)}-01`;
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
+    <div><h3>Create Invoice Draft</h3><div class="help">Only approved, invoice-eligible sessions can be selected.</div></div>
+    <div class="field-grid">
+      <label class="field wide">Bill to<select id="draftBillTo"><option value="">Select bill-to party</option>${parties.map(p => `<option value="${p.billing_party_id}">${fmt(p.billing_name)}</option>`).join("")}</select></label>
+      <label class="field">Period start<input id="draftPeriodStart" type="date" value="${monthStart}"></label>
+      <label class="field">Period end<input id="draftPeriodEnd" type="date" value="${today}"></label>
+      <label class="field">Invoice date<input id="draftInvoiceDate" type="date" value="${today}"></label>
+      <label class="field">Delivery<select id="draftDelivery">${optionSet(["unresolved","email","mail","both"], "unresolved")}</select></label>
+    </div>
+    <div><div class="section-title-row"><h3>Eligible sessions</h3><button id="refreshEligible" class="mini">Refresh</button></div><div class="eligible-list" id="eligibleSessions"><div class="empty-state">Select a bill-to party and period.</div></div></div>
+    <div class="actions"><button id="saveInvoiceDraft" class="save">Save Draft</button></div>
+  </div>`;
+  ["draftBillTo","draftPeriodStart","draftPeriodEnd"].forEach(id => $(id).onchange = loadEligibleInvoiceSessions);
+  $("refreshEligible").onclick = loadEligibleInvoiceSessions;
+  $("saveInvoiceDraft").onclick = async () => {
+    const sessionIds = [...document.querySelectorAll("#eligibleSessions input:checked")].map(input => input.value);
+    const created = await api("/api/invoices", { method:"POST", body:JSON.stringify({
+      bill_to_party_id:$("draftBillTo").value, billing_period_start:$("draftPeriodStart").value,
+      billing_period_end:$("draftPeriodEnd").value, invoice_date:$("draftInvoiceDate").value,
+      delivery_method:$("draftDelivery").value, session_ids:sessionIds
+    })});
+    await loadInvoices(); await renderInvoiceEditor(created);
+  };
+}
+
+async function loadEligibleInvoiceSessions() {
+  const party = $("draftBillTo").value;
+  if (!party) return;
+  const rows = await api(`/api/invoices/eligible-sessions?bill_to_party_id=${encodeURIComponent(party)}&period_start=${$("draftPeriodStart").value}&period_end=${$("draftPeriodEnd").value}`);
+  state.eligibleSessions = rows;
+  $("eligibleSessions").innerHTML = rows.map(row => `<label class="eligible-row ${row.eligible ? "" : "ineligible"}">
+    <input type="checkbox" value="${row.id}" ${row.eligible ? "" : "disabled"}><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}<small class="secondary">${row.ineligibility_reasons.join("; ")}</small></span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong>
+  </label>`).join("") || `<div class="empty-state">No sessions in this period.</div>`;
+}
+
+async function openInvoice(invoiceId) {
+  const data = await api(`/api/invoices/${invoiceId}`);
+  state.invoice = data;
+  if (data.invoice.status === "draft") return renderInvoiceEditor(data);
+  renderInvoicePreview(data);
+}
+
+async function renderInvoiceEditor(data) {
+  state.invoice = data;
+  const i = data.invoice;
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
+    <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
+    <div class="field-grid">
+      <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${i.invoice_date}"></label>
+      <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
+    </div>
+    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${line.invoice_line_item_id}"><td>${line.service_date}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td><input class="line-description" value="${escapeHtml(line.description_snapshot)}"></td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
+    <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="previewDraft">Preview</button><button id="finalizeInvoice" class="approve">Finalize Invoice</button></div>
+  </div>`;
+  document.querySelectorAll(".remove-line").forEach(button => button.onclick = async () => {
+    const lineId = button.closest("tr").dataset.line;
+    const updated = await api(`/api/invoices/${i.invoice_id}/remove-line`, {method:"POST", body:JSON.stringify({invoice_line_item_id:lineId})});
+    await renderInvoiceEditor(updated); await loadInvoices();
+  });
+  $("saveDraftChanges").onclick = async () => {
+    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.querySelector(".line-description").value, sort_order:index}));
+    const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines})});
+    await renderInvoiceEditor(updated); await loadInvoices();
+  };
+  $("previewDraft").onclick = () => renderInvoicePreview({...data, invoice:{...i, invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value}});
+  $("finalizeInvoice").onclick = async () => {
+    if (!confirm("Finalize this invoice? Its number and snapshots cannot be edited afterward.")) return;
+    const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true})});
+    await loadInvoices(); renderInvoicePreview(final);
+  };
+}
+
+function renderInvoicePreview(data) {
+  const i = data.invoice;
+  const profile = data.business_profile || {};
+  const party = data.billing_party || {};
+  const business = i.business_name_snapshot || profile.business_name || "Business profile not configured";
+  const provider = i.provider_name_snapshot || profile.provider_display_name || "";
+  const credentials = i.credentials_snapshot || profile.credentials_display || "";
+  const currentAddress = [party.billing_address_line_1, party.billing_address_line_2, [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : "")].filter(Boolean).join("\n");
+  const billto = [i.bill_to_name_snapshot || party.billing_name, i.bill_to_address_snapshot || currentAddress, i.bill_to_email_snapshot || party.billing_email].filter(Boolean).join("\n");
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${i.status}">${i.status}</span></div>
+    <article class="invoice-preview">
+      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${provider} ${credentials}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice number:</strong> ${i.invoice_number || "Draft"}</div><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
+      <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${data.lines.map(line => `<tr><td>${line.service_date}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-total"><span>${i.total_label_snapshot || profile.invoice_total_label || "TOTAL DUE"}</span><span>${money(centString(i.total_cents))}</span></div>
+      <div class="invoice-payment"><b>Please make all checks payable to:</b> ${fmt(i.payee_name_snapshot || profile.payee_name)}\n<b>Please send payment to:</b> ${fmt(i.payment_address_snapshot || [profile.payee_name, profile.payment_address_line_1, [profile.payment_city, profile.payment_state].filter(Boolean).join(", ") + (profile.payment_postal_code ? ` ${profile.payment_postal_code}` : "")].filter(Boolean).join("\n"))}</div>
+    </article>
+    <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}</div></div>`;
+  if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
+  if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
+}
+
+$("newInvoiceBtn").onclick = startInvoiceBuilder;
+$("invoiceStatusFilter").onchange = loadInvoices;
 document.getElementById("rateRuleForm").onsubmit = async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -890,6 +1027,7 @@ loadList();
 if (location.hash === "#rate-card") showRateCard();
 if (location.hash === "#clients" || location.pathname === "/clients") showClients();
 if (location.hash === "#people" || location.pathname === "/people") showPeople();
+if (location.pathname === "/invoices") showInvoices();
 window.addEventListener("beforeunload", event => {
   if (state.dirty.size) {
     event.preventDefault();

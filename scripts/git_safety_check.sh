@@ -29,7 +29,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   done
 fi
 
-if rg --hidden -n 'jb_[0-9a-fA-F]{8,}' . -g '!.env' -g '!.venv/**' -g '!build/**' >/tmp/jordana_git_secret_scan.txt; then
+if rg --hidden -n 'jb_[0-9a-fA-F]{8,}' . -g '!.git/**' -g '!.env' -g '!.venv/**' -g '!build/**' -g '!data/private/**' -g '!output/**' >/tmp/jordana_git_secret_scan.txt; then
   cat /tmp/jordana_git_secret_scan.txt >&2
   echo "Blocked: possible API key outside .env." >&2
   exit 1

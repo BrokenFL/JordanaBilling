@@ -38,6 +38,20 @@ from .review_services import (
     update_billing_party,
     update_person,
 )
+from .invoice_services import (
+    add_sessions_to_draft,
+    create_invoice_draft,
+    eligible_sessions,
+    finalize_invoice,
+    get_business_profile,
+    get_invoice,
+    list_invoice_records,
+    remove_line_from_draft,
+    save_business_profile,
+    update_invoice_draft,
+    void_invoice,
+)
+from .service_catalog import list_services, set_service_active
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -51,7 +65,7 @@ def make_handler(database_path: str):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             try:
-                if parsed.path in {"/", "/review"}:
+                if parsed.path in {"/", "/review", "/invoices"} or parsed.path.startswith("/invoices/"):
                     self.send_static("review.html")
                     return
                 if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
@@ -111,6 +125,22 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/rate-rules":
                     self.send_json(list_rate_rules(self.conn()))
                     return
+                if parsed.path == "/api/business-profile":
+                    self.send_json(get_business_profile(self.conn()))
+                    return
+                if parsed.path == "/api/service-catalog":
+                    self.send_json(list_services(self.conn(), first(parse_qs(parsed.query), "include_inactive") == "1"))
+                    return
+                if parsed.path == "/api/invoices/eligible-sessions":
+                    query = parse_qs(parsed.query)
+                    self.send_json(eligible_sessions(self.conn(), first(query, "bill_to_party_id"), first(query, "period_start"), first(query, "period_end")))
+                    return
+                if parsed.path == "/api/invoices":
+                    self.send_json(list_invoice_records(self.conn(), first(parse_qs(parsed.query), "status")))
+                    return
+                if parsed.path.startswith("/api/invoices/"):
+                    self.send_json(get_invoice(self.conn(), parsed.path.strip("/").split("/")[2]))
+                    return
                 self.send_error(404)
             except Exception as error:
                 self.send_json({"ok": False, "error": str(error)}, status=500)
@@ -153,6 +183,36 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/rate-rules":
                     self.send_json(create_rate_rule_from_payload(self.conn(), data))
+                    return
+                if parsed.path == "/api/business-profile":
+                    self.send_json(save_business_profile(self.conn(), data))
+                    return
+                if parsed.path.startswith("/api/service-catalog/"):
+                    parts = parsed.path.strip("/").split("/")
+                    self.send_json(set_service_active(self.conn(), parts[2], parts[3] != "deactivate"))
+                    return
+                if parsed.path == "/api/invoices":
+                    self.send_json(create_invoice_draft(self.conn(), data))
+                    return
+                if parsed.path.startswith("/api/invoices/"):
+                    parts = parsed.path.strip("/").split("/")
+                    invoice_id = parts[2]
+                    action = parts[3] if len(parts) > 3 else "update"
+                    if action == "add-sessions":
+                        self.send_json(add_sessions_to_draft(self.conn(), invoice_id, data.get("session_ids") or []))
+                        return
+                    if action == "remove-line":
+                        self.send_json(remove_line_from_draft(self.conn(), invoice_id, data["invoice_line_item_id"]))
+                        return
+                    if action == "finalize":
+                        if not data.get("confirmed"):
+                            raise ValueError("Explicit finalization confirmation is required.")
+                        self.send_json(finalize_invoice(self.conn(), invoice_id))
+                        return
+                    if action == "void":
+                        self.send_json(void_invoice(self.conn(), invoice_id, data.get("reason") or ""))
+                        return
+                    self.send_json(update_invoice_draft(self.conn(), invoice_id, data))
                     return
                 if parsed.path == "/api/account-members":
                     self.send_json(
@@ -208,9 +268,18 @@ def make_handler(database_path: str):
                 self.send_json({"ok": False, "error": str(error)}, status=400)
 
         def conn(self):
-            conn = connect(database_path)
-            init_db(conn)
-            return conn
+            if not hasattr(self, "_database_connection"):
+                self._database_connection = connect(database_path)
+                init_db(self._database_connection)
+            return self._database_connection
+
+        def finish(self) -> None:
+            try:
+                super().finish()
+            finally:
+                connection = getattr(self, "_database_connection", None)
+                if connection is not None:
+                    connection.close()
 
         def read_json(self) -> dict:
             length = int(self.headers.get("Content-Length", "0"))

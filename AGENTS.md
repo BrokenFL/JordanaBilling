@@ -8,7 +8,7 @@ This project is a local-first billing normalization app for Jordana.
 - Treat Google Sheets as the raw cloud staging and audit layer.
 - Treat SQLite as the local application database.
 - Keep ambiguous data reviewable and reversible.
-- Do not generate invoices in Phase 1 or Phase 2.
+- Do not generate invoices from unapproved or ineligible sessions.
 - Do not add clinical notes.
 - Do not silently classify uncertain records.
 - Use internal UUID primary keys.
@@ -25,6 +25,10 @@ This project is a local-first billing normalization app for Jordana.
 - Cancelled and no-show appointments remain preserved and require a separate billing-treatment decision.
 - Calendar start time is authoritative; title time is validation evidence only.
 - Use only sanitized fictional records for demo data.
+- Invoice statuses are `draft`, `finalized`, and `void`; payment remains separate.
+- Finalization freezes source values and assigns numbers transactionally.
+- Never edit or delete a finalized invoice; void with a reason and reissue with a new number.
+- Keep private business profiles, branding assets, and generated PDFs outside Git.
 - Before any GitHub push, run `scripts/git_safety_check.sh`.
 - Do not commit live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, or credentials.
 
@@ -48,6 +52,11 @@ Read these files before making changes:
 14. `docs/SCHEMA_AUDIT.md`
 15. `docs/CALENDAR_ENTRY_STANDARD.md`
 16. `docs/DEMO_DATA.md`
+17. `docs/INVOICE_MODEL.md`
+18. `docs/INVOICE_LIFECYCLE.md`
+19. `docs/INVOICE_TEMPLATE.md`
+20. `docs/SERVICE_CATALOG.md`
+21. `docs/BUSINESS_PROFILE.md`
 
 ## Verification
 

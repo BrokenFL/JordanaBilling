@@ -2,6 +2,8 @@
 
 GitHub transfers code only. Live databases, `.env`, reports, credentials, raw imports, and backups must move separately.
 
+Private branding belongs under `data/private/branding/`; the recommended logo path is `data/private/branding/jordana-logo.svg`. Business profile JSON may remain under ignored `data/private/` and be applied with `set-business-profile`. Generated `Invoices/` must transfer privately and never enter Git.
+
 ## Package Shape
 
 Recommended local package:

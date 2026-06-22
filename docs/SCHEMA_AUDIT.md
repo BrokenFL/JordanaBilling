@@ -138,3 +138,15 @@ Authoritative direction remains:
 - `sessions` stores reviewable and approved session facts, including historical charged amounts.
 
 Removal prerequisites are unchanged: no destructive cleanup of legacy `clients`, `client_aliases`, or `client_rates` should happen until live data absence, compatibility removal, backup, reversible migration, tests, and documentation prove it safe.
+
+## Invoice Additions
+
+- `business_profile`: one active local invoice identity.
+- `service_catalog`: normalized current service labels and usage metadata.
+- `invoice_sequences`: per-year numbering state.
+- `invoices`: draft/finalized/void lifecycle and frozen bill-to/business snapshots.
+- `invoice_line_items`: source-session links plus frozen line display values.
+- `billing_parties.preferred_delivery_method`: current delivery default.
+- `sessions.service_catalog_id`: additive catalog link; `service_mode` remains the historical text value.
+
+No legacy client/rate table was removed or repurposed.

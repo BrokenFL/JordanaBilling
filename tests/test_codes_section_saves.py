@@ -50,6 +50,7 @@ class CodesAndSectionSaveTests(unittest.TestCase):
         self.candidate_id = list_review_candidates(self.conn)["items"][0]["candidate_id"]
 
     def tearDown(self):
+        self.conn.close()
         self.temp.cleanup()
 
     def test_person_code_waits_for_full_name_then_uses_stable_prefix(self):

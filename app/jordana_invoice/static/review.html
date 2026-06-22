@@ -17,7 +17,7 @@
           <a href="#" id="peopleNav">People</a>
           <a href="#" id="rateCardNav">Rate Card</a>
           <a>Sessions</a>
-          <a>Invoices</a>
+          <a href="/invoices" id="invoicesNav">Invoices</a>
           <a>Reports</a>
           <a>Unpaid</a>
           <a>Settings</a>
@@ -31,8 +31,8 @@
         <div class="demo-banner" id="demoBanner" hidden>DEMO DATA — NOT FOR REAL BILLING</div>
         <header class="topbar">
           <div>
-            <h1>Session Review</h1>
-            <p>Review calendar events and confirm details</p>
+            <h1 id="pageTitle">Session Review</h1>
+            <p id="pageSubtitle">Review calendar events and confirm details</p>
           </div>
           <div class="metrics">
             <div><span id="lastSync">-</span><label>Last Sync</label></div>
@@ -178,6 +178,25 @@
               <tbody id="peopleRows"></tbody>
             </table>
             <aside class="record-pane" id="personRecord"><div class="empty-state">Open a person record.</div></aside>
+          </div>
+        </section>
+
+        <section class="invoice-view" id="invoicesView" hidden>
+          <div class="crm-header">
+            <div><h2>Invoices</h2><p>Build drafts from approved sessions, preview, finalize, and preserve history.</p></div>
+            <div class="crm-tools">
+              <select id="invoiceStatusFilter"><option value="">All statuses</option><option value="draft">Drafts</option><option value="finalized">Finalized</option><option value="void">Void</option></select>
+              <button id="newInvoiceBtn" class="save">Create Invoice</button>
+            </div>
+          </div>
+          <div class="invoice-layout">
+            <section>
+              <table class="review-table invoice-list-table">
+                <thead><tr><th>Number</th><th>Bill to</th><th>Period</th><th>Date</th><th>Lines</th><th>Total</th><th>Status</th><th>Delivery</th></tr></thead>
+                <tbody id="invoiceRows"></tbody>
+              </table>
+            </section>
+            <aside class="invoice-workspace" id="invoiceWorkspace"><div class="empty-state">Create or open an invoice.</div></aside>
           </div>
         </section>
       </main>

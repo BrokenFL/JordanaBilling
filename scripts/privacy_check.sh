@@ -20,7 +20,8 @@ if git diff --cached --name-only | grep -E "$blocked_staged" >/tmp/jordana_priva
 fi
 
 if rg --hidden -n 'jb_[0-9a-fA-F]{8,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----' . \
-  -g '!.env' -g '!.venv/**' -g '!build/**' -g '!logs/**' -g '!Reports/**' >/tmp/jordana_privacy_secrets.txt; then
+  -g '!.git/**' -g '!.env' -g '!.venv/**' -g '!build/**' -g '!logs/**' -g '!Reports/**' \
+  -g '!data/private/**' -g '!output/**' >/tmp/jordana_privacy_secrets.txt; then
   echo "Possible secret outside approved private files:" >&2
   cat /tmp/jordana_privacy_secrets.txt >&2
   fail=1

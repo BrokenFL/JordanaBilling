@@ -2,6 +2,8 @@
 
 The database is local SQLite. Internal UUIDs are primary keys. Human-readable person and account codes are secondary identifiers.
 
+Invoice development adds authoritative `business_profile`, `service_catalog`, `invoice_sequences`, `invoices`, and `invoice_line_items` tables. Finalized values are snapshots and are not reconstructed from current records. See `docs/INVOICE_MODEL.md`.
+
 ## Phase 2 Relationship Model
 
 The app separates actual people, client accounts, account members, session participants, billing parties, calendar aliases, and rate rules.

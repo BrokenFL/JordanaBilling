@@ -46,6 +46,7 @@ class SimplifiedReviewRateMemoryTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.temp.cleanup()
 
     def import_one(self, key="snap-1", title="Fred 830", start="2026-06-17T20:30:00-04:00", end="2026-06-17T21:30:00-04:00", duration="60"):

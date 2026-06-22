@@ -84,6 +84,7 @@ class CalendarStatusDemoTests(unittest.TestCase):
             self.assertTrue(all(not item["hidden_from_review"] for item in normal))
             self.assertTrue(hidden)
             self.assertTrue(all(item["hidden_from_review"] for item in hidden))
+            conn.close()
 
     def test_later_cancelled_snapshot_updates_one_candidate_and_one_session(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -105,6 +106,7 @@ class CalendarStatusDemoTests(unittest.TestCase):
             session = conn.execute("SELECT * FROM sessions").fetchone()
             self.assertEqual(session["appointment_status"], "cancelled")
             self.assertEqual(session["billing_treatment"], "unresolved")
+            conn.close()
 
     def test_demo_script_creates_isolated_demo_database(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -121,6 +123,7 @@ class CalendarStatusDemoTests(unittest.TestCase):
                 conn = connect(db_path)
                 self.assertTrue(dashboard_status(conn)["demo_mode"])
                 self.assertGreater(count(conn, "raw_calendar_snapshots"), 0)
+                conn.close()
             finally:
                 for suffix in ("", "-shm", "-wal"):
                     Path(f"{db_path}{suffix}").unlink(missing_ok=True)

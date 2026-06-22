@@ -208,11 +208,60 @@ CREATE TABLE IF NOT EXISTS billing_parties (
   billing_state TEXT,
   billing_postal_code TEXT,
   billing_phone TEXT,
+  preferred_delivery_method TEXT NOT NULL DEFAULT 'unresolved',
   administrative_notes TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS business_profile (
+  business_profile_id TEXT PRIMARY KEY,
+  business_name TEXT NOT NULL,
+  provider_display_name TEXT,
+  credentials_display TEXT,
+  address_line_1 TEXT,
+  address_line_2 TEXT,
+  city TEXT,
+  state TEXT,
+  postal_code TEXT,
+  phone TEXT,
+  email TEXT,
+  payee_name TEXT,
+  payment_address_line_1 TEXT,
+  payment_address_line_2 TEXT,
+  payment_city TEXT,
+  payment_state TEXT,
+  payment_postal_code TEXT,
+  logo_path TEXT,
+  logo_contains_business_details INTEGER NOT NULL DEFAULT 0,
+  show_email_below_logo INTEGER NOT NULL DEFAULT 0,
+  invoice_total_label TEXT NOT NULL DEFAULT 'TOTAL DUE',
+  invoice_number_format TEXT NOT NULL DEFAULT 'YYYY-NNNN',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_business_profile_one_active
+  ON business_profile(active) WHERE active = 1;
+
+CREATE TABLE IF NOT EXISTS service_catalog (
+  service_catalog_id TEXT PRIMARY KEY,
+  canonical_name TEXT NOT NULL,
+  normalized_name TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  usage_count INTEGER NOT NULL DEFAULT 0,
+  first_used_at TEXT,
+  last_used_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_catalog_active_name
+  ON service_catalog(active, display_name);
 
 CREATE TABLE IF NOT EXISTS calendar_aliases (
   alias_id TEXT PRIMARY KEY,
@@ -318,6 +367,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   approved_duration_minutes INTEGER,
   duration_minutes INTEGER NOT NULL,
   service_mode TEXT,
+  service_catalog_id TEXT REFERENCES service_catalog(service_catalog_id),
   rate_group TEXT,
   time_category TEXT,
   is_evening INTEGER NOT NULL DEFAULT 0,
@@ -405,6 +455,88 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS invoice_sequences (
+  sequence_year INTEGER PRIMARY KEY,
+  last_value INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  invoice_id TEXT PRIMARY KEY,
+  invoice_number TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'draft',
+  bill_to_party_id TEXT NOT NULL REFERENCES billing_parties(billing_party_id),
+  billing_period_start TEXT NOT NULL,
+  billing_period_end TEXT NOT NULL,
+  invoice_date TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  subtotal_cents INTEGER NOT NULL DEFAULT 0,
+  adjustment_cents INTEGER NOT NULL DEFAULT 0,
+  total_cents INTEGER NOT NULL DEFAULT 0,
+  delivery_method TEXT NOT NULL DEFAULT 'unresolved',
+  bill_to_name_snapshot TEXT,
+  bill_to_email_snapshot TEXT,
+  bill_to_phone_snapshot TEXT,
+  bill_to_address_snapshot TEXT,
+  business_name_snapshot TEXT,
+  provider_name_snapshot TEXT,
+  credentials_snapshot TEXT,
+  business_address_snapshot TEXT,
+  business_phone_snapshot TEXT,
+  business_email_snapshot TEXT,
+  payee_name_snapshot TEXT,
+  payment_address_snapshot TEXT,
+  logo_reference_snapshot TEXT,
+  logo_contains_business_details_snapshot INTEGER NOT NULL DEFAULT 0,
+  show_email_below_logo_snapshot INTEGER NOT NULL DEFAULT 0,
+  total_label_snapshot TEXT,
+  number_format_snapshot TEXT,
+  notes TEXT,
+  void_reason TEXT,
+  pdf_path TEXT,
+  pdf_sha256 TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finalized_at TEXT,
+  voided_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_status_date
+  ON invoices(status, invoice_date);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_bill_to_period
+  ON invoices(bill_to_party_id, billing_period_start, billing_period_end);
+
+CREATE TABLE IF NOT EXISTS invoice_line_items (
+  invoice_line_item_id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES invoices(invoice_id),
+  source_session_id TEXT REFERENCES sessions(id),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  service_date TEXT NOT NULL,
+  participants_snapshot TEXT NOT NULL,
+  service_catalog_id TEXT REFERENCES service_catalog(service_catalog_id),
+  service_name_snapshot TEXT NOT NULL,
+  time_category_snapshot TEXT,
+  appointment_status_snapshot TEXT,
+  duration_minutes INTEGER,
+  description_snapshot TEXT NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  unit_amount_cents INTEGER NOT NULL,
+  line_amount_cents INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_line_items_invoice_order
+  ON invoice_line_items(invoice_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_line_items_source_session
+  ON invoice_line_items(source_session_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_line_items_invoice_session
+  ON invoice_line_items(invoice_id, source_session_id)
+  WHERE source_session_id IS NOT NULL;
 """
 
 
@@ -421,6 +553,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     migrate_existing_db(conn)
     conn.executescript(SCHEMA)
     migrate_phase2_columns(conn)
+    seed_service_catalog(conn)
     conn.commit()
 
 
@@ -493,6 +626,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
         "billing_parties",
         {
             "administrative_notes": "TEXT",
+            "preferred_delivery_method": "TEXT NOT NULL DEFAULT 'unresolved'",
         },
     )
     add_columns(
@@ -507,6 +641,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "parsed_duration_minutes": "INTEGER",
             "approved_duration_minutes": "INTEGER",
             "service_mode": "TEXT",
+            "service_catalog_id": "TEXT",
             "rate_group": "TEXT",
             "time_category": "TEXT",
             "is_evening": "INTEGER NOT NULL DEFAULT 0",
@@ -541,6 +676,32 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name)"
     )
+
+
+def seed_service_catalog(conn: sqlite3.Connection) -> None:
+    from .util import new_id, now_iso
+
+    now = now_iso()
+    for canonical, display in (
+        ("office", "Office"),
+        ("phone", "Phone"),
+        ("facetime", "FaceTime"),
+        ("house_call", "House Call"),
+        ("correspondence", "Correspondence"),
+        ("preparation", "Preparation"),
+        ("mediation", "Mediation"),
+        ("other", "Other"),
+    ):
+        conn.execute(
+            """
+            INSERT INTO service_catalog (
+              service_catalog_id, canonical_name, normalized_name, display_name,
+              active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(normalized_name) DO NOTHING
+            """,
+            (new_id(), canonical, canonical, display, now, now),
+        )
 
 
 def add_columns(

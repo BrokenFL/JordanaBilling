@@ -154,7 +154,7 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .member-row { display: grid; grid-template-columns: 1fr 120px 60px; gap: 6px; font-size: 12px; align-items: center; }
 .warning { background: #fff8e8; border: 1px solid #f4d391; color: #6a4600; padding: 8px; border-radius: 7px; font-size: 12px; margin: 8px 0; }
 
-.rate-card-view, .crm-view { padding: 22px 26px; }
+.rate-card-view, .crm-view, .invoice-view { padding: 22px 26px; }
 .rate-card-header { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 16px; }
 .rate-card-header h2 { margin: 0 0 4px; font-size: 22px; }
 .rate-card-header p { margin: 0; color: var(--muted); }
@@ -239,11 +239,49 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .compact-list div { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid #edf1f6; padding-bottom: 5px; }
 .return-link { display: inline-flex; margin-bottom: 10px; color: var(--blue); font-weight: 800; text-decoration: none; }
 .readonly-note { color: var(--muted); font-size: 12px; }
+.invoice-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(500px, 0.92fr); gap: 18px; align-items: start; }
+.invoice-list-table { min-width: 0; table-layout: auto; }
+.invoice-list-table th, .invoice-list-table td { width: auto; text-align: left; }
+.invoice-workspace { border-left: 1px solid var(--line); padding-left: 18px; min-width: 0; min-height: 640px; }
+.invoice-builder { display: grid; gap: 14px; }
+.invoice-builder h3 { margin: 0; font-size: 18px; }
+.eligible-list { border: 1px solid var(--line); max-height: 280px; overflow: auto; }
+.eligible-row { display: grid; grid-template-columns: 28px 84px 1fr 110px 72px; gap: 8px; align-items: center; padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.eligible-row:last-child { border-bottom: 0; }
+.eligible-row.ineligible { color: var(--muted); background: var(--soft); }
+.eligible-row input { min-height: 18px; }
+.invoice-editor-lines { width: 100%; border-collapse: collapse; }
+.invoice-editor-lines th, .invoice-editor-lines td { border-bottom: 1px solid var(--line); padding: 7px 5px; font-size: 12px; vertical-align: top; }
+.invoice-editor-lines input { width: 100%; min-height: 32px; }
+.invoice-preview { border: 1px solid #b8c5d4; background: white; padding: 28px 30px; min-height: 620px; box-shadow: 0 2px 8px rgba(16, 42, 67, 0.08); color: #102a43; }
+.invoice-preview-header { display: grid; grid-template-columns: 1fr 220px; gap: 24px; align-items: start; }
+.invoice-preview-brand { font-weight: 800; font-size: 18px; line-height: 1.35; }
+.invoice-preview-title { text-align: right; }
+.invoice-preview-title h3 { font-size: 28px; margin: 0 0 8px; }
+.invoice-preview-title div { font-size: 12px; margin-top: 3px; }
+.invoice-billto { margin: 28px 0 20px; max-width: 340px; white-space: pre-line; font-size: 12px; line-height: 1.45; }
+.invoice-billto strong { display: block; color: var(--muted); font-size: 10px; margin-bottom: 5px; }
+.invoice-preview-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.invoice-preview-table th { background: #eaf0f6; padding: 8px 6px; height: auto; }
+.invoice-preview-table td { padding: 8px 6px; height: auto; font-size: 11px; vertical-align: top; }
+.invoice-preview-table th:last-child, .invoice-preview-table td:last-child { text-align: right; }
+.invoice-preview-table th:nth-child(1) { width: 15%; }
+.invoice-preview-table th:nth-child(2) { width: 25%; }
+.invoice-preview-table th:nth-child(3) { width: 27%; }
+.invoice-preview-table th:nth-child(4) { width: 17%; }
+.invoice-preview-table th:nth-child(5) { width: 16%; }
+.invoice-total { border-top: 1px solid #102a43; display: flex; justify-content: flex-end; gap: 28px; margin-top: 18px; padding-top: 10px; font-weight: 850; }
+.invoice-payment { margin-top: 30px; font-size: 11px; line-height: 1.55; white-space: pre-line; }
+.status-pill { display: inline-flex; padding: 3px 7px; border-radius: 5px; background: #edf2f7; font-size: 11px; font-weight: 800; text-transform: capitalize; }
+.status-pill.finalized { background: #e8f7ed; color: #176b35; }
+.status-pill.void { background: #fff0ed; color: #a12619; }
 
 @media (max-width: 1100px) {
   .sidebar { width: 190px; }
   .review-layout { grid-template-columns: 1fr; }
   .crm-layout { grid-template-columns: 1fr; }
+  .invoice-layout { grid-template-columns: 1fr; }
+  .invoice-workspace { border-left: 0; border-top: 1px solid var(--line); padding: 18px 0 0; }
   .inspector { border-top: 1px solid var(--line); }
   .metrics div { min-width: 90px; }
 }

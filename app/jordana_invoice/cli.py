@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from .db import connect, init_db
@@ -11,6 +12,8 @@ from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
 from .review import record_review_decision
 from .review_server import serve as serve_review
+from .invoice_services import save_business_profile
+from .service_catalog import list_services, set_service_active
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,6 +120,19 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
 
+    profile_parser = subparsers.add_parser(
+        "set-business-profile",
+        help="Create or update the private local business profile from an ignored JSON file.",
+    )
+    profile_parser.add_argument("json_path")
+
+    services_parser = subparsers.add_parser("list-services", help="List invoice service catalog entries.")
+    services_parser.add_argument("--include-inactive", action="store_true")
+
+    service_status_parser = subparsers.add_parser("set-service-active", help="Activate or deactivate a service catalog entry.")
+    service_status_parser.add_argument("service_catalog_id")
+    service_status_parser.add_argument("--inactive", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.command == "init-db":
@@ -220,6 +236,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve-review":
         serve_review(args.db, args.host, args.port)
+        return 0
+
+    if args.command == "set-business-profile":
+        conn = connect(args.db)
+        init_db(conn)
+        profile = save_business_profile(conn, json.loads(Path(args.json_path).read_text(encoding="utf-8")))
+        conn.close()
+        print(f"business_profile_id={profile['business_profile_id']}")
+        return 0
+
+    if args.command == "list-services":
+        conn = connect(args.db)
+        init_db(conn)
+        for service in list_services(conn, args.include_inactive):
+            print(f"{service['service_catalog_id']}\t{service['display_name']}\t{'active' if service['active'] else 'inactive'}")
+        conn.close()
+        return 0
+
+    if args.command == "set-service-active":
+        conn = connect(args.db)
+        init_db(conn)
+        service = set_service_active(conn, args.service_catalog_id, not args.inactive)
+        conn.close()
+        print(f"{service['display_name']}={'active' if service['active'] else 'inactive'}")
         return 0
 
     parser.error("Unknown command.")

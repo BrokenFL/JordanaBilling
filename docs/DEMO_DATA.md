@@ -32,3 +32,5 @@ PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 se
 ```
 
 The review UI displays `DEMO DATA - NOT FOR REAL BILLING` only when `app_metadata.demo_mode=true`.
+
+The command also seeds sanitized business/bill-to profiles, standard and custom services, eligible/ineligible cancellation and no-show cases, drafts, finalized history, void/reissue, a nonparticipant parent payer, joint sessions, and a multi-page invoice. Sanitized PDFs are written to ignored `output/pdf/demo/<year>/`.

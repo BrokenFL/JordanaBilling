@@ -47,6 +47,7 @@ class IdentityRelationshipTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.temp.cleanup()
 
     def import_one(self, title="Fred 830", key="snap-1"):

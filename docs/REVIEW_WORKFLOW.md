@@ -107,3 +107,7 @@ Calendar filters are:
 - hidden calendars
 
 Hidden records are recoverable through the intentional hidden-calendar filter.
+
+## Invoice Eligibility Boundary
+
+Approval does not create an invoice. The invoice builder revalidates approval, participants, bill-to, actual charged amount, appointment status, billing treatment, billable classification, raw evidence, and duplicate attachment. Cancelled/no-show sessions require explicit `billable` treatment.

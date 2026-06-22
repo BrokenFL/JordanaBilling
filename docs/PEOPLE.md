@@ -18,3 +18,5 @@ Session history uses approved session values. It must not reconstruct historical
 Active rate exceptions shown on a person record include person-specific exceptions and shared/joint exceptions involving that person. Joint exceptions should show the actual participant names, not a fabricated household name.
 
 Do not store clinical notes. Administrative notes should stay limited to billing and operational details such as preferred email, payer instructions, check payment, or unpaid balance context.
+
+Finalized invoice participant names are immutable line snapshots. Correcting a current person name does not rewrite old invoices.

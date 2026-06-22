@@ -74,6 +74,7 @@ class SyncTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.temp.cleanup()
 
     def test_empty_sync_response(self):

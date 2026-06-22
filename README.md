@@ -1,12 +1,12 @@
 # Jordana Invoice System
 
-Local-first calendar evidence importer and billing review workflow.
+Local-first calendar evidence importer, billing review workflow, and invoice prototype.
 
 Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot rows, preserves the raw evidence, collapses duplicate event versions, proposes classifications, parses Jordana's shorthand, and opens review items for anything uncertain.
 
 Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
 
-Phase 2 strengthens the normalization layer. It separates people, client accounts, account members, session participants, billing parties, aliases, rate rules, sessions, review items, raw snapshots, and audit records. The local review UI now uses Jordana's routine confirmation model: Participants, Bill to, duration, session type, time category, suggested/editable rate, payment status, and approval. Backend accounts remain available under advanced relationships and shared billing. It still does not generate invoices.
+Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement payment allocation or delivery.
 
 ## Current Scope
 
@@ -34,6 +34,11 @@ Phase 2 strengthens the normalization layer. It separates people, client account
 - Local CSV reports after successful sync
 - Acceptance report for June-style data
 - Isolated sanitized demo database for review testing
+- Private local business profile and logo reference
+- Normalized service catalog
+- Draft, finalized, and void invoice lifecycle
+- Transaction-safe numbering and immutable invoice snapshots
+- Local multi-page PDF generation
 
 ## Quick Start
 
@@ -140,7 +145,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - Google Sheets is the cloud staging and audit layer; do not delete or alter source rows there.
 - SQLite is the local application database.
 - Ambiguous rows stay reviewable and reversible.
-- No PDF invoices are generated in Phase 1.
+- Calendar import and review commands do not generate invoices automatically.
 - No PDF invoices are generated in Phase 2.
 - No polished production dashboard is built yet.
 - Do not store clinical notes beyond the raw calendar evidence already imported.

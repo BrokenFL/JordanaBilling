@@ -18,6 +18,7 @@ class Phase2RateTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.temp.cleanup()
 
     def test_global_remote_rate(self):

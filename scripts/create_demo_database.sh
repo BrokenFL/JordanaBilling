@@ -20,12 +20,18 @@ fi
 mkdir -p "$(dirname "$DB_PATH")"
 rm -f "$DB_PATH" "$DB_PATH-shm" "$DB_PATH-wal"
 
-PYTHONPATH=app python3 - <<'PY' "$DB_PATH" "$FIXTURE"
+PYTHON_BIN="python3"
+if [[ -x ".venv/bin/python" ]]; then
+  PYTHON_BIN=".venv/bin/python"
+fi
+
+PYTHONPATH=app "$PYTHON_BIN" - <<'PY' "$DB_PATH" "$FIXTURE"
 import sys
 from pathlib import Path
 
 from jordana_invoice.calendar_preferences import upsert_calendar_preference
 from jordana_invoice.db import connect, init_db
+from jordana_invoice.demo_invoices import seed_demo_invoice_data
 from jordana_invoice.importer import import_csv
 from jordana_invoice.util import now_iso
 
@@ -53,8 +59,18 @@ if integrity != "ok":
 raw_count = conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0]
 candidate_count = conn.execute("SELECT COUNT(*) FROM calendar_event_candidates").fetchone()[0]
 session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+invoice_pdf_root = Path("output/pdf/demo")
+invoice_pdf_root.mkdir(parents=True, exist_ok=True)
+for old_pdf in invoice_pdf_root.glob("**/*.pdf"):
+    old_pdf.unlink()
+invoice_counts = seed_demo_invoice_data(conn, invoice_pdf_root)
+integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+if integrity != "ok":
+    raise SystemExit(f"DEMO integrity check failed after invoice seed: {integrity}")
 print(f"DEMO: import_run_id={run_id}")
 print(f"DEMO: raw_snapshots={raw_count} candidates={candidate_count} sessions={session_count}")
+print(f"DEMO: invoices={invoice_counts}")
+print(f"DEMO: sanitized invoice PDFs={invoice_pdf_root}")
 print("DEMO: SQLite integrity_check=ok")
 print(f"DEMO: launch review UI with: PYTHONPATH=app python3 -m jordana_invoice --db {db_path} serve-review")
 PY

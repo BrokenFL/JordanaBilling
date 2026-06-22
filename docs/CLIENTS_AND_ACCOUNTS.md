@@ -19,3 +19,5 @@ Account records show:
 Quick corrections can be made in the Review Queue inspector. Deeper editing belongs here.
 
 Do not automatically create a permanent shared account merely because two names appear in one calendar title.
+
+Invoice grouping uses the confirmed billing party, not a required visible household account. Bill-to delivery preference is `email`, `mail`, `both`, or `unresolved`; a draft may override it and finalization freezes the selected method and destination.
