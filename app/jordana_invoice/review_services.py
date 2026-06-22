@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import unicodedata
 from typing import Any
 
 from .backfill import backfill_phase2
 from .csv_reports import write_reports
 from .db import init_db
-from .rates import cents_to_dollars, dollars_to_cents, seed_rate_rule
+from .rates import cents_to_dollars, dollars_to_cents, seed_rate_rule, suggest_rate
 from .util import json_dumps, new_id, now_iso, text
 
 
@@ -489,6 +491,146 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
     return get_review_candidate(conn, candidate_id)
 
 
+def save_person_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    person_data = payload.get("person") or payload
+    person_id = person_data.get("person_id")
+    if person_id:
+        update_person(conn, person_id, person_data)
+    elif person_data.get("display_name"):
+        created = create_person(conn, person_data["display_name"])
+        person_id = created["person_id"]
+    if person_id:
+        session = session_for_candidate(conn, candidate_id)
+        participants = get_session_participants(conn, session["id"])
+        if not participants:
+            add_session_participant(conn, session["id"], person_id, person_data.get("display_name") or "", True)
+    refresh_candidate_suggestions(conn, candidate_id)
+    record_audit(conn, "calendar_event_candidate", candidate_id, "person_section_saved", {"payload": safe_payload(payload)})
+    conn.commit()
+    return get_review_candidate(conn, candidate_id)
+
+
+def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    session = session_for_candidate(conn, candidate_id)
+    now = now_iso()
+    account_id = payload.get("account_id") or None
+    participants = payload.get("participants", [])
+    primary_person_id = payload.get("primary_person_id")
+    if account_id:
+        conn.execute("UPDATE sessions SET account_id = ?, updated_at = ? WHERE id = ?", (account_id, now, session["id"]))
+    if participants:
+        conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session["id"],))
+        for index, participant in enumerate(participants):
+            person_id = participant.get("person_id")
+            is_primary = bool(participant.get("is_primary")) or (primary_person_id and person_id == primary_person_id) or (index == 0 and len(participants) == 1)
+            add_session_participant(
+                conn,
+                session["id"],
+                person_id,
+                participant.get("display_name") or participant.get("participant_name") or "",
+                is_primary,
+                participant.get("participant_role") or ("primary" if is_primary else "participant"),
+            )
+            if account_id and person_id:
+                ensure_account_member(
+                    conn,
+                    account_id,
+                    person_id,
+                    participant.get("relationship_role") or ("primary" if is_primary else "family_member"),
+                    is_primary,
+                )
+    if payload.get("default_billing_party_id") and account_id:
+        conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
+            (payload["default_billing_party_id"], now, account_id),
+        )
+    refresh_candidate_suggestions(conn, candidate_id)
+    record_audit(conn, "session", session["id"], "relationship_section_saved", {"payload": safe_payload(payload)})
+    conn.commit()
+    return get_review_candidate(conn, candidate_id)
+
+
+def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    session = session_for_candidate(conn, candidate_id)
+    billing_party_id = payload.get("billing_party_id")
+    if payload.get("billing_party"):
+        billing = payload["billing_party"]
+        if billing.get("billing_party_id"):
+            updated = update_billing_party(conn, billing["billing_party_id"], billing)
+            billing_party_id = updated["billing_party_id"]
+        else:
+            created = create_billing_party(conn, billing)
+            billing_party_id = created["billing_party_id"]
+    if billing_party_id:
+        now = now_iso()
+        conn.execute(
+            "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
+            (billing_party_id, now, session["id"]),
+        )
+        if session["account_id"]:
+            conn.execute(
+                "UPDATE client_accounts SET default_billing_party_id = COALESCE(default_billing_party_id, ?), updated_at = ? WHERE account_id = ?",
+                (billing_party_id, now, session["account_id"]),
+            )
+    refresh_candidate_suggestions(conn, candidate_id)
+    record_audit(conn, "session", session["id"], "billing_section_saved", {"payload": safe_payload(payload)})
+    conn.commit()
+    return get_review_candidate(conn, candidate_id)
+
+
+def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    session = session_for_candidate(conn, candidate_id)
+    now = now_iso()
+    approved_rate_cents = money_payload_to_cents(payload.get("approved_rate"))
+    suggested_rate_cents = money_payload_to_cents(payload.get("suggested_rate"))
+    duration = int(payload.get("approved_duration_minutes") or payload.get("duration_minutes") or session["duration_minutes"])
+    service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
+    time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
+    payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
+    billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
+    conn.execute(
+        """
+        UPDATE sessions
+        SET approved_duration_minutes = ?,
+            duration_minutes = ?,
+            service_mode = ?,
+            rate_group = ?,
+            time_category = ?,
+            suggested_rate_cents = COALESCE(?, suggested_rate_cents),
+            approved_rate_cents = ?,
+            rate_needs_review = ?,
+            rate_override_reason = ?,
+            payment_status = ?,
+            billable_status = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            duration,
+            duration,
+            service_mode,
+            rate_group_for(service_mode),
+            time_category,
+            suggested_rate_cents,
+            approved_rate_cents,
+            0 if approved_rate_cents is not None else 1,
+            payload.get("rate_override_reason") or None,
+            payment_status,
+            billable_status,
+            now,
+            session["id"],
+        ),
+    )
+    refresh_candidate_suggestions(conn, candidate_id, preserve_approved_rate=True)
+    record_audit(conn, "session", session["id"], "session_draft_saved", {"payload": safe_payload(payload)})
+    conn.commit()
+    return get_review_candidate(conn, candidate_id)
+
+
 def mark_candidate(
     conn: sqlite3.Connection,
     candidate_id: str,
@@ -544,6 +686,77 @@ def search_people(conn: sqlite3.Connection, query: str = "") -> list[dict[str, A
     return rows
 
 
+def list_people_records(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
+    init_db(conn)
+    like = f"%{query}%"
+    rows = conn.execute(
+        """
+        SELECT
+          p.*,
+          GROUP_CONCAT(DISTINCT ca.account_name) AS accounts,
+          GROUP_CONCAT(DISTINCT bp.billing_name) AS billing_for,
+          MAX(s.session_date) AS last_session
+        FROM people p
+        LEFT JOIN account_members am ON am.person_id = p.person_id
+        LEFT JOIN client_accounts ca ON ca.account_id = am.account_id
+        LEFT JOIN billing_parties bp ON bp.person_id = p.person_id
+        LEFT JOIN session_participants sp ON sp.person_id = p.person_id
+        LEFT JOIN sessions s ON s.id = sp.session_id
+        WHERE p.display_name LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR COALESCE(p.person_code, '') LIKE ?
+        GROUP BY p.person_id
+        ORDER BY COALESCE(NULLIF(p.last_name, ''), p.display_name), p.first_name
+        LIMIT 250
+        """,
+        (like, like, like, like),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]:
+    init_db(conn)
+    person = conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone()
+    if not person:
+        raise ValueError("Person not found.")
+    accounts = conn.execute(
+        """
+        SELECT ca.*, am.relationship_role, am.is_primary, am.effective_from, am.effective_through
+        FROM account_members am
+        JOIN client_accounts ca ON ca.account_id = am.account_id
+        WHERE am.person_id = ?
+        ORDER BY ca.account_name
+        """,
+        (person_id,),
+    ).fetchall()
+    sessions = conn.execute(
+        """
+        SELECT s.session_date, s.start_at, s.duration_minutes, s.service_mode, s.time_category,
+               s.approved_rate_cents, s.payment_status, s.review_status, s.raw_calendar_title
+        FROM session_participants sp
+        JOIN sessions s ON s.id = sp.session_id
+        WHERE sp.person_id = ?
+        ORDER BY s.start_at DESC
+        LIMIT 50
+        """,
+        (person_id,),
+    ).fetchall()
+    aliases = conn.execute(
+        "SELECT * FROM calendar_aliases WHERE person_id = ? ORDER BY updated_at DESC LIMIT 50",
+        (person_id,),
+    ).fetchall()
+    billing = conn.execute(
+        "SELECT * FROM billing_parties WHERE person_id = ? ORDER BY billing_name",
+        (person_id,),
+    ).fetchall()
+    return {
+        "person": dict(person),
+        "accounts": [dict(row) for row in accounts],
+        "sessions": [dict(row) for row in sessions],
+        "aliases": [dict(row) for row in aliases],
+        "billing_parties": [dict(row) for row in billing],
+        "audit": audit_history_for_entity(conn, "person", person_id),
+    }
+
+
 def create_person(conn: sqlite3.Connection, display_name: str) -> dict[str, Any]:
     init_db(conn)
     existing = conn.execute(
@@ -555,6 +768,7 @@ def create_person(conn: sqlite3.Connection, display_name: str) -> dict[str, Any]
     now = now_iso()
     person_id = new_id()
     first, last = split_name(display_name)
+    person_code = generate_person_code(conn, first, last) if first and last else None
     conn.execute(
         """
         INSERT INTO people (
@@ -562,9 +776,9 @@ def create_person(conn: sqlite3.Connection, display_name: str) -> dict[str, Any]
           person_code, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (person_id, display_name, first, last, first, make_code("P", display_name), now, now),
+        (person_id, display_name, first, last, first, person_code, now, now),
     )
-    record_audit(conn, "person", person_id, "created_inline", {"display_name": display_name})
+    record_audit(conn, "person", person_id, "created_inline", {"display_name": display_name, "person_code": person_code})
     conn.commit()
     return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
 
@@ -579,6 +793,10 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
     first_name = text(data.get("first_name") or split_name(display_name)[0])
     last_name = text(data.get("last_name") or split_name(display_name)[1])
     preferred_name = text(data.get("preferred_name") or first_name)
+    old_code = existing["person_code"]
+    person_code = data.get("person_code") or old_code
+    if not person_code and first_name and last_name:
+        person_code = generate_person_code(conn, first_name, last_name)
     now = now_iso()
     conn.execute(
         """
@@ -590,6 +808,7 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
             person_code = COALESCE(?, person_code),
             billing_email = ?,
             billing_phone = ?,
+            administrative_notes = ?,
             active_status = ?,
             active = ?,
             updated_at = ?
@@ -600,9 +819,10 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
             first_name,
             last_name,
             preferred_name,
-            data.get("person_code"),
+            person_code,
             data.get("billing_email"),
             data.get("billing_phone"),
+            data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
             data.get("active_status", "active"),
             1 if data.get("active", True) else 0,
             now,
@@ -623,7 +843,13 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
         "person",
         person_id,
         "identity_corrected",
-        {"old_value": old_name, "new_value": display_name, "source": "review_ui"},
+        {
+            "old_value": old_name,
+            "new_value": display_name,
+            "old_code": old_code,
+            "new_code": person_code,
+            "source": "review_ui",
+        },
     )
     conn.commit()
     return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
@@ -730,19 +956,130 @@ def search_accounts(conn: sqlite3.Connection, query: str = "") -> list[dict[str,
     return search_table(conn, "client_accounts", "account_id", "account_name", query, code_column="account_code")
 
 
+def list_account_records(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
+    init_db(conn)
+    like = f"%{query}%"
+    rows = conn.execute(
+        """
+        SELECT
+          ca.*,
+          bp.billing_name AS billing_party_name,
+          GROUP_CONCAT(DISTINCT p.display_name) AS members,
+          (
+            SELECT MAX(s2.session_date)
+            FROM sessions s2
+            WHERE s2.account_id = ca.account_id
+          ) AS last_session,
+          (
+            SELECT SUM(CASE WHEN s3.payment_status != 'paid' THEN COALESCE(s3.approved_rate_cents, 0) ELSE 0 END)
+            FROM sessions s3
+            WHERE s3.account_id = ca.account_id
+          ) AS outstanding_cents
+        FROM client_accounts ca
+        LEFT JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+        LEFT JOIN account_members am ON am.account_id = ca.account_id
+        LEFT JOIN people p ON p.person_id = am.person_id
+        WHERE ca.account_name LIKE ? OR COALESCE(ca.account_code, '') LIKE ?
+        GROUP BY ca.account_id
+        ORDER BY ca.account_name
+        LIMIT 250
+        """,
+        (like, like),
+    ).fetchall()
+    output = []
+    for row in rows:
+        item = dict(row)
+        primary = conn.execute(
+            """
+            SELECT p.display_name
+            FROM account_members am
+            JOIN people p ON p.person_id = am.person_id
+            WHERE am.account_id = ? AND am.is_primary = 1
+            ORDER BY p.display_name
+            LIMIT 1
+            """,
+            (row["account_id"],),
+        ).fetchone()
+        rate = conn.execute(
+            """
+            SELECT amount_cents
+            FROM rate_rules
+            WHERE active = 1 AND client_account_id = ?
+            ORDER BY priority ASC, effective_from DESC
+            LIMIT 1
+            """,
+            (row["account_id"],),
+        ).fetchone()
+        item["primary_person"] = primary["display_name"] if primary else ""
+        item["current_default_rate"] = cents_to_dollars(rate["amount_cents"]) if rate else ""
+        item["outstanding_balance"] = cents_to_dollars(item.pop("outstanding_cents") or 0)
+        output.append(item)
+    return output
+
+
+def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, Any]:
+    init_db(conn)
+    account = get_account(conn, account_id)
+    if not account:
+        raise ValueError("Account not found.")
+    members = get_account_members(conn, account_id)
+    billing_party = get_billing_party(conn, account.get("default_billing_party_id"))
+    rates = conn.execute(
+        """
+        SELECT rr.*, p.display_name
+        FROM rate_rules rr
+        LEFT JOIN people p ON p.person_id = rr.person_id
+        WHERE rr.client_account_id = ?
+        ORDER BY rr.active DESC, rr.effective_from DESC
+        """,
+        (account_id,),
+    ).fetchall()
+    sessions = conn.execute(
+        """
+        SELECT session_date, start_at, duration_minutes, service_mode, time_category,
+               approved_rate_cents, payment_status, review_status, raw_calendar_title
+        FROM sessions
+        WHERE account_id = ?
+        ORDER BY start_at DESC
+        LIMIT 75
+        """,
+        (account_id,),
+    ).fetchall()
+    aliases = conn.execute(
+        "SELECT * FROM calendar_aliases WHERE account_id = ? ORDER BY updated_at DESC LIMIT 50",
+        (account_id,),
+    ).fetchall()
+    return {
+        "account": account,
+        "members": members,
+        "billing_party": billing_party,
+        "rates": [dict(row) for row in rates],
+        "sessions": [dict(row) for row in sessions],
+        "aliases": [dict(row) for row in aliases],
+        "audit": audit_history_for_entity(conn, "client_account", account_id),
+    }
+
+
 def create_account(conn: sqlite3.Connection, account_name: str, account_type: str = "individual") -> dict[str, Any]:
     init_db(conn)
+    existing = conn.execute(
+        "SELECT * FROM client_accounts WHERE lower(account_name) = lower(?) AND active = 1 LIMIT 1",
+        (account_name,),
+    ).fetchone()
+    if existing:
+        return dict(existing)
     now = now_iso()
     account_id = new_id()
+    account_code = generate_account_code(conn)
     conn.execute(
         """
         INSERT INTO client_accounts (
           account_id, account_code, account_name, account_type, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (account_id, make_code("A", account_name), account_name, account_type, now, now),
+        (account_id, account_code, account_name, account_type, now, now),
     )
-    record_audit(conn, "client_account", account_id, "created_inline", {"account_name": account_name})
+    record_audit(conn, "client_account", account_id, "created_inline", {"account_name": account_name, "account_code": account_code})
     conn.commit()
     return dict(conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone())
 
@@ -759,6 +1096,7 @@ def update_account(conn: sqlite3.Connection, account_id: str, data: dict[str, An
         SET account_name = ?,
             account_type = ?,
             default_billing_party_id = ?,
+            administrative_notes = ?,
             active = ?,
             updated_at = ?
         WHERE account_id = ?
@@ -767,6 +1105,7 @@ def update_account(conn: sqlite3.Connection, account_id: str, data: dict[str, An
             data.get("account_name") or existing["account_name"],
             data.get("account_type") or existing["account_type"],
             data.get("default_billing_party_id") or existing["default_billing_party_id"],
+            data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
             1 if data.get("active", True) else 0,
             now,
             account_id,
@@ -792,8 +1131,9 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
           billing_party_id, billing_party_type, person_id, organization_name,
           billing_name, billing_email, billing_address_line_1, billing_address_line_2,
           billing_city, billing_state, billing_postal_code, billing_phone,
+          administrative_notes,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             billing_party_id,
@@ -808,6 +1148,7 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
             data.get("billing_state"),
             data.get("billing_postal_code"),
             data.get("billing_phone"),
+            data.get("administrative_notes"),
             now,
             now,
         ),
@@ -837,6 +1178,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
             billing_state = ?,
             billing_postal_code = ?,
             billing_phone = ?,
+            administrative_notes = ?,
             active = ?,
             updated_at = ?
         WHERE billing_party_id = ?
@@ -853,6 +1195,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
             data.get("billing_state") or existing["billing_state"],
             data.get("billing_postal_code") or existing["billing_postal_code"],
             data.get("billing_phone") or existing["billing_phone"],
+            data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
             1 if data.get("active", True) else 0,
             now,
             billing_party_id,
@@ -926,6 +1269,123 @@ def ensure_account_member(
         (member_id, account_id, person_id, relationship_role, 1 if is_primary else 0, now, now),
     )
     return member_id
+
+
+def add_session_participant(
+    conn: sqlite3.Connection,
+    session_id: str,
+    person_id: str | None,
+    participant_name: str,
+    is_primary: bool = False,
+    participant_role: str = "participant",
+) -> str:
+    now = now_iso()
+    participant_id = new_id()
+    display_name = participant_name
+    if person_id and not display_name:
+        person = conn.execute("SELECT display_name FROM people WHERE person_id = ?", (person_id,)).fetchone()
+        display_name = person["display_name"] if person else ""
+    conn.execute(
+        """
+        INSERT INTO session_participants (
+          session_participant_id, session_id, person_id, participant_name,
+          participant_role, is_primary, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (participant_id, session_id, person_id, display_name, participant_role, 1 if is_primary else 0, now, now),
+    )
+    return participant_id
+
+
+def refresh_candidate_suggestions(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    *,
+    preserve_approved_rate: bool = False,
+) -> dict[str, Any]:
+    session = session_for_candidate(conn, candidate_id)
+    participants = get_session_participants(conn, session["id"])
+    primary_person_id = next((p["person_id"] for p in participants if p.get("is_primary") and p.get("person_id")), None)
+    now = now_iso()
+    account_id = session["account_id"]
+    billing_party_id = session["billing_party_id"]
+
+    if not primary_person_id and len(participants) == 1 and participants[0].get("person_id"):
+        primary_person_id = participants[0]["person_id"]
+        conn.execute(
+            "UPDATE session_participants SET is_primary = 1, participant_role = 'primary', updated_at = ? WHERE session_participant_id = ?",
+            (now, participants[0]["session_participant_id"]),
+        )
+
+    if account_id and not billing_party_id:
+        account = conn.execute(
+            "SELECT default_billing_party_id FROM client_accounts WHERE account_id = ?",
+            (account_id,),
+        ).fetchone()
+        if account and account["default_billing_party_id"]:
+            billing_party_id = account["default_billing_party_id"]
+            conn.execute(
+                "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
+                (billing_party_id, now, session["id"]),
+            )
+
+    duration = session["approved_duration_minutes"] or session["duration_minutes"]
+    service_mode = normalize_service_mode(session["service_mode"])
+    time_category = normalize_time_category(session["time_category"])
+    suggestion = suggest_rate(
+        conn,
+        session_date=session["session_date"] or text(session["start_at"])[:10],
+        duration_minutes=duration,
+        service_mode=service_mode,
+        rate_group=session["rate_group"] or rate_group_for(service_mode),
+        time_category=time_category,
+        account_id=account_id,
+        person_id=primary_person_id,
+    )
+    approved_rate = session["approved_rate_cents"] if preserve_approved_rate else session["approved_rate_cents"]
+    if suggestion.suggested_rate_cents is not None:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET suggested_rate_cents = ?,
+                rate_rule_id = ?,
+                rate_source = ?,
+                rate_needs_review = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                suggestion.suggested_rate_cents,
+                suggestion.rate_rule_id,
+                suggestion.rate_source,
+                1 if suggestion.rate_needs_review and approved_rate is None else 0,
+                now,
+                session["id"],
+            ),
+        )
+
+    refreshed = session_for_candidate(conn, candidate_id)
+    unresolved = unresolved_from_values(
+        participants=get_session_participants(conn, refreshed["id"]),
+        account_id=refreshed["account_id"],
+        billing_party_id=refreshed["billing_party_id"],
+        duration=refreshed["approved_duration_minutes"] or refreshed["duration_minutes"],
+        service_mode=refreshed["service_mode"],
+        time_category=refreshed["time_category"],
+        approved_rate_cents=refreshed["approved_rate_cents"],
+        payment_status=refreshed["payment_status"],
+    )
+    review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
+    conn.execute(
+        "UPDATE sessions SET review_status = ?, updated_at = ? WHERE id = ?",
+        (review_status, now, refreshed["id"]),
+    )
+    conn.execute(
+        "UPDATE calendar_event_candidates SET review_status = ?, unresolved_fields = ?, review_reasons = ?, updated_at = ? WHERE id = ?",
+        (review_status, json_dumps(unresolved), json_dumps([suggestion.explanation]), now, candidate_id),
+    )
+    add_review_item(conn, candidate_id, refreshed["id"], review_status, unresolved, [suggestion.explanation])
+    return {"review_status": review_status, "unresolved_fields": unresolved, "rate_explanation": suggestion.explanation}
 
 
 def get_account_members(conn: sqlite3.Connection, account_id: str | None) -> list[dict[str, Any]]:
@@ -1259,6 +1719,20 @@ def audit_history(conn: sqlite3.Connection, session_id: str, candidate_id: str) 
     return [dict(row) for row in rows]
 
 
+def audit_history_for_entity(conn: sqlite3.Connection, entity_type: str, entity_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM audit_log
+        WHERE entity_type = ? AND entity_id = ?
+        ORDER BY created_at DESC
+        LIMIT 50
+        """,
+        (entity_type, entity_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def record_audit(conn: sqlite3.Connection, entity_type: str, entity_id: str, action: str, details: dict[str, Any]) -> None:
     conn.execute(
         """
@@ -1267,6 +1741,11 @@ def record_audit(conn: sqlite3.Connection, entity_type: str, entity_id: str, act
         """,
         (new_id(), entity_type, entity_id, action, json_dumps(details), now_iso()),
     )
+
+
+def safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    blocked = {"api_key", "password", "secret", "token"}
+    return {key: value for key, value in payload.items() if key.lower() not in blocked}
 
 
 def parse_json(value: Any, fallback: Any) -> Any:
@@ -1295,9 +1774,52 @@ def split_name(name: str) -> tuple[str, str]:
     return parts[0], parts[-1] if len(parts) > 1 else ""
 
 
-def make_code(prefix: str, name: str) -> str:
-    stem = "".join(ch for ch in text(name).upper() if ch.isalnum())[:4] or prefix
-    return f"{stem}-{new_id()[:4].upper()}"
+def generate_person_code(conn: sqlite3.Connection, first_name: str, last_name: str) -> str:
+    prefix = person_code_prefix(first_name, last_name)
+    for suffix in range(1, 1000):
+        code = f"{prefix}-{suffix:03d}"
+        exists = conn.execute("SELECT 1 FROM people WHERE person_code = ?", (code,)).fetchone()
+        if not exists:
+            return code
+    raise ValueError(f"No available person code for prefix {prefix}.")
+
+
+def person_code_prefix(first_name: str, last_name: str) -> str:
+    first = normalize_code_text(first_name)
+    last = normalize_code_text(last_name)
+    if not first or not last:
+        raise ValueError("First and last name are required before assigning a person code.")
+    usable_last = (last + "XXX")[:3]
+    return f"{first[0]}{usable_last}"
+
+
+def generate_account_code(conn: sqlite3.Connection) -> str:
+    row = conn.execute(
+        """
+        SELECT account_code
+        FROM client_accounts
+        WHERE account_code LIKE 'ACCT-%'
+        ORDER BY account_code DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    next_number = 1
+    if row and row["account_code"]:
+        match = re.search(r"ACCT-(\d+)$", row["account_code"])
+        if match:
+            next_number = int(match.group(1)) + 1
+    while True:
+        code = f"ACCT-{next_number:04d}"
+        exists = conn.execute("SELECT 1 FROM client_accounts WHERE account_code = ?", (code,)).fetchone()
+        if not exists:
+            return code
+        next_number += 1
+
+
+def normalize_code_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text(value))
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^A-Za-z0-9]", "", ascii_text).upper()
 
 
 def normalize_alias(value: str) -> str:

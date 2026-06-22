@@ -44,11 +44,11 @@ Phase 2 fields include confidence label, unresolved fields, review reasons, cand
 
 ## `people`
 
-Actual humans with permanent UUIDs. Person codes are optional human-readable helpers.
+Actual humans with permanent UUIDs. Person codes are optional human-readable helpers and are generated only after first and last names are confirmed. The code is not the primary key and is not silently changed when a name changes.
 
 ## `client_accounts`
 
-Billing and relationship units such as an individual, household, family, couple, or organization.
+Billing and relationship units such as an individual, household, family, couple, or organization. Account codes use the separate `ACCT-####` sequence and never imitate person codes.
 
 ## `account_members`
 
@@ -99,6 +99,8 @@ Structured review-state records for the future dashboard. Review decisions persi
 ## Local API Service
 
 The review UI uses backend service functions and local API routes for candidate listing, retrieval, save, approval, inline person/account/billing-party creation, alias learning, and audit history. Frontend code must not write SQLite directly.
+
+Section-level review APIs save people, relationships, billing details, and session drafts independently. After each section save, `refresh_candidate_suggestions` recomputes payer, rate, checklist, unresolved fields, and review status.
 
 ## `audit_log`
 

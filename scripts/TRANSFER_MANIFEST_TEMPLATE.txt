@@ -1,0 +1,17 @@
+Jordana Private Transfer Manifest
+Created UTC:
+Source Mac:
+Destination Mac:
+Database schema version:
+
+File | Required | Source Path | Destination Path | Size Bytes | SHA256 | Record Counts | Notes
+data/jordana_invoice.sqlite3 | yes |  | data/jordana_invoice.sqlite3 |  |  | import_runs= raw_calendar_snapshots= sessions= people= client_accounts= | verified backup only
+config/.env | yes |  | .env |  |  | n/a | contains secrets; never commit
+credentials/ | optional |  | credentials/ |  |  | n/a | only if external services require local credentials
+imports/ | optional |  | imports/ |  |  | n/a | CSV recovery inputs
+Reports/ | optional |  | Reports/ |  |  | n/a | regenerated reports are acceptable
+
+Transfer method:
+Encryption method:
+Integrity check result:
+Verified by:

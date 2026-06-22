@@ -6,7 +6,7 @@ Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot r
 
 Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
 
-Phase 2 strengthens the normalization layer. It separates people, client accounts, account members, session participants, billing parties, aliases, rate rules, sessions, review items, raw snapshots, and audit records. It still does not generate invoices or build the polished dashboard UI.
+Phase 2 strengthens the normalization layer. It separates people, client accounts, account members, session participants, billing parties, aliases, rate rules, sessions, review items, raw snapshots, and audit records. The local review UI now includes section-level saves plus first CRM-style People and Clients & Accounts views. It still does not generate invoices.
 
 ## Current Scope
 
@@ -22,6 +22,9 @@ Phase 2 strengthens the normalization layer. It separates people, client account
 - Service mode, rate group, evening, and weekend categorization
 - Effective-dated rate rules
 - Structured review-state engine
+- Section-level saves for people, relationships, billing, and session drafts
+- Human-readable person codes and account codes
+- Clients & Accounts and People CRM views
 - Initial client, alias, rate, session, review, and audit tables
 - Local CSV reports after successful sync
 - Acceptance report for June-style data
@@ -88,6 +91,14 @@ http://127.0.0.1:8765/review
 
 The review UI reads and writes SQLite through local API routes. It does not edit CSV files.
 
+The Review Queue resolves one calendar event at a time. Quick fixes stay in the inspector. Deeper people/account editing happens in the CRM views:
+
+- `/review`
+- `/clients`
+- `/people`
+
+The inspector has independent saves for person, relationship, billing details, and session draft. None of those saves approve a session automatically.
+
 ## Important Guardrails
 
 - Calendar rows are evidence, not approved billing.
@@ -101,6 +112,8 @@ The review UI reads and writes SQLite through local API routes. It does not edit
 - Do not rewrite historical finalized invoice values when rates change later.
 - Store secrets only in `.env`; never paste the real API key into source files or docs.
 - Do not make a permanent new client account just because two names appear in one calendar title.
+- Do not generate a person code for a provisional parser-only name.
+- Do not transfer private data through GitHub.
 
 ## Project Layout
 
@@ -108,6 +121,7 @@ The review UI reads and writes SQLite through local API routes. It does not edit
 - `app/jordana_invoice/static/` - local review UI.
 - `launchd/` and `scripts/` - hourly macOS sync agent installer and remover.
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
+- `scripts/setup_jordana_mac.sh`, `scripts/verify_install.sh`, and `scripts/privacy_check.sh` - setup and safety utilities for Mac handoff.
 - `data/samples/` - small June-style fixture for acceptance testing.
 - `tests/` - parser tests for known shorthand examples.
 

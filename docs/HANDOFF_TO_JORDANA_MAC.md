@@ -8,16 +8,16 @@ Continue the local-first invoice system without relying on prior chat history.
 
 ## Setup
 
-1. Copy or clone this project folder onto Jordana's Mac.
-2. Open Terminal in the project folder.
-3. Run:
+1. Clone the private GitHub repository onto Jordana's Mac.
+2. Transfer private data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
+3. Open Terminal in the project folder.
+4. Run:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install .
-jordana-invoice --db data/jordana_invoice.sqlite3 init-db
+scripts/setup_jordana_mac.sh
 ```
+
+The setup script creates `.venv`, required folders, initializes or migrates SQLite without overwriting an existing live database, creates a first backup when a database already exists, and runs verification.
 
 ## Configure Automated Sync
 
@@ -140,6 +140,7 @@ Before pushing or handing off through GitHub, run:
 
 ```bash
 scripts/git_safety_check.sh
+scripts/privacy_check.sh
 ```
 
 Live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, and credentials should remain ignored locally.

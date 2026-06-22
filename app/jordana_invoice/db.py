@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS people (
   person_code TEXT UNIQUE,
   billing_email TEXT,
   billing_phone TEXT,
+  administrative_notes TEXT,
   active_status TEXT NOT NULL DEFAULT 'active',
   merged_into_person_id TEXT REFERENCES people(person_id),
   merge_note TEXT,
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS client_accounts (
   account_name TEXT NOT NULL,
   account_type TEXT NOT NULL DEFAULT 'individual',
   default_billing_party_id TEXT,
+  administrative_notes TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -172,6 +174,7 @@ CREATE TABLE IF NOT EXISTS billing_parties (
   billing_state TEXT,
   billing_postal_code TEXT,
   billing_phone TEXT,
+  administrative_notes TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -389,6 +392,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
         {
             "billing_email": "TEXT",
             "billing_phone": "TEXT",
+            "administrative_notes": "TEXT",
             "active_status": "TEXT NOT NULL DEFAULT 'active'",
             "merged_into_person_id": "TEXT",
             "merge_note": "TEXT",
@@ -411,6 +415,20 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "is_evening": "INTEGER NOT NULL DEFAULT 0",
             "is_weekend": "INTEGER NOT NULL DEFAULT 0",
             "reconciliation_status": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "client_accounts",
+        {
+            "administrative_notes": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "billing_parties",
+        {
+            "administrative_notes": "TEXT",
         },
     )
     add_columns(

@@ -1,4 +1,4 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null };
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
@@ -88,7 +88,7 @@ function renderInspector(data) {
     </div>
 
     <section class="section">
-      <h3>Calendar Evidence</h3>
+      <div class="section-title-row"><h3>Calendar Evidence</h3></div>
       <div class="kv">
         <label>Raw Title</label><strong>${fmt(s.raw_calendar_title || s.title)}</strong>
         <label>Calendar</label><span>${fmt(s.calendar_name)}</span>
@@ -98,10 +98,11 @@ function renderInspector(data) {
         <label>Notes</label><span>${fmt(s.notes)}</span>
         <label>Captured</label><span>${fmt(s.captured_at)}</span>
       </div>
+      <details><summary>Raw payload</summary><pre class="evidence-raw">${escapeHtml(s.raw_json || "")}</pre></details>
     </section>
 
     <section class="section">
-      <h3>Suggested Interpretation</h3>
+      <div class="section-title-row"><h3>People and Relationship</h3><span class="save-state" id="relationshipState">Needs review</span></div>
       <label class="field wide">Who attended?</label>
       <div class="help">Select everyone who participated in this session. This may be one person or multiple people, such as Fred Colin + Bobsey Colin.</div>
       <div class="chips" id="participantChips"></div>
@@ -122,16 +123,21 @@ function renderInspector(data) {
         <datalist id="billingList"></datalist>
       </div>
       <div class="inline-actions">
+        <button id="savePersonBtn" class="save">Save Person</button>
+        <button id="saveRelationshipBtn" class="save">Save Relationship</button>
+        <button id="saveBillingBtn" class="save">Save Billing Details</button>
         <button id="sameAsPrimary">Same as primary participant</button>
-        <button id="editAccount">Edit Account</button>
+        <button id="editAccount">Quick Edit Account</button>
         <button id="editBilling">Edit Billing Party</button>
+        <button id="openPersonRecord">Open Person Record</button>
+        <button id="openAccountRecord">Open Client Account</button>
       </div>
       <div id="relationshipEditor" class="drawer"></div>
       <div class="hint">Suggestion reasons: ${(safeList(s.review_reasons).join(" ") || s.explanation || "Calendar title matched the parser pattern.")}</div>
     </section>
 
     <section class="section">
-      <h3>Session Details</h3>
+      <div class="section-title-row"><h3>Session Details</h3><span class="save-state" id="sessionState">Needs review</span></div>
       <div class="field-grid">
         <label class="field">Duration (min)<input id="durationInput" type="number" value="${s.approved_duration_minutes || s.duration_minutes || ""}"></label>
         <label class="field">Service Mode<select id="serviceInput">${optionSet(["phone","facetime","office","house_call","unknown"], s.service_mode)}</select></label>
@@ -139,8 +145,10 @@ function renderInspector(data) {
         <label class="field">Suggested Rate<span class="help">Calculated from the Rate Card. Jordana can override it.</span><input id="suggestedRateInput" value="${centString(s.suggested_rate_cents)}"></label>
         <label class="field">Approved Rate<span class="help">The final amount that will be used for this session.</span><input id="approvedRateInput" value="${centString(s.approved_rate_cents)}"></label>
         <label class="field">Payment Status<span class="help">Whether payment has already been received.</span><select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
+        <label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label>
         <label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>
       </div>
+      <div class="inline-actions"><button id="saveSessionBtn" class="save">Save Session Draft</button></div>
     </section>
 
     <section class="section">
@@ -149,7 +157,7 @@ function renderInspector(data) {
     </section>
 
     <div class="actions">
-      ${isSession ? '<button class="approve" id="approveBtn">Approve</button><button class="save" id="saveBtn">Save Changes</button>' : ""}
+      ${isSession ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
       <button id="personalBtn">Mark Personal/Admin</button>
       <button id="duplicateBtn">Mark Duplicate</button>
       <button class="danger" id="excludeBtn">Exclude</button>
@@ -167,14 +175,42 @@ function wireInspector() {
   $("addPerson").onclick = createPersonFromInput;
   $("addAccount").onclick = createAccountFromInput;
   $("addBilling").onclick = createBillingFromInput;
-  if ($("saveBtn")) $("saveBtn").onclick = () => save(false);
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
+  $("savePersonBtn").onclick = savePersonSection;
+  $("saveRelationshipBtn").onclick = saveRelationshipSection;
+  $("saveBillingBtn").onclick = saveBillingSection;
+  $("saveSessionBtn").onclick = saveSessionSection;
   $("sameAsPrimary").onclick = sameAsPrimaryParticipant;
   $("editAccount").onclick = showAccountEditor;
   $("editBilling").onclick = showBillingEditor;
+  $("openPersonRecord").onclick = () => openPrimaryPersonRecord();
+  $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
   $("personalBtn").onclick = () => mark("personal");
   $("duplicateBtn").onclick = () => mark("duplicate");
   $("excludeBtn").onclick = () => mark("nonbillable");
+  ["durationInput","serviceInput","timeCategoryInput","suggestedRateInput","approvedRateInput","paymentInput","billableInput","overrideReasonInput"].forEach(id => $(id).addEventListener("input", () => markDirty("session")));
+  ["accountInput","billingInput"].forEach(id => $(id).addEventListener("input", () => markDirty("relationship")));
+}
+
+function markDirty(section) {
+  state.dirty.add(section);
+  if (section === "session" && $("sessionState")) {
+    $("sessionState").textContent = "Unsaved changes";
+    $("sessionState").className = "save-state dirty";
+  }
+  if (section === "relationship" && $("relationshipState")) {
+    $("relationshipState").textContent = "Unsaved changes";
+    $("relationshipState").className = "save-state dirty";
+  }
+}
+
+function markSaved(section, message = "Saved") {
+  state.dirty.delete(section);
+  const id = section === "session" ? "sessionState" : "relationshipState";
+  if ($(id)) {
+    $(id).textContent = message;
+    $(id).className = "save-state saved";
+  }
 }
 
 function renderParticipantChips() {
@@ -191,6 +227,7 @@ async function createPersonFromInput() {
   $("personInput").value = "";
   renderParticipantChips();
   renderRelationshipEditor(state.detail);
+  markDirty("relationship");
 }
 
 async function createAccountFromInput() {
@@ -198,6 +235,7 @@ async function createAccountFromInput() {
   if (!name) return;
   state.account = await findOrCreate("/api/accounts", "account_name", name, { account_name: name, account_type: name.toLowerCase().includes("family") ? "family" : "individual" });
   $("accountInput").value = state.account.account_name;
+  markDirty("relationship");
 }
 
 async function createBillingFromInput() {
@@ -205,6 +243,7 @@ async function createBillingFromInput() {
   if (!name) return;
   state.billingParty = await findOrCreate("/api/billing-parties", "billing_name", name, { billing_name: name, billing_party_type: "person" });
   $("billingInput").value = state.billingParty.billing_name;
+  markDirty("relationship");
 }
 
 async function findOrCorrectPerson(name) {
@@ -251,6 +290,7 @@ function showPersonEditor(index) {
     }
     $("personEditor").hidden = true;
     renderParticipantChips();
+    markSaved("relationship", "Person saved");
   };
   $("cancelPersonEdit").onclick = () => $("personEditor").hidden = true;
   $("mergePersonBtn").onclick = async () => {
@@ -264,6 +304,7 @@ function showPersonEditor(index) {
     state.participants[index] = { ...p, person_id: merged.person_id, display_name: merged.display_name };
     $("personEditor").hidden = true;
     renderParticipantChips();
+    markSaved("relationship", "Person merged");
   };
 }
 
@@ -326,6 +367,65 @@ function showBillingEditor() {
     .then(updated => { state.billingParty = updated; $("billingInput").value = updated.billing_name; renderRelationshipEditor(state.detail); });
 }
 
+async function savePersonSection() {
+  const primary = state.participants[0];
+  if (!primary) return alert("Add or select a person first.");
+  let payload = { person: { person_id: primary.person_id, display_name: primary.display_name || primary.participant_name } };
+  const updated = await api(`/api/review/candidates/${state.selected}/save-person`, { method: "POST", body: JSON.stringify(payload) });
+  const sessionDraft = collectSessionDraftValues();
+  state.detail = updated;
+  state.participants = updated.participants.map(p => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary }));
+  renderInspector(updated);
+  restoreSessionDraftValues(sessionDraft);
+  markSaved("relationship", "Person saved. Suggestions refreshed.");
+  await loadList();
+}
+
+async function saveRelationshipSection() {
+  await resolveTypedSelections();
+  const sessionDraft = collectSessionDraftValues();
+  const updated = await api(`/api/review/candidates/${state.selected}/save-relationship`, {
+    method: "POST",
+    body: JSON.stringify({
+      participants: collectParticipants(),
+      account_id: state.account ? state.account.account_id : null,
+      primary_person_id: state.participants.find(p => p.is_primary)?.person_id || state.participants[0]?.person_id || null,
+      default_billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null
+    })
+  });
+  state.detail = updated;
+  state.account = updated.account;
+  state.billingParty = updated.billing_party;
+  state.participants = updated.participants.map(p => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary, relationship_role: p.relationship_role }));
+  renderInspector(updated);
+  restoreSessionDraftValues(sessionDraft);
+  markSaved("relationship", "Relationship saved. Session suggestions refreshed.");
+  await loadList();
+}
+
+async function saveBillingSection() {
+  await resolveTypedSelections();
+  const sessionDraft = collectSessionDraftValues();
+  const updated = await api(`/api/review/candidates/${state.selected}/save-billing`, {
+    method: "POST",
+    body: JSON.stringify({ billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null })
+  });
+  state.detail = updated;
+  state.billingParty = updated.billing_party;
+  renderInspector(updated);
+  restoreSessionDraftValues(sessionDraft);
+  markSaved("relationship", "Billing details saved");
+  await loadList();
+}
+
+async function saveSessionSection() {
+  const updated = await api(`/api/review/candidates/${state.selected}/save-session`, { method: "POST", body: JSON.stringify(collectPayload()) });
+  state.detail = updated;
+  renderInspector(updated);
+  markSaved("session", "Session draft saved");
+  await loadList();
+}
+
 async function save(approve) {
   await resolveTypedSelections();
   const payload = collectPayload();
@@ -338,6 +438,31 @@ async function save(approve) {
   } catch (err) {
     alert(err.message);
   }
+}
+
+function collectSessionDraftValues() {
+  return {
+    approved_duration_minutes: $("durationInput")?.value || "",
+    service_mode: $("serviceInput")?.value || "",
+    time_category: $("timeCategoryInput")?.value || "",
+    suggested_rate: $("suggestedRateInput")?.value || "",
+    approved_rate: $("approvedRateInput")?.value || "",
+    payment_status: $("paymentInput")?.value || "",
+    billable_status: $("billableInput")?.value || "",
+    rate_override_reason: $("overrideReasonInput")?.value || ""
+  };
+}
+
+function restoreSessionDraftValues(values) {
+  if (!values) return;
+  if ($("durationInput")) $("durationInput").value = values.approved_duration_minutes;
+  if ($("serviceInput")) $("serviceInput").value = values.service_mode;
+  if ($("timeCategoryInput")) $("timeCategoryInput").value = values.time_category;
+  if ($("suggestedRateInput")) $("suggestedRateInput").value = values.suggested_rate;
+  if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
+  if ($("paymentInput")) $("paymentInput").value = values.payment_status;
+  if ($("billableInput")) $("billableInput").value = values.billable_status;
+  if ($("overrideReasonInput")) $("overrideReasonInput").value = values.rate_override_reason;
 }
 
 async function resolveTypedSelections() {
@@ -357,6 +482,28 @@ async function mark(classification) {
 }
 
 function collectPayload() {
+  return {
+    ...collectRelationshipPayload(),
+    approved_duration_minutes: $("durationInput").value,
+    service_mode: $("serviceInput").value,
+    time_category: $("timeCategoryInput").value,
+    suggested_rate: $("suggestedRateInput").value,
+    approved_rate: $("approvedRateInput").value,
+    payment_status: $("paymentInput").value,
+    billable_status: $("billableInput").value,
+    rate_override_reason: $("overrideReasonInput").value
+  };
+}
+
+function collectRelationshipPayload() {
+  return {
+    participants: collectParticipants(),
+    account_id: state.account ? state.account.account_id : null,
+    billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null
+  };
+}
+
+function collectParticipants() {
   const roleSelects = [...document.querySelectorAll("[data-role]")];
   roleSelects.forEach(select => {
     const index = Number(select.dataset.role);
@@ -364,18 +511,7 @@ function collectPayload() {
       state.participants[index].relationship_role = select.value;
     }
   });
-  return {
-    participants: state.participants,
-    account_id: state.account ? state.account.account_id : null,
-    billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null,
-    approved_duration_minutes: $("durationInput").value,
-    service_mode: $("serviceInput").value,
-    time_category: $("timeCategoryInput").value,
-    suggested_rate: $("suggestedRateInput").value,
-    approved_rate: $("approvedRateInput").value,
-    payment_status: $("paymentInput").value,
-    rate_override_reason: $("overrideReasonInput").value
-  };
+  return state.participants;
 }
 
 function fillDatalist(id, rows, label) {
@@ -405,33 +541,82 @@ document.getElementById("rateCardNav").onclick = (event) => {
   location.hash = "rate-card";
   showRateCard();
 };
+document.getElementById("clientsNav").onclick = (event) => {
+  event.preventDefault();
+  location.hash = "clients";
+  showClients();
+};
+document.getElementById("peopleNav").onclick = (event) => {
+  event.preventDefault();
+  location.hash = "people";
+  showPeople();
+};
 document.getElementById("reviewNav").onclick = () => {
   location.hash = "";
   showReviewWorkbench();
 };
 
+function hideViews() {
+  ["reviewWorkbench","rateCardView","clientsView","peopleView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","rateCardNav","clientsNav","peopleNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+}
+
 function showRateCard() {
-  document.getElementById("reviewWorkbench").hidden = true;
+  hideViews();
   document.getElementById("rateCardView").hidden = false;
-  document.getElementById("reviewNav").classList.remove("active");
   document.getElementById("rateCardNav").classList.add("active");
   loadRateRules();
 }
 
 function showReviewWorkbench() {
+  hideViews();
   document.getElementById("reviewWorkbench").hidden = false;
-  document.getElementById("rateCardView").hidden = true;
   document.getElementById("reviewNav").classList.add("active");
-  document.getElementById("rateCardNav").classList.remove("active");
+  if (state.returnCandidate) {
+    selectCandidate(state.returnCandidate);
+    state.returnCandidate = null;
+  }
+}
+
+async function showClients() {
+  hideViews();
+  document.getElementById("clientsView").hidden = false;
+  document.getElementById("clientsNav").classList.add("active");
+  await loadClients();
+}
+
+async function showPeople() {
+  hideViews();
+  document.getElementById("peopleView").hidden = false;
+  document.getElementById("peopleNav").classList.add("active");
+  await loadPeople();
 }
 document.getElementById("rateRuleForm").onsubmit = async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  await api("/api/rate-rules", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
+  const payload = Object.fromEntries(form.entries());
+  if (payload.applies_to === "account" && payload.applies_to_search) {
+    const rows = await api(`/api/accounts?q=${encodeURIComponent(payload.applies_to_search)}`);
+    const match = rows.find(row => row.account_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
+    if (match) payload.client_account_id = match.account_id;
+  }
+  if (payload.applies_to === "person" && payload.applies_to_search) {
+    const rows = await api(`/api/people?q=${encodeURIComponent(payload.applies_to_search)}`);
+    const match = rows.find(row => row.display_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
+    if (match) payload.person_id = match.person_id;
+  }
+  await api("/api/rate-rules", { method: "POST", body: JSON.stringify(payload) });
   event.currentTarget.reset();
   event.currentTarget.effective_from.value = "2026-01-01";
   await loadRateRules();
 };
+document.getElementById("rateAppliesSearch").addEventListener("input", debounce(async e => {
+  const mode = $("rateAppliesTo").value;
+  const rows = mode === "person"
+    ? await api(`/api/people?q=${encodeURIComponent(e.target.value)}`)
+    : await api(`/api/accounts?q=${encodeURIComponent(e.target.value)}`);
+  fillDatalist("rateAppliesList", rows, mode === "person" ? "display_name" : "account_name");
+}, 160));
 
 async function loadRateRules() {
   const rows = await api("/api/rate-rules");
@@ -441,11 +626,161 @@ async function loadRateRules() {
       <td>${row.duration_minutes || "Any"}</td>
       <td>${serviceLabel(row.service_mode || row.rate_group || "Any")}</td>
       <td>${timeLabel(row.time_category)}</td>
-      <td>${row.account_name || "Global"}</td>
-      <td>${row.display_name || "Any"}</td>
+      <td>${row.account_name || row.display_name || "Everyone"}</td>
       <td>${row.effective_from}</td>
+      <td>${ruleExplanation(row)}</td>
     </tr>
   `).join("");
 }
+
+async function loadClients() {
+  const rows = await api(`/api/accounts?full=1&q=${encodeURIComponent($("clientSearch").value || "")}`);
+  $("clientRows").innerHTML = rows.map(row => `
+    <tr data-account="${row.account_id}">
+      <td>${fmt(row.account_code)}</td>
+      <td><span class="primary">${fmt(row.account_name)}</span></td>
+      <td>${fmt(row.account_type)}</td>
+      <td>${fmt(row.primary_person)}</td>
+      <td>${fmt(row.members)}</td>
+      <td>${fmt(row.billing_party_name)}</td>
+      <td>${money(row.current_default_rate)}</td>
+      <td>${money(row.outstanding_balance)}</td>
+      <td>${fmt(row.last_session)}</td>
+      <td>${row.active ? "Active" : "Inactive"}</td>
+    </tr>
+  `).join("");
+  document.querySelectorAll("#clientRows tr").forEach(row => row.onclick = () => openAccountRecord(row.dataset.account));
+}
+
+async function openAccountRecord(accountId) {
+  if (!accountId) return alert("Select or create an account first.");
+  state.returnCandidate = state.selected;
+  const data = await api(`/api/accounts/${accountId}`);
+  $("accountRecord").innerHTML = `
+    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
+    <h3>${fmt(data.account.account_name)}</h3>
+    <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span><span>${data.account.active ? "Active" : "Inactive"}</span></div>
+    <div class="record-actions"><button id="editAccountRecord" class="save">Save Account</button><button id="addMemberRecord">Add Member</button></div>
+    <div class="field-grid">
+      <label class="field">Account Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
+      <label class="field">Type<select id="recordAccountType">${optionSet(["individual","household","family","couple","organization","other"], data.account.account_type)}</select></label>
+      <label class="field wide">Admin Notes<input id="recordAccountNotes" value="${data.account.administrative_notes || ""}"></label>
+    </div>
+    <h4>Members</h4><div class="compact-list">${data.members.map(m => `<div><span>${fmt(m.display_name)} ${m.is_primary ? "(Primary)" : ""}</span><span>${fmt(m.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No members yet.</span>"}</div>
+    <h4>Billing</h4><div class="kv"><label>Default payer</label><span>${fmt(data.billing_party?.billing_name)}</span><label>Email</label><span>${fmt(data.billing_party?.billing_email)}</span><label>Phone</label><span>${fmt(data.billing_party?.billing_phone)}</span></div>
+    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No account-specific rates.</span>"}</div>
+    <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.raw_calendar_title)}</span><span>${money(centString(s.approved_rate_cents))}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
+  `;
+  if ($("returnFromAccount")) $("returnFromAccount").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
+  $("editAccountRecord").onclick = async () => {
+    await api(`/api/accounts/${accountId}`, { method: "POST", body: JSON.stringify({ account_name: $("recordAccountName").value, account_type: $("recordAccountType").value, administrative_notes: $("recordAccountNotes").value }) });
+    await openAccountRecord(accountId);
+    await loadClients();
+  };
+  if (location.hash !== "#clients") {
+    location.hash = "clients";
+    showClients();
+  }
+}
+
+async function loadPeople() {
+  const rows = await api(`/api/people?full=1&q=${encodeURIComponent($("peopleSearch").value || "")}`);
+  $("peopleRows").innerHTML = rows.map(row => `
+    <tr data-person="${row.person_id}">
+      <td>${fmt(row.person_code)}</td>
+      <td>${fmt(row.last_name)}</td>
+      <td>${fmt(row.first_name)}</td>
+      <td><span class="primary">${fmt(row.display_name)}</span></td>
+      <td>${fmt(row.accounts)}</td>
+      <td>${fmt(row.billing_for)}</td>
+      <td>${fmt(row.last_session)}</td>
+      <td>${fmt(row.active_status)}</td>
+    </tr>
+  `).join("");
+  document.querySelectorAll("#peopleRows tr").forEach(row => row.onclick = () => openPersonRecord(row.dataset.person));
+}
+
+function openPrimaryPersonRecord() {
+  const primary = state.participants.find(p => p.is_primary && p.person_id) || state.participants.find(p => p.person_id);
+  if (!primary) return alert("Select or create a person first.");
+  openPersonRecord(primary.person_id);
+}
+
+async function openPersonRecord(personId) {
+  state.returnCandidate = state.selected;
+  const data = await api(`/api/people/${personId}`);
+  $("personRecord").innerHTML = `
+    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
+    <h3>${fmt(data.person.display_name)}</h3>
+    <div class="meta"><span>${fmt(data.person.person_code)}</span><span>${fmt(data.person.active_status)}</span></div>
+    <div class="field-grid">
+      <label class="field">First Name<input id="recordFirstName" value="${data.person.first_name || ""}"></label>
+      <label class="field">Last Name<input id="recordLastName" value="${data.person.last_name || ""}"></label>
+      <label class="field">Preferred Name<input id="recordPreferredName" value="${data.person.preferred_name || ""}"></label>
+      <label class="field">Display Name<input id="recordDisplayName" value="${data.person.display_name || ""}"></label>
+      <label class="field">Email<input id="recordPersonEmail" value="${data.person.billing_email || ""}"></label>
+      <label class="field">Phone<input id="recordPersonPhone" value="${data.person.billing_phone || ""}"></label>
+      <label class="field wide">Admin Notes<input id="recordPersonNotes" value="${data.person.administrative_notes || ""}"></label>
+    </div>
+    <div class="record-actions"><button id="savePersonRecord" class="save">Save Person</button></div>
+    <h4>Accounts</h4><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)}</span><span>${fmt(a.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No accounts yet.</span>"}</div>
+    <h4>Billing Relationships</h4><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)}</span><span>${fmt(b.billing_email)}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
+    <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.raw_calendar_title)}</span><span>${money(centString(s.approved_rate_cents))}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
+  `;
+  if ($("returnFromPerson")) $("returnFromPerson").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
+  $("savePersonRecord").onclick = async () => {
+    await api(`/api/people/${personId}`, { method: "POST", body: JSON.stringify({
+      first_name: $("recordFirstName").value,
+      last_name: $("recordLastName").value,
+      preferred_name: $("recordPreferredName").value,
+      display_name: $("recordDisplayName").value,
+      billing_email: $("recordPersonEmail").value,
+      billing_phone: $("recordPersonPhone").value,
+      administrative_notes: $("recordPersonNotes").value,
+      active: true
+    }) });
+    await openPersonRecord(personId);
+    await loadPeople();
+  };
+  if (location.hash !== "#people") {
+    location.hash = "people";
+    showPeople();
+  }
+}
+["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? loadClients() : loadPeople(), 180)));
+$("newAccountBtn").onclick = async () => {
+  const name = prompt("Account name");
+  if (!name) return;
+  const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
+  await loadClients();
+  await openAccountRecord(account.account_id);
+};
+$("newPersonBtn").onclick = async () => {
+  const name = prompt("Person display name");
+  if (!name) return;
+  const person = await api("/api/people", { method: "POST", body: JSON.stringify({ display_name: name }) });
+  await loadPeople();
+  await openPersonRecord(person.person_id);
+};
+
 loadList();
 if (location.hash === "#rate-card") showRateCard();
+if (location.hash === "#clients" || location.pathname === "/clients") showClients();
+if (location.hash === "#people" || location.pathname === "/people") showPeople();
+window.addEventListener("beforeunload", event => {
+  if (state.dirty.size) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+
+function ruleExplanation(row) {
+  const scope = row.account_name ? `account ${row.account_name}` : row.display_name ? `person ${row.display_name}` : "everyone";
+  return `Applies to ${scope}; ${row.duration_minutes || "any"} minutes; ${serviceLabel(row.service_mode || row.rate_group || "any")}; ${timeLabel(row.time_category)}.`;
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[ch]));
+}

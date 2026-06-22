@@ -30,7 +30,12 @@ Read these files before making changes:
 5. `docs/RATE_RULES.md`
 6. `docs/REVIEW_WORKFLOW.md`
 7. `docs/CSV_EXPORTS.md`
-8. `docs/HANDOFF_TO_JORDANA_MAC.md`
+8. `docs/SECTION_LEVEL_SAVES.md`
+9. `docs/CLIENT_CODES.md`
+10. `docs/CLIENTS_AND_ACCOUNTS.md`
+11. `docs/PEOPLE.md`
+12. `docs/PRIVATE_DATA_TRANSFER.md`
+13. `docs/HANDOFF_TO_JORDANA_MAC.md`
 
 ## Verification
 
@@ -49,4 +54,11 @@ For remote sync work, verify:
 ```bash
 PYTHONPATH=app python -m jordana_invoice sync --dry-run
 PYTHONPATH=app python -m jordana_invoice sync-status
+```
+
+Before committing or pushing, run:
+
+```bash
+scripts/git_safety_check.sh
+scripts/privacy_check.sh
 ```

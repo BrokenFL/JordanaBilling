@@ -50,3 +50,17 @@ PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve
 ```
 
 It supports save without approval, approval validation, inline person/account/billing-party creation, and structured audit records.
+
+## Section-Level Saves
+
+The inspector order is:
+
+1. Calendar Evidence
+2. People and Relationship
+3. Session Details
+4. Review Checklist
+5. Session Actions
+
+Save Person, Save Relationship, Save Billing Details, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
+
+When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.

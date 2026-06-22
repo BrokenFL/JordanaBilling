@@ -13,8 +13,8 @@
         <nav>
           <a class="active" href="/review" id="reviewNav">Review Queue <span id="navNeeds" class="count">0</span></a>
           <a>Calendar Import</a>
-          <a>Clients & Accounts</a>
-          <a>People</a>
+          <a href="#" id="clientsNav">Clients & Accounts</a>
+          <a href="#" id="peopleNav">People</a>
           <a href="#" id="rateCardNav">Rate Card</a>
           <a>Sessions</a>
           <a>Invoices</a>
@@ -106,7 +106,13 @@
           </div>
           <form class="rate-form" id="rateRuleForm">
             <input name="amount" placeholder="Amount, e.g. 150.00" required />
-            <input name="duration_minutes" placeholder="Duration min" />
+            <select name="duration_minutes">
+              <option value="">Any length</option>
+              <option value="30">30 min</option>
+              <option value="45">45 min</option>
+              <option value="60">60 min</option>
+              <option value="90">90 min</option>
+            </select>
             <select name="service_mode">
               <option value="">Any service</option>
               <option value="phone">Phone</option>
@@ -120,15 +126,50 @@
               <option value="weekend">Weekend</option>
               <option value="weekend_evening">Weekend + Evening</option>
             </select>
+            <select name="applies_to" id="rateAppliesTo">
+              <option value="everyone">Everyone</option>
+              <option value="account">Specific Account</option>
+              <option value="person">Specific Person</option>
+            </select>
+            <input name="applies_to_search" id="rateAppliesSearch" placeholder="Account or person name" list="rateAppliesList" />
+            <datalist id="rateAppliesList"></datalist>
             <input name="effective_from" placeholder="Effective from YYYY-MM-DD" value="2026-01-01" />
             <button type="submit" class="save">Add Rate Rule</button>
           </form>
           <table class="review-table rate-table">
             <thead>
-              <tr><th>Amount</th><th>Duration</th><th>Service</th><th>Time Category</th><th>Account</th><th>Person</th><th>Effective</th></tr>
+              <tr><th>Amount</th><th>Duration</th><th>Service</th><th>Time Category</th><th>Applies To</th><th>Effective</th><th>Explanation</th></tr>
             </thead>
             <tbody id="rateRows"></tbody>
           </table>
+        </section>
+
+        <section class="crm-view" id="clientsView" hidden>
+          <div class="crm-header">
+            <div><h2>Clients & Accounts</h2><p>Households, individuals, billing setup, rates, and session history.</p></div>
+            <div class="crm-tools"><input id="clientSearch" type="search" placeholder="Search accounts..." /><button id="newAccountBtn" class="save">Create Account</button></div>
+          </div>
+          <div class="crm-layout">
+            <table class="review-table crm-table">
+              <thead><tr><th>Account Code</th><th>Account Name</th><th>Type</th><th>Primary Person</th><th>Members</th><th>Billing Party</th><th>Default Rate</th><th>Outstanding</th><th>Last Session</th><th>Status</th></tr></thead>
+              <tbody id="clientRows"></tbody>
+            </table>
+            <aside class="record-pane" id="accountRecord"><div class="empty-state">Open an account record.</div></aside>
+          </div>
+        </section>
+
+        <section class="crm-view" id="peopleView" hidden>
+          <div class="crm-header">
+            <div><h2>People</h2><p>Confirmed people, aliases, relationships, and billing contacts.</p></div>
+            <div class="crm-tools"><input id="peopleSearch" type="search" placeholder="Search people..." /><button id="newPersonBtn" class="save">Create Person</button></div>
+          </div>
+          <div class="crm-layout">
+            <table class="review-table crm-table people-table">
+              <thead><tr><th>Person Code</th><th>Last Name</th><th>First Name</th><th>Display Name</th><th>Accounts</th><th>Billing Party For</th><th>Last Session</th><th>Status</th></tr></thead>
+              <tbody id="peopleRows"></tbody>
+            </table>
+            <aside class="record-pane" id="personRecord"><div class="empty-state">Open a person record.</div></aside>
+          </div>
         </section>
       </main>
     </div>

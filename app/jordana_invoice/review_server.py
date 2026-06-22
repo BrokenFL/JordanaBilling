@@ -16,12 +16,21 @@ from .review_services import (
     create_person,
     create_rate_rule_from_payload,
     dashboard_status,
+    get_account_record,
+    get_person_record,
     get_review_candidate,
+    list_account_records,
+    list_people_records,
     list_review_candidates,
     list_rate_rules,
     mark_candidate,
     merge_people,
+    refresh_candidate_suggestions,
+    save_billing_section,
     save_interpretation,
+    save_person_section,
+    save_relationship_section,
+    save_session_draft,
     search_accounts,
     search_billing_parties,
     search_people,
@@ -43,6 +52,9 @@ def make_handler(database_path: str):
             parsed = urlparse(self.path)
             try:
                 if parsed.path in {"/", "/review"}:
+                    self.send_static("review.html")
+                    return
+                if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
                     self.send_static("review.html")
                     return
                 if parsed.path.startswith("/static/"):
@@ -71,10 +83,26 @@ def make_handler(database_path: str):
                     self.send_json(get_review_candidate(self.conn(), candidate_id))
                     return
                 if parsed.path == "/api/people":
-                    self.send_json(search_people(self.conn(), first(parse_qs(parsed.query), "q")))
+                    query = parse_qs(parsed.query)
+                    if first(query, "full") == "1":
+                        self.send_json(list_people_records(self.conn(), first(query, "q")))
+                    else:
+                        self.send_json(search_people(self.conn(), first(query, "q")))
+                    return
+                if parsed.path.startswith("/api/people/"):
+                    person_id = parsed.path.rsplit("/", 1)[-1]
+                    self.send_json(get_person_record(self.conn(), person_id))
                     return
                 if parsed.path == "/api/accounts":
-                    self.send_json(search_accounts(self.conn(), first(parse_qs(parsed.query), "q")))
+                    query = parse_qs(parsed.query)
+                    if first(query, "full") == "1":
+                        self.send_json(list_account_records(self.conn(), first(query, "q")))
+                    else:
+                        self.send_json(search_accounts(self.conn(), first(query, "q")))
+                    return
+                if parsed.path.startswith("/api/accounts/"):
+                    account_id = parsed.path.rsplit("/", 1)[-1]
+                    self.send_json(get_account_record(self.conn(), account_id))
                     return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(search_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
@@ -144,6 +172,22 @@ def make_handler(database_path: str):
                     action = parts[4] if len(parts) > 4 else "save"
                     if action == "save":
                         self.send_json(save_interpretation(self.conn(), candidate_id, data))
+                        return
+                    if action == "save-person":
+                        self.send_json(save_person_section(self.conn(), candidate_id, data))
+                        return
+                    if action == "save-relationship":
+                        self.send_json(save_relationship_section(self.conn(), candidate_id, data))
+                        return
+                    if action == "save-billing":
+                        self.send_json(save_billing_section(self.conn(), candidate_id, data))
+                        return
+                    if action == "save-session":
+                        self.send_json(save_session_draft(self.conn(), candidate_id, data))
+                        return
+                    if action == "refresh":
+                        refresh_candidate_suggestions(self.conn(), candidate_id)
+                        self.send_json(get_review_candidate(self.conn(), candidate_id))
                         return
                     if action == "approve":
                         self.send_json(approve_candidate(self.conn(), candidate_id, data))

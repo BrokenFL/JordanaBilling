@@ -47,6 +47,10 @@ The inspector supports:
 - personal/admin/nonbillable/duplicate marking
 - relationship editor for account members, roles, primary participant, and default payer
 - functional Rate Card section
+- independent Save Person, Save Relationship, Save Billing Details, and Save Session Draft buttons
+- Clients & Accounts list and account record
+- People list and person record
+- return link from CRM record back to the originating review item
 
 ## Future UI Work
 
@@ -55,7 +59,6 @@ The inspector supports:
 - explicit previous/next controls
 - audit history drawer
 - duplicate-link picker
-- rate-rule picker with rule explanations
-- full Clients & Accounts, People, and Rate Card pages
+- deeper rate-rule editing and deactivation controls
 
 The next build should keep this dense list plus inspector architecture.
