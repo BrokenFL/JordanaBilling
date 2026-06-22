@@ -86,3 +86,17 @@ Service mode aliases such as `Phone`, `Call`, `FaceTime`, `FT`, `Office`, `In Pe
 Ambiguous records must stay reversible. A future UI should show the raw event alongside the proposed interpretation.
 
 Multi-person shorthand such as `Fred + Bobsy` is only a participant candidate. It must not automatically create a permanent shared account or bill-to record without review.
+## Structured Title Compatibility
+
+Structured pipe titles are parsed before legacy shorthand:
+
+```text
+Full Name | Minutes | Session Type
+Full Name | Time | Minutes | Session Type
+Full Name | Time | Minutes | Session Type | Cancelled
+Full Name | Time | Minutes | Session Type | No Show
+```
+
+Legacy shorthand remains supported after structured parsing, including forms such as `Fred 830`, `Leah Grossman 630 30`, `Rebecca colon 630 90`, and `Bobsy and Fred 6`.
+
+Calendar start time remains authoritative. Optional title time is used only to create a warning when it disagrees exactly by hour/minute.

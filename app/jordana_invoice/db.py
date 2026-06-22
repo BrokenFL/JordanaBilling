@@ -70,6 +70,26 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS app_metadata (
+  metadata_key TEXT PRIMARY KEY,
+  metadata_value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS calendar_preferences (
+  calendar_preference_id TEXT PRIMARY KEY,
+  calendar_name TEXT NOT NULL UNIQUE,
+  disposition TEXT NOT NULL DEFAULT 'review_normally',
+  hidden_from_review INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'manual',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_preferences_disposition
+  ON calendar_preferences(disposition, hidden_from_review, active);
+
 CREATE TABLE IF NOT EXISTS calendar_event_candidates (
   id TEXT PRIMARY KEY,
   import_run_id TEXT NOT NULL REFERENCES import_runs(id),
@@ -106,11 +126,25 @@ CREATE TABLE IF NOT EXISTS calendar_event_candidates (
   time_category TEXT,
   is_evening INTEGER NOT NULL DEFAULT 0,
   is_weekend INTEGER NOT NULL DEFAULT 0,
+  appointment_status TEXT NOT NULL DEFAULT 'unresolved',
+  billing_treatment TEXT NOT NULL DEFAULT 'unresolved',
+  title_time_text TEXT,
+  title_time_normalized TEXT,
+  title_time_matches_calendar INTEGER,
+  calendar_disposition TEXT NOT NULL DEFAULT 'review_normally',
+  calendar_is_preferred_work INTEGER NOT NULL DEFAULT 0,
+  hidden_from_review INTEGER NOT NULL DEFAULT 0,
   reconciliation_status TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(import_run_id, candidate_key)
 );
+
+CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_candidate_key
+  ON calendar_event_candidates(candidate_key);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter
+  ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name);
 
 CREATE TABLE IF NOT EXISTS people (
   person_id TEXT PRIMARY KEY,
@@ -298,6 +332,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   rate_override_reason TEXT,
   billable_status TEXT NOT NULL DEFAULT 'proposed',
   payment_status TEXT NOT NULL DEFAULT 'unresolved',
+  appointment_status TEXT NOT NULL DEFAULT 'unresolved',
+  billing_treatment TEXT NOT NULL DEFAULT 'billable',
+  title_time_text TEXT,
+  title_time_normalized TEXT,
+  title_time_matches_calendar INTEGER,
+  calendar_name TEXT,
+  calendar_disposition TEXT NOT NULL DEFAULT 'review_normally',
+  calendar_is_preferred_work INTEGER NOT NULL DEFAULT 0,
+  hidden_from_review INTEGER NOT NULL DEFAULT 0,
   rate_cents_snapshot INTEGER,
   source_raw_snapshot_id TEXT NOT NULL REFERENCES raw_calendar_snapshots(id),
   raw_calendar_title TEXT,
@@ -427,6 +470,14 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "time_category": "TEXT",
             "is_evening": "INTEGER NOT NULL DEFAULT 0",
             "is_weekend": "INTEGER NOT NULL DEFAULT 0",
+            "appointment_status": "TEXT NOT NULL DEFAULT 'unresolved'",
+            "billing_treatment": "TEXT NOT NULL DEFAULT 'unresolved'",
+            "title_time_text": "TEXT",
+            "title_time_normalized": "TEXT",
+            "title_time_matches_calendar": "INTEGER",
+            "calendar_disposition": "TEXT NOT NULL DEFAULT 'review_normally'",
+            "calendar_is_preferred_work": "INTEGER NOT NULL DEFAULT 0",
+            "hidden_from_review": "INTEGER NOT NULL DEFAULT 0",
             "reconciliation_status": "TEXT",
         },
     )
@@ -469,11 +520,26 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "rate_needs_review": "INTEGER NOT NULL DEFAULT 1",
             "rate_override_reason": "TEXT",
             "payment_status": "TEXT NOT NULL DEFAULT 'unresolved'",
+            "appointment_status": "TEXT NOT NULL DEFAULT 'unresolved'",
+            "billing_treatment": "TEXT NOT NULL DEFAULT 'billable'",
+            "title_time_text": "TEXT",
+            "title_time_normalized": "TEXT",
+            "title_time_matches_calendar": "INTEGER",
+            "calendar_name": "TEXT",
+            "calendar_disposition": "TEXT NOT NULL DEFAULT 'review_normally'",
+            "calendar_is_preferred_work": "INTEGER NOT NULL DEFAULT 0",
+            "hidden_from_review": "INTEGER NOT NULL DEFAULT 0",
             "raw_calendar_title": "TEXT",
         },
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_payment_status ON sessions(payment_status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_candidate_key ON calendar_event_candidates(candidate_key)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name)"
     )
 
 

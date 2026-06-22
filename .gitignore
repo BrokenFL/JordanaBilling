@@ -1,6 +1,7 @@
 .env
 .DS_Store
 .venv/
+.playwright-cli/
 __pycache__/
 *.py[cod]
 *.sqlite3
@@ -8,6 +9,7 @@ __pycache__/
 logs/
 Reports/
 data/imports/
+data/backups/
 data/*.sqlite3
 data/*.sqlite3-*
 data/*acceptance_report*.md

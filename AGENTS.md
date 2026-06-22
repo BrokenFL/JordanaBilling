@@ -19,6 +19,12 @@ This project is a local-first billing normalization app for Jordana.
 - Routine review should use Participants and Bill to; backend accounts are advanced relationship support.
 - Every approved session must preserve the actual charged rate.
 - Joint participant rate exceptions must use person UUIDs, not display names.
+- The Shortcut imports all calendars; calendar source is a classification/filtering signal, not an ingestion filter.
+- `Jordana Work` is the preferred future work calendar when configured with `JORDANA_PREFERRED_WORK_CALENDAR`.
+- Appointment status is separate from review status, billable status, payment status, and future invoice status.
+- Cancelled and no-show appointments remain preserved and require a separate billing-treatment decision.
+- Calendar start time is authoritative; title time is validation evidence only.
+- Use only sanitized fictional records for demo data.
 - Before any GitHub push, run `scripts/git_safety_check.sh`.
 - Do not commit live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, or credentials.
 
@@ -40,6 +46,8 @@ Read these files before making changes:
 12. `docs/PRIVATE_DATA_TRANSFER.md`
 13. `docs/HANDOFF_TO_JORDANA_MAC.md`
 14. `docs/SCHEMA_AUDIT.md`
+15. `docs/CALENDAR_ENTRY_STANDARD.md`
+16. `docs/DEMO_DATA.md`
 
 ## Verification
 

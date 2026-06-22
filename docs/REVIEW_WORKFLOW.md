@@ -82,3 +82,28 @@ Save Participants, Save Bill To, and Save Session Draft are independent. None of
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.
 
 Calendar evidence remains read-only under View Calendar Evidence.
+## Calendar, Status, and Billing Treatment
+
+Routine review remains a confirmation form: Participants, Bill to, Duration, Session type, Time category, Suggested/editable rate, Payment status, and Approve.
+
+The review screen now also shows source calendar, calendar disposition, appointment-status badge, Calendar start time, parsed title time, original title, and title-time mismatch warnings.
+
+Cancelled and no-show appointments stay preserved and reviewable. They require a separate billing-treatment decision:
+
+- `billable`
+- `not_billable`
+- `waived`
+- `unresolved`
+
+This decision is not payment status. A no-charge cancelled appointment should be preserved instead of excluded/deleted.
+
+Calendar filters are:
+
+- normal review calendars
+- all calendars
+- preferred work calendar
+- other calendars
+- personal/admin calendars
+- hidden calendars
+
+Hidden records are recoverable through the intentional hidden-calendar filter.

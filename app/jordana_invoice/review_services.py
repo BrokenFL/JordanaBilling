@@ -7,6 +7,7 @@ import unicodedata
 from typing import Any
 
 from .backfill import backfill_phase2
+from .calendar_preferences import upsert_calendar_preference
 from .csv_reports import write_reports
 from .db import init_db
 from .rates import cents_to_dollars, dollars_to_cents, seed_rate_rule, suggest_rate
@@ -46,7 +47,11 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
     last_sync = conn.execute(
         "SELECT last_success_at FROM sync_state WHERE source_name = 'google_calendar_snapshots'"
     ).fetchone()
+    demo = conn.execute(
+        "SELECT metadata_value FROM app_metadata WHERE metadata_key = 'demo_mode'"
+    ).fetchone()
     return {
+        "demo_mode": bool(demo and demo["metadata_value"].lower() == "true"),
         "last_sync": last_sync["last_success_at"] if last_sync else "",
         "needs_review": sum(
             counts.get(status, 0)
@@ -69,6 +74,22 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def add_calendar_filter(filters: list[str], params: list[Any], calendar_filter: str, alias: str) -> None:
+    if calendar_filter == "preferred_work":
+        filters.append(f"COALESCE({alias}.calendar_is_preferred_work, 0) = 1")
+    elif calendar_filter == "other":
+        filters.append(f"COALESCE({alias}.calendar_is_preferred_work, 0) = 0")
+        filters.append(f"COALESCE({alias}.hidden_from_review, 0) = 0")
+    elif calendar_filter == "personal_admin":
+        filters.append(f"{alias}.calendar_disposition = 'usually_personal_admin'")
+    elif calendar_filter == "hidden":
+        filters.append(f"COALESCE({alias}.hidden_from_review, 0) = 1")
+    elif calendar_filter == "all":
+        return
+    else:
+        filters.append(f"COALESCE({alias}.hidden_from_review, 0) = 0")
+
+
 def list_review_candidates(
     conn: sqlite3.Connection,
     *,
@@ -77,6 +98,7 @@ def list_review_candidates(
     service_mode: str = "",
     time_category: str = "",
     payment_status: str = "",
+    calendar_filter: str = "",
     limit: int = 25,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -103,6 +125,10 @@ def list_review_candidates(
     if payment_status:
         filters.append("s.payment_status = ?")
         params.append(payment_status)
+    if calendar_filter:
+        add_calendar_filter(filters, params, calendar_filter, "s")
+    else:
+        filters.append("COALESCE(s.hidden_from_review, 0) = 0")
     where = "WHERE " + " AND ".join(filters) if filters else ""
     session_total = conn.execute(
         f"""
@@ -125,10 +151,19 @@ def list_review_candidates(
           s.service_mode,
           s.time_category,
           s.payment_status,
+          s.appointment_status,
+          s.billing_treatment,
           s.review_status,
           s.raw_calendar_title,
           s.suggested_rate_cents,
           s.approved_rate_cents,
+          s.calendar_name,
+          s.calendar_disposition,
+          s.calendar_is_preferred_work,
+          s.hidden_from_review,
+          s.title_time_text,
+          s.title_time_normalized,
+          s.title_time_matches_calendar,
           c.classification,
           c.confidence,
           c.candidate_person_names,
@@ -145,7 +180,7 @@ def list_review_candidates(
         (*params, limit, offset),
     ).fetchall()
     items = [row_summary(conn, row) for row in rows]
-    candidate_only = list_candidate_only_rows(conn, query=query, review_status=review_status)
+    candidate_only = list_candidate_only_rows(conn, query=query, review_status=review_status, calendar_filter=calendar_filter)
     if offset == 0:
         items.extend(candidate_only[: max(0, limit - len(items))])
     return {
@@ -218,6 +253,15 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "service_mode": row["service_mode"] or "unknown",
         "time_category": row["time_category"] or "standard",
         "payment_status": row["payment_status"] or "unresolved",
+        "appointment_status": row["appointment_status"] or "unresolved",
+        "billing_treatment": row["billing_treatment"] or "unresolved",
+        "calendar_name": row["calendar_name"] or "",
+        "calendar_disposition": row["calendar_disposition"] or "review_normally",
+        "calendar_is_preferred_work": bool(row["calendar_is_preferred_work"]),
+        "hidden_from_review": bool(row["hidden_from_review"]),
+        "title_time_text": row["title_time_text"] or "",
+        "title_time_normalized": row["title_time_normalized"] or "",
+        "title_time_matches_calendar": row["title_time_matches_calendar"],
         "rate": cents_to_dollars(row["approved_rate_cents"] or row["suggested_rate_cents"]),
         "confidence": round(float(row["confidence"] or 0) * 100),
         "classification": row["classification"],
@@ -229,6 +273,7 @@ def list_candidate_only_rows(
     conn: sqlite3.Connection,
     query: str = "",
     review_status: str = "",
+    calendar_filter: str = "",
 ) -> list[dict[str, Any]]:
     filters = [
         "c.id NOT IN (SELECT candidate_id FROM sessions)",
@@ -242,6 +287,10 @@ def list_candidate_only_rows(
     if review_status:
         filters.append("c.review_status = ?")
         params.append(review_status)
+    if calendar_filter:
+        add_calendar_filter(filters, params, calendar_filter, "c")
+    else:
+        filters.append("COALESCE(c.hidden_from_review, 0) = 0")
     rows = conn.execute(
         f"""
         SELECT c.*, r.calendar_name
@@ -271,6 +320,15 @@ def candidate_only_summary(row: sqlite3.Row) -> dict[str, Any]:
         "service_mode": row["service_mode"] or "unknown",
         "time_category": row["time_category"] or "standard",
         "payment_status": "not_billable",
+        "appointment_status": row["appointment_status"] or "unresolved",
+        "billing_treatment": row["billing_treatment"] or "not_billable",
+        "calendar_name": row["calendar_name"] or "",
+        "calendar_disposition": row["calendar_disposition"] or "review_normally",
+        "calendar_is_preferred_work": bool(row["calendar_is_preferred_work"]),
+        "hidden_from_review": bool(row["hidden_from_review"]),
+        "title_time_text": row["title_time_text"] or "",
+        "title_time_normalized": row["title_time_normalized"] or "",
+        "title_time_matches_calendar": row["title_time_matches_calendar"],
         "rate": "",
         "confidence": round(float(row["confidence"] or 0) * 100),
         "classification": row["classification"],
@@ -303,6 +361,14 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
         "service_mode": row["service_mode"] or "unknown",
         "time_category": row["time_category"] or "standard",
         "payment_status": "not_billable",
+        "appointment_status": row["appointment_status"] or "unresolved",
+        "billing_treatment": row["billing_treatment"] or "not_billable",
+        "title_time_text": row["title_time_text"] or "",
+        "title_time_normalized": row["title_time_normalized"] or "",
+        "title_time_matches_calendar": row["title_time_matches_calendar"],
+        "calendar_disposition": row["calendar_disposition"] or "review_normally",
+        "calendar_is_preferred_work": bool(row["calendar_is_preferred_work"]),
+        "hidden_from_review": bool(row["hidden_from_review"]),
         "review_status": row["review_status"],
         "classification": row["classification"],
         "confidence": row["confidence"],
@@ -342,6 +408,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
+    billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
     rate_override_reason = payload.get("rate_override_reason") or None
     rate_scope = payload.get("rate_scope") or "session_only"
     approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
@@ -394,6 +461,8 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
         time_category=time_category,
         approved_rate_cents=approved_rate_cents,
         payment_status=payment_status,
+        appointment_status=session["appointment_status"],
+        billing_treatment=billing_treatment,
     )
     review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
     conn.execute(
@@ -414,6 +483,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             rate_override_reason = ?,
             payment_status = ?,
             billable_status = ?,
+            billing_treatment = ?,
             review_status = ?,
             updated_at = ?
         WHERE id = ?
@@ -434,6 +504,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             rate_override_reason,
             payment_status,
             billable_status,
+            billing_treatment,
             review_status,
             now,
             session_id,
@@ -468,6 +539,8 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
         time_category=session["time_category"],
         approved_rate_cents=session["approved_rate_cents"],
         payment_status=session["payment_status"],
+        appointment_status=session["appointment_status"],
+        billing_treatment=session["billing_treatment"],
     )
     if unresolved:
         raise ValueError("Cannot approve until required fields are complete: " + ", ".join(unresolved))
@@ -603,6 +676,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
+    billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
     rate_scope = payload.get("rate_scope") or "session_only"
     approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
     conn.execute(
@@ -621,6 +695,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             rate_override_reason = ?,
             payment_status = ?,
             billable_status = ?,
+            billing_treatment = ?,
             updated_at = ?
         WHERE id = ?
         """,
@@ -638,6 +713,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             payload.get("rate_override_reason") or None,
             payment_status,
             billable_status,
+            billing_treatment,
             now,
             session["id"],
         ),
@@ -1455,6 +1531,8 @@ def refresh_candidate_suggestions(
         time_category=refreshed["time_category"],
         approved_rate_cents=refreshed["approved_rate_cents"],
         payment_status=refreshed["payment_status"],
+        appointment_status=refreshed["appointment_status"],
+        billing_treatment=refreshed["billing_treatment"],
     )
     review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
     conn.execute(
@@ -1730,6 +1808,8 @@ def unresolved_from_values(**values: Any) -> list[str]:
         unresolved.append("time_category")
     if values["approved_rate_cents"] is None:
         unresolved.append("approved_rate_cents")
+    if values.get("appointment_status") in {"cancelled", "no_show"} and values.get("billing_treatment") in {"", None, "unresolved"}:
+        unresolved.append("billing_treatment")
     if not values["payment_status"] or values["payment_status"] == "unresolved":
         unresolved.append("payment_status")
     return unresolved
@@ -1744,6 +1824,8 @@ def status_from_unresolved(unresolved: list[str]) -> str:
         return "needs_service_mode"
     if "approved_rate_cents" in unresolved:
         return "needs_rate"
+    if "billing_treatment" in unresolved:
+        return "needs_billing_treatment"
     if "payment_status" in unresolved:
         return "needs_payment_status"
     return "needs_review"

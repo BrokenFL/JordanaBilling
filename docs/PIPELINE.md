@@ -125,3 +125,20 @@ After June normalization has been reviewed:
 - Add client rates
 - Approve session rows
 - Only then build invoice generation
+## Calendar Classification Update
+
+The Shortcut remains all-calendar intake. The existing payload/header field `calendar` maps to SQLite `calendar_name`; do not add a duplicate calendar-name payload key.
+
+`JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work` is optional. When present, that calendar raises work-session confidence but does not auto-approve or guarantee billability. Other calendars are still imported and preserved.
+
+Calendar preferences live in SQLite `calendar_preferences` and support `preferred_work`, `review_normally`, `usually_personal_admin`, and `hidden`.
+
+Hidden means hidden from the normal review queue only. Raw snapshots, event versions, audit records, and manual recovery remain available.
+
+Candidate collapse now prefers stable identity in this order:
+
+1. `calendar_event_id`
+2. `event_fingerprint`
+3. fallback title/start/end/calendar evidence
+
+Later title corrections, cancellations, time moves, or calendar moves update the current candidate/session while preserving every raw snapshot version.

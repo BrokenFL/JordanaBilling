@@ -19,6 +19,7 @@ async function loadList() {
     review_status: $("statusFilter").value,
     service_mode: $("serviceFilter").value,
     time_category: $("timeFilter").value,
+    calendar_filter: $("calendarFilter").value,
     limit: state.limit,
     offset: state.offset
   });
@@ -30,6 +31,7 @@ async function loadList() {
 }
 
 function renderStatus(s) {
+  $("demoBanner").hidden = !s.demo_mode;
   $("lastSync").textContent = s.last_sync ? new Date(s.last_sync).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
   $("needsReview").textContent = s.needs_review;
   $("navNeeds").textContent = s.needs_review;
@@ -82,10 +84,11 @@ function renderInspector(data) {
     <div class="inspector-header">
       <div>
         <h2>${fmt(s.raw_calendar_title || s.title)}</h2>
-        <div class="meta"><span>${fmt(s.session_date)}</span><span>${fmt(startRange(s))}</span><span>${fmt(s.duration_minutes)} min</span></div>
+        <div class="meta"><span>${fmt(s.session_date)}</span><span>${fmt(startRange(s))}</span><span>${fmt(s.duration_minutes)} min</span><span>${calendarLabel(s)}</span><span>${appointmentBadge(s.appointment_status)}</span></div>
       </div>
       <div><span class="badge">${fmt(s.review_status).replaceAll("_", " ")}</span><div class="confidence ${Math.round((s.confidence || 0) * 100) >= 90 ? "good" : "low"}">Confidence: ${Math.round((s.confidence || 0) * 100)}%</div></div>
     </div>
+    ${titleTimeWarning(s)}
 
     <section class="section">
       <details>
@@ -93,8 +96,10 @@ function renderInspector(data) {
       <div class="kv">
         <label>Raw Title</label><strong>${fmt(s.raw_calendar_title || s.title)}</strong>
         <label>Calendar</label><span>${fmt(s.calendar_name)}</span>
+        <label>Calendar Disposition</label><span>${calendarDispositionLabel(s.calendar_disposition)}</span>
         <label>Original Start</label><span>${fmt(s.start_at)}</span>
         <label>Original End</label><span>${fmt(s.end_at)}</span>
+        <label>Parsed Title Time</label><span>${fmt(s.title_time_text)} ${s.title_time_normalized ? `(${s.title_time_normalized})` : ""}</span>
         <label>Calendar Duration</label><span>${fmt(s.calendar_duration_minutes || s.duration_minutes)} minutes</span>
         <label>Notes</label><span>${fmt(s.notes)}</span>
         <label>Captured</label><span>${fmt(s.captured_at)}</span>
@@ -139,6 +144,7 @@ function renderInspector(data) {
         <label class="field">Suggested Rate<span class="help">${rateSourceDescription(s, data.participants)}</span><input id="suggestedRateInput" value="${centString(s.suggested_rate_cents)}"></label>
         <label class="field">Suggested/editable rate<span class="help">The final amount saved for this session.</span><input id="approvedRateInput" value="${centString(s.approved_rate_cents || s.suggested_rate_cents)}"></label>
         <label class="field">Payment Status<span class="help">Whether payment has already been received.</span><select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
+        <label class="field">Cancellation/No-Show Billing<span class="help">Separate billing decision for cancelled or no-show appointments.</span><select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>
         <label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label>
         <label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>
       </div>
@@ -207,7 +213,7 @@ function wireInspector() {
   $("personalBtn").onclick = () => mark("personal");
   $("duplicateBtn").onclick = () => mark("duplicate");
   $("excludeBtn").onclick = () => mark("nonbillable");
-  ["durationInput","serviceInput","timeCategoryInput","suggestedRateInput","approvedRateInput","paymentInput","billableInput","overrideReasonInput"].forEach(id => $(id).addEventListener("input", () => markDirty("session")));
+  ["durationInput","serviceInput","timeCategoryInput","suggestedRateInput","approvedRateInput","paymentInput","billingTreatmentInput","billableInput","overrideReasonInput"].forEach(id => $(id).addEventListener("input", () => markDirty("session")));
   $("accountInput").addEventListener("input", () => markDirty("relationship"));
   $("billingInput").addEventListener("input", () => markDirty("billing"));
 }
@@ -556,6 +562,7 @@ function collectSessionDraftValues() {
     suggested_rate: $("suggestedRateInput")?.value || "",
     approved_rate: $("approvedRateInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
+    billing_treatment: $("billingTreatmentInput")?.value || "",
     billable_status: $("billableInput")?.value || "",
     rate_override_reason: $("overrideReasonInput")?.value || ""
   };
@@ -569,6 +576,7 @@ function restoreSessionDraftValues(values) {
   if ($("suggestedRateInput")) $("suggestedRateInput").value = values.suggested_rate;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
   if ($("paymentInput")) $("paymentInput").value = values.payment_status;
+  if ($("billingTreatmentInput")) $("billingTreatmentInput").value = values.billing_treatment;
   if ($("billableInput")) $("billableInput").value = values.billable_status;
   if ($("overrideReasonInput")) $("overrideReasonInput").value = values.rate_override_reason;
 }
@@ -598,6 +606,7 @@ function collectPayload() {
     suggested_rate: $("suggestedRateInput").value,
     approved_rate: $("approvedRateInput").value,
     payment_status: $("paymentInput").value,
+    billing_treatment: $("billingTreatmentInput").value,
     billable_status: $("billableInput").value,
     rate_override_reason: $("overrideReasonInput").value,
     rate_scope: document.querySelector("input[name='rateScope']:checked")?.value || "session_only",
@@ -643,7 +652,7 @@ function safeList(raw) { try { return Array.isArray(raw) ? raw : JSON.parse(raw 
 function startRange(s) { return `${(s.start_at || "").split("T")[1]?.slice(0,5) || ""} - ${(s.end_at || "").split("T")[1]?.slice(0,5) || ""}`; }
 function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
 
-["searchBox","statusFilter","serviceFilter","timeFilter"].forEach(id => $(id).addEventListener("input", () => { state.offset = 0; loadList(); }));
+["searchBox","statusFilter","serviceFilter","timeFilter","calendarFilter"].forEach(id => $(id).addEventListener("input", () => { state.offset = 0; loadList(); }));
 $("prevPage").onclick = () => { state.offset = Math.max(0, state.offset - state.limit); loadList(); };
 $("nextPage").onclick = () => { state.offset += state.limit; loadList(); };
 document.getElementById("rateCardNav").onclick = (event) => {
@@ -906,6 +915,26 @@ function rateSourceDescription(session, participants = []) {
   if (source === "manual_override") return "Manually changed for this session";
   if (session.duration_minutes) return `Default ${session.duration_minutes}-minute rate`;
   return "Default rate";
+}
+
+function appointmentBadge(status) {
+  const labels = {scheduled:"Scheduled", completed:"Completed", cancelled:"Cancelled", no_show:"No Show", unresolved:"Status unresolved"};
+  return labels[status] || labels.unresolved;
+}
+
+function calendarLabel(session) {
+  if (session.calendar_is_preferred_work) return `${fmt(session.calendar_name)} · preferred work`;
+  if (session.hidden_from_review) return `${fmt(session.calendar_name)} · hidden`;
+  return fmt(session.calendar_name);
+}
+
+function calendarDispositionLabel(value) {
+  return ({preferred_work:"Preferred work calendar", review_normally:"Review normally", usually_personal_admin:"Usually personal/admin", hidden:"Hidden from normal review"}[value] || "Review normally");
+}
+
+function titleTimeWarning(session) {
+  if (session.title_time_matches_calendar !== 0) return "";
+  return `<div class="warning">Title time ${fmt(session.title_time_text)} does not match Calendar start ${fmt(startRange(session).split(" - ")[0])}. Calendar start remains authoritative.</div>`;
 }
 
 function escapeHtml(value) {

@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
+from .calendar_preferences import CalendarDisposition, classify_calendar
 from .db import init_db
 from .parser import ParseResult, parse_event
 from .rates import suggest_rate
@@ -196,7 +197,7 @@ def snapshot_exists(conn: sqlite3.Connection, snapshot_key: str) -> bool:
 
 
 def normalize_raw_row(row: dict[str, object]) -> dict[str, str]:
-    normalized = {key: text(value) for key, value in row.items()}
+    normalized = {RAW_HEADER_MAP.get(key, key): text(value) for key, value in row.items()}
     raw_json = normalized.get("raw_json")
     if raw_json:
         try:
@@ -228,11 +229,12 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
         (import_run_id,),
     ).fetchall()
 
-    groups: dict[str, list[sqlite3.Row]] = defaultdict(list)
+    keys: set[str] = set()
     for row in rows:
-        groups[candidate_key(row)].append(row)
+        keys.add(candidate_key(row))
 
-    for key, group in groups.items():
+    for key in sorted(keys):
+        group = raw_snapshots_for_candidate_key(conn, key)
         latest = sorted(
             group,
             key=lambda r: (
@@ -242,6 +244,8 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
             ),
         )[-1]
         parse_result = parse_event(dict(latest))
+        calendar_disposition = classify_calendar(conn, latest["calendar_name"])
+        parse_result = apply_calendar_signal(parse_result, calendar_disposition)
         candidate_id = insert_candidate(
             conn,
             import_run_id,
@@ -249,6 +253,7 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
             latest,
             group,
             parse_result,
+            calendar_disposition,
         )
         inserted_session = maybe_insert_session(conn, candidate_id, latest, parse_result)
         if not inserted_session:
@@ -256,15 +261,46 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
 
 
 def candidate_key(row: sqlite3.Row) -> str:
+    calendar_event_id = text(row["calendar_event_id"])
+    if calendar_event_id:
+        return stable_hash(f"calendar_event_id:{calendar_event_id}")
+    event_fingerprint = text(row["event_fingerprint"])
+    if event_fingerprint:
+        return stable_hash(f"event_fingerprint:{event_fingerprint}")
     stable_parts = [
-        text(row["calendar_event_id"]),
-        text(row["event_fingerprint"]),
         text(row["event_title"]).lower(),
         text(row["start_at"]),
         text(row["end_at"]),
+        text(row["calendar_name"]).lower(),
     ]
-    meaningful = [part for part in stable_parts if part]
-    return stable_hash("|".join(meaningful))
+    return stable_hash("|".join(part for part in stable_parts if part))
+
+
+def raw_snapshots_for_candidate_key(conn: sqlite3.Connection, key: str) -> list[sqlite3.Row]:
+    rows = conn.execute(
+        """
+        SELECT * FROM raw_calendar_snapshots
+        ORDER BY start_at, captured_at, source_row_number
+        """
+    ).fetchall()
+    return [row for row in rows if candidate_key(row) == key]
+
+
+def apply_calendar_signal(result: ParseResult, disposition: CalendarDisposition) -> ParseResult:
+    if disposition.disposition == "preferred_work" and result.classification == "client_session":
+        result.confidence = min(0.96, result.confidence + 0.04)
+        result.explanation = f"{result.explanation} Source calendar is the preferred work calendar."
+    elif disposition.disposition in {"usually_personal_admin", "hidden"}:
+        if result.classification == "unresolved":
+            result.classification = "personal"
+            result.confidence = max(result.confidence, 0.58)
+            result.explanation = "Source calendar is usually personal/admin; preserved for review."
+            result.fields_requiring_review = sorted(set(result.fields_requiring_review + ["classification"]))
+        elif result.classification == "client_session":
+            result.confidence = max(0.2, result.confidence - 0.12)
+            result.fields_requiring_review = sorted(set(result.fields_requiring_review + ["calendar_source"]))
+            result.explanation = f"{result.explanation} Source calendar is usually personal/admin."
+    return result
 
 
 def insert_candidate(
@@ -274,11 +310,118 @@ def insert_candidate(
     latest: sqlite3.Row,
     group: list[sqlite3.Row],
     result: ParseResult,
+    calendar_disposition: CalendarDisposition,
 ) -> str:
     now = now_iso()
-    candidate_id = new_id()
     windows = sorted({text(row["capture_window"]) for row in group if text(row["capture_window"])})
     review_status = review_status_for_parse(result)
+    existing = conn.execute(
+        """
+        SELECT id, review_status
+        FROM calendar_event_candidates
+        WHERE candidate_key = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (key,),
+    ).fetchone()
+    if existing:
+        candidate_id = existing["id"]
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET import_run_id = ?,
+                latest_raw_snapshot_id = ?,
+                raw_snapshot_count = ?,
+                title = ?,
+                start_at = ?,
+                end_at = ?,
+                calendar_duration_minutes = ?,
+                calendar_name = ?,
+                capture_windows = ?,
+                classification = ?,
+                confidence = ?,
+                explanation = ?,
+                fields_requiring_review = ?,
+                proposed_client_name = ?,
+                proposed_start_at = ?,
+                proposed_duration_minutes = ?,
+                proposed_end_at = ?,
+                time_shorthand = ?,
+                duration_source = ?,
+                parser_payload = ?,
+                review_status = CASE WHEN review_status = 'approved' THEN review_status ELSE ? END,
+                confidence_label = ?,
+                unresolved_fields = ?,
+                review_reasons = ?,
+                candidate_person_names = ?,
+                possible_referenced_person = ?,
+                service_mode = ?,
+                rate_group = ?,
+                time_category = ?,
+                is_evening = ?,
+                is_weekend = ?,
+                appointment_status = ?,
+                billing_treatment = ?,
+                title_time_text = ?,
+                title_time_normalized = ?,
+                title_time_matches_calendar = ?,
+                calendar_disposition = ?,
+                calendar_is_preferred_work = ?,
+                hidden_from_review = ?,
+                reconciliation_status = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                import_run_id,
+                latest["id"],
+                len(group),
+                latest["event_title"],
+                latest["start_at"],
+                latest["end_at"],
+                result.calendar_duration_minutes,
+                latest["calendar_name"],
+                json_dumps(windows),
+                result.classification,
+                result.confidence,
+                result.explanation,
+                json_dumps(result.fields_requiring_review),
+                result.proposed_client_name,
+                result.proposed_start_at,
+                result.proposed_duration_minutes,
+                result.proposed_end_at,
+                result.time_shorthand,
+                result.duration_source,
+                json_dumps(result.as_dict()),
+                review_status,
+                result.confidence_label,
+                json_dumps(result.unresolved_fields),
+                json_dumps(result.review_reasons),
+                json_dumps(result.candidate_person_names),
+                result.possible_referenced_person,
+                result.service_mode,
+                result.rate_group,
+                result.time_category,
+                1 if result.is_evening else 0,
+                1 if result.is_weekend else 0,
+                result.appointment_status,
+                initial_billing_treatment(result),
+                result.title_time_text,
+                result.title_time_normalized,
+                bool_to_db(result.title_time_matches_calendar),
+                calendar_disposition.disposition,
+                1 if calendar_disposition.is_preferred_work else 0,
+                1 if calendar_disposition.hidden_from_review else 0,
+                reconciliation_status(conn, latest, result),
+                now,
+                candidate_id,
+            ),
+        )
+        audit(conn, "calendar_event_candidate", candidate_id, "updated_from_calendar_snapshot", result.as_dict())
+        return candidate_id
+
+    candidate_id = new_id()
 
     conn.execute(
         """
@@ -292,10 +435,13 @@ def insert_candidate(
           review_status, confidence_label, unresolved_fields, review_reasons,
           candidate_person_names, possible_referenced_person, service_mode,
           rate_group, time_category, is_evening, is_weekend,
+          appointment_status, billing_treatment, title_time_text,
+          title_time_normalized, title_time_matches_calendar,
+          calendar_disposition, calendar_is_preferred_work, hidden_from_review,
           reconciliation_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
+        candidate_values(
             candidate_id,
             import_run_id,
             key,
@@ -329,6 +475,14 @@ def insert_candidate(
             result.time_category,
             1 if result.is_evening else 0,
             1 if result.is_weekend else 0,
+            result.appointment_status,
+            initial_billing_treatment(result),
+            result.title_time_text,
+            result.title_time_normalized,
+            bool_to_db(result.title_time_matches_calendar),
+            calendar_disposition.disposition,
+            1 if calendar_disposition.is_preferred_work else 0,
+            1 if calendar_disposition.hidden_from_review else 0,
             reconciliation_status(conn, latest, result),
             now,
             now,
@@ -336,6 +490,114 @@ def insert_candidate(
     )
     audit(conn, "calendar_event_candidate", candidate_id, "parsed", result.as_dict())
     return candidate_id
+
+
+def candidate_values(
+    candidate_id: str,
+    import_run_id: str,
+    key: str,
+    latest_id: str,
+    group_count: int,
+    title: str,
+    start_at: str,
+    end_at: str,
+    calendar_duration_minutes: int | None,
+    calendar_name: str,
+    capture_windows: str,
+    classification: str,
+    confidence: float,
+    explanation: str,
+    fields_requiring_review: str,
+    proposed_client_name: str | None,
+    proposed_start_at: str | None,
+    proposed_duration_minutes: int | None,
+    proposed_end_at: str | None,
+    time_shorthand: str | None,
+    duration_source: str | None,
+    parser_payload: str,
+    review_status: str,
+    confidence_label: str,
+    unresolved_fields: str,
+    review_reasons: str,
+    candidate_person_names: str,
+    possible_referenced_person: str | None,
+    service_mode: str,
+    rate_group: str | None,
+    time_category: str,
+    is_evening: int,
+    is_weekend: int,
+    appointment_status: str,
+    billing_treatment: str,
+    title_time_text: str | None,
+    title_time_normalized: str | None,
+    title_time_matches_calendar: int | None,
+    calendar_disposition: str,
+    calendar_is_preferred_work: int,
+    hidden_from_review: int,
+    reconciliation_status_value: str,
+    created_at: str,
+    updated_at: str,
+) -> tuple:
+    return (
+        candidate_id,
+        import_run_id,
+        key,
+        latest_id,
+        group_count,
+        title,
+        start_at,
+        end_at,
+        calendar_duration_minutes,
+        calendar_name,
+        capture_windows,
+        classification,
+        confidence,
+        explanation,
+        fields_requiring_review,
+        proposed_client_name,
+        proposed_start_at,
+        proposed_duration_minutes,
+        proposed_end_at,
+        time_shorthand,
+        duration_source,
+        parser_payload,
+        review_status,
+        confidence_label,
+        unresolved_fields,
+        review_reasons,
+        candidate_person_names,
+        possible_referenced_person,
+        service_mode,
+        rate_group,
+        time_category,
+        is_evening,
+        is_weekend,
+        appointment_status,
+        billing_treatment,
+        title_time_text,
+        title_time_normalized,
+        title_time_matches_calendar,
+        calendar_disposition,
+        calendar_is_preferred_work,
+        hidden_from_review,
+        reconciliation_status_value,
+        created_at,
+        updated_at,
+    )
+
+
+def bool_to_db(value: bool | None) -> int | None:
+    if value is None:
+        return None
+    return 1 if value else 0
+
+
+def initial_billing_treatment(result: ParseResult) -> str:
+    if result.appointment_status in {"cancelled", "no_show"}:
+        return "unresolved"
+    if result.classification == "client_session":
+        return "billable"
+    return "not_billable"
 
 
 def maybe_insert_session(
@@ -349,7 +611,6 @@ def maybe_insert_session(
     if not result.proposed_start_at or not result.proposed_duration_minutes:
         return False
     now = now_iso()
-    session_id = new_id()
     session_date = result.proposed_start_at[:10]
     rate = suggest_rate(
         conn,
@@ -361,6 +622,102 @@ def maybe_insert_session(
     )
     unresolved_fields = unresolved_fields_for_session(result, rate.rate_needs_review)
     review_status = review_status_for_parse(result, rate.rate_needs_review)
+    existing = conn.execute(
+        "SELECT * FROM sessions WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    candidate = conn.execute(
+        """
+        SELECT calendar_disposition, calendar_is_preferred_work, hidden_from_review
+        FROM calendar_event_candidates
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    billing_treatment = initial_billing_treatment(result)
+    if existing:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET proposed_client_name = ?,
+                session_date = ?,
+                start_at = ?,
+                end_at = ?,
+                calendar_duration_minutes = ?,
+                parsed_duration_minutes = ?,
+                duration_minutes = CASE WHEN review_status = 'approved' THEN duration_minutes ELSE ? END,
+                service_mode = CASE WHEN review_status = 'approved' THEN service_mode ELSE ? END,
+                rate_group = CASE WHEN review_status = 'approved' THEN rate_group ELSE ? END,
+                time_category = CASE WHEN review_status = 'approved' THEN time_category ELSE ? END,
+                is_evening = ?,
+                is_weekend = ?,
+                suggested_rate_cents = CASE WHEN review_status = 'approved' THEN suggested_rate_cents ELSE ? END,
+                rate_rule_id = CASE WHEN review_status = 'approved' THEN rate_rule_id ELSE ? END,
+                rate_source = CASE WHEN review_status = 'approved' THEN rate_source ELSE ? END,
+                rate_needs_review = CASE WHEN review_status = 'approved' THEN rate_needs_review ELSE ? END,
+                source_raw_snapshot_id = ?,
+                raw_calendar_title = ?,
+                review_status = CASE WHEN review_status = 'approved' THEN review_status ELSE ? END,
+                appointment_status = ?,
+                billing_treatment = CASE
+                  WHEN review_status = 'approved' THEN billing_treatment
+                  WHEN ? IN ('cancelled', 'no_show') THEN ?
+                  WHEN billing_treatment != 'unresolved' THEN billing_treatment
+                  ELSE ?
+                END,
+                title_time_text = ?,
+                title_time_normalized = ?,
+                title_time_matches_calendar = ?,
+                calendar_name = ?,
+                calendar_disposition = ?,
+                calendar_is_preferred_work = ?,
+                hidden_from_review = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                result.proposed_client_name,
+                session_date,
+                result.proposed_start_at,
+                result.proposed_end_at,
+                result.calendar_duration_minutes,
+                result.proposed_duration_minutes,
+                result.proposed_duration_minutes,
+                result.service_mode,
+                result.rate_group,
+                result.time_category,
+                1 if result.is_evening else 0,
+                1 if result.is_weekend else 0,
+                rate.suggested_rate_cents,
+                rate.rate_rule_id,
+                rate.rate_source,
+                1 if rate.rate_needs_review else 0,
+                latest["id"],
+                latest["event_title"],
+                review_status,
+                result.appointment_status,
+                result.appointment_status,
+                billing_treatment,
+                billing_treatment,
+                result.title_time_text,
+                result.title_time_normalized,
+                bool_to_db(result.title_time_matches_calendar),
+                latest["calendar_name"],
+                candidate["calendar_disposition"] if candidate else "review_normally",
+                candidate["calendar_is_preferred_work"] if candidate else 0,
+                candidate["hidden_from_review"] if candidate else 0,
+                now,
+                existing["id"],
+            ),
+        )
+        if existing["review_status"] != "approved":
+            conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
+            insert_session_participants(conn, existing["id"], result)
+        maybe_insert_review_item(conn, candidate_id, existing["id"], result, unresolved_fields, review_status)
+        audit(conn, "session", existing["id"], "updated_from_calendar_snapshot", result.as_dict())
+        return True
+
+    session_id = new_id()
     conn.execute(
         """
         INSERT INTO sessions (
@@ -370,8 +727,11 @@ def maybe_insert_session(
           time_category, is_evening, is_weekend, suggested_rate_cents,
           rate_rule_id, rate_source, rate_needs_review, source_raw_snapshot_id,
           raw_calendar_title, review_status, billable_status, payment_status,
+          appointment_status, billing_treatment, title_time_text,
+          title_time_normalized, title_time_matches_calendar, calendar_name,
+          calendar_disposition, calendar_is_preferred_work, hidden_from_review,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -398,6 +758,15 @@ def maybe_insert_session(
             review_status,
             "proposed",
             "unresolved",
+            result.appointment_status,
+            billing_treatment,
+            result.title_time_text,
+            result.title_time_normalized,
+            bool_to_db(result.title_time_matches_calendar),
+            latest["calendar_name"],
+            candidate["calendar_disposition"] if candidate else "review_normally",
+            candidate["calendar_is_preferred_work"] if candidate else 0,
+            candidate["hidden_from_review"] if candidate else 0,
             now,
             now,
         ),

@@ -23,3 +23,15 @@ Used for duration, session type, time category, suggested/editable rate, rate-ch
 ## Approval
 
 Approve Session validates participants, bill-to, duration, session type, time category, approved/actual charged rate, and payment status. It saves reusable aliases and relationships, snapshots approved rates, writes audit history, and advances the review state. Approval is separate from every section save.
+## Calendar/Status Fields
+
+Section-level saves remain independent:
+
+- Save Participants
+- Save Bill To
+- Save Session Draft
+- Approve Session
+
+Saving session draft may update `billing_treatment` for cancelled/no-show appointments. That does not approve the session and does not overwrite raw calendar evidence.
+
+Participant or bill-to saves continue to refresh dependent suggestions while preserving unrelated unsaved session fields in the UI.

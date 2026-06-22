@@ -73,6 +73,7 @@ def make_handler(database_path: str):
                             service_mode=first(query, "service_mode"),
                             time_category=first(query, "time_category"),
                             payment_status=first(query, "payment_status"),
+                            calendar_filter=first(query, "calendar_filter"),
                             limit=int(first(query, "limit") or 25),
                             offset=int(first(query, "offset") or 0),
                         )

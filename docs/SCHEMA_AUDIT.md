@@ -115,3 +115,26 @@ These legacy tables remain intact for compatibility. They should not be deleted 
 - Prove no application read/write path depends on the legacy table.
 - Provide downgrade or restore instructions.
 - Update documentation and tests in the same change.
+## Calendar Classification Additions
+
+This round added only additive SQLite structures. No legacy client/rate tables were deleted or destructively migrated.
+
+New authoritative support tables:
+
+- `calendar_preferences`: optional calendar disposition rules. Authoritative for local review filtering only.
+- `app_metadata`: database-level metadata such as explicit demo mode.
+
+New candidate/session fields:
+
+- `appointment_status`: scheduled/completed/cancelled/no_show/unresolved.
+- `billing_treatment`: human decision for cancelled/no-show billing; separate from `payment_status`.
+- `title_time_text`, `title_time_normalized`, `title_time_matches_calendar`: title-time validation evidence.
+- `calendar_disposition`, `calendar_is_preferred_work`, `hidden_from_review`: source-calendar review/filter metadata.
+
+Authoritative direction remains:
+
+- `raw_calendar_snapshots` preserves every captured version and original `calendar_name`.
+- `calendar_event_candidates` stores the current interpretation for an event identity.
+- `sessions` stores reviewable and approved session facts, including historical charged amounts.
+
+Removal prerequisites are unchanged: no destructive cleanup of legacy `clients`, `client_aliases`, or `client_rates` should happen until live data absence, compatibility removal, backup, reversible migration, tests, and documentation prove it safe.

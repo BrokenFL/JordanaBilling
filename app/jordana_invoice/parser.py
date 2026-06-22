@@ -29,6 +29,7 @@ REVIEW_STATUSES = {
     "needs_service_mode",
     "needs_rate",
     "needs_payment_status",
+    "needs_billing_treatment",
     "ready_for_approval",
     "approved",
     "excluded",
@@ -82,6 +83,14 @@ CANCELLED_KEYWORDS = {"cancel", "cancelled", "canceled", "reschedule", "reschedu
 NO_SHOW_KEYWORDS = {"no show", "noshow", "no-show"}
 NONBILLABLE_KEYWORDS = {"nonbillable", "non-billable", "free consult", "courtesy"}
 MULTI_PERSON_MARKERS = (" and ", " + ", " with ", " for ", "&")
+STATUS_ALIASES = {
+    "cancel": "cancelled",
+    "cancelled": "cancelled",
+    "canceled": "cancelled",
+    "no show": "no_show",
+    "no-show": "no_show",
+    "noshow": "no_show",
+}
 
 SERVICE_MODE_ALIASES = {
     "phone": "phone",
@@ -127,6 +136,9 @@ class ParseResult:
     explicit_duration_minutes: int | None = None
     calendar_duration_minutes: int | None = None
     title_time_matches_calendar: bool | None = None
+    title_time_text: str | None = None
+    title_time_normalized: str | None = None
+    appointment_status: str = "unresolved"
     confidence_label: str = "low"
     unresolved_fields: list[str] = field(default_factory=list)
     review_reasons: list[str] = field(default_factory=list)
@@ -160,6 +172,9 @@ class ParseResult:
             "explicit_duration_minutes": self.explicit_duration_minutes,
             "calendar_duration_minutes": self.calendar_duration_minutes,
             "title_time_matches_calendar": self.title_time_matches_calendar,
+            "title_time_text": self.title_time_text,
+            "title_time_normalized": self.title_time_normalized,
+            "appointment_status": self.appointment_status,
             "service_mode": self.service_mode,
             "rate_group": self.rate_group,
             "time_category": self.time_category,
@@ -178,6 +193,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
     calendar_duration = parse_int(row.get("duration_minutes"))
     computed_duration = calendar_duration or compute_duration_minutes(start_at, end_at)
     time_info = derive_time_category(start_at)
+    occurrence_status = infer_appointment_status(start_at, end_at)
 
     if not title:
         return finalize_result(
@@ -188,6 +204,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 fields_requiring_review=["event_title"],
                 proposed_start_at=start_at or None,
                 calendar_duration_minutes=computed_duration,
+                appointment_status=occurrence_status,
                 **time_info,
             )
         )
@@ -203,18 +220,108 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 calendar_duration_minutes=computed_duration,
                 proposed_duration_minutes=computed_duration or 60,
                 duration_source="calendar" if computed_duration else "default",
+                appointment_status=occurrence_status,
                 **time_info,
             )
         )
 
-    if contains_any(lower, CANCELLED_KEYWORDS):
-        return finalize_result(status_result("cancelled", start_at, computed_duration, time_info))
+    parsed_title = parse_standard_title(title) or parse_shorthand(title)
+    if parsed_title and (
+        parsed_title[4]
+        or not (
+            starts_with_admin(lower)
+            or contains_any(lower, ADMIN_KEYWORDS)
+            or contains_any(lower, PERSONAL_KEYWORDS)
+            or contains_any(lower, CANCELLED_KEYWORDS)
+            or contains_any(lower, NO_SHOW_KEYWORDS)
+            or contains_any(lower, NONBILLABLE_KEYWORDS)
+        )
+    ):
+        client_name, time_token, explicit_duration, service_mode, standardized, explicit_status, unknown_status = parsed_title
+        proposed_duration, duration_source = choose_duration(
+            explicit_duration,
+            computed_duration,
+        )
+        proposed_end = add_minutes(start_at, proposed_duration)
+        title_time_matches = compare_title_time(start_at, time_token)
+        title_time = parse_title_time(time_token) if time_token else None
+        people = split_candidate_people(client_name)
+        fields = [
+            "client_full_name",
+            "client_account",
+            "billing_party",
+            "client_rate",
+        ]
+        explanation_parts = ["Recognized client session title pattern."]
 
-    if contains_any(lower, NO_SHOW_KEYWORDS):
-        return finalize_result(status_result("no_show", start_at, computed_duration, time_info))
+        appointment_status = explicit_status or occurrence_status
+        relationship_review = has_multiple_person_markers(client_name)
+        if relationship_review:
+            fields.extend(["participants", "relationship_role"])
+            explanation_parts.append(
+                "Title appears to reference multiple people or a billing relationship."
+            )
 
-    if contains_any(lower, NONBILLABLE_KEYWORDS):
-        return finalize_result(status_result("nonbillable", start_at, computed_duration, time_info))
+        if service_mode == "unknown":
+            fields.append("service_mode")
+        if unknown_status:
+            fields.append("appointment_status")
+            appointment_status = "unresolved"
+            explanation_parts.append("Final structured title value is not a recognized appointment status.")
+        if explicit_status in {"cancelled", "no_show"}:
+            fields.append("billing_treatment")
+            explanation_parts.append("Appointment status needs a separate billing decision.")
+        if explicit_duration:
+            explanation_parts.append(
+                "Explicit title duration overrides calendar duration."
+            )
+        if explicit_duration and computed_duration and explicit_duration != computed_duration:
+            fields.append("duration_discrepancy")
+            explanation_parts.append(
+                "Title duration differs from the Calendar event duration."
+            )
+        if title_time_matches is False:
+            fields.append("time_discrepancy")
+            explanation_parts.append(
+                "Title time does not match calendar start time."
+            )
+
+        confidence = 0.86 if standardized else 0.76
+        if explicit_duration:
+            confidence += 0.04
+        if relationship_review:
+            confidence -= 0.18
+        if title_time_matches is False:
+            confidence -= 0.25
+        if unknown_status:
+            confidence -= 0.2
+
+        return finalize_result(
+            ParseResult(
+                classification="client_session",
+                confidence=max(0.2, min(confidence, 0.94)),
+                explanation=" ".join(explanation_parts),
+                fields_requiring_review=sorted(set(fields)),
+                proposed_client_name=client_name,
+                candidate_person_names=people,
+                proposed_start_at=start_at or None,
+                proposed_duration_minutes=proposed_duration,
+                proposed_end_at=proposed_end,
+                time_shorthand=time_token,
+                duration_source=duration_source,
+                explicit_duration_minutes=explicit_duration,
+                calendar_duration_minutes=computed_duration,
+                title_time_matches_calendar=title_time_matches,
+                title_time_text=time_token,
+                title_time_normalized=format_title_time(title_time),
+                appointment_status=appointment_status,
+                service_mode=service_mode,
+                rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
+                standardized_title_format=standardized,
+                relationship_review_required=relationship_review,
+                **time_info,
+            )
+        )
 
     if starts_with_admin(lower) or contains_any(lower, ADMIN_KEYWORDS):
         return finalize_result(
@@ -228,6 +335,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 duration_source="calendar" if computed_duration else "default",
                 calendar_duration_minutes=computed_duration,
                 possible_referenced_person=extract_admin_person(title),
+                appointment_status=occurrence_status,
                 **time_info,
             )
         )
@@ -243,83 +351,19 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 proposed_duration_minutes=computed_duration or 60,
                 duration_source="calendar" if computed_duration else "default",
                 calendar_duration_minutes=computed_duration,
+                appointment_status=occurrence_status,
                 **time_info,
             )
         )
 
-    parsed_title = parse_standard_title(title) or parse_shorthand(title)
-    if parsed_title:
-        client_name, time_token, explicit_duration, service_mode, standardized = parsed_title
-        proposed_duration, duration_source = choose_duration(
-            explicit_duration,
-            computed_duration,
-        )
-        proposed_end = add_minutes(start_at, proposed_duration)
-        title_time_matches = compare_title_time(start_at, time_token)
-        people = split_candidate_people(client_name)
-        fields = [
-            "client_full_name",
-            "client_account",
-            "billing_party",
-            "client_rate",
-        ]
-        explanation_parts = ["Recognized client session title pattern."]
+    if contains_any(lower, CANCELLED_KEYWORDS):
+        return finalize_result(status_result("cancelled", start_at, computed_duration, time_info))
 
-        relationship_review = has_multiple_person_markers(client_name)
-        if relationship_review:
-            fields.extend(["participants", "relationship_role"])
-            explanation_parts.append(
-                "Title appears to reference multiple people or a billing relationship."
-            )
+    if contains_any(lower, NO_SHOW_KEYWORDS):
+        return finalize_result(status_result("no_show", start_at, computed_duration, time_info))
 
-        if service_mode == "unknown":
-            fields.append("service_mode")
-        if explicit_duration:
-            explanation_parts.append(
-                "Explicit title duration overrides calendar duration."
-            )
-        if explicit_duration and computed_duration and explicit_duration != computed_duration:
-            fields.append("duration_discrepancy")
-            explanation_parts.append(
-                "Title duration differs from the Calendar event duration."
-            )
-        if title_time_matches is False:
-            fields.append("time_discrepancy")
-            explanation_parts.append(
-                "Title time shorthand does not match calendar start time."
-            )
-
-        confidence = 0.84 if standardized else 0.76
-        if explicit_duration:
-            confidence += 0.04
-        if relationship_review:
-            confidence -= 0.18
-        if title_time_matches is False:
-            confidence -= 0.25
-
-        return finalize_result(
-            ParseResult(
-                classification="client_session",
-                confidence=max(0.2, min(confidence, 0.92)),
-                explanation=" ".join(explanation_parts),
-                fields_requiring_review=sorted(set(fields)),
-                proposed_client_name=client_name,
-                candidate_person_names=people,
-                proposed_start_at=start_at or None,
-                proposed_duration_minutes=proposed_duration,
-                proposed_end_at=proposed_end,
-                time_shorthand=time_token,
-                duration_source=duration_source,
-                explicit_duration_minutes=explicit_duration,
-                calendar_duration_minutes=computed_duration,
-                title_time_matches_calendar=title_time_matches,
-                service_mode=service_mode,
-                rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
-                standardized_title_format=standardized,
-                relationship_review_required=relationship_review,
-                **time_info,
-            )
-        )
+    if contains_any(lower, NONBILLABLE_KEYWORDS):
+        return finalize_result(status_result("nonbillable", start_at, computed_duration, time_info))
 
     return finalize_result(
         ParseResult(
@@ -331,6 +375,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             proposed_duration_minutes=computed_duration or 60,
             duration_source="calendar" if computed_duration else "default",
             calendar_duration_minutes=computed_duration,
+            appointment_status=occurrence_status,
             **time_info,
         )
     )
@@ -361,27 +406,46 @@ def status_result(
         calendar_duration_minutes=computed_duration,
         proposed_duration_minutes=computed_duration or 60,
         duration_source="calendar" if computed_duration else "default",
+        appointment_status="cancelled" if classification == "cancelled" else "no_show" if classification == "no_show" else "unresolved",
         **time_info,
     )
 
 
-def parse_standard_title(title: str) -> tuple[str, str | None, int | None, str, bool] | None:
+def parse_standard_title(title: str) -> tuple[str, str | None, int | None, str, bool, str | None, str | None] | None:
     if "|" not in title:
         return None
     parts = [part.strip() for part in title.split("|")]
-    if len(parts) < 2:
+    if len(parts) not in {3, 4, 5}:
         return None
-    name = canonicalize_name(parts[0])
-    explicit_duration = parse_int(parts[1])
+    explicit_status = None
+    unknown_status = None
+    if len(parts) == 3:
+        name_part, duration_part, service_part = parts
+        time_part = None
+    elif len(parts) == 4:
+        if parse_title_time(parts[1]) is not None:
+            name_part, time_part, duration_part, service_part = parts
+        else:
+            explicit_status = normalize_status(parts[-1])
+            unknown_status = None if explicit_status else parts[-1]
+            name_part, duration_part, service_part = parts[:3]
+            time_part = None
+    elif len(parts) == 5:
+        explicit_status = normalize_status(parts[-1])
+        unknown_status = None if explicit_status else parts[-1]
+        name_part, time_part, duration_part, service_part = parts[:4]
+
+    name = canonicalize_name(name_part)
+    explicit_duration = parse_int(duration_part)
     if explicit_duration not in KNOWN_DURATION_MINUTES:
-        explicit_duration = None
-    service_mode = normalize_service_mode(parts[2]) if len(parts) >= 3 else "unknown"
-    if not name:
         return None
-    return name, None, explicit_duration, service_mode, True
+    service_mode = normalize_service_mode(service_part)
+    if not name or (time_part and parse_title_time(time_part) is None):
+        return None
+    return name, time_part, explicit_duration, service_mode, True, explicit_status, unknown_status
 
 
-def parse_shorthand(title: str) -> tuple[str, str, int | None, str, bool] | None:
+def parse_shorthand(title: str) -> tuple[str, str, int | None, str, bool, str | None, str | None] | None:
     cleaned_title, service_mode = strip_service_mode(title)
     tokens = cleaned_title.strip().split()
     if len(tokens) < 2:
@@ -422,7 +486,7 @@ def parse_shorthand(title: str) -> tuple[str, str, int | None, str, bool] | None
         return None
 
     client_name = canonicalize_name(raw_name)
-    return client_name, time_token, explicit_duration, service_mode, False
+    return client_name, time_token, explicit_duration, service_mode, False, None, None
 
 
 def strip_service_mode(title: str) -> tuple[str, str]:
@@ -476,15 +540,7 @@ def is_duration_token(token: str) -> bool:
 
 
 def is_time_token(token: str) -> bool:
-    clean = token.upper().replace("AM", "").replace("PM", "").strip()
-    if not clean.isdigit() or len(clean) > 4:
-        return False
-    value = int(clean)
-    if len(clean) <= 2:
-        return 1 <= value <= 12
-    hour = value // 100
-    minute = value % 100
-    return 1 <= hour <= 12 and minute in {0, 15, 30, 45}
+    return parse_title_time(token) is not None
 
 
 def choose_duration(
@@ -522,25 +578,78 @@ def compare_title_time(start_at: str, token: str | None) -> bool | None:
     start = parse_datetime(start_at)
     if not start or not token:
         return None
-    hour, minute, meridiem = shorthand_hour_minute(token)
-    if meridiem == "AM":
-        return (start.hour, start.minute) == (hour % 12, minute)
-    if meridiem == "PM":
-        return (start.hour, start.minute) == ((hour % 12) + 12, minute)
-    candidates = {(hour, minute), ((hour % 12) + 12, minute)}
-    return (start.hour, start.minute) in candidates
+    parsed = parse_title_time(token)
+    if not parsed:
+        return None
+    return (start.hour, start.minute) == parsed
 
 
 def shorthand_hour_minute(token: str) -> tuple[int, int, str | None]:
-    clean = token.upper().strip()
-    meridiem = None
-    if clean.endswith("AM") or clean.endswith("PM"):
-        meridiem = clean[-2:]
+    parsed = parse_title_time(token)
+    if not parsed:
+        raise ValueError(f"Invalid title time token: {token}")
+    clean = token.upper().strip().replace(".", "")
+    meridiem = clean[-2:] if clean.endswith(("AM", "PM")) else None
+    return parsed[0], parsed[1], meridiem
+
+
+def parse_title_time(token: str | None) -> tuple[int, int] | None:
+    clean = text(token).lower().replace(".", "").strip()
+    if not clean:
+        return None
+    suffix = None
+    if clean.endswith("am"):
+        suffix = "am"
         clean = clean[:-2].strip()
-    value = int(clean)
-    if len(clean) <= 2:
-        return value, 0, meridiem
-    return value // 100, value % 100, meridiem
+    elif clean.endswith("pm"):
+        suffix = "pm"
+        clean = clean[:-2].strip()
+    try:
+        if ":" in clean:
+            hour_text, minute_text = clean.split(":", 1)
+            hour = int(hour_text)
+            minute = int(minute_text)
+        else:
+            numeric = int(clean)
+            if numeric >= 100:
+                hour = numeric // 100
+                minute = numeric % 100
+            else:
+                hour = numeric
+                minute = 0
+    except ValueError:
+        return None
+    if not (0 <= minute <= 59):
+        return None
+    if suffix == "pm" and 1 <= hour < 12:
+        hour += 12
+    elif suffix == "am" and hour == 12:
+        hour = 0
+    elif suffix is None and 1 <= hour <= 7:
+        hour += 12
+    if not (0 <= hour <= 23):
+        return None
+    return hour, minute
+
+
+def format_title_time(parsed: tuple[int, int] | None) -> str | None:
+    if not parsed:
+        return None
+    return f"{parsed[0]:02d}:{parsed[1]:02d}"
+
+
+def normalize_status(value: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", text(value).lower().replace("-", " ").strip())
+    return STATUS_ALIASES.get(normalized)
+
+
+def infer_appointment_status(start_at: str, end_at: str) -> str:
+    reference = end_at or start_at
+    parsed = parse_datetime(reference)
+    if not parsed:
+        return "unresolved"
+    now = datetime.now(parsed.tzinfo)
+    return "completed" if parsed <= now else "scheduled"
 
 
 def derive_time_category(start_at: str) -> dict[str, object]:

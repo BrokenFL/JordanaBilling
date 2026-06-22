@@ -119,3 +119,18 @@ Append-only record of parsing, proposed sessions, review decisions, and future i
 - Preserve event versions and review decisions.
 - Never rewrite historical finalized invoice values after rate changes.
 - Never add clinical interpretation to this app.
+## Calendar Status Additions
+
+Authoritative raw calendar evidence remains in `raw_calendar_snapshots`. The existing `calendar` payload/header maps to `calendar_name`.
+
+Additive tables/fields for this round:
+
+- `calendar_preferences`: optional source-calendar disposition rules.
+- `app_metadata`: database-level metadata such as explicit `demo_mode=true`.
+- `calendar_event_candidates.appointment_status`: scheduled/completed/cancelled/no_show/unresolved.
+- `sessions.appointment_status`: copied to the current session for review and future invoice selection.
+- `billing_treatment`: separate human billing decision for cancelled/no-show appointments.
+- `title_time_text`, `title_time_normalized`, `title_time_matches_calendar`: validation evidence; Calendar `start_at` remains authoritative.
+- `calendar_disposition`, `calendar_is_preferred_work`, `hidden_from_review`: review filtering metadata.
+
+Do not use `payment_status` for cancellation/no-show meaning. Do not delete raw snapshots when a calendar is personal/admin or hidden.

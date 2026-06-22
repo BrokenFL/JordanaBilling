@@ -16,6 +16,8 @@ Phase 2 strengthens the normalization layer. It separates people, client account
 - Completed-run validation from capture windows
 - Duplicate collapse into event candidates
 - Conservative shorthand parser
+- Structured calendar titles with optional title time and Cancelled/No Show status
+- Source-calendar classification and review filtering
 - Event classification
 - People/account/billing-party data model
 - Session participant modeling
@@ -31,6 +33,7 @@ Phase 2 strengthens the normalization layer. It separates people, client account
 - Initial client, alias, rate, session, review, and audit tables
 - Local CSV reports after successful sync
 - Acceptance report for June-style data
+- Isolated sanitized demo database for review testing
 
 ## Quick Start
 
@@ -53,6 +56,7 @@ JORDANA_APPS_SCRIPT_URL=
 JORDANA_INGEST_API_KEY=
 JORDANA_DATABASE_PATH=/Users/brookesnader/Documents/Jordana Billing/data/jordana_invoice.sqlite3
 JORDANA_REPORTS_DIR=/Users/brookesnader/Documents/Jordana Billing/Reports
+JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work
 ```
 
 Then run:
@@ -102,6 +106,34 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 
 The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 
+Calendar filters can show all calendars, the preferred work calendar, other calendars, personal/admin calendars, and hidden calendars. Hidden means hidden from the normal queue only; records remain searchable and recoverable.
+
+## Calendar Entry Standard
+
+The Shortcut still imports all non-all-day events from all calendars. `Jordana Work` is a preferred classification signal, not an ingestion restriction. Calendar start time remains authoritative, and title time is validation evidence only.
+
+Preferred structured titles:
+
+```text
+Full Name | Minutes | Session Type
+Full Name | Time | Minutes | Session Type
+Full Name | Time | Minutes | Session Type | Cancelled
+Full Name | Time | Minutes | Session Type | No Show
+```
+
+See `docs/CALENDAR_ENTRY_STANDARD.md` for the full standard.
+
+## Sanitized Demo Data
+
+Create and launch the isolated demo database:
+
+```bash
+scripts/create_demo_database.sh
+PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
+```
+
+The generated demo DB is ignored by Git and explicitly marked as demo mode, causing the UI to show `DEMO DATA - NOT FOR REAL BILLING`.
+
 ## Important Guardrails
 
 - Calendar rows are evidence, not approved billing.
@@ -118,6 +150,8 @@ The inspector has independent saves for Participants, Bill To, and Session Draft
 - Store secrets only in `.env`; never paste the real API key into source files or docs.
 - Do not make a permanent new client account just because two names appear in one calendar title.
 - Do not generate a person code for a provisional parser-only name.
+- Do not treat appointment status as payment status.
+- Do not filter calendar data at Shortcut level; filter irrelevant records after ingestion.
 - Do not transfer private data through GitHub.
 
 ## Project Layout

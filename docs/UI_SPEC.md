@@ -64,3 +64,18 @@ Routine review should not display Client / Family Account, Primary Client, House
 - deeper rate-rule editing and deactivation controls
 
 The next build should keep this dense list plus inspector architecture.
+## Calendar Review UI Additions
+
+Keep the dense desktop review layout. Do not turn the screen into calendar administration.
+
+Additions:
+
+- demo banner only when SQLite `app_metadata.demo_mode=true`
+- source-calendar filter
+- source calendar and preferred-work indicator
+- calendar-disposition indicator
+- appointment-status badge
+- title-time discrepancy warning with Calendar start preserved
+- cancellation/no-show billing-treatment control
+
+Backend account/relationship controls remain collapsed under Advanced relationships and shared billing.

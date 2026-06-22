@@ -12,6 +12,8 @@ def review_status_for_parse(result: ParseResult, rate_needs_review: bool = True)
         return "excluded" if result.confidence_label == "excluded" and not fields else "needs_classification"
     if result.classification == "unresolved":
         return "needs_classification"
+    if "billing_treatment" in fields:
+        return "needs_billing_treatment"
     if "participants" in fields:
         return "needs_participants"
     if "client_full_name" in fields:
@@ -32,6 +34,8 @@ def review_status_for_parse(result: ParseResult, rate_needs_review: bool = True)
 def unresolved_fields_for_session(result: ParseResult, rate_needs_review: bool = True) -> list[str]:
     fields = set(result.unresolved_fields or result.fields_requiring_review)
     fields.discard("client_account")
+    if result.appointment_status in {"cancelled", "no_show"}:
+        fields.add("billing_treatment")
     if rate_needs_review and result.classification == "client_session":
         fields.add("rate")
     fields.add("payment_status")

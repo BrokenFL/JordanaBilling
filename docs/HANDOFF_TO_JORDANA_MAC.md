@@ -148,3 +148,23 @@ scripts/privacy_check.sh
 ```
 
 Live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, and credentials should remain ignored locally.
+## Calendar Intake Note
+
+Do not change the live Shortcut or Apps Script for this calendar-classification round. The Shortcut should continue to send all non-all-day calendars through the existing Google Sheet headers, including the existing `calendar` field.
+
+`Jordana Work` may be configured later as:
+
+```bash
+JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work
+```
+
+That value is a review/classification preference only. It is not a Shortcut filter and it does not reject events from other calendars.
+
+For demo review on a Mac, create the isolated sanitized database:
+
+```bash
+scripts/create_demo_database.sh
+PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
+```
+
+Never import demo rows into a live database.

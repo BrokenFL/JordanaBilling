@@ -28,6 +28,7 @@
       </aside>
 
       <main class="workspace">
+        <div class="demo-banner" id="demoBanner" hidden>DEMO DATA — NOT FOR REAL BILLING</div>
         <header class="topbar">
           <div>
             <h1>Session Review</h1>
@@ -69,6 +70,14 @@
                 <option value="evening">Evening</option>
                 <option value="weekend">Weekend</option>
                 <option value="weekend_evening">Weekend + Evening</option>
+              </select>
+              <select id="calendarFilter">
+                <option value="">Normal review calendars</option>
+                <option value="all">All calendars</option>
+                <option value="preferred_work">Preferred work calendar</option>
+                <option value="other">Other calendars</option>
+                <option value="personal_admin">Personal/admin calendars</option>
+                <option value="hidden">Hidden calendars</option>
               </select>
               <input id="searchBox" type="search" placeholder="Search..." />
             </div>
