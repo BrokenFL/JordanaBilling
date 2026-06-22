@@ -1,0 +1,618 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from .util import parse_int, text
+
+
+CLASSIFICATIONS = {
+    "client_session",
+    "administrative",
+    "personal",
+    "cancelled",
+    "no_show",
+    "nonbillable",
+    "duplicate",
+    "unresolved",
+}
+
+REVIEW_STATUSES = {
+    "needs_classification",
+    "needs_person_match",
+    "needs_account",
+    "needs_participants",
+    "needs_billing_party",
+    "needs_duration",
+    "needs_service_mode",
+    "needs_rate",
+    "needs_payment_status",
+    "ready_for_approval",
+    "approved",
+    "excluded",
+}
+
+KNOWN_DURATION_MINUTES = {15, 20, 30, 45, 50, 60, 75, 90, 120}
+PERSONAL_KEYWORDS = {
+    "mani",
+    "pedi",
+    "manicure",
+    "pedicure",
+    "cp reformer",
+    "haircut",
+    "cleaners",
+    "dry cleaner",
+    "dinner",
+    "breakfast",
+    "lunch",
+    "car wash",
+    "bank",
+    "plant",
+    "father's day",
+    "fathers day",
+    "gyno",
+    "taxes",
+    "trip",
+    "trips",
+}
+ADMIN_PREFIXES = (
+    "ask",
+    "call",
+    "contact",
+    "follow up",
+    "email",
+    "invoice",
+    "check",
+    "cancel",
+    "have i heard",
+)
+ADMIN_KEYWORDS = {
+    "follow up",
+    "email",
+    "call ",
+    "letter",
+    "board meeting",
+    "review to do",
+    "open house",
+    "showing",
+}
+CANCELLED_KEYWORDS = {"cancel", "cancelled", "canceled", "reschedule", "rescheduled"}
+NO_SHOW_KEYWORDS = {"no show", "noshow", "no-show"}
+NONBILLABLE_KEYWORDS = {"nonbillable", "non-billable", "free consult", "courtesy"}
+MULTI_PERSON_MARKERS = (" and ", " + ", " with ", " for ", "&")
+
+SERVICE_MODE_ALIASES = {
+    "phone": "phone",
+    "call": "phone",
+    "facetime": "facetime",
+    "face time": "facetime",
+    "ft": "facetime",
+    "office": "office",
+    "in person": "office",
+    "in-person": "office",
+    "house": "house_call",
+    "home": "house_call",
+    "house call": "house_call",
+    "home visit": "house_call",
+}
+
+RATE_GROUP_BY_SERVICE_MODE = {
+    "phone": "remote",
+    "facetime": "remote",
+    "office": "office",
+    "house_call": "house_call",
+    "unknown": "",
+}
+
+NAME_FIXES = {
+    "rebecca colon": "Rebecca Colon",
+    "jenny g": "Jenny G",
+}
+
+
+@dataclass
+class ParseResult:
+    classification: str
+    confidence: float
+    explanation: str
+    fields_requiring_review: list[str] = field(default_factory=list)
+    proposed_client_name: str | None = None
+    proposed_start_at: str | None = None
+    proposed_duration_minutes: int | None = None
+    proposed_end_at: str | None = None
+    time_shorthand: str | None = None
+    duration_source: str | None = None
+    explicit_duration_minutes: int | None = None
+    calendar_duration_minutes: int | None = None
+    title_time_matches_calendar: bool | None = None
+    confidence_label: str = "low"
+    unresolved_fields: list[str] = field(default_factory=list)
+    review_reasons: list[str] = field(default_factory=list)
+    candidate_person_names: list[str] = field(default_factory=list)
+    possible_referenced_person: str | None = None
+    service_mode: str = "unknown"
+    rate_group: str | None = None
+    time_category: str = "standard"
+    is_evening: bool = False
+    is_weekend: bool = False
+    standardized_title_format: bool = False
+    relationship_review_required: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "classification": self.classification,
+            "confidence": self.confidence,
+            "confidence_label": self.confidence_label,
+            "explanation": self.explanation,
+            "fields_requiring_review": self.fields_requiring_review,
+            "unresolved_fields": self.unresolved_fields,
+            "review_reasons": self.review_reasons,
+            "proposed_client_name": self.proposed_client_name,
+            "candidate_person_names": self.candidate_person_names,
+            "possible_referenced_person": self.possible_referenced_person,
+            "proposed_start_at": self.proposed_start_at,
+            "proposed_duration_minutes": self.proposed_duration_minutes,
+            "proposed_end_at": self.proposed_end_at,
+            "time_shorthand": self.time_shorthand,
+            "duration_source": self.duration_source,
+            "explicit_duration_minutes": self.explicit_duration_minutes,
+            "calendar_duration_minutes": self.calendar_duration_minutes,
+            "title_time_matches_calendar": self.title_time_matches_calendar,
+            "service_mode": self.service_mode,
+            "rate_group": self.rate_group,
+            "time_category": self.time_category,
+            "is_evening": self.is_evening,
+            "is_weekend": self.is_weekend,
+            "standardized_title_format": self.standardized_title_format,
+            "relationship_review_required": self.relationship_review_required,
+        }
+
+
+def parse_event(row: dict[str, object]) -> ParseResult:
+    title = normalize_title(text(row.get("event_title") or row.get("title")))
+    lower = title.lower()
+    start_at = text(row.get("start_at"))
+    end_at = text(row.get("end_at"))
+    calendar_duration = parse_int(row.get("duration_minutes"))
+    computed_duration = calendar_duration or compute_duration_minutes(start_at, end_at)
+    time_info = derive_time_category(start_at)
+
+    if not title:
+        return finalize_result(
+            ParseResult(
+                classification="unresolved",
+                confidence=0.1,
+                explanation="Missing event title.",
+                fields_requiring_review=["event_title"],
+                proposed_start_at=start_at or None,
+                calendar_duration_minutes=computed_duration,
+                **time_info,
+            )
+        )
+
+    if "?" in title:
+        return finalize_result(
+            ParseResult(
+                classification="unresolved",
+                confidence=0.25,
+                explanation="Question mark in title signals uncertainty.",
+                fields_requiring_review=["event_title", "client"],
+                proposed_start_at=start_at or None,
+                calendar_duration_minutes=computed_duration,
+                proposed_duration_minutes=computed_duration or 60,
+                duration_source="calendar" if computed_duration else "default",
+                **time_info,
+            )
+        )
+
+    if contains_any(lower, CANCELLED_KEYWORDS):
+        return finalize_result(status_result("cancelled", start_at, computed_duration, time_info))
+
+    if contains_any(lower, NO_SHOW_KEYWORDS):
+        return finalize_result(status_result("no_show", start_at, computed_duration, time_info))
+
+    if contains_any(lower, NONBILLABLE_KEYWORDS):
+        return finalize_result(status_result("nonbillable", start_at, computed_duration, time_info))
+
+    if starts_with_admin(lower) or contains_any(lower, ADMIN_KEYWORDS):
+        return finalize_result(
+            ParseResult(
+                classification="administrative",
+                confidence=0.7 if starts_with_admin(lower) else 0.58,
+                explanation="Title matches likely administrative work language.",
+                fields_requiring_review=["classification"],
+                proposed_start_at=start_at or None,
+                proposed_duration_minutes=computed_duration or 60,
+                duration_source="calendar" if computed_duration else "default",
+                calendar_duration_minutes=computed_duration,
+                possible_referenced_person=extract_admin_person(title),
+                **time_info,
+            )
+        )
+
+    if contains_any(lower, PERSONAL_KEYWORDS):
+        return finalize_result(
+            ParseResult(
+                classification="personal",
+                confidence=0.65,
+                explanation="Title matches likely personal exclusion language.",
+                fields_requiring_review=["exclusion_alias"],
+                proposed_start_at=start_at or None,
+                proposed_duration_minutes=computed_duration or 60,
+                duration_source="calendar" if computed_duration else "default",
+                calendar_duration_minutes=computed_duration,
+                **time_info,
+            )
+        )
+
+    parsed_title = parse_standard_title(title) or parse_shorthand(title)
+    if parsed_title:
+        client_name, time_token, explicit_duration, service_mode, standardized = parsed_title
+        proposed_duration, duration_source = choose_duration(
+            explicit_duration,
+            computed_duration,
+        )
+        proposed_end = add_minutes(start_at, proposed_duration)
+        title_time_matches = compare_title_time(start_at, time_token)
+        people = split_candidate_people(client_name)
+        fields = [
+            "client_full_name",
+            "client_account",
+            "billing_party",
+            "client_rate",
+        ]
+        explanation_parts = ["Recognized client session title pattern."]
+
+        relationship_review = has_multiple_person_markers(client_name)
+        if relationship_review:
+            fields.extend(["participants", "relationship_role"])
+            explanation_parts.append(
+                "Title appears to reference multiple people or a billing relationship."
+            )
+
+        if service_mode == "unknown":
+            fields.append("service_mode")
+        if explicit_duration:
+            explanation_parts.append(
+                "Explicit title duration overrides calendar duration."
+            )
+        if explicit_duration and computed_duration and explicit_duration != computed_duration:
+            fields.append("duration_discrepancy")
+            explanation_parts.append(
+                "Title duration differs from the Calendar event duration."
+            )
+        if title_time_matches is False:
+            fields.append("time_discrepancy")
+            explanation_parts.append(
+                "Title time shorthand does not match calendar start time."
+            )
+
+        confidence = 0.84 if standardized else 0.76
+        if explicit_duration:
+            confidence += 0.04
+        if relationship_review:
+            confidence -= 0.18
+        if title_time_matches is False:
+            confidence -= 0.25
+
+        return finalize_result(
+            ParseResult(
+                classification="client_session",
+                confidence=max(0.2, min(confidence, 0.92)),
+                explanation=" ".join(explanation_parts),
+                fields_requiring_review=sorted(set(fields)),
+                proposed_client_name=client_name,
+                candidate_person_names=people,
+                proposed_start_at=start_at or None,
+                proposed_duration_minutes=proposed_duration,
+                proposed_end_at=proposed_end,
+                time_shorthand=time_token,
+                duration_source=duration_source,
+                explicit_duration_minutes=explicit_duration,
+                calendar_duration_minutes=computed_duration,
+                title_time_matches_calendar=title_time_matches,
+                service_mode=service_mode,
+                rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
+                standardized_title_format=standardized,
+                relationship_review_required=relationship_review,
+                **time_info,
+            )
+        )
+
+    return finalize_result(
+        ParseResult(
+            classification="unresolved",
+            confidence=0.2,
+            explanation="No recognized shorthand, exclusion, or status pattern.",
+            fields_requiring_review=["classification", "client"],
+            proposed_start_at=start_at or None,
+            proposed_duration_minutes=computed_duration or 60,
+            duration_source="calendar" if computed_duration else "default",
+            calendar_duration_minutes=computed_duration,
+            **time_info,
+        )
+    )
+
+
+def status_result(
+    classification: str,
+    start_at: str,
+    computed_duration: int | None,
+    time_info: dict[str, object],
+) -> ParseResult:
+    explanations = {
+        "cancelled": "Title contains cancellation or reschedule language.",
+        "no_show": "Title contains no-show language.",
+        "nonbillable": "Title contains non-billable language.",
+    }
+    fields = {
+        "cancelled": ["billing_disposition"],
+        "no_show": ["billing_disposition"],
+        "nonbillable": ["nonbillable_reason"],
+    }
+    return ParseResult(
+        classification=classification,
+        confidence=0.74,
+        explanation=explanations[classification],
+        fields_requiring_review=fields[classification],
+        proposed_start_at=start_at or None,
+        calendar_duration_minutes=computed_duration,
+        proposed_duration_minutes=computed_duration or 60,
+        duration_source="calendar" if computed_duration else "default",
+        **time_info,
+    )
+
+
+def parse_standard_title(title: str) -> tuple[str, str | None, int | None, str, bool] | None:
+    if "|" not in title:
+        return None
+    parts = [part.strip() for part in title.split("|")]
+    if len(parts) < 2:
+        return None
+    name = canonicalize_name(parts[0])
+    explicit_duration = parse_int(parts[1])
+    if explicit_duration not in KNOWN_DURATION_MINUTES:
+        explicit_duration = None
+    service_mode = normalize_service_mode(parts[2]) if len(parts) >= 3 else "unknown"
+    if not name:
+        return None
+    return name, None, explicit_duration, service_mode, True
+
+
+def parse_shorthand(title: str) -> tuple[str, str, int | None, str, bool] | None:
+    cleaned_title, service_mode = strip_service_mode(title)
+    tokens = cleaned_title.strip().split()
+    if len(tokens) < 2:
+        return None
+
+    last = tokens[-1]
+    penultimate = tokens[-2] if len(tokens) >= 3 else ""
+    antepenultimate = tokens[-3] if len(tokens) >= 4 else ""
+    explicit_duration = None
+    time_token = None
+    name_tokens: list[str]
+
+    if is_duration_token(last) and is_time_token(penultimate):
+        explicit_duration = int(last)
+        time_token = penultimate
+        name_tokens = tokens[:-2]
+    elif is_duration_token(last) and penultimate.lower() in {"am", "pm"} and is_time_token(antepenultimate):
+        explicit_duration = None
+        time_token = f"{antepenultimate} {penultimate.upper()}"
+        name_tokens = tokens[:-2]
+    elif penultimate.lower() in {"am", "pm"} and is_time_token(last):
+        time_token = f"{last} {penultimate.upper()}"
+        name_tokens = tokens[:-2]
+    elif last.lower() in {"am", "pm"} and is_time_token(penultimate):
+        time_token = f"{penultimate} {last.upper()}"
+        name_tokens = tokens[:-2]
+    elif is_time_token(last):
+        time_token = last
+        name_tokens = tokens[:-1]
+    else:
+        return None
+
+    if not name_tokens:
+        return None
+
+    raw_name = " ".join(name_tokens).strip(" -:")
+    if not re.search(r"[A-Za-z]", raw_name):
+        return None
+
+    client_name = canonicalize_name(raw_name)
+    return client_name, time_token, explicit_duration, service_mode, False
+
+
+def strip_service_mode(title: str) -> tuple[str, str]:
+    for alias in sorted(SERVICE_MODE_ALIASES, key=len, reverse=True):
+        pattern = re.compile(rf"(\b|\|){re.escape(alias)}\b", re.IGNORECASE)
+        if pattern.search(title):
+            stripped = pattern.sub(" ", title)
+            return normalize_title(stripped), SERVICE_MODE_ALIASES[alias]
+    return title, "unknown"
+
+
+def normalize_service_mode(value: str) -> str:
+    normalized = normalize_title(value).lower()
+    return SERVICE_MODE_ALIASES.get(normalized, "unknown")
+
+
+def normalize_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def canonicalize_name(name: str) -> str:
+    lowered = normalize_title(name).lower().strip()
+    if lowered in NAME_FIXES:
+        return NAME_FIXES[lowered]
+    chunks = re.split(r"(\s+|\+|&|\band\b|\bwith\b|\bfor\b)", lowered)
+    fixed: list[str] = []
+    for chunk in chunks:
+        if chunk in {" + ", "+", "&"} or chunk.strip() in {"and", "with", "for"}:
+            fixed.append(chunk.strip() if chunk.strip() != "+" else "+")
+        elif chunk.isspace() or not chunk:
+            fixed.append(chunk)
+        else:
+            fixed.append(" ".join(part.capitalize() for part in chunk.split()))
+    return normalize_title(" ".join(part for part in fixed if part != ""))
+
+
+def split_candidate_people(name: str) -> list[str]:
+    raw_parts = re.split(r"\s+(?:and|with|for)\s+|\s*\+\s*|\s*&\s*", name, flags=re.I)
+    return [canonicalize_name(part) for part in raw_parts if text(part)]
+
+
+def has_multiple_person_markers(name: str) -> bool:
+    lower = f" {name.lower()} "
+    return any(marker in lower for marker in MULTI_PERSON_MARKERS)
+
+
+def is_duration_token(token: str) -> bool:
+    if not token.isdigit():
+        return False
+    return int(token) in KNOWN_DURATION_MINUTES
+
+
+def is_time_token(token: str) -> bool:
+    clean = token.upper().replace("AM", "").replace("PM", "").strip()
+    if not clean.isdigit() or len(clean) > 4:
+        return False
+    value = int(clean)
+    if len(clean) <= 2:
+        return 1 <= value <= 12
+    hour = value // 100
+    minute = value % 100
+    return 1 <= hour <= 12 and minute in {0, 15, 30, 45}
+
+
+def choose_duration(
+    explicit_duration: int | None,
+    calendar_duration: int | None,
+) -> tuple[int, str]:
+    if explicit_duration:
+        return explicit_duration, "title"
+    if calendar_duration:
+        return calendar_duration, "calendar"
+    return 60, "default"
+
+
+def compute_duration_minutes(start_at: str, end_at: str) -> int | None:
+    start = parse_datetime(start_at)
+    end = parse_datetime(end_at)
+    if not start or not end:
+        return None
+    minutes = round((end - start).total_seconds() / 60)
+    return minutes if minutes > 0 else None
+
+
+def add_minutes(start_at: str, minutes: int | None) -> str | None:
+    start = parse_datetime(start_at)
+    if not start or not minutes:
+        return None
+    return start_plus(start, minutes)
+
+
+def start_plus(start: datetime, minutes: int) -> str:
+    return (start + timedelta(minutes=minutes)).isoformat()
+
+
+def compare_title_time(start_at: str, token: str | None) -> bool | None:
+    start = parse_datetime(start_at)
+    if not start or not token:
+        return None
+    hour, minute, meridiem = shorthand_hour_minute(token)
+    if meridiem == "AM":
+        return (start.hour, start.minute) == (hour % 12, minute)
+    if meridiem == "PM":
+        return (start.hour, start.minute) == ((hour % 12) + 12, minute)
+    candidates = {(hour, minute), ((hour % 12) + 12, minute)}
+    return (start.hour, start.minute) in candidates
+
+
+def shorthand_hour_minute(token: str) -> tuple[int, int, str | None]:
+    clean = token.upper().strip()
+    meridiem = None
+    if clean.endswith("AM") or clean.endswith("PM"):
+        meridiem = clean[-2:]
+        clean = clean[:-2].strip()
+    value = int(clean)
+    if len(clean) <= 2:
+        return value, 0, meridiem
+    return value // 100, value % 100, meridiem
+
+
+def derive_time_category(start_at: str) -> dict[str, object]:
+    start = parse_datetime(start_at)
+    if not start:
+        return {"is_evening": False, "is_weekend": False, "time_category": "standard"}
+    is_evening = start.hour >= 20
+    is_weekend = start.weekday() in {5, 6}
+    if is_weekend and is_evening:
+        category = "weekend_evening"
+    elif is_weekend:
+        category = "weekend"
+    elif is_evening:
+        category = "evening"
+    else:
+        category = "standard"
+    return {"is_evening": is_evening, "is_weekend": is_weekend, "time_category": category}
+
+
+def parse_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo("America/New_York"))
+    return parsed.astimezone(ZoneInfo("America/New_York"))
+
+
+def starts_with_admin(lower_title: str) -> bool:
+    return any(lower_title.startswith(prefix) for prefix in ADMIN_PREFIXES)
+
+
+def extract_admin_person(title: str) -> str | None:
+    match = re.search(r"\b(?:ask|call|contact|email)\s+(.+?)(?:\s+for\b|$)", title, re.I)
+    if not match:
+        return None
+    candidate = canonicalize_name(match.group(1))
+    return candidate or None
+
+
+def finalize_result(result: ParseResult) -> ParseResult:
+    result.fields_requiring_review = sorted(set(result.fields_requiring_review))
+    result.unresolved_fields = list(result.fields_requiring_review)
+    result.review_reasons = build_review_reasons(result)
+    result.confidence_label = confidence_label(result)
+    return result
+
+
+def build_review_reasons(result: ParseResult) -> list[str]:
+    reasons = []
+    if result.fields_requiring_review:
+        reasons.append(result.explanation)
+    if result.service_mode == "unknown" and result.classification == "client_session":
+        reasons.append("Service mode is unknown.")
+    if result.relationship_review_required:
+        reasons.append("Participant, account, and billing-party relationship needs review.")
+    return sorted(set(reason for reason in reasons if reason))
+
+
+def confidence_label(result: ParseResult) -> str:
+    if result.classification in {"personal", "administrative", "cancelled", "nonbillable"} and result.confidence >= 0.65:
+        return "excluded"
+    if result.confidence >= 0.8:
+        return "high"
+    if result.confidence >= 0.5:
+        return "medium"
+    return "low"
+
+
+def contains_any(value: str, needles: set[str]) -> bool:
+    return any(needle in value for needle in needles)

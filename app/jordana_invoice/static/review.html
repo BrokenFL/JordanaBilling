@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jordana Billing - Session Review</title>
+    <link rel="stylesheet" href="/static/review.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark">JB</span><strong>Jordana Billing</strong></div>
+        <nav>
+          <a class="active" href="/review" id="reviewNav">Review Queue <span id="navNeeds" class="count">0</span></a>
+          <a>Calendar Import</a>
+          <a>Clients & Accounts</a>
+          <a>People</a>
+          <a href="#" id="rateCardNav">Rate Card</a>
+          <a>Sessions</a>
+          <a>Invoices</a>
+          <a>Reports</a>
+          <a>Unpaid</a>
+          <a>Settings</a>
+          <a>Help</a>
+        </nav>
+        <div class="db-status"><span></span>Database<br />Connected</div>
+        <small>v0.3.0</small>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>Session Review</h1>
+            <p>Review calendar events and confirm details</p>
+          </div>
+          <div class="metrics">
+            <div><span id="lastSync">-</span><label>Last Sync</label></div>
+            <div><strong id="needsReview">0</strong><label>Needs Review</label></div>
+            <div><strong id="readyApprove">0</strong><label>Ready to Approve</label></div>
+            <div><strong id="approvedMonth">0</strong><label>Approved</label></div>
+            <div><strong id="personalAdmin">0</strong><label>Personal/Admin</label></div>
+          </div>
+        </header>
+
+        <section class="review-layout" id="reviewWorkbench">
+          <section class="list-pane">
+            <div class="filters">
+              <select id="statusFilter">
+                <option value="">All Review Statuses</option>
+                <option value="needs_rate">Needs Rate</option>
+                <option value="needs_account">Needs Account</option>
+                <option value="needs_billing_party">Needs Billing Party</option>
+                <option value="needs_payment_status">Needs Payment</option>
+                <option value="ready_for_approval">Ready to Approve</option>
+                <option value="approved">Approved</option>
+                <option value="excluded">Excluded</option>
+              </select>
+              <select id="serviceFilter">
+                <option value="">All Service Types</option>
+                <option value="phone">Phone</option>
+                <option value="facetime">FaceTime</option>
+                <option value="office">Office</option>
+                <option value="house_call">House Call</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <select id="timeFilter">
+                <option value="">All Time Categories</option>
+                <option value="standard">Standard</option>
+                <option value="evening">Evening</option>
+                <option value="weekend">Weekend</option>
+                <option value="weekend_evening">Weekend + Evening</option>
+              </select>
+              <input id="searchBox" type="search" placeholder="Search..." />
+            </div>
+            <table class="review-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Raw Title</th>
+                  <th>Suggested Client / Account</th>
+                  <th>Duration</th>
+                  <th>Type</th>
+                  <th>Time Cat.</th>
+                  <th>Rate</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody id="candidateRows"></tbody>
+            </table>
+            <footer class="pager"><span id="resultCount">Showing 0 results</span><button id="prevPage">‹</button><button id="nextPage">›</button></footer>
+          </section>
+
+          <aside class="inspector" id="inspector">
+            <div class="empty-state">Select a session to review.</div>
+          </aside>
+        </section>
+
+        <section class="rate-card-view" id="rateCardView" hidden>
+          <div class="rate-card-header">
+            <div>
+              <h2>Rate Card</h2>
+              <p>Set suggested rates by duration, service type, time category, person, account, and effective date.</p>
+            </div>
+          </div>
+          <form class="rate-form" id="rateRuleForm">
+            <input name="amount" placeholder="Amount, e.g. 150.00" required />
+            <input name="duration_minutes" placeholder="Duration min" />
+            <select name="service_mode">
+              <option value="">Any service</option>
+              <option value="phone">Phone</option>
+              <option value="facetime">FaceTime</option>
+              <option value="office">Office</option>
+              <option value="house_call">House Call</option>
+            </select>
+            <select name="time_category">
+              <option value="standard">Standard</option>
+              <option value="evening">Evening</option>
+              <option value="weekend">Weekend</option>
+              <option value="weekend_evening">Weekend + Evening</option>
+            </select>
+            <input name="effective_from" placeholder="Effective from YYYY-MM-DD" value="2026-01-01" />
+            <button type="submit" class="save">Add Rate Rule</button>
+          </form>
+          <table class="review-table rate-table">
+            <thead>
+              <tr><th>Amount</th><th>Duration</th><th>Service</th><th>Time Category</th><th>Account</th><th>Person</th><th>Effective</th></tr>
+            </thead>
+            <tbody id="rateRows"></tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+    <script src="/static/review.js"></script>
+  </body>
+</html>
