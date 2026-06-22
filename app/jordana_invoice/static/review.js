@@ -803,7 +803,7 @@ async function renderInvoiceEditor(data) {
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${line.invoice_line_item_id}"><td>${line.service_date}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td><input class="line-description" value="${escapeHtml(line.description_snapshot)}"></td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="previewDraft">Preview</button><button id="finalizeInvoice" class="approve">Finalize Invoice</button></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="previewDraft">Preview</button><button id="finalizeInvoice" class="approve">Finalize Invoice</button></div>
   </div>`;
   document.querySelectorAll(".remove-line").forEach(button => button.onclick = async () => {
     const lineId = button.closest("tr").dataset.line;
@@ -815,11 +815,30 @@ async function renderInvoiceEditor(data) {
     const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines})});
     await renderInvoiceEditor(updated); await loadInvoices();
   };
+  $("addDraftSessions").onclick = () => showAddSessionsToDraft(data);
   $("previewDraft").onclick = () => renderInvoicePreview({...data, invoice:{...i, invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value}});
   $("finalizeInvoice").onclick = async () => {
     if (!confirm("Finalize this invoice? Its number and snapshots cannot be edited afterward.")) return;
     const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true})});
     await loadInvoices(); renderInvoicePreview(final);
+  };
+}
+
+async function showAddSessionsToDraft(data) {
+  const i = data.invoice;
+  const rows = await api(`/api/invoices/eligible-sessions?bill_to_party_id=${encodeURIComponent(i.bill_to_party_id)}&period_start=${i.billing_period_start}&period_end=${i.billing_period_end}`);
+  const eligible = rows.filter(row => row.eligible);
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
+    <div><h3>Add Sessions to Draft</h3><div class="help">Sessions already attached to an invoice are excluded by the backend.</div></div>
+    <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${row.id}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
+    <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>
+  </div>`;
+  $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
+  $("confirmAddSessions").onclick = async () => {
+    const sessionIds = [...document.querySelectorAll("#invoiceWorkspace input:checked")].map(input => input.value);
+    if (!sessionIds.length) return;
+    const updated = await api(`/api/invoices/${i.invoice_id}/add-sessions`, {method:"POST", body:JSON.stringify({session_ids:sessionIds})});
+    await loadInvoices(); renderInvoiceEditor(updated);
   };
 }
 
