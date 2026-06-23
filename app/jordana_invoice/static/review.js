@@ -222,7 +222,23 @@ function wireInspector() {
   $("personalBtn").onclick = () => mark("personal");
   $("duplicateBtn").onclick = () => mark("duplicate");
   $("excludeBtn").onclick = () => mark("nonbillable");
-  ["durationInput","serviceInput","timeCategoryInput","suggestedRateInput","approvedRateInput","paymentInput","billingTreatmentInput","billableInput","overrideReasonInput"].forEach(id => $(id).addEventListener("input", () => markDirty("session")));
+  [
+    "billingTypeInput",
+    "durationChoiceInput",
+    "customDurationInput",
+    "customDescInput",
+    "customCodeInput",
+    "timeCategoryInput",
+    "suggestedRateInput",
+    "approvedRateInput",
+    "paymentInput",
+    "billingTreatmentInput",
+    "billableInput",
+    "overrideReasonInput"
+  ].forEach(id => {
+    const element = $(id);
+    if (element) element.addEventListener("input", () => markDirty("session"));
+  });
   $("accountInput").addEventListener("input", () => markDirty("relationship"));
   $("billingInput").addEventListener("input", () => markDirty("billing"));
 }
