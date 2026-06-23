@@ -202,6 +202,31 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("Session type is required", js)
         self.assertIn("Effective date is required", js)
 
+    def test_settings_screen_uses_existing_business_profile_api_and_defaults(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="settingsNav">Settings</a>', html)
+        self.assertIn('id="settingsView"', html)
+        self.assertIn('id="businessProfileForm"', html)
+        self.assertIn('name="business_name"', html)
+        self.assertIn('name="provider_display_name"', html)
+        self.assertIn('name="credentials_display"', html)
+        self.assertIn('name="payee_name"', html)
+        self.assertIn('name="logo_contains_business_details"', html)
+        self.assertIn('name="show_email_below_logo"', html)
+        self.assertIn('name="invoice_total_label"', html)
+        self.assertIn('name="invoice_number_format"', html)
+        self.assertIn("future finalized invoices only", html)
+        self.assertIn('location.hash = "settings";', js)
+        self.assertIn('await api("/api/business-profile"', js)
+        self.assertIn('await api("/api/business-profile", { method: "POST"', js)
+        self.assertIn('invoice_total_label: "TOTAL DUE"', js)
+        self.assertIn('invoice_number_format: "YYYY-NNNN"', js)
+        self.assertIn('Missing for invoice readiness: ${missing.join(", ")}.', js)
+        self.assertIn('if (state.settingsSaving) return;', js)
+        self.assertIn('if (location.hash === "#settings") showSettings();', js)
+
 
 if __name__ == "__main__":
     unittest.main()

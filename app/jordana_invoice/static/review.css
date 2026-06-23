@@ -159,7 +159,7 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .cal-badge.cal-hidden { background: #ebebf5; color: #5050a0; }
 .cal-badge.cal-personal { background: #f0f5e8; color: #507020; }
 
-.rate-card-view, .crm-view, .invoice-view { padding: 22px 26px; }
+.rate-card-view, .crm-view, .invoice-view, .settings-view { padding: 22px 26px; }
 .rate-card-header { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 16px; }
 .rate-card-header h2 { margin: 0 0 4px; font-size: 22px; }
 .rate-card-header p { margin: 0; color: var(--muted); }
@@ -245,6 +245,75 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .crm-header h2 { margin: 0 0 4px; font-size: 22px; }
 .crm-header p { margin: 0; color: var(--muted); }
 .crm-tools { display: flex; gap: 8px; align-items: center; }
+.settings-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+}
+.settings-header h2 { margin: 0 0 4px; font-size: 22px; }
+.settings-header p { margin: 0; color: var(--muted); }
+.settings-notice,
+.settings-readiness {
+  border-radius: 7px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.settings-notice {
+  background: #f8fbff;
+  border: 1px solid #cfe0fb;
+  color: #1d3f72;
+}
+.settings-readiness {
+  background: #fff8e8;
+  border: 1px solid #f4d391;
+  color: #6a4600;
+}
+.settings-readiness.ready {
+  background: #edf9ef;
+  border-color: #c9ebd0;
+  color: #184729;
+}
+.settings-form {
+  display: grid;
+  gap: 16px;
+  max-width: 920px;
+}
+.settings-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  padding: 16px;
+}
+.settings-card h3 { margin: 0 0 14px; font-size: 16px; }
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  font-size: 13px;
+  color: #263850;
+}
+.checkbox-field input {
+  min-height: auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.settings-message {
+  min-height: 18px;
+  font-size: 13px;
+  color: var(--red);
+}
+.settings-message.success {
+  color: var(--green);
+}
 .crm-layout { display: grid; grid-template-columns: minmax(760px, 1fr) 390px; gap: 16px; align-items: start; }
 .crm-table { min-width: 1060px; }
 .people-table { min-width: 900px; }
@@ -366,5 +435,11 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
   }
   .field-grid {
     grid-template-columns: 1fr;
+  }
+  .settings-actions {
+    align-items: stretch;
+  }
+  .settings-actions button {
+    width: 100%;
   }
 }

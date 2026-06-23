@@ -20,7 +20,7 @@
           <a href="/invoices" id="invoicesNav">Invoices</a>
           <a>Reports</a>
           <a>Unpaid</a>
-          <a>Settings</a>
+          <a href="#" id="settingsNav">Settings</a>
           <a>Help</a>
         </nav>
         <div class="db-status"><span></span>Database<br />Connected</div>
@@ -200,6 +200,114 @@
             </section>
             <aside class="invoice-workspace" id="invoiceWorkspace"><div class="empty-state">Create or open an invoice.</div></aside>
           </div>
+        </section>
+
+        <section class="settings-view" id="settingsView" hidden>
+          <div class="settings-header">
+            <div>
+              <h2>Invoice Settings</h2>
+              <p>Manage the business profile used for future finalized invoices.</p>
+            </div>
+          </div>
+          <div class="settings-notice">
+            Changes here affect future finalized invoices only. Existing finalized invoices keep their frozen business profile snapshots.
+          </div>
+          <div class="settings-readiness" id="settingsReadiness"></div>
+          <form class="settings-form" id="businessProfileForm">
+            <section class="settings-card">
+              <h3>Invoice identity</h3>
+              <div class="field-grid">
+                <label class="field wide">Business name
+                  <input id="businessNameInput" name="business_name" required />
+                </label>
+                <label class="field">Provider name
+                  <input id="providerDisplayNameInput" name="provider_display_name" />
+                </label>
+                <label class="field">Credentials
+                  <input id="credentialsDisplayInput" name="credentials_display" />
+                </label>
+                <label class="field wide">Business address line 1
+                  <input id="addressLine1Input" name="address_line_1" />
+                </label>
+                <label class="field wide">Business address line 2
+                  <input id="addressLine2Input" name="address_line_2" />
+                </label>
+                <label class="field">City
+                  <input id="cityInput" name="city" />
+                </label>
+                <label class="field">State
+                  <input id="stateInput" name="state" />
+                </label>
+                <label class="field">ZIP
+                  <input id="postalCodeInput" name="postal_code" />
+                </label>
+                <label class="field">Phone
+                  <input id="phoneInput" name="phone" />
+                </label>
+                <label class="field">Email
+                  <input id="emailInput" name="email" />
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-card">
+              <h3>Payment instructions</h3>
+              <div class="field-grid">
+                <label class="field wide">Payee name
+                  <input id="payeeNameInput" name="payee_name" />
+                </label>
+                <label class="field wide">Payment address line 1
+                  <input id="paymentAddressLine1Input" name="payment_address_line_1" />
+                </label>
+                <label class="field wide">Payment address line 2
+                  <input id="paymentAddressLine2Input" name="payment_address_line_2" />
+                </label>
+                <label class="field">Payment city
+                  <input id="paymentCityInput" name="payment_city" />
+                </label>
+                <label class="field">Payment state
+                  <input id="paymentStateInput" name="payment_state" />
+                </label>
+                <label class="field">Payment ZIP
+                  <input id="paymentPostalCodeInput" name="payment_postal_code" />
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-card">
+              <h3>Branding</h3>
+              <div class="field-grid">
+                <label class="field wide">Local logo path
+                  <input id="logoPathInput" name="logo_path" />
+                </label>
+                <label class="checkbox-field wide">
+                  <input id="logoContainsBusinessDetailsInput" name="logo_contains_business_details" type="checkbox" />
+                  <span>Logo contains business details</span>
+                </label>
+                <label class="checkbox-field wide">
+                  <input id="showEmailBelowLogoInput" name="show_email_below_logo" type="checkbox" />
+                  <span>Show email below logo</span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-card">
+              <h3>Invoice conventions</h3>
+              <div class="field-grid">
+                <label class="field">Total label
+                  <input id="invoiceTotalLabelInput" name="invoice_total_label" />
+                </label>
+                <label class="field">Invoice number format
+                  <input id="invoiceNumberFormatInput" name="invoice_number_format" />
+                </label>
+              </div>
+            </section>
+
+            <div class="settings-actions">
+              <button type="submit" class="save" id="businessProfileSaveBtn">Save Invoice Settings</button>
+              <div class="settings-message" id="businessProfileMessage" aria-live="polite"></div>
+            </div>
+          </form>
         </section>
       </main>
     </div>

@@ -1,5 +1,28 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], editSteps: { clients: false, session: false } };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], editSteps: { clients: false, session: false }, settingsSaving: false };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
+const BUSINESS_PROFILE_DEFAULTS = {
+  business_name: "",
+  provider_display_name: "",
+  credentials_display: "",
+  address_line_1: "",
+  address_line_2: "",
+  city: "",
+  state: "",
+  postal_code: "",
+  phone: "",
+  email: "",
+  payee_name: "",
+  payment_address_line_1: "",
+  payment_address_line_2: "",
+  payment_city: "",
+  payment_state: "",
+  payment_postal_code: "",
+  logo_path: "",
+  logo_contains_business_details: false,
+  show_email_below_logo: false,
+  invoice_total_label: "TOTAL DUE",
+  invoice_number_format: "YYYY-NNNN"
+};
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
@@ -868,14 +891,19 @@ document.getElementById("invoicesNav").onclick = (event) => {
   history.pushState({}, "", "/invoices");
   showInvoices();
 };
+document.getElementById("settingsNav").onclick = (event) => {
+  event.preventDefault();
+  location.hash = "settings";
+  showSettings();
+};
 document.getElementById("reviewNav").onclick = () => {
   location.hash = "";
   showReviewWorkbench();
 };
 
 function hideViews() {
-  ["reviewWorkbench","rateCardView","clientsView","peopleView","invoicesView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","rateCardNav","clientsNav","peopleNav","invoicesNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","rateCardView","clientsView","peopleView","invoicesView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","rateCardNav","clientsNav","peopleNav","invoicesNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -972,6 +1000,146 @@ async function showInvoices() {
   $("pageSubtitle").textContent = "Draft, finalize, and preserve invoice history";
   document.title = "Jordana Billing - Invoices";
   await loadInvoices();
+}
+
+function businessProfileFromResponse(profile) {
+  return {
+    ...BUSINESS_PROFILE_DEFAULTS,
+    ...(profile || {}),
+    logo_contains_business_details: !!profile?.logo_contains_business_details,
+    show_email_below_logo: !!profile?.show_email_below_logo
+  };
+}
+
+function businessProfileFieldValue(name) {
+  return $(name)?.type === "checkbox" ? $(name).checked : $(name).value.trim();
+}
+
+function paymentAddressReady() {
+  return Boolean(
+    businessProfileFieldValue("paymentAddressLine1Input") &&
+    businessProfileFieldValue("paymentCityInput") &&
+    businessProfileFieldValue("paymentStateInput") &&
+    businessProfileFieldValue("paymentPostalCodeInput")
+  );
+}
+
+function renderBusinessProfileReadiness() {
+  const missing = [];
+  if (!businessProfileFieldValue("businessNameInput")) missing.push("business name");
+  if (!businessProfileFieldValue("payeeNameInput")) missing.push("payee name");
+  if (!paymentAddressReady()) missing.push("payment address");
+  const notice = $("settingsReadiness");
+  if (!missing.length) {
+    notice.textContent = "Invoice settings are ready for future finalized invoices.";
+    notice.className = "settings-readiness ready";
+    return;
+  }
+  notice.textContent = `Missing for invoice readiness: ${missing.join(", ")}.`;
+  notice.className = "settings-readiness";
+}
+
+function setBusinessProfileMessage(message, isSuccess = false) {
+  const node = $("businessProfileMessage");
+  node.textContent = message;
+  node.className = isSuccess ? "settings-message success" : "settings-message";
+}
+
+function setBusinessProfileSaving(isSaving) {
+  state.settingsSaving = isSaving;
+  $("businessProfileSaveBtn").disabled = isSaving;
+  $("businessProfileSaveBtn").textContent = isSaving ? "Saving..." : "Save Invoice Settings";
+}
+
+function populateBusinessProfileForm(profile) {
+  const next = businessProfileFromResponse(profile);
+  $("businessNameInput").value = next.business_name;
+  $("providerDisplayNameInput").value = next.provider_display_name;
+  $("credentialsDisplayInput").value = next.credentials_display;
+  $("addressLine1Input").value = next.address_line_1;
+  $("addressLine2Input").value = next.address_line_2;
+  $("cityInput").value = next.city;
+  $("stateInput").value = next.state;
+  $("postalCodeInput").value = next.postal_code;
+  $("phoneInput").value = next.phone;
+  $("emailInput").value = next.email;
+  $("payeeNameInput").value = next.payee_name;
+  $("paymentAddressLine1Input").value = next.payment_address_line_1;
+  $("paymentAddressLine2Input").value = next.payment_address_line_2;
+  $("paymentCityInput").value = next.payment_city;
+  $("paymentStateInput").value = next.payment_state;
+  $("paymentPostalCodeInput").value = next.payment_postal_code;
+  $("logoPathInput").value = next.logo_path;
+  $("logoContainsBusinessDetailsInput").checked = next.logo_contains_business_details;
+  $("showEmailBelowLogoInput").checked = next.show_email_below_logo;
+  $("invoiceTotalLabelInput").value = next.invoice_total_label;
+  $("invoiceNumberFormatInput").value = next.invoice_number_format;
+  renderBusinessProfileReadiness();
+}
+
+function collectBusinessProfilePayload() {
+  return {
+    business_name: $("businessNameInput").value.trim(),
+    provider_display_name: $("providerDisplayNameInput").value.trim(),
+    credentials_display: $("credentialsDisplayInput").value.trim(),
+    address_line_1: $("addressLine1Input").value.trim(),
+    address_line_2: $("addressLine2Input").value.trim(),
+    city: $("cityInput").value.trim(),
+    state: $("stateInput").value.trim(),
+    postal_code: $("postalCodeInput").value.trim(),
+    phone: $("phoneInput").value.trim(),
+    email: $("emailInput").value.trim(),
+    payee_name: $("payeeNameInput").value.trim(),
+    payment_address_line_1: $("paymentAddressLine1Input").value.trim(),
+    payment_address_line_2: $("paymentAddressLine2Input").value.trim(),
+    payment_city: $("paymentCityInput").value.trim(),
+    payment_state: $("paymentStateInput").value.trim(),
+    payment_postal_code: $("paymentPostalCodeInput").value.trim(),
+    logo_path: $("logoPathInput").value.trim(),
+    logo_contains_business_details: $("logoContainsBusinessDetailsInput").checked,
+    show_email_below_logo: $("showEmailBelowLogoInput").checked,
+    invoice_total_label: $("invoiceTotalLabelInput").value.trim() || BUSINESS_PROFILE_DEFAULTS.invoice_total_label,
+    invoice_number_format: $("invoiceNumberFormatInput").value.trim() || BUSINESS_PROFILE_DEFAULTS.invoice_number_format
+  };
+}
+
+async function loadBusinessProfile() {
+  setBusinessProfileMessage("");
+  const profile = await api("/api/business-profile");
+  populateBusinessProfileForm(profile);
+}
+
+async function saveBusinessProfile(event) {
+  event.preventDefault();
+  if (state.settingsSaving) return;
+  const payload = collectBusinessProfilePayload();
+  if (!payload.business_name) {
+    setBusinessProfileMessage("Business name is required.");
+    $("businessNameInput").focus();
+    renderBusinessProfileReadiness();
+    return;
+  }
+  setBusinessProfileSaving(true);
+  setBusinessProfileMessage("");
+  try {
+    const saved = await api("/api/business-profile", { method: "POST", body: JSON.stringify(payload) });
+    populateBusinessProfileForm(saved);
+    setBusinessProfileMessage("Invoice settings saved.", true);
+  } catch (err) {
+    setBusinessProfileMessage(err.message || "Failed to save invoice settings.");
+  } finally {
+    setBusinessProfileSaving(false);
+  }
+}
+
+async function showSettings() {
+  hideViews();
+  $("settingsView").hidden = false;
+  $("settingsNav").classList.add("active");
+  $("pageTitle").textContent = "Invoice Settings";
+  $("pageSubtitle").textContent = "Business profile for future finalized invoices";
+  document.title = "Jordana Billing - Invoice Settings";
+  await loadBusinessProfile();
 }
 
 async function loadInvoices() {
@@ -1525,11 +1693,36 @@ $("newPersonBtn").onclick = async () => {
   await loadPeople();
   await openPersonRecord(person.person_id);
 };
+document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
+[
+  "businessNameInput",
+  "providerDisplayNameInput",
+  "credentialsDisplayInput",
+  "addressLine1Input",
+  "addressLine2Input",
+  "cityInput",
+  "stateInput",
+  "postalCodeInput",
+  "phoneInput",
+  "emailInput",
+  "payeeNameInput",
+  "paymentAddressLine1Input",
+  "paymentAddressLine2Input",
+  "paymentCityInput",
+  "paymentStateInput",
+  "paymentPostalCodeInput",
+  "logoPathInput",
+  "logoContainsBusinessDetailsInput",
+  "showEmailBelowLogoInput",
+  "invoiceTotalLabelInput",
+  "invoiceNumberFormatInput"
+].forEach(id => $(id).addEventListener("input", renderBusinessProfileReadiness));
 
 loadList();
 if (location.hash === "#rate-card") showRateCard();
 if (location.hash === "#clients" || location.pathname === "/clients") showClients();
 if (location.hash === "#people" || location.pathname === "/people") showPeople();
+if (location.hash === "#settings") showSettings();
 if (location.pathname === "/invoices") showInvoices();
 window.addEventListener("beforeunload", event => {
   if (state.dirty.size) {
