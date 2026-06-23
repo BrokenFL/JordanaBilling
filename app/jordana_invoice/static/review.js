@@ -1,4 +1,4 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], editSteps: { clients: false, session: false }, settingsSaving: false, syncRunning: false };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], sessions: { items: [], offset: 0, limit: 30, total: 0 }, editSteps: { clients: false, session: false }, settingsSaving: false, syncRunning: false };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
   business_name: "",
@@ -897,6 +897,11 @@ document.getElementById("peopleNav").onclick = (event) => {
   location.hash = "people";
   showPeople();
 };
+document.getElementById("sessionsNav").onclick = (event) => {
+  event.preventDefault();
+  location.hash = "sessions";
+  showSessions();
+};
 document.getElementById("invoicesNav").onclick = (event) => {
   event.preventDefault();
   history.pushState({}, "", "/invoices");
@@ -913,8 +918,8 @@ document.getElementById("reviewNav").onclick = () => {
 };
 
 function hideViews() {
-  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","invoicesView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","invoicesNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -1000,7 +1005,48 @@ async function showPeople() {
   document.getElementById("peopleNav").classList.add("active");
   $("pageTitle").textContent = "Clients";
   $("pageSubtitle").textContent = "Permanent clients and billing relationships";
+  document.title = "Jordana Billing - Clients";
   await loadPeople();
+}
+
+function renderSessions(rows, total) {
+  state.sessions.items = rows;
+  state.sessions.total = total;
+  $("sessionsResultCount").textContent = `Showing ${rows.length ? state.sessions.offset + 1 : 0} to ${state.sessions.offset + rows.length} of ${total} results`;
+  $("sessionsRows").innerHTML = rows.map(row => `
+    <tr>
+      <td>${fmt(row.date)}</td>
+      <td>${fmt(row.time)}</td>
+      <td><span class="primary">${fmt(row.client_participants)}</span></td>
+      <td>${fmt(row.calendar_title)}</td>
+      <td>${fmt(row.session_length)}</td>
+      <td>${money(row.rate)}</td>
+      <td>${fmt(row.payment_status)}</td>
+      <td>${fmt(row.review_status)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="8" class="readonly-note">No appointments found.</td></tr>`;
+}
+
+async function loadSessions() {
+  const params = new URLSearchParams({
+    date_range: $("sessionsDateFilter").value,
+    review_status: $("sessionsReviewStatusFilter").value,
+    payment_status: $("sessionsPaymentStatusFilter").value,
+    limit: state.sessions.limit,
+    offset: state.sessions.offset
+  });
+  const data = await api(`/api/sessions?${params}`);
+  renderSessions(data.items, data.total);
+}
+
+async function showSessions() {
+  hideViews();
+  $("sessionsView").hidden = false;
+  $("sessionsNav").classList.add("active");
+  $("pageTitle").textContent = "Sessions";
+  $("pageSubtitle").textContent = "Read-only appointment ledger";
+  document.title = "Jordana Billing - Sessions";
+  await loadSessions();
 }
 
 async function showInvoices() {
@@ -1342,6 +1388,18 @@ function renderInvoicePreview(data) {
 
 $("newInvoiceBtn").onclick = startInvoiceBuilder;
 $("invoiceStatusFilter").onchange = loadInvoices;
+["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter"].forEach(id => $(id).addEventListener("input", () => {
+  state.sessions.offset = 0;
+  loadSessions();
+}));
+$("sessionsPrevPage").onclick = () => {
+  state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
+  loadSessions();
+};
+$("sessionsNextPage").onclick = () => {
+  state.sessions.offset += state.sessions.limit;
+  loadSessions();
+};
 document.getElementById("rateRuleForm").onsubmit = async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1791,6 +1849,7 @@ if (location.hash === "#calendar-import") showCalendarImport();
 if (location.hash === "#rate-card") showRateCard();
 if (location.hash === "#clients" || location.pathname === "/clients") showClients();
 if (location.hash === "#people" || location.pathname === "/people") showPeople();
+if (location.hash === "#sessions") showSessions();
 if (location.hash === "#settings") showSettings();
 if (location.pathname === "/invoices") showInvoices();
 window.addEventListener("beforeunload", event => {

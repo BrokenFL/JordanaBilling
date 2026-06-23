@@ -5,6 +5,10 @@ import os
 import sqlite3
 from pathlib import Path
 
+from .appointment_ledger import (
+    APPOINTMENT_LEDGER_COLUMNS,
+    build_appointment_ledger_csv_rows,
+)
 from .rates import cents_to_dollars
 from .util import text
 
@@ -52,20 +56,23 @@ def write_reports(
     conn: sqlite3.Connection,
     reports_dir: str | Path = "Reports",
     year: int = 2026,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path]:
     target_dir = Path(reports_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     session_path = target_dir / f"Jordana_Client_Sessions_{year}.csv"
     summary_path = target_dir / f"Jordana_Client_Summary_{year}.csv"
     simple_path = target_dir / f"Jordana_Session_Log_{year}.csv"
+    appointment_path = target_dir / "Jordana_All_Appointments.csv"
 
     session_rows = build_session_rows(conn, year)
     summary_rows = build_summary_rows(session_rows)
+    appointment_rows = build_appointment_ledger_csv_rows(conn)
 
     atomic_write_csv(session_path, SESSION_COLUMNS, session_rows)
     atomic_write_csv(summary_path, SUMMARY_COLUMNS, summary_rows)
     atomic_write_csv(simple_path, SIMPLE_COLUMNS, build_simple_rows(session_rows))
-    return session_path, summary_path, simple_path
+    atomic_write_csv(appointment_path, APPOINTMENT_LEDGER_COLUMNS, appointment_rows)
+    return session_path, summary_path, simple_path, appointment_path
 
 
 SIMPLE_COLUMNS = [

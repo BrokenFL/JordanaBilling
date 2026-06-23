@@ -16,7 +16,7 @@
           <a href="#" id="clientsNav">Billing Relationships</a>
           <a href="#" id="peopleNav">Clients</a>
           <a href="#" id="rateCardNav">Rate Card</a>
-          <a>Sessions</a>
+          <a href="#" id="sessionsNav">Sessions</a>
           <a href="/invoices" id="invoicesNav">Invoices</a>
           <a>Reports</a>
           <a>Unpaid</a>
@@ -214,6 +214,44 @@
             </table>
             <aside class="record-pane" id="personRecord"><div class="empty-state">Open a client record.</div></aside>
           </div>
+        </section>
+
+        <section class="crm-view" id="sessionsView" hidden>
+          <div class="crm-header">
+            <div><h2>Sessions</h2><p>Read-only appointment ledger across reviewed and unresolved calendar records.</p></div>
+            <div class="crm-tools">
+              <select id="sessionsDateFilter">
+                <option value="rolling_30">Rolling 30 days</option>
+                <option value="this_month">This month</option>
+                <option value="previous_month">Previous month</option>
+                <option value="all">All dates</option>
+              </select>
+              <select id="sessionsReviewStatusFilter">
+                <option value="">All review statuses</option>
+                <option value="needs_review">Needs review</option>
+                <option value="needs_rate">Needs rate</option>
+                <option value="ready_for_approval">Ready to approve</option>
+                <option value="approved">Approved</option>
+                <option value="excluded">Excluded</option>
+              </select>
+              <select id="sessionsPaymentStatusFilter">
+                <option value="">All payment statuses</option>
+                <option value="unresolved">Unresolved</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="partially_paid">Partially paid</option>
+                <option value="paid">Paid</option>
+                <option value="waived">Waived</option>
+                <option value="not_billable">Not billable</option>
+              </select>
+            </div>
+          </div>
+          <table class="review-table sessions-table">
+            <thead>
+              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment</th><th>Review Status</th></tr>
+            </thead>
+            <tbody id="sessionsRows"></tbody>
+          </table>
+          <footer class="pager"><span id="sessionsResultCount">Showing 0 results</span><button id="sessionsPrevPage">‹</button><button id="sessionsNextPage">›</button></footer>
         </section>
 
         <section class="invoice-view" id="invoicesView" hidden>

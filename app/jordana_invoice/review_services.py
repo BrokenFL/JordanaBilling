@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .appointment_ledger import list_appointment_ledger_page
 from .backfill import backfill_phase2
 from .calendar_preferences import upsert_calendar_preference
 from .csv_reports import write_reports
@@ -338,6 +339,28 @@ def list_review_candidates(
         "items": items,
         "status": dashboard_status(conn),
     }
+
+
+def list_sessions_ledger(
+    conn: sqlite3.Connection,
+    *,
+    date_range: str = "rolling_30",
+    review_status: str = "",
+    payment_status: str = "",
+    limit: int = 30,
+    offset: int = 0,
+) -> dict[str, Any]:
+    init_db(conn)
+    backfill_phase2(conn)
+    apply_smart_prefill(conn)
+    return list_appointment_ledger_page(
+        conn,
+        date_range=date_range,
+        review_status=review_status,
+        payment_status=payment_status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[str, Any]:

@@ -84,6 +84,7 @@ After a successful sync the app updates:
 
 - `Reports/Jordana_Client_Sessions_2026.csv`
 - `Reports/Jordana_Client_Summary_2026.csv`
+- `Reports/Jordana_All_Appointments.csv`
 
 The reports are written atomically so a failed write does not leave a partial CSV behind.
 
@@ -110,6 +111,8 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 - `/people`
 
 The `Calendar Import` sidebar screen shows local sync status and a single `Sync Now` action. That button only pulls completed snapshot rows already staged by the iPhone Shortcut through Apps Script; it does not trigger the Shortcut and does not edit Apple Calendar.
+
+The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
 
 The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 

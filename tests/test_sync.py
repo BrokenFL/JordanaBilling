@@ -244,6 +244,7 @@ class SyncTests(unittest.TestCase):
         )
         self.assertTrue((self.reports_dir / "Jordana_Client_Sessions_2026.csv").exists())
         self.assertTrue((self.reports_dir / "Jordana_Client_Summary_2026.csv").exists())
+        self.assertTrue((self.reports_dir / "Jordana_All_Appointments.csv").exists())
         self.assertFalse(list(self.reports_dir.glob("*.tmp")))
 
     def test_public_sync_status_exposes_only_safe_summary_fields(self):

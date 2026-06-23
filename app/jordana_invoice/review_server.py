@@ -8,7 +8,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .db import connect, init_db
-from .google_sync import get_sync_status, public_sync_status, sync_now
+from .google_sync import (
+    default_transport,
+    load_sync_config_for_database,
+    public_sync_status,
+    sync_status_for_connection,
+    sync_with_connection,
+)
 from .review_services import (
     add_account_member,
     approve_candidate,
@@ -21,6 +27,7 @@ from .review_services import (
     get_person_record,
     get_review_candidate,
     list_account_records,
+    list_sessions_ledger,
     list_people_records,
     list_review_candidates,
     list_rate_rules,
@@ -57,6 +64,11 @@ from .service_catalog import list_services, set_service_active
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+REVIEW_SYNC_TRANSPORT = default_transport
+
+
+def review_sync_config(database_path: str):
+    return load_sync_config_for_database(database_path)
 
 
 def make_handler(database_path: str):
@@ -131,8 +143,21 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/business-profile":
                     self.send_json(get_business_profile(self.conn()))
                     return
+                if parsed.path == "/api/sessions":
+                    query = parse_qs(parsed.query)
+                    self.send_json(
+                        list_sessions_ledger(
+                            self.conn(),
+                            date_range=first(query, "date_range") or "rolling_30",
+                            review_status=first(query, "review_status"),
+                            payment_status=first(query, "payment_status"),
+                            limit=int(first(query, "limit") or 30),
+                            offset=int(first(query, "offset") or 0),
+                        )
+                    )
+                    return
                 if parsed.path == "/api/sync/status":
-                    self.send_json(public_sync_status(get_sync_status()))
+                    self.send_json(public_sync_status(sync_status_for_connection(self.conn())))
                     return
                 if parsed.path == "/api/service-catalog":
                     self.send_json(list_services(self.conn(), first(parse_qs(parsed.query), "include_inactive") == "1"))
@@ -206,12 +231,16 @@ def make_handler(database_path: str):
                     self.send_json(save_business_profile(self.conn(), data))
                     return
                 if parsed.path == "/api/sync/run":
-                    result = sync_now()
+                    result = sync_with_connection(
+                        self.conn(),
+                        review_sync_config(database_path),
+                        transport=REVIEW_SYNC_TRANSPORT,
+                    )
                     self.send_json(
                         {
                             "rows_fetched": result.rows_fetched,
                             "rows_imported": result.rows_imported,
-                            "status": public_sync_status(get_sync_status()),
+                            "status": public_sync_status(sync_status_for_connection(self.conn())),
                         }
                     )
                     return

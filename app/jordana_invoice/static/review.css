@@ -328,6 +328,8 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 }
 .crm-layout { display: grid; grid-template-columns: minmax(760px, 1fr) 390px; gap: 16px; align-items: start; }
 .crm-table { min-width: 1060px; }
+.sessions-table { min-width: 960px; table-layout: auto; }
+.sessions-table th, .sessions-table td { width: auto; text-align: left; }
 .people-table { min-width: 900px; }
 .record-pane {
   border: 1px solid var(--line);

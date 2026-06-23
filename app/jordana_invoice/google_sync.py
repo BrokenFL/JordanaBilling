@@ -83,6 +83,30 @@ def load_config(env_path: str | Path = ".env") -> SyncConfig:
     )
 
 
+def load_sync_config_for_database(
+    database_path: str,
+    env_path: str | Path = ".env",
+) -> SyncConfig:
+    load_env_file(env_path)
+    missing = [
+        key
+        for key in (
+            "JORDANA_APPS_SCRIPT_URL",
+            "JORDANA_INGEST_API_KEY",
+        )
+        if not os.environ.get(key)
+    ]
+    if missing:
+        raise SyncError("Missing environment variables: " + ", ".join(missing))
+    return SyncConfig(
+        apps_script_url=os.environ["JORDANA_APPS_SCRIPT_URL"],
+        ingest_api_key=os.environ["JORDANA_INGEST_API_KEY"],
+        database_path=database_path,
+        reports_dir=os.environ.get("JORDANA_REPORTS_DIR", "Reports"),
+        timeout_seconds=int(os.environ.get("JORDANA_SYNC_TIMEOUT_SECONDS", "30")),
+    )
+
+
 def default_transport(
     url: str,
     payload: dict[str, Any],
