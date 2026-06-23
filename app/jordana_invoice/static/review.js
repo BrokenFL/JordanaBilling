@@ -151,8 +151,9 @@ function renderInspector(data) {
            <div id="personWarning"></div>
            <div id="personEditor" class="drawer" hidden></div>`}
       <div class="inline-actions">
-        <button id="changeClientsBtn">${readiness.clients_ready && !clientsEditing ? "Change" : "Confirm Client(s)"}</button>
-        ${showRelationshipSave ? '<button id="saveRelationshipBtn" class="save">Confirm Client(s)</button>' : ""}
+        ${readiness.clients_ready && !clientsEditing
+          ? '<button id="changeClientsBtn">Change</button>'
+          : '<button id="saveRelationshipBtn" class="save">Confirm Client(s)</button>'}
       </div>
     </section>
 
@@ -285,7 +286,9 @@ function markSaved(section, message = "Saved") {
 }
 
 function renderParticipantChips() {
-  $("participantChips").innerHTML = state.participants.map((p, i) => `<span class="chip ${p.is_proposed ? "proposed" : "linked"}">${p.display_name || p.participant_name}${p.is_proposed ? '<small>proposed</small>' : ''}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
+  const chips = $("participantChips");
+  if (!chips) return;
+  chips.innerHTML = state.participants.map((p, i) => `<span class="chip ${p.is_proposed ? "proposed" : "linked"}">${p.display_name || p.participant_name}${p.is_proposed ? '<small>proposed</small>' : ''}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
   document.querySelectorAll("#participantChips button[data-i]").forEach(btn => btn.onclick = () => { state.participants.splice(Number(btn.dataset.i), 1); renderParticipantChips(); renderRelationshipEditor(state.detail); markDirty("relationship"); });
   document.querySelectorAll("#participantChips button[data-edit]").forEach(btn => btn.onclick = () => showPersonEditor(Number(btn.dataset.edit)));
 }

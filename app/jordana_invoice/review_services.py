@@ -827,9 +827,6 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
                     participant.get("relationship_role") or ("primary" if is_primary else "family_member"),
                     is_primary,
                 )
-        confirmed_person_ids = [participant.get("person_id") for participant in participants if participant.get("person_id")]
-        if not payload.get("billing_party_id") and not account_id and len(confirmed_person_ids) == 1:
-            billing_party_for_person(conn, confirmed_person_ids[0])
     if payload.get("default_billing_party_id") and account_id:
         conn.execute(
             "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",

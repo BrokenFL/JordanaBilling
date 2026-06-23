@@ -32,6 +32,20 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertNotIn("Same as sole participant", js)
         self.assertNotIn("Search or create a bill-to contact", js)
 
+    def test_confirmed_client_summary_renders_without_participant_chips(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("if (!chips) return;", js)
+        self.assertIn('relationship-summary success', js)
+
+    def test_unresolved_client_step_contains_exactly_one_confirm_action(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("Clients in this session")
+        end = js.index("<section class=\"section\">", start + 1)
+        section = js[start:end]
+        self.assertIn("Confirm Client(s)", section)
+        self.assertIn('button id="changeClientsBtn">Change</button>', section)
+        self.assertIn('button id="saveRelationshipBtn" class="save">Confirm Client(s)</button>', section)
+
     def test_inline_review_client_editor_does_not_expose_person_code(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("function showPersonEditor")

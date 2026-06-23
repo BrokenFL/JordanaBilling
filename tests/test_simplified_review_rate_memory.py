@@ -89,22 +89,30 @@ class SimplifiedReviewRateMemoryTests(unittest.TestCase):
         self.assertEqual([p["person_id"] for p in detail["participants"]], [simon["person_id"]])
         self.assertEqual(detail["billing_party"]["billing_party_id"], parent["billing_party_id"])
 
-    def test_sole_participant_defaults_bill_to_and_reuses_later(self):
+    def test_sole_participant_requires_explicit_bill_to_then_reuses_later(self):
         first = self.import_one("snap-a", "Fred 5", "2026-06-18T17:00:00-04:00", "2026-06-18T18:00:00-04:00")
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        before_billing_parties = self.conn.execute("SELECT COUNT(*) AS count FROM billing_parties").fetchone()["count"]
         save_relationship_section(
             self.conn,
             first,
             {"participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin"}]},
         )
         detail = get_review_candidate(self.conn, first)
-        self.assertEqual(detail["billing_party"]["person_id"], fred["person_id"])
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM billing_parties").fetchone()["count"],
+            before_billing_parties,
+        )
+        self.assertIsNone(detail["billing_party"])
+        self.assertFalse(detail["readiness"]["billing_ready"])
+        billed = save_billing_section(self.conn, first, {"bill_to_person_id": fred["person_id"]})
+        self.assertEqual(billed["billing_party"]["person_id"], fred["person_id"])
         approve_candidate(
             self.conn,
             first,
             {
                 "participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin"}],
-                "billing_party_id": detail["billing_party"]["billing_party_id"],
+                "billing_party_id": billed["billing_party"]["billing_party_id"],
                 "approved_duration_minutes": 60,
                 "service_mode": "phone",
                 "time_category": "standard",
