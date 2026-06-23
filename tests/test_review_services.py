@@ -404,6 +404,107 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertIsNone(detail["participants"][0]["person_id"])
         self.assertTrue(detail["participants"][0]["is_proposed"])
 
+    def test_saved_session_bill_to_is_used_for_readiness(self):
+        person = create_person(self.conn, "Fred Smith")
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})
+        save_interpretation(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "paid",
+            },
+        )
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertTrue(detail["readiness"]["billing_ready"])
+        self.assertEqual(detail["readiness"]["billing_party_source"], "session")
+        self.assertEqual(detail["effective_billing_party"]["billing_party_id"], payer["billing_party_id"])
+
+    def test_account_default_payer_is_used_for_readiness(self):
+        person = create_person(self.conn, "Fred Smith")
+        account = create_account(self.conn, "Fred Household", "household")
+        payer = create_billing_party(self.conn, {"billing_name": "Household Payer", "billing_party_type": "organization"})
+        self.conn.execute("UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?", (payer["billing_party_id"], account["account_id"]))
+        self.conn.commit()
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}], "account_id": account["account_id"]})
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(detail["readiness"]["billing_party_source"], "account_default")
+        self.assertEqual(detail["effective_billing_party"]["billing_party_id"], payer["billing_party_id"])
+
+    def test_one_participant_with_exactly_one_active_billing_record_is_suggested(self):
+        person = create_person(self.conn, "Fred Smith")
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}]})
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(detail["readiness"]["billing_party_source"], "person_default")
+        self.assertEqual(detail["effective_billing_party"]["billing_party_id"], payer["billing_party_id"])
+
+    def test_ambiguous_billing_records_remain_unresolved(self):
+        person = create_person(self.conn, "Fred Smith")
+        create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})
+        create_billing_party(self.conn, {"billing_name": "Fred Smith 2", "billing_party_type": "person", "person_id": person["person_id"]})
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}]})
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertFalse(detail["readiness"]["billing_ready"])
+        self.assertEqual(detail["readiness"]["billing_party_source"], "unresolved")
+
+    def test_get_readiness_lookup_creates_no_records(self):
+        person = create_person(self.conn, "Fred Smith")
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}]})
+        before = count(self.conn, "billing_parties")
+        get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(count(self.conn, "billing_parties"), before)
+
+    def test_known_client_payer_and_exact_rate_produces_high_authority(self):
+        person = create_person(self.conn, "Fred Smith")
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})
+        create_rate_rule_from_payload(self.conn, {"amount": "150", "duration_minutes": "60", "billing_session_type": "psychotherapy", "time_category": "standard", "person_id": person["person_id"], "effective_from": "2026-01-01"})
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}], "billing_party_id": payer["billing_party_id"]})
+        save_interpretation(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}], "billing_party_id": payer["billing_party_id"], "approved_duration_minutes": 60, "billing_session_type": "psychotherapy", "time_category": "standard", "approved_rate": "", "payment_status": "paid"})
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertTrue(detail["readiness"]["all_ready"])
+        self.assertGreaterEqual(detail["session"]["authority_score"], 75)
+        self.assertIn("Known client", detail["session"]["authority_reasons"])
+
+    def test_unresolved_client_locks_later_steps(self):
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertFalse(detail["readiness"]["clients_ready"])
+        self.assertFalse(detail["readiness"]["billing_ready"])
+        self.assertFalse(detail["readiness"]["session_ready"])
+
+    def test_unresolved_payer_locks_session_details(self):
+        person = create_person(self.conn, "Fred Smith")
+        create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})
+        create_billing_party(self.conn, {"billing_name": "Fred Smith 2", "billing_party_type": "person", "person_id": person["person_id"]})
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}]})
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertTrue(detail["readiness"]["clients_ready"])
+        self.assertFalse(detail["readiness"]["billing_ready"])
+        self.assertFalse(detail["readiness"]["session_ready"])
+
+    def test_exact_suggested_rate_counts_as_ready_without_creating_override(self):
+        person = create_person(self.conn, "Fred Smith")
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})
+        create_rate_rule_from_payload(self.conn, {"amount": "150", "duration_minutes": "60", "billing_session_type": "psychotherapy", "time_category": "standard", "person_id": person["person_id"], "effective_from": "2026-01-01"})
+        save_relationship_section(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}], "billing_party_id": payer["billing_party_id"]})
+        save_interpretation(self.conn, self.candidate_id, {"participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}], "billing_party_id": payer["billing_party_id"], "approved_duration_minutes": 60, "billing_session_type": "psychotherapy", "time_category": "standard", "approved_rate": "", "payment_status": "paid"})
+        detail = get_review_candidate(self.conn, self.candidate_id)
+        self.assertTrue(detail["readiness"]["session_ready"])
+        self.assertIsNone(detail["session"]["approved_rate_cents"])
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 15000)
+
+    def test_backend_time_display_uses_eastern_and_raw_timestamp_remains_unchanged(self):
+        import_rows(self.conn, [raw_row("snap-time", title="Late 630 60", start="2026-06-17T13:30:00-04:00")], "test")
+        row = next(item for item in list_review_candidates(self.conn)["items"] if item["raw_title"] == "Late 630 60")
+        detail = get_review_candidate(self.conn, row["candidate_id"])
+        self.assertEqual(row["time"], "1:30 PM")
+        self.assertEqual(detail["session"]["start_at"], "2026-06-17T13:30:00-04:00")
+
     def test_saving_empty_participant_list_clears_participants_and_suppresses_proposal(self):
         candidate_id = self.import_without_persisted_participants("snap-empty", "Leah Grossman 630 30")
 

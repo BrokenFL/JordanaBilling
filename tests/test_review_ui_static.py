@@ -23,10 +23,10 @@ class ReviewUiStaticTests(unittest.TestCase):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn("Clients in this session", js)
-        self.assertIn("Save Client(s)", js)
+        self.assertIn("Confirm Client(s)", js)
         self.assertIn("Search or add a client...", js)
         self.assertIn("Bill to client", js)
-        self.assertIn("Edit Billing Relationship", js)
+        self.assertIn("Change payer or shared billing", js)
         self.assertNotIn("Save Participants", js)
         self.assertNotIn("Open Person Record", js)
         self.assertNotIn("Same as sole participant", js)
@@ -91,6 +91,53 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("function readReturnContext()", js)
         self.assertIn("function clearReturnContext()", js)
         self.assertIn("returnContextHash", js)
+
+    def test_guided_review_uses_review_confidence_and_final_approval_gate(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Review confidence", html)
+        self.assertIn('Review confidence: ${s.authority_score || 0}%', js)
+        self.assertIn("readiness.all_ready", js)
+        self.assertIn("Approve Session", js)
+
+    def test_unresolved_client_and_payer_lock_later_steps(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('Confirm Client(s) first.', js)
+        self.assertIn('Confirm Bill To first.', js)
+        self.assertIn("const billingLocked = !readiness.clients_ready;", js)
+        self.assertIn("const sessionLocked = !readiness.clients_ready || !readiness.billing_ready;", js)
+
+    def test_edited_rate_reveals_override_scope_and_unchanged_rate_does_not(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("const rateChanged = currentRate !== suggestedRate && currentRate !== \"\";", js)
+        self.assertIn('Apply this rate to:', js)
+        self.assertIn('This session only', js)
+        self.assertIn('Future sessions for this client', js)
+        self.assertIn('Future joint sessions for these clients', js)
+
+    def test_cancelled_no_show_billing_field_is_conditional(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('const showCancellation = ["cancelled", "no_show"].includes(s.appointment_status);', js)
+
+    def test_inline_relationship_roles_and_primary_controls_are_gone(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function renderRelationshipEditor")
+        end = js.index("function showAccountEditor")
+        section = js[start:end]
+
+        self.assertNotIn("data-role", section)
+        self.assertNotIn("primaryMember", section)
+        self.assertNotIn("Quick Edit Billing Relationship", section)
+        self.assertIn("Open Billing Relationship Record", section)
+
+    def test_frontend_time_display_uses_eastern_12_hour_format(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('timeZone: "America/New_York"', js)
+        self.assertIn('hour: "numeric"', js)
+        self.assertIn('minute: "2-digit"', js)
 
     def test_billing_relationship_save_returns_to_review_and_reloads_session(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

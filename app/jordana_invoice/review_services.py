@@ -4,7 +4,9 @@ import json
 import re
 import sqlite3
 import unicodedata
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .backfill import backfill_phase2
 from .calendar_preferences import upsert_calendar_preference
@@ -33,6 +35,8 @@ REQUIRED_APPROVAL_FIELDS = {
     "approved_rate_cents",
     "payment_status",
 }
+
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def get_session_type_options() -> list[dict[str, str]]:
@@ -92,6 +96,129 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "approved_this_month": counts.get("approved", 0),
         "personal_admin": int(personal_admin),
     }
+
+
+def review_readiness(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row | dict[str, Any],
+    participants: list[dict[str, Any]],
+) -> dict[str, Any]:
+    values = dict(row)
+    clients_ready = bool(participants) and all(
+        participant.get("person_id") and not participant.get("is_proposed")
+        for participant in participants
+    )
+    effective_billing_party_id, billing_party_source = effective_billing_party_lookup(
+        conn,
+        values.get("billing_party_id"),
+        values.get("account_id"),
+        participants,
+    )
+    billing_ready = bool(effective_billing_party_id)
+    duration_known = bool(values.get("approved_duration_minutes") or values.get("duration_minutes"))
+    billing_type = values.get("billing_session_type") or map_service_mode_to_billing_type(values.get("service_mode"))
+    session_type_known = billing_type in ALLOWED_BILLING_SESSION_TYPES
+    time_category_known = bool(values.get("time_category"))
+    cancellation_needed = values.get("appointment_status") in {"cancelled", "no_show"}
+    cancellation_ready = not cancellation_needed or values.get("billing_treatment") not in {"", None, "unresolved"}
+    payment_ready = values.get("payment_status") not in {"", None, "unresolved"}
+    rate_ready = bool(values.get("approved_rate_cents")) or (
+        values.get("suggested_rate_cents") is not None
+        and values.get("rate_rule_id")
+        and not values.get("rate_needs_review")
+    )
+    session_ready = all(
+        [
+            duration_known,
+            session_type_known,
+            time_category_known,
+            payment_ready,
+            cancellation_ready,
+            rate_ready,
+        ]
+    )
+    authority_score = 0
+    authority_reasons: list[str] = []
+    if clients_ready:
+        authority_score += 30
+        authority_reasons.append("Known client")
+    if billing_ready:
+        authority_score += 20
+        authority_reasons.append("Saved payer")
+    if duration_known:
+        authority_score += 10
+    if session_type_known:
+        authority_score += 10
+    if time_category_known:
+        authority_score += 5
+    if values.get("suggested_rate_cents") is not None and values.get("rate_rule_id") and not values.get("rate_needs_review"):
+        authority_score += 15
+        authority_reasons.append(f"Exact {time_label_for_reason(values.get('time_category'))} rate")
+    if payment_ready:
+        authority_score += 10
+    if values.get("title_time_matches_calendar") == 0:
+        authority_score = min(authority_score, 75)
+    return {
+        "clients_ready": clients_ready,
+        "billing_ready": billing_ready,
+        "session_ready": session_ready,
+        "all_ready": clients_ready and billing_ready and session_ready,
+        "authority_score": authority_score,
+        "authority_reasons": authority_reasons,
+        "billing_party_source": billing_party_source,
+        "effective_billing_party_id": effective_billing_party_id,
+    }
+
+
+def effective_billing_party_lookup(
+    conn: sqlite3.Connection,
+    session_billing_party_id: str | None,
+    account_id: str | None,
+    participants: list[dict[str, Any]],
+) -> tuple[str | None, str]:
+    if session_billing_party_id:
+        return session_billing_party_id, "session"
+    if account_id:
+        account = conn.execute(
+            """
+            SELECT bp.billing_party_id
+            FROM client_accounts ca
+            JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+            WHERE ca.account_id = ? AND bp.active = 1
+            """,
+            (account_id,),
+        ).fetchone()
+        if account:
+            return account["billing_party_id"], "account_default"
+    person_ids = sorted({participant.get("person_id") for participant in participants if participant.get("person_id")})
+    if len(person_ids) == 1:
+        rows = conn.execute(
+            """
+            SELECT billing_party_id
+            FROM billing_parties
+            WHERE person_id = ? AND active = 1
+            ORDER BY updated_at DESC
+            """,
+            (person_ids[0],),
+        ).fetchall()
+        if len(rows) == 1:
+            return rows[0]["billing_party_id"], "person_default"
+    return None, "unresolved"
+
+
+def map_service_mode_to_billing_type(service_mode: str | None) -> str | None:
+    normalized = normalize_service_mode(service_mode)
+    if normalized == "unknown":
+        return None
+    return "psychotherapy_house_call" if normalized == "house_call" else "psychotherapy"
+
+
+def time_label_for_reason(time_category: str | None) -> str:
+    return {
+        "evening": "evening",
+        "weekend": "weekend",
+        "weekend_evening": "weekend-evening",
+    }.get(text(time_category), "standard")
 
 
 def add_calendar_filter(filters: list[str], params: list[Any], calendar_filter: str, alias: str) -> None:
@@ -249,13 +376,18 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
     display_participants = participants
     if not display_participants and not participants_were_explicitly_saved(conn, row["id"]):
         display_participants = proposed_participants_from_candidate(conn, row)
+    readiness = review_readiness(conn, row, display_participants)
+    effective_billing_party = get_billing_party(conn, readiness["effective_billing_party_id"])
+    saved_billing_party = get_billing_party(conn, row["billing_party_id"])
     return {
-        "session": dict(row),
+        "session": {**dict(row), "authority_score": readiness["authority_score"], "authority_reasons": readiness["authority_reasons"]},
         "participants": display_participants,
         "account": get_account(conn, row["account_id"]),
         "account_members": get_account_members(conn, row["account_id"]),
-        "billing_party": get_billing_party(conn, row["billing_party_id"]),
-        "checklist": checklist_for(row, display_participants),
+        "billing_party": saved_billing_party or effective_billing_party,
+        "effective_billing_party": effective_billing_party,
+        "checklist": checklist_for(row, display_participants, readiness),
+        "readiness": readiness,
         "audit": audit_history(conn, row["id"], row["candidate_id"]),
     }
 
@@ -266,6 +398,7 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     candidate_people = parse_json(row["candidate_person_names"], [])
     suggested = "; ".join(participant_names or candidate_people)
     account_name = row["account_name"] or suggested
+    readiness = review_readiness(conn, row, participants or proposed_participants_from_candidate(conn, row))
     return {
         "session_id": row["session_id"],
         "candidate_id": row["candidate_id"],
@@ -292,6 +425,9 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "title_time_matches_calendar": row["title_time_matches_calendar"],
         "rate": cents_to_dollars(row["approved_rate_cents"] or row["suggested_rate_cents"]),
         "confidence": round(float(row["confidence"] or 0) * 100),
+        "authority_score": readiness["authority_score"],
+        "authority_reasons": readiness["authority_reasons"],
+        "billing_party_source": readiness["billing_party_source"],
         "classification": row["classification"],
         "review_reasons": parse_json(row["review_reasons"], []),
     }
@@ -451,6 +587,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     rate_override_reason = payload.get("rate_override_reason") or None
     rate_scope = payload.get("rate_scope") or "session_only"
     approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
+    exact_existing_rate = bool(session["suggested_rate_cents"] is not None and session["rate_rule_id"] and not session["rate_needs_review"])
 
     conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session_id,))
     for index, participant in enumerate(participants):
@@ -493,12 +630,18 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             (billing_party_id, now, account_id),
         )
     unresolved = unresolved_from_values(
+        conn=conn,
         participants=participants,
         billing_party_id=billing_party_id,
+        account_id=account_id,
         duration=duration,
+        billing_session_type=billing_session_type,
         service_mode=service_mode,
         time_category=time_category,
         approved_rate_cents=approved_rate_cents,
+        suggested_rate_cents=suggested_rate_cents,
+        rate_rule_id=session["rate_rule_id"],
+        rate_needs_review=0 if approved_rate_cents is not None else session["rate_needs_review"],
         payment_status=payment_status,
         appointment_status=session["appointment_status"],
         billing_treatment=billing_treatment,
@@ -555,7 +698,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             approved_rate_cents,
             approved_source,
             approved_source,
-            0 if approved_rate_cents is not None else 1,
+            0 if approved_rate_cents is not None or exact_existing_rate else 1,
             rate_override_reason,
             payment_status,
             billable_status,
@@ -587,12 +730,18 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
     session = session_for_candidate(conn, candidate_id)
     participants = get_session_participants(conn, session["id"])
     unresolved = unresolved_from_values(
+        conn=conn,
         participants=participants,
         billing_party_id=session["billing_party_id"],
+        account_id=session["account_id"],
         duration=session["approved_duration_minutes"] or session["duration_minutes"],
+        billing_session_type=session["billing_session_type"],
         service_mode=session["service_mode"],
         time_category=session["time_category"],
         approved_rate_cents=session["approved_rate_cents"],
+        suggested_rate_cents=session["suggested_rate_cents"],
+        rate_rule_id=session["rate_rule_id"],
+        rate_needs_review=session["rate_needs_review"],
         payment_status=session["payment_status"],
         appointment_status=session["appointment_status"],
         billing_treatment=session["billing_treatment"],
@@ -678,6 +827,9 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
                     participant.get("relationship_role") or ("primary" if is_primary else "family_member"),
                     is_primary,
                 )
+        confirmed_person_ids = [participant.get("person_id") for participant in participants if participant.get("person_id")]
+        if not payload.get("billing_party_id") and not account_id and len(confirmed_person_ids) == 1:
+            billing_party_for_person(conn, confirmed_person_ids[0])
     if payload.get("default_billing_party_id") and account_id:
         conn.execute(
             "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
@@ -1744,25 +1896,6 @@ def refresh_candidate_suggestions(
             (now, participants[0]["session_participant_id"]),
         )
 
-    if account_id and not billing_party_id:
-        account = conn.execute(
-            "SELECT default_billing_party_id FROM client_accounts WHERE account_id = ?",
-            (account_id,),
-        ).fetchone()
-        if account and account["default_billing_party_id"]:
-            billing_party_id = account["default_billing_party_id"]
-            conn.execute(
-                "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
-                (billing_party_id, now, session["id"]),
-            )
-    if not billing_party_id:
-        billing_party_id = default_billing_party_for_participants(conn, participants)
-        if billing_party_id:
-            conn.execute(
-                "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
-                (billing_party_id, now, session["id"]),
-            )
-
     duration = session["approved_duration_minutes"] or session["duration_minutes"]
     service_mode = normalize_service_mode(session["service_mode"])
     billing_session_type = session["billing_session_type"] or None
@@ -1806,12 +1939,18 @@ def refresh_candidate_suggestions(
 
     refreshed = session_for_candidate(conn, candidate_id)
     unresolved = unresolved_from_values(
+        conn=conn,
         participants=get_session_participants(conn, refreshed["id"]),
         billing_party_id=refreshed["billing_party_id"],
+        account_id=refreshed["account_id"],
         duration=refreshed["approved_duration_minutes"] or refreshed["duration_minutes"],
+        billing_session_type=refreshed["billing_session_type"],
         service_mode=refreshed["service_mode"],
         time_category=refreshed["time_category"],
         approved_rate_cents=refreshed["approved_rate_cents"],
+        suggested_rate_cents=refreshed["suggested_rate_cents"],
+        rate_rule_id=refreshed["rate_rule_id"],
+        rate_needs_review=refreshed["rate_needs_review"],
         payment_status=refreshed["payment_status"],
         appointment_status=refreshed["appointment_status"],
         billing_treatment=refreshed["billing_treatment"],
@@ -2012,83 +2151,47 @@ def get_billing_party(conn: sqlite3.Connection, billing_party_id: str | None) ->
 def default_billing_party_for_participants(
     conn: sqlite3.Connection,
     participants: list[dict[str, Any]],
+    *,
+    account_id: str | None = None,
 ) -> str | None:
-    person_ids = [p["person_id"] for p in participants if p.get("person_id")]
-    if not person_ids:
-        return None
-    placeholders = ",".join("?" for _ in person_ids)
-    prior = conn.execute(
-        f"""
-        SELECT s.billing_party_id
-        FROM sessions s
-        JOIN session_participants sp ON sp.session_id = s.id
-        WHERE sp.person_id IN ({placeholders})
-          AND s.billing_party_id IS NOT NULL
-          AND s.review_status = 'approved'
-        ORDER BY s.start_at DESC
-        LIMIT 1
-        """,
-        tuple(person_ids),
-    ).fetchone()
-    if prior and prior["billing_party_id"]:
-        return prior["billing_party_id"]
-    if len(person_ids) == 1:
-        person = conn.execute(
-            "SELECT display_name FROM people WHERE person_id = ?",
-            (person_ids[0],),
-        ).fetchone()
-        if not person:
-            return None
-        existing = conn.execute(
-            """
-            SELECT billing_party_id
-            FROM billing_parties
-            WHERE person_id = ? AND active = 1
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (person_ids[0],),
-        ).fetchone()
-        if existing:
-            return existing["billing_party_id"]
-        created = create_billing_party(
-            conn,
-            {
-                "billing_party_type": "person",
-                "person_id": person_ids[0],
-                "billing_name": person["display_name"],
-            },
-        )
-        return created["billing_party_id"]
-    return None
+    return effective_billing_party_lookup(conn, None, account_id, participants)[0]
 
 
-def checklist_for(row: sqlite3.Row, participants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def checklist_for(row: sqlite3.Row, participants: list[dict[str, Any]], readiness: dict[str, Any]) -> list[dict[str, Any]]:
     checks = [
-        ("Participants identified", bool(participants)),
-        ("Bill to selected", bool(row["billing_party_id"])),
-        ("Duration confirmed", bool(row["approved_duration_minutes"] or row["duration_minutes"])),
-        ("Service mode confirmed", bool(row["service_mode"] and row["service_mode"] != "unknown")),
-        ("Time category confirmed", bool(row["time_category"])),
-        ("Rate confirmed", bool(row["approved_rate_cents"])),
-        ("Payment status confirmed", bool(row["payment_status"] and row["payment_status"] != "unresolved")),
+        ("Clients confirmed", readiness["clients_ready"]),
+        ("Bill to confirmed", readiness["billing_ready"]),
+        ("Session details confirmed", readiness["session_ready"]),
+        ("Final approval required", dict(row).get("review_status") == "approved"),
     ]
     return [{"label": label, "resolved": resolved} for label, resolved in checks]
 
 
 def unresolved_from_values(**values: Any) -> list[str]:
     unresolved = []
-    if not values["participants"]:
+    participants = values["participants"]
+    if not participants or any(not participant.get("person_id") or participant.get("is_proposed") for participant in participants):
         unresolved.append("participants")
-    if not values["billing_party_id"]:
+    effective_billing_party_id, _ = effective_billing_party_lookup(
+        values["conn"],
+        values.get("billing_party_id"),
+        values.get("account_id"),
+        participants,
+    )
+    if not effective_billing_party_id:
         unresolved.append("billing_party_id")
     if not values["duration"]:
         unresolved.append("approved_duration_minutes")
-    if not values["service_mode"] or values["service_mode"] == "unknown":
+    billing_type = values.get("billing_session_type") or map_service_mode_to_billing_type(values.get("service_mode"))
+    if billing_type not in ALLOWED_BILLING_SESSION_TYPES:
         unresolved.append("service_mode")
     if not values["time_category"]:
         unresolved.append("time_category")
-    if values["approved_rate_cents"] is None:
+    if values["approved_rate_cents"] is None and not (
+        values.get("suggested_rate_cents") is not None
+        and values.get("rate_rule_id")
+        and not values.get("rate_needs_review")
+    ):
         unresolved.append("approved_rate_cents")
     if values.get("appointment_status") in {"cancelled", "no_show"} and values.get("billing_treatment") in {"", None, "unresolved"}:
         unresolved.append("billing_treatment")
@@ -2256,9 +2359,13 @@ def scrub_session(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def start_time(value: str | None) -> str:
-    if not value or "T" not in value:
+    if not value:
         return ""
-    return value.split("T", 1)[1][:5]
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return dt.astimezone(EASTERN_TZ).strftime("%-I:%M %p")
 
 
 def split_name(name: str) -> tuple[str, str]:
@@ -2746,7 +2853,6 @@ def save_person_alias(
     )
     conn.commit()
     return dict(row)
-    return dict(conn.execute("SELECT * FROM rate_rules WHERE rate_rule_id = ?", (rule_id,)).fetchone())
 
 
 def _find_duplicate_active_rate_rule(

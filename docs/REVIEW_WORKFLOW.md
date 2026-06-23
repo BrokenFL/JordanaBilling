@@ -107,20 +107,22 @@ The Clients record view is the durable place to review client details, bill-to l
 
 ## Section-Level Saves
 
-The routine inspector order is:
+The routine inspector is now guided in this order:
 
 1. Clients in this session
 2. Bill to
 3. Session Details
-4. Advanced billing relationships and shared billing
-5. Review Checklist
-6. Session Actions
+4. Final Approve Session
 
-Save Client(s), Save Bill To, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
+Later steps stay locked until the earlier step is established. When the backend can already confirm a step from saved clients, saved payer setup, or an exact matching rate rule, the UI collapses that step into a compact confirmed summary until Jordana chooses Change.
+
+Confirm Client(s), Save Bill To, and Save Session Draft remain independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, review status, and the separate review-authority score used for guided review.
 
 Removing all clients and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
 
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.
+
+Shared billing and relationships are still available, but ordinary review no longer exposes inline relationship-role editing. That deeper work stays in the Billing Relationships workflow and record view.
 
 Calendar evidence remains read-only under View Calendar Evidence.
 ## Calendar, Status, and Billing Treatment

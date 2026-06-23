@@ -1,4 +1,4 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [] };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], editSteps: { clients: false, session: false } };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 
 const $ = (id) => document.getElementById(id);
@@ -70,7 +70,7 @@ function renderRows(items, total) {
       <td>${billingTypeShort(item.billing_session_type || item.service_mode)}</td>
       <td>${timeLabel(item.time_category)}</td>
       <td>${money(item.rate)}</td>
-      <td><span class="confidence ${item.confidence >= 90 ? "good" : "low"}">${item.confidence || 0}%</span></td>
+      <td><span class="confidence ${item.authority_score >= 60 ? "good" : "low"}">${item.authority_score || 0}%</span></td>
     </tr>
   `).join("");
   document.querySelectorAll("#candidateRows tr").forEach(row => row.addEventListener("click", () => selectCandidate(row.dataset.id)));
@@ -85,25 +85,40 @@ function statusColor(status, classification) {
 
 async function selectCandidate(candidateId) {
   state.selected = candidateId;
+  state.editSteps = { clients: false, session: false };
   document.querySelectorAll("#candidateRows tr").forEach(row => row.classList.toggle("selected", row.dataset.id === candidateId));
   const data = await api(`/api/review/candidates/${candidateId}`);
   state.detail = data;
   state.participants = data.participants.map(participantState);
   state.account = data.account;
-  state.billingParty = data.billing_party;
+  state.billingParty = data.billing_party || data.effective_billing_party;
   renderInspector(data);
 }
 
 function renderInspector(data) {
   const s = data.session;
   const isSession = Boolean(s.id);
+  const readiness = data.readiness || {};
+  const effectiveBillingParty = data.effective_billing_party || data.billing_party;
+  const clientsEditing = state.editSteps.clients;
+  const sessionEditing = state.editSteps.session;
+  const clientsLocked = !readiness.clients_ready;
+  const billingLocked = !readiness.clients_ready;
+  const sessionLocked = !readiness.clients_ready || !readiness.billing_ready;
+  const currentRate = centString(s.approved_rate_cents || s.suggested_rate_cents);
+  const suggestedRate = centString(s.suggested_rate_cents);
+  const rateChanged = currentRate !== suggestedRate && currentRate !== "";
+  const showCancellation = ["cancelled", "no_show"].includes(s.appointment_status);
+  const showSessionSave = !sessionLocked && (!readiness.session_ready || state.dirty.has("session"));
+  const showRelationshipSave = !readiness.clients_ready || state.dirty.has("relationship");
+  const showBillingSave = !billingLocked && (!readiness.billing_ready || state.dirty.has("billing"));
   $("inspector").innerHTML = `
     <div class="inspector-header">
       <div>
         <h2>${fmt(s.raw_calendar_title || s.title)}</h2>
         <div class="meta"><span>${fmt(s.session_date)}</span><span>${fmt(startRange(s))}</span><span>${fmt(s.duration_minutes)} min</span><span>${calendarLabel(s)}</span><span>${appointmentBadge(s.appointment_status)}</span></div>
       </div>
-      <div><span class="badge">${fmt(s.review_status).replaceAll("_", " ")}</span><div class="confidence ${Math.round((s.confidence || 0) * 100) >= 90 ? "good" : "low"}">Confidence: ${Math.round((s.confidence || 0) * 100)}%</div></div>
+      <div><span class="badge">${fmt(s.review_status).replaceAll("_", " ")}</span><div class="confidence ${s.authority_score >= 60 ? "good" : "low"}">Review confidence: ${s.authority_score || 0}%</div><div class="help">${(s.authority_reasons || []).join(", ")}</div></div>
     </div>
     ${titleTimeWarning(s)}
 
@@ -128,73 +143,71 @@ function renderInspector(data) {
     <section class="section">
       <div class="section-title-row"><h3>Clients in this session</h3><span class="save-state" id="relationshipState">Needs review</span></div>
       <div class="help">Clients attending this session</div>
-      <div class="chips" id="participantChips"></div>
-      <div class="combobox"><input id="personInput" placeholder="Search or add a client..." list="peopleList"><button class="mini" id="addPerson">+</button></div>
-      <datalist id="peopleList"></datalist>
-      <div id="personWarning"></div>
-      <div id="personEditor" class="drawer" hidden></div>
+      ${readiness.clients_ready && !clientsEditing
+        ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${state.participants.map(p => fmt(p.display_name || p.participant_name)).join(", ")}</div></div>`
+        : `<div class="chips" id="participantChips"></div>
+           <div class="combobox"><input id="personInput" placeholder="Search or add a client..." list="peopleList"><button class="mini" id="addPerson">+</button></div>
+           <datalist id="peopleList"></datalist>
+           <div id="personWarning"></div>
+           <div id="personEditor" class="drawer" hidden></div>`}
       <div class="inline-actions">
-        <button id="saveRelationshipBtn" class="save">Save Client(s)</button>
+        <button id="changeClientsBtn">${readiness.clients_ready && !clientsEditing ? "Change" : "Confirm Client(s)"}</button>
+        ${showRelationshipSave ? '<button id="saveRelationshipBtn" class="save">Confirm Client(s)</button>' : ""}
       </div>
     </section>
 
     <section class="section">
       <div class="section-title-row"><h3>Bill to</h3><span class="save-state" id="billingState">Needs review</span></div>
       <div class="help">Choose which confirmed client should receive and pay the invoice.</div>
-      ${billToSummary(data)}
-      <label class="field wide">Bill to client<select id="billToClientSelect">${billToClientOptions(data)}</select></label>
-      <div id="billingEditor" class="drawer" hidden></div>
-      <div class="inline-actions">
-        <button id="editBillingRelationship">Edit Billing Relationship</button>
-        <button id="saveBillingBtn" class="save">Save Bill To</button>
-      </div>
+      ${billingLocked
+        ? `<div class="readonly-note">Confirm Client(s) first.</div>`
+        : readiness.billing_ready
+          ? `${billToSummary(data)}
+             <div class="inline-actions"><button id="editBillingRelationship">Change payer or shared billing</button></div>`
+          : `<label class="field wide">Bill to client<select id="billToClientSelect">${billToClientOptions(data)}</select></label>
+             <div class="inline-actions">
+               <button id="editBillingRelationship">Change payer or shared billing</button>
+               ${showBillingSave ? '<button id="saveBillingBtn" class="save">Save Bill To</button>' : ""}
+             </div>`}
     </section>
 
     <section class="section">
       <div class="section-title-row"><h3>Session Details</h3><span class="save-state" id="sessionState">Needs review</span></div>
-      <div class="field-grid">
-        <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
-        <label class="field">Duration<select id="durationChoiceInput">${durationOptions(s.duration_choice || durationToChoice(s.approved_duration_minutes || s.duration_minutes))}</select></label>
-        <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || ""}"></label>
-        <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${s.custom_service_description || ""}"></label>
-        <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${s.custom_service_code || ""}"></label>
-        <label class="field">Appointment Method<span class="help">Internal evidence (Office/Phone/FaceTime)</span><span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label>
-        <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend","weekend_evening"], s.time_category)}</select></label>
-        <label class="field">Suggested Rate<span class="help">${rateSourceDescription(s, data.participants)}</span><input id="suggestedRateInput" value="${centString(s.suggested_rate_cents)}"></label>
-        <label class="field">Suggested/editable rate<span class="help">The final amount saved for this session.</span><input id="approvedRateInput" value="${centString(s.approved_rate_cents || s.suggested_rate_cents)}"></label>
-        <label class="field">Payment Status<span class="help">Whether payment has already been received.</span><select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
-        <label class="field">Cancellation/No-Show Billing<span class="help">Separate billing decision for cancelled or no-show appointments.</span><select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>
-        <label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label>
-        <label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>
-      </div>
-      ${houseCallSuggestion(s)}
-      <div class="rate-scope" id="rateScope">
-        <strong>Apply this rate to:</strong>
-        <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
-        <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this client</label>
-        <select id="rateScopePerson">${state.participants.map(p => `<option value="${p.person_id || ""}">${p.display_name || p.participant_name || ""}</option>`).join("")}</select>
-        <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these clients</label>
-      </div>
-      <div class="inline-actions"><button id="saveSessionBtn" class="save">Save Session Draft</button></div>
+      ${sessionLocked
+        ? `<div class="readonly-note">${!readiness.clients_ready ? "Confirm Client(s) first." : "Confirm Bill To first."}</div>`
+        : readiness.session_ready && !sessionEditing
+          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${billingTypeLabel(s.billing_session_type || mapLegacyToType(s))} • ${fmt(s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)} • ${fmt(s.payment_status)}</div></div>
+             <div class="inline-actions"><button id="changeSessionBtn">Change</button></div>`
+          : `<div class="field-grid">
+               <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
+               <label class="field">Duration<select id="durationChoiceInput">${durationOptions(s.duration_choice || durationToChoice(s.approved_duration_minutes || s.duration_minutes))}</select></label>
+               <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || ""}"></label>
+               <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${s.custom_service_description || ""}"></label>
+               <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${s.custom_service_code || ""}"></label>
+               <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend","weekend_evening"], s.time_category)}</select></label>
+               <label class="field">Rate for this session<input id="approvedRateInput" value="${currentRate}"><span class="help">${rateSourceDescription(s, data.participants)}</span></label>
+               <label class="field">Payment Status<select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
+               ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
+               <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label><label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label></div></details>
+               ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>` : ""}
+             </div>
+             ${houseCallSuggestion(s)}
+             ${rateChanged ? `<div class="rate-scope" id="rateScope">
+               <strong>Apply this rate to:</strong>
+               <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
+               <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this client</label>
+               <select id="rateScopePerson">${state.participants.map(p => `<option value="${p.person_id || ""}">${p.display_name || p.participant_name || ""}</option>`).join("")}</select>
+               <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these clients</label>
+             </div>` : ""}
+             <div class="inline-actions">${showSessionSave ? '<button id="saveSessionBtn" class="save">Save Session Draft</button>' : ""}</div>`}
     </section>
 
     <section class="section">
       <details>
-        <summary class="section-summary">Advanced relationships and shared billing</summary>
-        <div class="field-grid">
-          <label class="field wide">Related Billing Relationship
-            <span class="help">Optional backend relationship support for families, couples, shared billing, default payer, or special joint rates.</span>
-            <div class="combobox"><input id="accountInput" placeholder="Search or create a billing relationship" value="${data.account ? data.account.account_name : ""}" list="accountList"><button class="mini" id="addAccount">+</button></div>
-          </label>
-          <datalist id="accountList"></datalist>
-        </div>
-        <div class="inline-actions">
-          <button id="editAccount">Quick Edit Billing Relationship</button>
-          <button id="openAccountRecord">Open Billing Relationship Record</button>
-        </div>
+        <summary class="section-summary">Shared billing and relationships</summary>
         <div id="relationshipEditor" class="drawer"></div>
       </details>
-      <div class="hint">Suggestion reasons: ${(safeList(s.review_reasons).join(" ") || s.explanation || "Calendar title matched the parser pattern.")}</div>
+      <div class="hint">Suggestion reasons: ${(s.authority_reasons || []).join(", ") || safeList(s.review_reasons).join(" ") || s.explanation || "Calendar title matched the parser pattern."}</div>
     </section>
 
     <section class="section">
@@ -203,7 +216,7 @@ function renderInspector(data) {
     </section>
 
     <div class="actions">
-      ${isSession ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
+      ${isSession && readiness.all_ready ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
       <button id="personalBtn">Mark Personal/Admin</button>
       <button id="duplicateBtn">Mark Duplicate</button>
       <button class="danger" id="excludeBtn">Exclude</button>
@@ -215,20 +228,18 @@ function renderInspector(data) {
 }
 
 function wireInspector() {
-  $("personInput").addEventListener("input", debounce(async e => fillDatalist("peopleList", await api(`/api/people?q=${encodeURIComponent(e.target.value)}`), "display_name"), 160));
-  $("accountInput").addEventListener("input", debounce(async e => fillDatalist("accountList", await api(`/api/accounts?q=${encodeURIComponent(e.target.value)}`), "account_name"), 160));
-  $("addPerson").onclick = createPersonFromInput;
-  $("addAccount").onclick = createAccountFromInput;
+  if ($("personInput")) $("personInput").addEventListener("input", debounce(async e => fillDatalist("peopleList", await api(`/api/people?q=${encodeURIComponent(e.target.value)}`), "display_name"), 160));
+  if ($("addPerson")) $("addPerson").onclick = createPersonFromInput;
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
-  $("saveRelationshipBtn").onclick = saveRelationshipSection;
-  $("saveBillingBtn").onclick = saveBillingSection;
-  $("saveSessionBtn").onclick = saveSessionSection;
-  $("editAccount").onclick = showAccountEditor;
-  $("editBillingRelationship").onclick = openBillingRelationshipEditor;
-  $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
-  $("personalBtn").onclick = () => mark("personal");
-  $("duplicateBtn").onclick = () => mark("duplicate");
-  $("excludeBtn").onclick = () => mark("nonbillable");
+  if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = saveRelationshipSection;
+  if ($("changeClientsBtn")) $("changeClientsBtn").onclick = () => { state.editSteps.clients = true; markDirty("relationship"); renderInspector(state.detail); };
+  if ($("saveBillingBtn")) $("saveBillingBtn").onclick = saveBillingSection;
+  if ($("changeSessionBtn")) $("changeSessionBtn").onclick = () => { state.editSteps.session = true; markDirty("session"); renderInspector(state.detail); };
+  if ($("saveSessionBtn")) $("saveSessionBtn").onclick = saveSessionSection;
+  if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipEditor;
+  if ($("personalBtn")) $("personalBtn").onclick = () => mark("personal");
+  if ($("duplicateBtn")) $("duplicateBtn").onclick = () => mark("duplicate");
+  if ($("excludeBtn")) $("excludeBtn").onclick = () => mark("nonbillable");
   [
     "billingTypeInput",
     "durationChoiceInput",
@@ -236,7 +247,6 @@ function wireInspector() {
     "customDescInput",
     "customCodeInput",
     "timeCategoryInput",
-    "suggestedRateInput",
     "approvedRateInput",
     "paymentInput",
     "billingTreatmentInput",
@@ -246,8 +256,7 @@ function wireInspector() {
     const element = $(id);
     if (element) element.addEventListener("input", () => markDirty("session"));
   });
-  $("accountInput").addEventListener("input", () => markDirty("relationship"));
-  $("billToClientSelect").addEventListener("input", () => markDirty("billing"));
+  if ($("billToClientSelect")) $("billToClientSelect").addEventListener("input", () => markDirty("billing"));
 }
 
 function markDirty(section) {
@@ -287,8 +296,8 @@ function confirmedSessionClients() {
 
 function billToClientOptions(data) {
   const clients = confirmedSessionClients();
-  const selectedPersonId = data.billing_party?.person_id || "";
-  if (!clients.length) return `<option value="">Save Client(s) before choosing a payer</option>`;
+  const selectedPersonId = data.effective_billing_party?.person_id || data.billing_party?.person_id || "";
+  if (!clients.length) return `<option value="">Confirm Client(s) first</option>`;
   const needsChoice = clients.length > 1 && !selectedPersonId;
   return [
     needsChoice ? `<option value="">Choose payer...</option>` : "",
@@ -301,8 +310,9 @@ function billToClientOptions(data) {
 }
 
 function billToSummary(data) {
-  if (!data.billing_party) return "";
-  return `<div class="relationship-summary"><strong>Current Bill To</strong><div>${fmt(data.billing_party.billing_name)}</div></div>`;
+  const billingParty = data.effective_billing_party || data.billing_party;
+  if (!billingParty) return "";
+  return `<div class="relationship-summary success"><strong>${fmt(billingParty.billing_name)}</strong><div>Saved billing setup</div></div>`;
 }
 
 function sessionClientSummary(participants = state.participants) {
@@ -576,25 +586,17 @@ function showPersonEditor(index) {
 function renderRelationshipEditor(data) {
   const members = data && data.account_members ? data.account_members : [];
   const accountName = state.account ? state.account.account_name : "No billing relationship selected";
-  const billingName = state.billingParty ? state.billingParty.billing_name : "No billing party selected";
+  const billingName = (data.effective_billing_party || state.billingParty)?.billing_name || "No billing party selected";
   $("relationshipEditor").innerHTML = `
-    <h4>Billing Relationship Editor</h4>
+    <h4>Relationship Summary</h4>
     <div class="kv">
       <label>Relationship</label><strong>${accountName}</strong>
+      <label>Members</label><span>${(members.length ? members : state.participants).map(m => m.display_name || m.participant_name || "").filter(Boolean).join(", ") || "None"}</span>
       <label>Default payer</label><span>${billingName}</span>
     </div>
-    <div class="member-list">
-      ${(members.length ? members : state.participants).map((m, i) => `
-        <div class="member-row">
-          <span>${m.display_name || m.participant_name || ""}</span>
-          <select data-role="${i}">
-            ${optionSet(["primary","spouse","child","parent","family_member","couple_member","payer","other"], m.relationship_role || (i === 0 ? "primary" : "family_member"))}
-          </select>
-          <label><input type="radio" name="primaryMember" ${m.is_primary || i === 0 ? "checked" : ""}> Primary</label>
-        </div>
-      `).join("")}
-    </div>
+    <div class="inline-actions"><button id="openAccountRecord">Open Billing Relationship Record</button></div>
   `;
+  if ($("openAccountRecord")) $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
 }
 
 function showAccountEditor() {
@@ -638,8 +640,9 @@ async function saveRelationshipSection() {
   });
   state.detail = updated;
   state.account = updated.account;
-  state.billingParty = updated.billing_party;
+  state.billingParty = updated.billing_party || updated.effective_billing_party;
   state.participants = updated.participants.map(participantState);
+  state.editSteps.clients = false;
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
   markSaved("relationship", "Client(s) saved. Session suggestions refreshed.");
@@ -656,7 +659,7 @@ async function saveBillingSection() {
     body: JSON.stringify({ bill_to_person_id: selectedPersonId })
   });
   state.detail = updated;
-  state.billingParty = updated.billing_party;
+  state.billingParty = updated.billing_party || updated.effective_billing_party;
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
   markSaved("billing", "Bill to saved");
@@ -666,6 +669,7 @@ async function saveBillingSection() {
 async function saveSessionSection() {
   const updated = await api(`/api/review/candidates/${state.selected}/save-session`, { method: "POST", body: JSON.stringify(collectPayload()) });
   state.detail = updated;
+  state.editSteps.session = false;
   renderInspector(updated);
   markSaved("session", "Session draft saved");
   await loadList();
@@ -678,6 +682,7 @@ async function save(approve) {
   try {
     const updated = await api(`/api/review/candidates/${state.selected}/${action}`, { method: "POST", body: JSON.stringify(payload) });
     state.detail = updated;
+    state.editSteps = { clients: false, session: false };
     renderInspector(updated);
     await loadList();
   } catch (err) {
@@ -697,7 +702,6 @@ function collectSessionDraftValues() {
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
     time_category: $("timeCategoryInput")?.value || "",
-    suggested_rate: $("suggestedRateInput")?.value || "",
     approved_rate: $("approvedRateInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
     billing_treatment: $("billingTreatmentInput")?.value || "",
@@ -714,7 +718,6 @@ function restoreSessionDraftValues(values) {
   if ($("customDescInput")) $("customDescInput").value = values.custom_service_description;
   if ($("customCodeInput")) $("customCodeInput").value = values.custom_service_code;
   if ($("timeCategoryInput")) $("timeCategoryInput").value = values.time_category;
-  if ($("suggestedRateInput")) $("suggestedRateInput").value = values.suggested_rate;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
   if ($("paymentInput")) $("paymentInput").value = values.payment_status;
   if ($("billingTreatmentInput")) $("billingTreatmentInput").value = values.billing_treatment;
@@ -723,7 +726,9 @@ function restoreSessionDraftValues(values) {
 }
 
 async function resolveTypedSelections() {
-  const accountName = $("accountInput").value.trim();
+  const accountField = $("accountInput");
+  if (!accountField) return;
+  const accountName = accountField.value.trim();
   if (accountName && (!state.account || state.account.account_name !== accountName)) {
     state.account = await findOrCreate("/api/accounts", "account_name", accountName, { account_name: accountName, account_type: accountName.toLowerCase().includes("family") ? "family" : "individual" });
   }
@@ -747,7 +752,8 @@ function collectPayload() {
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
     time_category: $("timeCategoryInput").value,
-    suggested_rate: $("suggestedRateInput").value,
+    suggested_rate: centString(state.detail?.session?.suggested_rate_cents),
+    billing_party_id: state.billingParty ? state.billingParty.billing_party_id : state.detail?.effective_billing_party?.billing_party_id || null,
     approved_rate: $("approvedRateInput").value,
     payment_status: $("paymentInput").value,
     billing_treatment: $("billingTreatmentInput").value,
@@ -828,7 +834,12 @@ function houseCallSuggestion(s) {
 }
 function centString(cents) { return cents ? (Number(cents) / 100).toFixed(2) : ""; }
 function safeList(raw) { try { return Array.isArray(raw) ? raw : JSON.parse(raw || "[]"); } catch { return []; } }
-function startRange(s) { return `${(s.start_at || "").split("T")[1]?.slice(0,5) || ""} - ${(s.end_at || "").split("T")[1]?.slice(0,5) || ""}`; }
+function startRange(s) {
+  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+  const start = s.start_at ? formatter.format(new Date(s.start_at)) : "";
+  const end = s.end_at ? formatter.format(new Date(s.end_at)) : "";
+  return start && end ? `${start} - ${end}` : start || end;
+}
 function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
 
 ["searchBox","statusFilter","serviceFilter","timeFilter","calendarFilter"].forEach(id => $(id).addEventListener("input", () => { state.offset = 0; loadList(); }));
