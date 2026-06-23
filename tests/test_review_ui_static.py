@@ -45,6 +45,23 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertNotIn("Person code", editor)
         self.assertNotIn("person_code", editor)
 
+    def test_selecting_existing_client_replaces_matching_proposed_chip(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function replaceMatchingProposedParticipant(person)", js)
+        self.assertIn("participant.is_proposed &&", js)
+        self.assertIn("state.participants[proposedIndex] = { ...state.participants[proposedIndex], ...nextParticipant };", js)
+        self.assertNotIn("state.participants.push({ person_id: person.person_id, display_name: person.display_name, is_primary: state.participants.length === 0 });", js)
+
+    def test_merge_is_hidden_for_proposed_participants(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function showPersonEditor")
+        end = js.index("function renderRelationshipEditor")
+        editor = js[start:end]
+
+        self.assertIn('const mergeButton = !p.is_proposed && p.person_id ? \'<button id="mergePersonBtn">Merge...</button>\' : "";', editor)
+        self.assertIn('if ($("mergePersonBtn")) $("mergePersonBtn").onclick = async () => {', editor)
+
     def test_billing_relationship_round_trip_uses_stable_return_context(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 

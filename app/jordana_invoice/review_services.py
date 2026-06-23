@@ -248,7 +248,7 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
     participants = get_session_participants(conn, row["id"])
     display_participants = participants
     if not display_participants and not participants_were_explicitly_saved(conn, row["id"]):
-        display_participants = proposed_participants_from_candidate(row)
+        display_participants = proposed_participants_from_candidate(conn, row)
     return {
         "session": dict(row),
         "participants": display_participants,
@@ -410,7 +410,7 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
     }
     return {
         "session": session,
-        "participants": proposed_participants_from_candidate(row),
+        "participants": proposed_participants_from_candidate(conn, row),
         "account": None,
         "account_members": [],
         "billing_party": None,
@@ -1545,7 +1545,10 @@ def add_session_participant(
     return participant_id
 
 
-def proposed_participants_from_candidate(row: sqlite3.Row) -> list[dict[str, Any]]:
+def proposed_participants_from_candidate(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> list[dict[str, Any]]:
     names = parse_json(row["candidate_person_names"] if "candidate_person_names" in row.keys() else None, [])
     if not isinstance(names, list) or not names:
         proposed = text(row["proposed_client_name"] if "proposed_client_name" in row.keys() else "")
@@ -1555,19 +1558,33 @@ def proposed_participants_from_candidate(row: sqlite3.Row) -> list[dict[str, Any
         display_name = text(name)
         if not display_name:
             continue
-        participants.append(
-            {
-                "session_participant_id": None,
-                "session_id": row["id"] if "id" in row.keys() else None,
-                "person_id": None,
-                "participant_name": display_name,
-                "display_name": display_name,
-                "participant_role": "primary" if index == 0 else "participant",
-                "is_primary": index == 0,
-                "is_proposed": True,
-                "source": "parser_candidate",
-            }
-        )
+        matches = find_active_people_by_exact_normalized_name(conn, display_name)
+        participant = {
+            "session_participant_id": None,
+            "session_id": row["id"] if "id" in row.keys() else None,
+            "person_id": None,
+            "participant_name": display_name,
+            "display_name": display_name,
+            "participant_role": "primary" if index == 0 else "participant",
+            "is_primary": index == 0,
+            "is_proposed": True,
+            "source": "parser_candidate",
+        }
+        if len(matches) == 1:
+            person = matches[0]
+            participant.update(
+                {
+                    "person_id": person["person_id"],
+                    "display_name": person["display_name"],
+                    "first_name": person["first_name"],
+                    "last_name": person["last_name"],
+                    "billing_email": person["billing_email"],
+                    "billing_phone": person["billing_phone"],
+                    "is_proposed": False,
+                    "source": "exact_person_match",
+                }
+            )
+        participants.append(participant)
     return participants
 
 
@@ -1598,12 +1615,11 @@ def resolve_confirmed_participant_person(
     display_name = text(participant_name)
     if not display_name:
         return None
-    existing = conn.execute(
-        "SELECT person_id FROM people WHERE lower(display_name) = lower(?) AND active = 1 LIMIT 1",
-        (display_name,),
-    ).fetchone()
-    if existing:
-        return existing["person_id"]
+    matches = find_active_people_by_exact_normalized_name(conn, display_name)
+    if len(matches) == 1:
+        return matches[0]["person_id"]
+    if len(matches) > 1:
+        return None
     if not is_usable_new_person_name(display_name):
         return None
     participant = participant or {}
@@ -1618,6 +1634,31 @@ def resolve_confirmed_participant_person(
         },
     )
     return created["person_id"]
+
+
+def normalize_exact_participant_name(value: str) -> str:
+    return " ".join(text(value).split()).casefold()
+
+
+def find_active_people_by_exact_normalized_name(
+    conn: sqlite3.Connection,
+    display_name: str,
+) -> list[sqlite3.Row]:
+    normalized = normalize_exact_participant_name(display_name)
+    if not normalized:
+        return []
+    rows = conn.execute(
+        """
+        SELECT person_id, display_name, first_name, last_name, billing_email, billing_phone
+        FROM people
+        WHERE active = 1
+        """
+    ).fetchall()
+    return [
+        row
+        for row in rows
+        if normalize_exact_participant_name(row["display_name"]) == normalized
+    ]
 
 
 def is_usable_new_person_name(display_name: str) -> bool:

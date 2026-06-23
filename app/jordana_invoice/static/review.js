@@ -454,11 +454,40 @@ function splitDisplayName(name) {
   return { first: parts[0] || "", last: parts.slice(1).join(" ") };
 }
 
+function normalizeParticipantName(name) {
+  return String(name || "").trim().toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+}
+
+function replaceMatchingProposedParticipant(person) {
+  const normalizedTarget = normalizeParticipantName(person.display_name);
+  const proposedIndex = state.participants.findIndex(participant =>
+    participant.is_proposed &&
+    normalizeParticipantName(participant.display_name || participant.participant_name) === normalizedTarget
+  );
+  const nextParticipant = {
+    person_id: person.person_id,
+    display_name: person.display_name,
+    participant_name: person.display_name,
+    first_name: person.first_name || "",
+    last_name: person.last_name || "",
+    billing_email: person.billing_email || "",
+    billing_phone: person.billing_phone || "",
+    is_primary: proposedIndex >= 0 ? !!state.participants[proposedIndex].is_primary : state.participants.length === 0,
+    is_proposed: false
+  };
+  if (proposedIndex >= 0) {
+    state.participants[proposedIndex] = { ...state.participants[proposedIndex], ...nextParticipant };
+    return true;
+  }
+  state.participants.push(nextParticipant);
+  return false;
+}
+
 async function createPersonFromInput() {
   const name = $("personInput").value.trim();
   if (!name) return;
   const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
-  const exact = rows.find(row => String(row.display_name).toLowerCase() === name.toLowerCase());
+  const exact = rows.find(row => normalizeParticipantName(row.display_name) === normalizeParticipantName(name));
   if (!exact) {
     state.participants.push({ display_name: name, participant_name: name, is_primary: state.participants.length === 0, is_proposed: true, source: "manual" });
     $("personInput").value = "";
@@ -468,7 +497,7 @@ async function createPersonFromInput() {
     return;
   }
   const person = exact;
-  state.participants.push({ person_id: person.person_id, display_name: person.display_name, is_primary: state.participants.length === 0 });
+  replaceMatchingProposedParticipant(person);
   $("personInput").value = "";
   renderParticipantChips();
   renderRelationshipEditor(state.detail);
@@ -486,6 +515,7 @@ async function createAccountFromInput() {
 function showPersonEditor(index) {
   const p = state.participants[index];
   const split = splitDisplayName(p.display_name || p.participant_name || "");
+  const mergeButton = !p.is_proposed && p.person_id ? '<button id="mergePersonBtn">Merge...</button>' : "";
   $("personEditor").hidden = false;
   $("personEditor").innerHTML = `
     <h4>Edit Client</h4>
@@ -495,7 +525,7 @@ function showPersonEditor(index) {
       <label class="field">Email<input id="editPersonEmail" value="${p.billing_email || ""}"></label>
       <label class="field">Phone<input id="editPersonPhone" value="${p.billing_phone || ""}"></label>
     </div>
-    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button><button id="mergePersonBtn">Merge...</button></div>
+    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}</div>
   `;
   $("savePersonEdit").onclick = async () => {
     const first = $("editPersonFirst").value.trim();
@@ -528,11 +558,11 @@ function showPersonEditor(index) {
     renderParticipantChips();
   };
   $("cancelPersonEdit").onclick = () => $("personEditor").hidden = true;
-  $("mergePersonBtn").onclick = async () => {
+  if ($("mergePersonBtn")) $("mergePersonBtn").onclick = async () => {
     const target = prompt("Merge this client into which existing display name?");
     if (!target || !p.person_id) return;
     const rows = await api(`/api/people?q=${encodeURIComponent(target)}`);
-    const survivor = rows.find(row => row.display_name.toLowerCase() === target.toLowerCase()) || rows[0];
+    const survivor = rows.find(row => normalizeParticipantName(row.display_name) === normalizeParticipantName(target)) || rows[0];
     if (!survivor) return alert("No matching survivor person found.");
     if (!confirm(`Merge ${p.display_name} into ${survivor.display_name}? The duplicate will be marked inactive, not deleted.`)) return;
     const merged = await api(`/api/people/${survivor.person_id}/merge`, { method: "POST", body: JSON.stringify({ duplicate_person_id: p.person_id, reason: "Merged from review UI" }) });

@@ -116,7 +116,50 @@ class ReviewServiceTests(unittest.TestCase):
 
         self.assertEqual(detail["participants"][0]["display_name"], "Leah Grossman")
         self.assertTrue(detail["participants"][0]["is_proposed"])
+        self.assertIsNone(detail["participants"][0]["person_id"])
         self.assertEqual(count(self.conn, "people"), 0)
+
+    def test_one_exact_match_auto_links_proposed_participant(self):
+        candidate_id = self.import_without_persisted_participants("snap-exact-match", "Leah Grossman 630 30")
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
+        self.assertEqual(detail["participants"][0]["display_name"], "Leah Grossman")
+        self.assertFalse(detail["participants"][0]["is_proposed"])
+        self.assertEqual(count(self.conn, "people"), 1)
+
+    def test_case_and_extra_space_exact_match_auto_links(self):
+        candidate_id = self.import_without_persisted_participants("snap-spaces", "Leah Grossman 630 30")
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "  leah   grossman  "})
+
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
+        self.assertFalse(detail["participants"][0]["is_proposed"])
+
+    def test_multiple_exact_matches_do_not_auto_link(self):
+        candidate_id = self.import_without_persisted_participants("snap-duplicate-match", "Leah Grossman 630 30")
+        first = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+        self.conn.execute(
+            """
+            INSERT INTO people (
+              person_id, display_name, first_name, last_name, active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 1, ?, ?)
+            """,
+            ("duplicate-leah", "Leah   Grossman", "Leah", "Grossman", "2026-06-23T00:00:00Z", "2026-06-23T00:00:00Z"),
+        )
+        self.conn.commit()
+
+        detail = get_review_candidate(self.conn, candidate_id)
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+
+        self.assertEqual(first["display_name"], "Leah Grossman")
+        self.assertIsNone(detail["participants"][0]["person_id"])
+        self.assertTrue(detail["participants"][0]["is_proposed"])
+        self.assertIsNone(saved["participants"][0]["person_id"])
+        self.assertEqual(count(self.conn, "people"), 2)
 
     def test_confirming_exact_existing_person_links_without_duplication(self):
         candidate_id = self.import_without_persisted_participants("snap-existing", "Leah Grossman 630 30")
