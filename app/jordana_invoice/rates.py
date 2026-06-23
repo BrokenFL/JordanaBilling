@@ -45,6 +45,7 @@ def seed_rate_rule(
     amount_cents: int,
     effective_from: str,
     duration_minutes: int | None = None,
+    billing_session_type: str | None = None,
     service_mode: str | None = None,
     rate_group: str | None = None,
     time_category: str = "standard",
@@ -59,15 +60,16 @@ def seed_rate_rule(
         """
         INSERT INTO rate_rules (
           rate_rule_id, client_account_id, person_id, duration_minutes,
-          service_mode, rate_group, time_category, amount_cents,
+          billing_session_type, service_mode, rate_group, time_category, amount_cents,
           effective_from, priority, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         """,
         (
             rule_id,
             client_account_id,
             person_id,
             duration_minutes,
+            billing_session_type,
             service_mode,
             rate_group,
             time_category,
@@ -119,6 +121,7 @@ def suggest_rate(
     *,
     session_date: str,
     duration_minutes: int | None,
+    billing_session_type: str | None = None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
@@ -146,6 +149,7 @@ def suggest_rate(
             participant_ids,
             session_date,
             duration_minutes,
+            billing_session_type,
             service_mode,
             rate_group,
             time_category,
@@ -173,6 +177,7 @@ def suggest_rate(
             value,
             session_date,
             duration_minutes,
+            billing_session_type,
             service_mode,
             rate_group,
             time_category,
@@ -200,6 +205,7 @@ def find_matching_participant_rule(
     participant_ids: list[str],
     session_date: str,
     duration_minutes: int | None,
+    billing_session_type: str | None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
@@ -214,6 +220,7 @@ def find_matching_participant_rule(
           AND rr.effective_from <= ?
           AND (rr.effective_through IS NULL OR rr.effective_through = '' OR rr.effective_through >= ?)
           AND (rr.duration_minutes IS NULL OR rr.duration_minutes = ?)
+          AND (rr.billing_session_type IS NULL OR rr.billing_session_type = ?)
           AND (rr.service_mode IS NULL OR rr.service_mode = ?)
           AND (rr.rate_group IS NULL OR rr.rate_group = ?)
           AND (rr.time_category = 'standard' OR rr.time_category = ?)
@@ -225,6 +232,7 @@ def find_matching_participant_rule(
              WHERE exact.rate_rule_id = rr.rate_rule_id
            ) = ?
         ORDER BY
+          CASE WHEN rr.billing_session_type IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN rr.duration_minutes IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN rr.service_mode IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN rr.rate_group IS NOT NULL THEN 1 ELSE 0 END DESC,
@@ -237,6 +245,7 @@ def find_matching_participant_rule(
             session_date,
             session_date,
             duration_minutes,
+            billing_session_type,
             service_mode,
             rate_group,
             time_category,
@@ -254,6 +263,7 @@ def find_matching_rule(
     scope_value: str | None,
     session_date: str,
     duration_minutes: int | None,
+    billing_session_type: str | None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
@@ -266,6 +276,7 @@ def find_matching_rule(
             session_date,
             session_date,
             duration_minutes,
+            billing_session_type,
             service_mode,
             rate_group,
             time_category,
@@ -280,12 +291,14 @@ def find_matching_rule(
           AND effective_from <= ?
           AND (effective_through IS NULL OR effective_through = '' OR effective_through >= ?)
           AND (duration_minutes IS NULL OR duration_minutes = ?)
+          AND (billing_session_type IS NULL OR billing_session_type = ?)
           AND (service_mode IS NULL OR service_mode = ?)
           AND (rate_group IS NULL OR rate_group = ?)
           AND (time_category = 'standard' OR time_category = ?)
         ORDER BY
           CASE WHEN person_id IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN client_account_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+          CASE WHEN billing_session_type IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN duration_minutes IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN service_mode IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN rate_group IS NOT NULL THEN 1 ELSE 0 END DESC,

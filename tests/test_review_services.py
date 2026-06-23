@@ -11,6 +11,7 @@ from jordana_invoice.review_services import (
     create_person,
     get_review_candidate,
     list_review_candidates,
+    save_billing_section,
     save_relationship_section,
     save_interpretation,
 )
@@ -162,6 +163,100 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(count(self.conn, "people"), 1)
         person = self.conn.execute("SELECT * FROM people").fetchone()
         self.assertEqual(person["display_name"], "Leah Goldberg")
+
+    def test_edited_new_client_contact_fields_are_used_on_confirmation(self):
+        candidate_id = self.import_without_persisted_participants("snap-contact", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+        detail["participants"][0].update(
+            {
+                "first_name": "Leah",
+                "last_name": "Goldberg",
+                "display_name": "Leah Goldberg",
+                "participant_name": "Leah Goldberg",
+                "billing_email": "leah@example.test",
+                "billing_phone": "555-0100",
+            }
+        )
+
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+
+        person = self.conn.execute("SELECT * FROM people").fetchone()
+        self.assertEqual(saved["participants"][0]["person_id"], person["person_id"])
+        self.assertEqual(person["display_name"], "Leah Goldberg")
+        self.assertEqual(person["billing_email"], "leah@example.test")
+        self.assertEqual(person["billing_phone"], "555-0100")
+        self.assertTrue(person["person_code"])
+
+    def test_save_bill_to_by_confirmed_client_id_creates_and_reuses_billing_party(self):
+        candidate_id = self.import_without_persisted_participants("snap-payer", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+        person_id = saved["participants"][0]["person_id"]
+
+        first = save_billing_section(self.conn, candidate_id, {"bill_to_person_id": person_id})
+        second = save_billing_section(self.conn, candidate_id, {"bill_to_person_id": person_id})
+
+        self.assertEqual(first["billing_party"]["person_id"], person_id)
+        self.assertEqual(second["billing_party"]["billing_party_id"], first["billing_party"]["billing_party_id"])
+        self.assertEqual(count(self.conn, "billing_parties"), 1)
+
+    def test_relationship_and_bill_to_save_persist_session_account_and_payer(self):
+        candidate_id = self.import_without_persisted_participants("snap-return", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+        saved_participants = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+        payer_person_id = saved_participants["participants"][0]["person_id"]
+        account = create_account(self.conn, "Grossman Family Billing", "family")
+
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": saved_participants["participants"],
+                "account_id": account["account_id"],
+                "primary_person_id": payer_person_id,
+            },
+        )
+        billed = save_billing_section(self.conn, candidate_id, {"bill_to_person_id": payer_person_id})
+        reloaded = get_review_candidate(self.conn, candidate_id)
+
+        self.assertEqual(billed["session"]["id"], reloaded["session"]["id"])
+        self.assertEqual(reloaded["session"]["account_id"], account["account_id"])
+        self.assertEqual(reloaded["billing_party"]["person_id"], payer_person_id)
+        self.assertEqual(reloaded["billing_party"]["billing_name"], "Leah Grossman")
+        self.assertNotEqual(reloaded["billing_party"]["billing_name"], "Grossman Family Billing")
+
+    def test_existing_billing_relationship_edit_keeps_selected_payer_name_on_review_reload(self):
+        candidate_id = self.import_without_persisted_participants("snap-existing-relationship", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+        saved_participants = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+        payer_person_id = saved_participants["participants"][0]["person_id"]
+        account = create_account(self.conn, "Simon Household", "household")
+        billing_party = create_billing_party(
+            self.conn,
+            {
+                "billing_party_type": "person",
+                "person_id": payer_person_id,
+                "billing_name": "Leah Grossman",
+                "billing_email": "leah@example.test",
+            },
+        )
+
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": saved_participants["participants"],
+                "account_id": account["account_id"],
+                "primary_person_id": payer_person_id,
+                "default_billing_party_id": billing_party["billing_party_id"],
+                "billing_party_id": billing_party["billing_party_id"],
+            },
+        )
+        reloaded = get_review_candidate(self.conn, candidate_id)
+
+        self.assertEqual(reloaded["session"]["id"], saved_participants["session"]["id"])
+        self.assertEqual(reloaded["billing_party"]["billing_name"], "Leah Grossman")
+        self.assertNotEqual(reloaded["billing_party"]["billing_name"], "Simon Household")
 
     def test_saving_empty_participant_list_clears_participants_and_suppresses_proposal(self):
         candidate_id = self.import_without_persisted_participants("snap-empty", "Leah Grossman 630 30")

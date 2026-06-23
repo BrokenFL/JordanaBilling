@@ -9,7 +9,7 @@ The review UI separates four ideas that may look similar in a calendar title:
 
 One session can have multiple participants and still be one charge.
 
-Routine review shows Participants and Bill to. It does not require a visible household or family account.
+Routine review shows Clients in this session and Bill to. It does not require a visible household or family billing relationship.
 
 ## Examples
 

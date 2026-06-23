@@ -660,7 +660,7 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
         conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session["id"],))
         for index, participant in enumerate(participants):
             participant_name = participant.get("display_name") or participant.get("participant_name") or ""
-            person_id = resolve_confirmed_participant_person(conn, participant.get("person_id"), participant_name)
+            person_id = resolve_confirmed_participant_person(conn, participant.get("person_id"), participant_name, participant)
             is_primary = bool(participant.get("is_primary")) or (primary_person_id and person_id == primary_person_id) or (index == 0 and len(participants) == 1)
             add_session_participant(
                 conn,
@@ -698,6 +698,8 @@ def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: d
     init_db(conn)
     session = session_for_candidate(conn, candidate_id)
     billing_party_id = payload.get("billing_party_id")
+    if payload.get("bill_to_person_id"):
+        billing_party_id = billing_party_for_person(conn, payload["bill_to_person_id"])
     if payload.get("billing_party"):
         billing = payload["billing_party"]
         if billing.get("billing_party_id"):
@@ -1369,6 +1371,36 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
     return dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
 
 
+def billing_party_for_person(conn: sqlite3.Connection, person_id: str) -> str:
+    init_db(conn)
+    person = conn.execute("SELECT * FROM people WHERE person_id = ? AND active = 1", (person_id,)).fetchone()
+    if not person:
+        raise ValueError("Bill-to client must be a confirmed active person.")
+    existing = conn.execute(
+        """
+        SELECT billing_party_id
+        FROM billing_parties
+        WHERE person_id = ? AND active = 1
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (person_id,),
+    ).fetchone()
+    if existing:
+        return existing["billing_party_id"]
+    created = create_billing_party(
+        conn,
+        {
+            "billing_party_type": "person",
+            "person_id": person_id,
+            "billing_name": person["display_name"],
+            "billing_email": person["billing_email"],
+            "billing_phone": person["billing_phone"],
+        },
+    )
+    return created["billing_party_id"]
+
+
 def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
     existing = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone()
@@ -1559,6 +1591,7 @@ def resolve_confirmed_participant_person(
     conn: sqlite3.Connection,
     person_id: str | None,
     participant_name: str,
+    participant: dict[str, Any] | None = None,
 ) -> str | None:
     if person_id:
         return person_id
@@ -1573,7 +1606,17 @@ def resolve_confirmed_participant_person(
         return existing["person_id"]
     if not is_usable_new_person_name(display_name):
         return None
-    created = create_person(conn, {"display_name": display_name})
+    participant = participant or {}
+    created = create_person(
+        conn,
+        {
+            "display_name": display_name,
+            "first_name": participant.get("first_name"),
+            "last_name": participant.get("last_name"),
+            "billing_email": participant.get("billing_email"),
+            "billing_phone": participant.get("billing_phone"),
+        },
+    )
     return created["person_id"]
 
 
@@ -1630,12 +1673,14 @@ def refresh_candidate_suggestions(
 
     duration = session["approved_duration_minutes"] or session["duration_minutes"]
     service_mode = normalize_service_mode(session["service_mode"])
+    billing_session_type = session["billing_session_type"] or None
     time_category = normalize_time_category(session["time_category"])
     participant_person_ids = [p["person_id"] for p in participants if p.get("person_id")]
     suggestion = suggest_rate(
         conn,
         session_date=session["session_date"] or text(session["start_at"])[:10],
         duration_minutes=duration,
+        billing_session_type=billing_session_type,
         service_mode=service_mode,
         rate_group=session["rate_group"] or rate_group_for(service_mode),
         time_category=time_category,
@@ -1847,7 +1892,7 @@ def session_for_candidate(conn: sqlite3.Connection, candidate_id: str) -> sqlite
 def get_session_participants(conn: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT sp.*, p.display_name
+        SELECT sp.*, p.display_name, p.first_name, p.last_name, p.billing_email, p.billing_phone
         FROM session_participants sp
         LEFT JOIN people p ON p.person_id = sp.person_id
         WHERE sp.session_id = ?
@@ -2482,19 +2527,156 @@ def list_rate_rules(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def create_rate_rule_from_payload(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
+    amount_cents = money_payload_to_cents(data.get("amount"))
+    if amount_cents is None or amount_cents <= 0:
+        raise ValueError("Amount is required and must be greater than 0.")
+    duration_minutes = int(data["duration_minutes"]) if text(data.get("duration_minutes")) else None
+    billing_session_type = text(data.get("billing_session_type")) or None
+    if billing_session_type:
+        validate_billing_session_type(billing_session_type)
+    service_mode = normalize_service_mode(data.get("service_mode")) if data.get("service_mode") else None
+    rate_group = text(data.get("rate_group")) or None
+    time_category = normalize_time_category(data.get("time_category") or "standard")
+    effective_from = text(data.get("effective_from")) or "2026-01-01"
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", effective_from):
+        raise ValueError("Effective date must be in YYYY-MM-DD format.")
+    client_account_id = data.get("client_account_id") or None
+    person_id = data.get("person_id") or None
+    participant_person_ids = data.get("participant_person_ids") or None
+    priority = int(data.get("priority") or 100)
+
+    duplicate = _find_duplicate_active_rate_rule(
+        conn,
+        client_account_id=client_account_id,
+        person_id=person_id,
+        participant_person_ids=participant_person_ids,
+        duration_minutes=duration_minutes,
+        billing_session_type=billing_session_type,
+        service_mode=service_mode,
+        rate_group=rate_group,
+        time_category=time_category,
+        effective_from=effective_from,
+    )
+    if duplicate:
+        raise ValueError("An active rate rule with the same scope and dimensions already exists.")
+
     rule_id = seed_rate_rule(
         conn,
-        amount_cents=money_payload_to_cents(data.get("amount")) or 0,
-        effective_from=data.get("effective_from") or "2026-01-01",
-        duration_minutes=int(data["duration_minutes"]) if text(data.get("duration_minutes")) else None,
-        service_mode=normalize_service_mode(data.get("service_mode")) if data.get("service_mode") else None,
-        rate_group=data.get("rate_group"),
-        time_category=normalize_time_category(data.get("time_category") or "standard"),
-        client_account_id=data.get("client_account_id"),
-        person_id=data.get("person_id"),
-        participant_person_ids=data.get("participant_person_ids") or None,
-        priority=int(data.get("priority") or 100),
+        amount_cents=amount_cents,
+        effective_from=effective_from,
+        duration_minutes=duration_minutes,
+        billing_session_type=billing_session_type,
+        service_mode=service_mode,
+        rate_group=rate_group,
+        time_category=time_category,
+        client_account_id=client_account_id,
+        person_id=person_id,
+        participant_person_ids=participant_person_ids,
+        priority=priority,
     )
     record_audit(conn, "rate_rule", rule_id, "created_inline", data)
+    _recalc_unapproved_session_rates(conn)
     conn.commit()
     return dict(conn.execute("SELECT * FROM rate_rules WHERE rate_rule_id = ?", (rule_id,)).fetchone())
+
+
+def _find_duplicate_active_rate_rule(
+    conn: sqlite3.Connection,
+    *,
+    client_account_id: str | None,
+    person_id: str | None,
+    participant_person_ids: list[str] | None,
+    duration_minutes: int | None,
+    billing_session_type: str | None,
+    service_mode: str | None,
+    rate_group: str | None,
+    time_category: str,
+    effective_from: str,
+) -> str | None:
+    """Return an existing active rule_id that duplicates the requested scope and dimensions."""
+    if participant_person_ids:
+        ids = sorted(set(p for p in participant_person_ids if p))
+        placeholders = ",".join("?" for _ in ids)
+        row = conn.execute(
+            f"""
+            SELECT rr.rate_rule_id
+            FROM rate_rules rr
+            JOIN rate_rule_participants rrp ON rrp.rate_rule_id = rr.rate_rule_id
+            WHERE rr.active = 1
+              AND rr.client_account_id IS NULL
+              AND rr.person_id IS NULL
+              AND COALESCE(rr.duration_minutes, -1) = ?
+              AND COALESCE(rr.billing_session_type, '') = ?
+              AND COALESCE(rr.service_mode, '') = ?
+              AND COALESCE(rr.rate_group, '') = ?
+              AND rr.time_category = ?
+              AND rr.effective_from = ?
+              AND rrp.person_id IN ({placeholders})
+            GROUP BY rr.rate_rule_id
+            HAVING COUNT(DISTINCT rrp.person_id) = ?
+               AND (
+                 SELECT COUNT(*) FROM rate_rule_participants exact
+                 WHERE exact.rate_rule_id = rr.rate_rule_id
+               ) = ?
+            LIMIT 1
+            """,
+            (
+                duration_minutes if duration_minutes is not None else -1,
+                billing_session_type or "",
+                service_mode or "",
+                rate_group or "",
+                time_category,
+                effective_from,
+                *ids,
+                len(ids),
+                len(ids),
+            ),
+        ).fetchone()
+        return row["rate_rule_id"] if row else None
+
+    row = conn.execute(
+        """
+        SELECT rate_rule_id
+        FROM rate_rules
+        WHERE active = 1
+          AND COALESCE(client_account_id, '') = ?
+          AND COALESCE(person_id, '') = ?
+          AND COALESCE(duration_minutes, -1) = ?
+          AND COALESCE(billing_session_type, '') = ?
+          AND COALESCE(service_mode, '') = ?
+          AND COALESCE(rate_group, '') = ?
+          AND time_category = ?
+          AND effective_from = ?
+          AND rate_rule_id NOT IN (SELECT rate_rule_id FROM rate_rule_participants)
+        LIMIT 1
+        """,
+        (
+            client_account_id or "",
+            person_id or "",
+            duration_minutes if duration_minutes is not None else -1,
+            billing_session_type or "",
+            service_mode or "",
+            rate_group or "",
+            time_category,
+            effective_from,
+        ),
+    ).fetchone()
+    return row["rate_rule_id"] if row else None
+
+
+def _recalc_unapproved_session_rates(conn: sqlite3.Connection) -> int:
+    """Refresh rate suggestions for all unapproved sessions after a rate rule change.
+
+    Approved and excluded sessions are intentionally skipped so historical approved
+    rates and explicit exclusions are never rewritten by new rate rules.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, candidate_id
+        FROM sessions
+        WHERE review_status NOT IN ('approved', 'excluded')
+        """
+    ).fetchall()
+    for row in rows:
+        refresh_candidate_suggestions(conn, row["candidate_id"], preserve_approved_rate=True)
+    return len(rows)

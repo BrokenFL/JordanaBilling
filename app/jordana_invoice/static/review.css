@@ -164,10 +164,28 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .rate-card-header h2 { margin: 0 0 4px; font-size: 22px; }
 .rate-card-header p { margin: 0; color: var(--muted); }
 .rate-form {
-  display: grid;
-  grid-template-columns: 140px 130px 150px 170px 150px 210px 170px 120px;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  align-items: end;
   margin-bottom: 18px;
+}
+.rate-form input,
+.rate-form select {
+  flex: 1 1 140px;
+  min-width: 130px;
+}
+.rate-form button {
+  flex: 0 0 auto;
+}
+.rate-form-message {
+  flex: 1 1 100%;
+  min-height: 18px;
+  font-size: 13px;
+  color: var(--red);
+}
+.rate-form-message.success {
+  color: var(--green);
 }
 .rate-table { max-width: 980px; }
 .rate-table th, .rate-table td { text-align: left; width: auto; }

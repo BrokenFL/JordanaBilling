@@ -38,7 +38,7 @@ http://127.0.0.1:8765/review
 
 The routine inspector supports:
 
-- Participants search/create/reuse/correction/merge
+- Clients in this session search/add/reuse/correction/merge
 - Bill-to search/create/reuse
 - duration edits
 - service mode edits
@@ -49,14 +49,14 @@ The routine inspector supports:
 - save without approval
 - approval with validation
 - personal/admin/nonbillable/duplicate marking
-- collapsed Advanced relationships and shared billing controls for account members, roles, default payer, shared-rate setup, and opening account records
+- collapsed Advanced relationships and shared billing controls for billing relationship members, roles, default payer, shared-rate setup, and opening billing relationship records
 - functional Rate Card section
-- independent Save Participants, Save Bill To, and Save Session Draft buttons
-- Clients & Accounts list and account record
-- People list and person record
+- independent Save Client(s), Save Bill To, and Save Session Draft buttons
+- Billing Relationships list and relationship record
+- Clients list and client record
 - return link from CRM record back to the originating review item
 
-Routine review should not display Client / Family Account, Primary Client, Household Name, Account Name, Relationship Role, or Account Membership as required fields.
+Routine review should not display backend family-account setup, household names, relationship roles, or billing relationship membership as required fields.
 
 ## Future UI Work
 
@@ -82,4 +82,4 @@ Additions:
 - title-time discrepancy warning with Calendar start preserved
 - cancellation/no-show billing-treatment control
 
-Backend account/relationship controls remain collapsed under Advanced relationships and shared billing.
+Backend billing relationship controls remain collapsed under Advanced relationships and shared billing.

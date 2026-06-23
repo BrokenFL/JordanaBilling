@@ -23,7 +23,7 @@ Each candidate can have multiple unresolved fields. Those fields are stored as s
 
 Routine review uses Jordana's normal mental model:
 
-1. Participants
+1. Clients in this session
 2. Bill to
 3. Session Type (exactly 5 choices)
 4. Duration (exactly 5 choices)
@@ -67,9 +67,9 @@ Automatic derivation uses this priority:
 
 House Call overrides Weekend and Evening. Weekend overrides Evening.
 
-Participants are people connected to one session. The bill-to party is the person or organization responsible for receiving and paying the invoice, and does not have to be a participant. A separate client/account field is not required for routine approval.
+Clients in this session are permanent human client records connected to one session. The bill-to party is the person or organization responsible for receiving and paying the invoice, and does not have to be an attending client. A separate billing relationship is not required for a simple self-paying client.
 
-Parser-derived names may appear in Participants as proposed participants before anything has been saved. Showing a proposed participant does not create a permanent person, approve the session, or change raw calendar evidence. When Jordana clicks Save Participants, exact matches are linked to existing people. A new permanent person is created only when the confirmed participant name has a usable first and last name; incomplete or ambiguous names remain reviewable session participant text until completed.
+Parser-derived names may appear in Clients in this session as proposed clients before anything has been saved. Showing a proposed client does not create a permanent person, approve the session, or change raw calendar evidence. When Jordana clicks Save Client(s), exact matches are linked to existing people. A new permanent person/client is created only when the confirmed client name has a usable first and last name; incomplete or ambiguous names remain reviewable session participant text until completed.
 
 ## Relationship Review
 
@@ -101,29 +101,29 @@ The first functional UI is available at `/review` through:
 PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
 ```
 
-It supports save without approval, approval validation, inline person/account/billing-party creation, and structured audit records.
+It supports save without approval, approval validation, proposed client editing before confirmation, billing relationship maintenance, and structured audit records.
 
 ## Section-Level Saves
 
 The routine inspector order is:
 
-1. Participants
+1. Clients in this session
 2. Bill to
 3. Session Details
-4. Advanced relationships and shared billing
+4. Advanced billing relationships and shared billing
 5. Review Checklist
 6. Session Actions
 
-Save Participants, Save Bill To, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
+Save Client(s), Save Bill To, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
 
-Removing all participants and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
+Removing all clients and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
 
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.
 
 Calendar evidence remains read-only under View Calendar Evidence.
 ## Calendar, Status, and Billing Treatment
 
-Routine review remains a confirmation form: Participants, Bill to, Duration, Session type, Time category, Suggested/editable rate, Payment status, and Approve.
+Routine review remains a confirmation form: Clients in this session, Bill to, Duration, Session type, Time category, Suggested/editable rate, Payment status, and Approve.
 
 The review screen now also shows source calendar, calendar disposition, appointment-status badge, Calendar start time, parsed title time, original title, and title-time mismatch warnings.
 
@@ -149,4 +149,4 @@ Hidden records are recoverable through the intentional hidden-calendar filter.
 
 ## Invoice Eligibility Boundary
 
-Approval does not create an invoice. The invoice builder revalidates approval, participants, bill-to, actual charged amount, appointment status, billing treatment, billable classification, raw evidence, and duplicate attachment. Cancelled/no-show sessions require explicit `billable` treatment.
+Approval does not create an invoice. The invoice builder revalidates approval, clients in the session, bill-to, actual charged amount, appointment status, billing treatment, billable classification, raw evidence, and duplicate attachment. Cancelled/no-show sessions require explicit `billable` treatment.

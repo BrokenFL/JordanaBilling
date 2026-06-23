@@ -13,8 +13,8 @@
         <nav>
           <a class="active" href="/review" id="reviewNav">Review Queue <span id="navNeeds" class="count">0</span></a>
           <a>Calendar Import</a>
-          <a href="#" id="clientsNav">Clients & Accounts</a>
-          <a href="#" id="peopleNav">People</a>
+          <a href="#" id="clientsNav">Billing Relationships</a>
+          <a href="#" id="peopleNav">Clients</a>
           <a href="#" id="rateCardNav">Rate Card</a>
           <a>Sessions</a>
           <a href="/invoices" id="invoicesNav">Invoices</a>
@@ -49,7 +49,7 @@
               <select id="statusFilter">
                 <option value="">All Review Statuses</option>
                 <option value="needs_rate">Needs Rate</option>
-                <option value="needs_account">Needs Account</option>
+                <option value="needs_account">Needs Billing Relationship</option>
                 <option value="needs_billing_party">Needs Billing Party</option>
                 <option value="needs_payment_status">Needs Payment</option>
                 <option value="ready_for_approval">Ready to Approve</option>
@@ -88,7 +88,7 @@
                   <th>Date</th>
                   <th>Time</th>
                   <th>Raw Title</th>
-                  <th>Participants</th>
+                  <th>Clients</th>
                   <th>Duration</th>
                   <th>Type</th>
                   <th>Time Cat.</th>
@@ -110,7 +110,7 @@
           <div class="rate-card-header">
             <div>
               <h2>Rate Card</h2>
-              <p>Set suggested rates by duration, service type, time category, person, account, and effective date.</p>
+              <p>Set suggested rates by duration, service type, time category, client, billing relationship, and effective date.</p>
             </div>
           </div>
           <form class="rate-form" id="rateRuleForm">
@@ -138,17 +138,18 @@
             </select>
             <select name="applies_to" id="rateAppliesTo">
               <option value="everyone">Everyone</option>
-              <option value="account">Specific Account</option>
-              <option value="person">Specific Person</option>
+              <option value="account">Specific Billing Relationship</option>
+              <option value="person">Specific Client</option>
             </select>
-            <input name="applies_to_search" id="rateAppliesSearch" placeholder="Account or person name" list="rateAppliesList" />
+            <input name="applies_to_search" id="rateAppliesSearch" placeholder="Billing relationship or client name" list="rateAppliesList" />
             <datalist id="rateAppliesList"></datalist>
             <input name="effective_from" placeholder="Effective from YYYY-MM-DD" value="2026-01-01" />
             <button type="submit" class="save">Add Rate Rule</button>
+            <div class="rate-form-message" id="rateFormMessage"></div>
           </form>
           <table class="review-table rate-table">
             <thead>
-              <tr><th>Amount</th><th>Duration</th><th>Service</th><th>Time Category</th><th>Applies To</th><th>Effective</th><th>Explanation</th></tr>
+              <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Applies To</th><th>Effective</th><th>Explanation</th></tr>
             </thead>
             <tbody id="rateRows"></tbody>
           </table>
@@ -156,29 +157,29 @@
 
         <section class="crm-view" id="clientsView" hidden>
           <div class="crm-header">
-            <div><h2>Clients & Accounts</h2><p>Households, individuals, billing setup, rates, and session history.</p></div>
-            <div class="crm-tools"><input id="clientSearch" type="search" placeholder="Search accounts..." /><button id="newAccountBtn" class="save">Create Account</button></div>
+            <div><h2>Billing Relationships</h2><p>Households, individuals, billing setup, rates, and session history.</p></div>
+            <div class="crm-tools"><input id="clientSearch" type="search" placeholder="Search billing relationships..." /><button id="newAccountBtn" class="save">Create Billing Relationship</button></div>
           </div>
           <div class="crm-layout">
             <table class="review-table crm-table">
-              <thead><tr><th>Account Code</th><th>Account Name</th><th>Type</th><th>Primary Person</th><th>Members</th><th>Billing Party</th><th>Default Rate</th><th>Outstanding</th><th>Last Session</th><th>Status</th></tr></thead>
+              <thead><tr><th>Relationship Code</th><th>Relationship Name</th><th>Type</th><th>Primary Client</th><th>Members</th><th>Billing Party</th><th>Default Rate</th><th>Outstanding</th><th>Last Session</th><th>Status</th></tr></thead>
               <tbody id="clientRows"></tbody>
             </table>
-            <aside class="record-pane" id="accountRecord"><div class="empty-state">Open an account record.</div></aside>
+            <aside class="record-pane" id="accountRecord"><div class="empty-state">Open a billing relationship record.</div></aside>
           </div>
         </section>
 
         <section class="crm-view" id="peopleView" hidden>
           <div class="crm-header">
-            <div><h2>People</h2><p>Confirmed people, aliases, relationships, and billing contacts.</p></div>
-            <div class="crm-tools"><input id="peopleSearch" type="search" placeholder="Search people..." /><button id="newPersonBtn" class="save">Create Person</button></div>
+            <div><h2>Clients</h2><p>Confirmed clients, aliases, relationships, and billing contacts.</p></div>
+            <div class="crm-tools"><input id="peopleSearch" type="search" placeholder="Search clients..." /><button id="newPersonBtn" class="save">Create Client</button></div>
           </div>
           <div class="crm-layout">
             <table class="review-table crm-table people-table">
-              <thead><tr><th>Person Code</th><th>Last Name</th><th>First Name</th><th>Display Name</th><th>Accounts</th><th>Billing Party For</th><th>Last Session</th><th>Status</th></tr></thead>
+              <thead><tr><th>Client Code</th><th>Last Name</th><th>First Name</th><th>Display Name</th><th>Billing Relationships</th><th>Bill To For</th><th>Last Session</th><th>Status</th></tr></thead>
               <tbody id="peopleRows"></tbody>
             </table>
-            <aside class="record-pane" id="personRecord"><div class="empty-state">Open a person record.</div></aside>
+            <aside class="record-pane" id="personRecord"><div class="empty-state">Open a client record.</div></aside>
           </div>
         </section>
 

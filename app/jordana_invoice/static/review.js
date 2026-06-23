@@ -1,4 +1,5 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, invoice: null, eligibleSessions: [] };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [] };
+const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
@@ -8,7 +9,19 @@ const billingTypeShort = (v) => ({psychotherapy:"Standard", psychotherapy_house_
 const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || v || "Unknown");
 const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || v || "Unknown");
 const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || v || "Standard");
-const participantState = (p) => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary, is_proposed: !!p.is_proposed, source: p.source || "", relationship_role: p.relationship_role });
+const participantState = (p) => ({
+  person_id: p.person_id,
+  display_name: p.display_name || p.participant_name,
+  participant_name: p.participant_name,
+  first_name: p.first_name || "",
+  last_name: p.last_name || "",
+  billing_email: p.billing_email || "",
+  billing_phone: p.billing_phone || "",
+  is_primary: !!p.is_primary,
+  is_proposed: !!p.is_proposed,
+  source: p.source || "",
+  relationship_role: p.relationship_role
+});
 
 async function api(path, options = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -113,29 +126,27 @@ function renderInspector(data) {
     </section>
 
     <section class="section">
-      <div class="section-title-row"><h3>Participants</h3><span class="save-state" id="relationshipState">Needs review</span></div>
-      <div class="help">Clients in this session</div>
+      <div class="section-title-row"><h3>Clients in this session</h3><span class="save-state" id="relationshipState">Needs review</span></div>
+      <div class="help">Clients attending this session</div>
       <div class="chips" id="participantChips"></div>
-      <div class="combobox"><input id="personInput" placeholder="Search existing person or add a new one" list="peopleList"><button class="mini" id="addPerson">+</button></div>
+      <div class="combobox"><input id="personInput" placeholder="Search or add a client..." list="peopleList"><button class="mini" id="addPerson">+</button></div>
       <datalist id="peopleList"></datalist>
       <div id="personWarning"></div>
       <div id="personEditor" class="drawer" hidden></div>
       <div class="inline-actions">
-        <button id="saveRelationshipBtn" class="save">Save Participants</button>
-        <button id="openPersonRecord">Open Person Record</button>
+        <button id="saveRelationshipBtn" class="save">Save Client(s)</button>
       </div>
     </section>
 
     <section class="section">
       <div class="section-title-row"><h3>Bill to</h3><span class="save-state" id="billingState">Needs review</span></div>
-      <div class="help">Person or organization responsible for receiving and paying the invoice. This does not add them as a participant.</div>
-      <div class="combobox"><input id="billingInput" placeholder="Search or create a bill-to contact" value="${data.billing_party ? data.billing_party.billing_name : ""}" list="billingList"><button class="mini" id="addBilling">+</button></div>
-      <datalist id="billingList"></datalist>
+      <div class="help">Choose which confirmed client should receive and pay the invoice.</div>
+      ${billToSummary(data)}
+      <label class="field wide">Bill to client<select id="billToClientSelect">${billToClientOptions(data)}</select></label>
       <div id="billingEditor" class="drawer" hidden></div>
       <div class="inline-actions">
+        <button id="editBillingRelationship">Edit Billing Relationship</button>
         <button id="saveBillingBtn" class="save">Save Bill To</button>
-        <button id="sameAsPrimary">Same as sole participant</button>
-        <button id="editBilling">Edit Bill To</button>
       </div>
     </section>
 
@@ -160,9 +171,9 @@ function renderInspector(data) {
       <div class="rate-scope" id="rateScope">
         <strong>Apply this rate to:</strong>
         <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
-        <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this participant</label>
+        <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this client</label>
         <select id="rateScopePerson">${state.participants.map(p => `<option value="${p.person_id || ""}">${p.display_name || p.participant_name || ""}</option>`).join("")}</select>
-        <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these participants</label>
+        <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these clients</label>
       </div>
       <div class="inline-actions"><button id="saveSessionBtn" class="save">Save Session Draft</button></div>
     </section>
@@ -171,15 +182,15 @@ function renderInspector(data) {
       <details>
         <summary class="section-summary">Advanced relationships and shared billing</summary>
         <div class="field-grid">
-          <label class="field wide">Related Account
+          <label class="field wide">Related Billing Relationship
             <span class="help">Optional backend relationship support for families, couples, shared billing, default payer, or special joint rates.</span>
-            <div class="combobox"><input id="accountInput" placeholder="Search or create an account" value="${data.account ? data.account.account_name : ""}" list="accountList"><button class="mini" id="addAccount">+</button></div>
+            <div class="combobox"><input id="accountInput" placeholder="Search or create a billing relationship" value="${data.account ? data.account.account_name : ""}" list="accountList"><button class="mini" id="addAccount">+</button></div>
           </label>
           <datalist id="accountList"></datalist>
         </div>
         <div class="inline-actions">
-          <button id="editAccount">Quick Edit Account</button>
-          <button id="openAccountRecord">Open Account Record</button>
+          <button id="editAccount">Quick Edit Billing Relationship</button>
+          <button id="openAccountRecord">Open Billing Relationship Record</button>
         </div>
         <div id="relationshipEditor" class="drawer"></div>
       </details>
@@ -206,18 +217,14 @@ function renderInspector(data) {
 function wireInspector() {
   $("personInput").addEventListener("input", debounce(async e => fillDatalist("peopleList", await api(`/api/people?q=${encodeURIComponent(e.target.value)}`), "display_name"), 160));
   $("accountInput").addEventListener("input", debounce(async e => fillDatalist("accountList", await api(`/api/accounts?q=${encodeURIComponent(e.target.value)}`), "account_name"), 160));
-  $("billingInput").addEventListener("input", debounce(async e => fillDatalist("billingList", await api(`/api/billing-parties?q=${encodeURIComponent(e.target.value)}`), "billing_name"), 160));
   $("addPerson").onclick = createPersonFromInput;
   $("addAccount").onclick = createAccountFromInput;
-  $("addBilling").onclick = createBillingFromInput;
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
   $("saveRelationshipBtn").onclick = saveRelationshipSection;
   $("saveBillingBtn").onclick = saveBillingSection;
   $("saveSessionBtn").onclick = saveSessionSection;
-  $("sameAsPrimary").onclick = sameAsPrimaryParticipant;
   $("editAccount").onclick = showAccountEditor;
-  $("editBilling").onclick = showBillingEditor;
-  $("openPersonRecord").onclick = () => openPrimaryPersonRecord();
+  $("editBillingRelationship").onclick = openBillingRelationshipEditor;
   $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
   $("personalBtn").onclick = () => mark("personal");
   $("duplicateBtn").onclick = () => mark("duplicate");
@@ -240,7 +247,7 @@ function wireInspector() {
     if (element) element.addEventListener("input", () => markDirty("session"));
   });
   $("accountInput").addEventListener("input", () => markDirty("relationship"));
-  $("billingInput").addEventListener("input", () => markDirty("billing"));
+  $("billToClientSelect").addEventListener("input", () => markDirty("billing"));
 }
 
 function markDirty(section) {
@@ -274,13 +281,190 @@ function renderParticipantChips() {
   document.querySelectorAll("#participantChips button[data-edit]").forEach(btn => btn.onclick = () => showPersonEditor(Number(btn.dataset.edit)));
 }
 
+function confirmedSessionClients() {
+  return state.participants.filter(p => p.person_id);
+}
+
+function billToClientOptions(data) {
+  const clients = confirmedSessionClients();
+  const selectedPersonId = data.billing_party?.person_id || "";
+  if (!clients.length) return `<option value="">Save Client(s) before choosing a payer</option>`;
+  const needsChoice = clients.length > 1 && !selectedPersonId;
+  return [
+    needsChoice ? `<option value="">Choose payer...</option>` : "",
+    ...clients.map(p => {
+      const name = p.display_name || p.participant_name || "Unnamed client";
+      const selected = p.person_id === selectedPersonId || (!selectedPersonId && clients.length === 1 && p.person_id) ? "selected" : "";
+      return `<option value="${p.person_id}" ${selected}>${fmt(name)}</option>`;
+    })
+  ].join("");
+}
+
+function billToSummary(data) {
+  if (!data.billing_party) return "";
+  return `<div class="relationship-summary"><strong>Current Bill To</strong><div>${fmt(data.billing_party.billing_name)}</div></div>`;
+}
+
+function sessionClientSummary(participants = state.participants) {
+  return participants
+    .filter(p => p.person_id)
+    .map(p => ({
+      person_id: p.person_id,
+      display_name: p.display_name || p.participant_name || "",
+      relationship_role: p.relationship_role || "",
+      is_primary: !!p.is_primary
+    }));
+}
+
+function buildReturnContext() {
+  const session = state.detail && state.detail.session ? state.detail.session : null;
+  if (!state.selected || !session || !session.id) return null;
+  return {
+    returnView: "review",
+    candidateId: state.selected,
+    sessionId: session.id,
+    accountId: state.account ? state.account.account_id : "",
+    billingPartyId: state.billingParty ? state.billingParty.billing_party_id : "",
+    billToPersonId: state.billingParty ? state.billingParty.person_id || "" : "",
+    participants: sessionClientSummary()
+  };
+}
+
+function validReturnContext(value) {
+  return !!(value && typeof value.candidateId === "string" && value.candidateId && typeof value.sessionId === "string" && value.sessionId);
+}
+
+function returnContextHash(context) {
+  if (!validReturnContext(context)) return "#clients";
+  const params = new URLSearchParams({
+    returnView: context.returnView || "review",
+    candidateId: context.candidateId,
+    sessionId: context.sessionId
+  });
+  if (context.accountId) params.set("accountId", context.accountId);
+  if (context.billToPersonId) params.set("billToPersonId", context.billToPersonId);
+  if (context.billingPartyId) params.set("billingPartyId", context.billingPartyId);
+  const participantIds = (context.participants || []).map(p => p.person_id).filter(Boolean);
+  if (participantIds.length) params.set("participantIds", participantIds.join(","));
+  return `#clients?${params.toString()}`;
+}
+
+function persistReturnContext(context) {
+  if (!validReturnContext(context)) {
+    clearReturnContext();
+    return null;
+  }
+  state.returnContext = context;
+  try {
+    sessionStorage.setItem(RETURN_CONTEXT_KEY, JSON.stringify(context));
+  } catch (_) {}
+  return context;
+}
+
+function hashReturnContext() {
+  const raw = location.hash.startsWith("#") ? location.hash.slice(1) : "";
+  const [view, query] = raw.split("?");
+  if (view !== "clients" || !query) return null;
+  const params = new URLSearchParams(query);
+  const candidateId = params.get("candidateId") || "";
+  const sessionId = params.get("sessionId") || "";
+  if (!candidateId || !sessionId) return null;
+  return {
+    returnView: params.get("returnView") || "review",
+    candidateId,
+    sessionId,
+    accountId: params.get("accountId") || "",
+    billingPartyId: params.get("billingPartyId") || "",
+    billToPersonId: params.get("billToPersonId") || "",
+    participants: []
+  };
+}
+
+function readReturnContext() {
+  if (validReturnContext(state.returnContext)) return state.returnContext;
+  const fromHash = hashReturnContext();
+  let fromStorage = null;
+  try {
+    fromStorage = JSON.parse(sessionStorage.getItem(RETURN_CONTEXT_KEY) || "null");
+  } catch (_) {
+    fromStorage = null;
+  }
+  if (validReturnContext(fromStorage)) {
+    if (fromHash && fromHash.candidateId === fromStorage.candidateId && fromHash.sessionId === fromStorage.sessionId) {
+      fromStorage.accountId = fromHash.accountId || fromStorage.accountId || "";
+      fromStorage.billingPartyId = fromHash.billingPartyId || fromStorage.billingPartyId || "";
+      fromStorage.billToPersonId = fromHash.billToPersonId || fromStorage.billToPersonId || "";
+    }
+    state.returnContext = fromStorage;
+    return fromStorage;
+  }
+  if (fromHash) {
+    state.returnContext = fromHash;
+    return fromHash;
+  }
+  return null;
+}
+
+function clearReturnContext() {
+  state.returnContext = null;
+  try {
+    sessionStorage.removeItem(RETURN_CONTEXT_KEY);
+  } catch (_) {}
+  if (location.hash.startsWith("#clients?")) location.hash = "#clients";
+}
+
+function payerDisplayOptions(members = [], returnContext = null) {
+  const seen = new Set();
+  const options = [];
+  const add = (personId, displayName) => {
+    if (!personId || seen.has(personId)) return;
+    seen.add(personId);
+    options.push({ person_id: personId, display_name: displayName || "Unnamed client" });
+  };
+  members.forEach(member => add(member.person_id, member.display_name));
+  (returnContext?.participants || []).forEach(participant => add(participant.person_id, participant.display_name));
+  return options;
+}
+
+function relationshipNameSuggestion(returnContext) {
+  const names = (returnContext?.participants || []).map(p => p.display_name).filter(Boolean);
+  if (!names.length) return "New Billing Relationship";
+  if (names.length === 1) return `${names[0]} Billing Relationship`;
+  return `${names[0]} + ${names[1]} Billing Relationship`;
+}
+
+function recordBillingPartyDraft(data, payerOptions, returnContext) {
+  const billing = data.billing_party || {};
+  const isPerson = billing.person_id || billing.billing_party_type === "person" || (!billing.billing_party_type && payerOptions.length);
+  const selectedPersonId = billing.person_id || returnContext?.billToPersonId || payerOptions[0]?.person_id || "";
+  return {
+    billing_party_id: billing.billing_party_id || "",
+    billing_party_type: isPerson ? "person" : "organization",
+    person_id: selectedPersonId,
+    organization_name: billing.organization_name || "",
+    billing_name: billing.billing_name || "",
+    billing_email: billing.billing_email || "",
+    billing_phone: billing.billing_phone || "",
+    administrative_notes: data.account?.administrative_notes || ""
+  };
+}
+
+function splitDisplayName(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return { first: parts[0] || "", last: parts.slice(1).join(" ") };
+}
+
 async function createPersonFromInput() {
   const name = $("personInput").value.trim();
   if (!name) return;
   const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
   const exact = rows.find(row => String(row.display_name).toLowerCase() === name.toLowerCase());
   if (!exact) {
-    showNewPersonForm(name);
+    state.participants.push({ display_name: name, participant_name: name, is_primary: state.participants.length === 0, is_proposed: true, source: "manual" });
+    $("personInput").value = "";
+    renderParticipantChips();
+    renderRelationshipEditor(state.detail);
+    markDirty("relationship");
     return;
   }
   const person = exact;
@@ -291,43 +475,6 @@ async function createPersonFromInput() {
   markDirty("relationship");
 }
 
-function showNewPersonForm(name = "") {
-  const firstLast = name.split(/\s+/);
-  $("personEditor").hidden = false;
-  $("personEditor").innerHTML = `
-    <h4>New Person</h4>
-    <div class="field-grid">
-      <label class="field">First Name<input id="newPersonFirst" value="${firstLast[0] || ""}"></label>
-      <label class="field">Last Name<input id="newPersonLast" value="${firstLast.slice(1).join(" ")}"></label>
-      <label class="field">Preferred Name<input id="newPersonPreferred" value="${firstLast[0] || ""}"></label>
-      <label class="field">Display Name<input id="newPersonDisplay" value="${name}"></label>
-      <label class="field">Email<input id="newPersonEmail"></label>
-      <label class="field">Phone<input id="newPersonPhone"></label>
-      <label class="field wide">Administrative Notes<input id="newPersonNotes"></label>
-    </div>
-    <div class="inline-actions"><button id="saveNewPerson" class="save">Save Person</button><button id="cancelNewPerson">Cancel</button></div>
-  `;
-  $("saveNewPerson").onclick = async () => {
-    const display = $("newPersonDisplay").value.trim() || `${$("newPersonFirst").value.trim()} ${$("newPersonLast").value.trim()}`.trim();
-    const person = await api("/api/people", { method: "POST", body: JSON.stringify({
-      first_name: $("newPersonFirst").value.trim(),
-      last_name: $("newPersonLast").value.trim(),
-      preferred_name: $("newPersonPreferred").value.trim(),
-      display_name: display,
-      billing_email: $("newPersonEmail").value.trim(),
-      billing_phone: $("newPersonPhone").value.trim(),
-      administrative_notes: $("newPersonNotes").value.trim()
-    }) });
-    state.participants.push({ person_id: person.person_id, display_name: person.display_name, is_primary: state.participants.length === 0 });
-    $("personInput").value = "";
-    $("personEditor").hidden = true;
-    renderParticipantChips();
-    renderRelationshipEditor(state.detail);
-    markDirty("relationship");
-  };
-  $("cancelNewPerson").onclick = () => $("personEditor").hidden = true;
-}
-
 async function createAccountFromInput() {
   const name = $("accountInput").value.trim();
   if (!name) return;
@@ -336,70 +483,53 @@ async function createAccountFromInput() {
   markDirty("relationship");
 }
 
-async function createBillingFromInput() {
-  const name = $("billingInput").value.trim();
-  if (!name) return;
-  const rows = await api(`/api/billing-parties?q=${encodeURIComponent(name)}`);
-  const exact = rows.find(row => String(row.billing_name).toLowerCase() === name.toLowerCase());
-  if (exact) {
-    state.billingParty = exact;
-    $("billingInput").value = state.billingParty.billing_name;
-    markDirty("billing");
-    return;
-  }
-  showBillingForm({ billing_name: name });
-}
-
-async function findOrCorrectPerson(name) {
-  const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
-  const exact = rows.find(row => String(row.display_name).toLowerCase() === name.toLowerCase());
-  if (exact) return exact;
-  const firstToken = name.split(/\s+/)[0].toLowerCase();
-  const similar = rows.find(row => String(row.display_name || "").toLowerCase() === firstToken || row.similar_match);
-  if (similar) {
-    $("personWarning").innerHTML = `<div class="warning">Similar person already exists: <strong>${similar.display_name}</strong>. Use Edit Person to correct this person to ${name}, or press + again after clearing this warning to create a new person.</div>`;
-    if (confirm(`Similar person already exists: ${similar.display_name}. Update that person to ${name} instead of creating a duplicate?`)) {
-      return api(`/api/people/${similar.person_id}`, { method: "POST", body: JSON.stringify({ display_name: name }) });
-    }
-  }
-  return api("/api/people", { method: "POST", body: JSON.stringify({ display_name: name }) });
-}
-
 function showPersonEditor(index) {
   const p = state.participants[index];
+  const split = splitDisplayName(p.display_name || p.participant_name || "");
   $("personEditor").hidden = false;
   $("personEditor").innerHTML = `
-    <h4>Edit Person</h4>
+    <h4>Edit Client</h4>
     <div class="field-grid">
-      <label class="field">Display name<input id="editPersonDisplay" value="${p.display_name || p.participant_name || ""}"></label>
-      <label class="field">Person code<input id="editPersonCode" value="${p.person_code || ""}"></label>
+      <label class="field">First name<input id="editPersonFirst" value="${p.first_name || split.first}"></label>
+      <label class="field">Last name<input id="editPersonLast" value="${p.last_name || split.last}"></label>
       <label class="field">Email<input id="editPersonEmail" value="${p.billing_email || ""}"></label>
       <label class="field">Phone<input id="editPersonPhone" value="${p.billing_phone || ""}"></label>
     </div>
-    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Person</button><button id="cancelPersonEdit">Cancel</button><button id="mergePersonBtn">Merge...</button></div>
+    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button><button id="mergePersonBtn">Merge...</button></div>
   `;
   $("savePersonEdit").onclick = async () => {
+    const first = $("editPersonFirst").value.trim();
+    const last = $("editPersonLast").value.trim();
+    const display = `${first} ${last}`.trim();
     if (!p.person_id) {
-      const display = $("editPersonDisplay").value.trim();
-      state.participants[index] = { ...p, display_name: display, participant_name: display };
+      state.participants[index] = {
+        ...p,
+        first_name: first,
+        last_name: last,
+        billing_email: $("editPersonEmail").value.trim(),
+        billing_phone: $("editPersonPhone").value.trim(),
+        display_name: display,
+        participant_name: display
+      };
       markDirty("relationship");
     } else {
       const updated = await api(`/api/people/${p.person_id}`, { method: "POST", body: JSON.stringify({
-        display_name: $("editPersonDisplay").value,
-        person_code: $("editPersonCode").value || null,
+        first_name: first,
+        last_name: last,
+        display_name: display,
         billing_email: $("editPersonEmail").value || null,
         billing_phone: $("editPersonPhone").value || null,
         active: true
       }) });
       state.participants[index] = { ...p, ...updated, display_name: updated.display_name };
-      markSaved("relationship", "Person saved");
+      markSaved("relationship", "Client saved");
     }
     $("personEditor").hidden = true;
     renderParticipantChips();
   };
   $("cancelPersonEdit").onclick = () => $("personEditor").hidden = true;
   $("mergePersonBtn").onclick = async () => {
-    const target = prompt("Merge this person into which existing display name?");
+    const target = prompt("Merge this client into which existing display name?");
     if (!target || !p.person_id) return;
     const rows = await api(`/api/people?q=${encodeURIComponent(target)}`);
     const survivor = rows.find(row => row.display_name.toLowerCase() === target.toLowerCase()) || rows[0];
@@ -409,18 +539,18 @@ function showPersonEditor(index) {
     state.participants[index] = { ...p, person_id: merged.person_id, display_name: merged.display_name };
     $("personEditor").hidden = true;
     renderParticipantChips();
-    markSaved("relationship", "Person merged");
+    markSaved("relationship", "Client merged");
   };
 }
 
 function renderRelationshipEditor(data) {
   const members = data && data.account_members ? data.account_members : [];
-  const accountName = state.account ? state.account.account_name : "No account selected";
+  const accountName = state.account ? state.account.account_name : "No billing relationship selected";
   const billingName = state.billingParty ? state.billingParty.billing_name : "No billing party selected";
   $("relationshipEditor").innerHTML = `
-    <h4>Relationship Editor</h4>
+    <h4>Billing Relationship Editor</h4>
     <div class="kv">
-      <label>Account</label><strong>${accountName}</strong>
+      <label>Relationship</label><strong>${accountName}</strong>
       <label>Default payer</label><span>${billingName}</span>
     </div>
     <div class="member-list">
@@ -437,87 +567,30 @@ function renderRelationshipEditor(data) {
   `;
 }
 
-async function sameAsPrimaryParticipant() {
-  const primary = state.participants[0];
-  if (!primary) return alert("Add a participant first.");
-  if (!primary.person_id) {
-    const person = await findOrCorrectPerson(primary.display_name || primary.participant_name);
-    primary.person_id = person.person_id;
-    primary.display_name = person.display_name;
-  }
-  state.billingParty = await findOrCreate("/api/billing-parties", "billing_name", primary.display_name, {
-    billing_name: primary.display_name,
-    billing_party_type: "person",
-    person_id: primary.person_id
-  });
-  $("billingInput").value = state.billingParty.billing_name;
-  renderRelationshipEditor(state.detail);
-}
-
 function showAccountEditor() {
-  if (!state.account) return alert("Select or create an account first.");
-  const name = prompt("Account name", state.account.account_name);
+  if (!state.account) return alert("Select or create a billing relationship first.");
+  const name = prompt("Billing relationship name", state.account.account_name);
   if (!name) return;
-  const type = prompt("Account type: individual, household, family, couple, organization, other", state.account.account_type || "individual") || "individual";
+  const type = prompt("Relationship type: individual, household, family, couple, organization, other", state.account.account_type || "individual") || "individual";
   api(`/api/accounts/${state.account.account_id}`, { method: "POST", body: JSON.stringify({ account_name: name, account_type: type, default_billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null }) })
     .then(updated => { state.account = updated; $("accountInput").value = updated.account_name; renderRelationshipEditor(state.detail); });
 }
 
-function showBillingEditor() {
-  if (!state.billingParty) return showBillingForm({ billing_name: $("billingInput").value.trim() });
-  showBillingForm(state.billingParty);
-}
-
-function showBillingForm(billing = {}) {
-  $("billingEditor").hidden = false;
-  $("billingEditor").innerHTML = `
-    <h4>${billing.billing_party_id ? "Edit Bill To" : "New Bill-To Contact"}</h4>
-    <div class="field-grid">
-      <label class="field">Type<select id="billToType">${optionSet(["person","organization"], billing.billing_party_type || "person")}</select></label>
-      <label class="field">Organization Name<input id="billToOrg" value="${billing.organization_name || ""}"></label>
-      <label class="field">First Name<input id="billToFirst" value=""></label>
-      <label class="field">Last Name<input id="billToLast" value=""></label>
-      <label class="field">Display Name<input id="billToDisplay" value="${billing.billing_name || ""}"></label>
-      <label class="field">Billing Email<input id="billToEmail" value="${billing.billing_email || ""}"></label>
-      <label class="field">Billing Phone<input id="billToPhone" value="${billing.billing_phone || ""}"></label>
-      <label class="field wide">Billing Address<input id="billToAddress" value="${billing.billing_address_line_1 || ""}"></label>
-      <label class="field wide">Administrative Billing Notes<input id="billToNotes" value="${billing.administrative_notes || ""}"></label>
-    </div>
-    <div class="inline-actions"><button id="saveBillToForm" class="save">Save Bill To</button><button id="cancelBillToForm">Cancel</button></div>
-  `;
-  $("saveBillToForm").onclick = async () => {
-    const display = $("billToDisplay").value.trim() || `${$("billToFirst").value.trim()} ${$("billToLast").value.trim()}`.trim() || $("billToOrg").value.trim();
-    const payload = {
-      billing_party_type: $("billToType").value,
-      organization_name: $("billToOrg").value.trim(),
-      billing_name: display,
-      billing_email: $("billToEmail").value.trim(),
-      billing_phone: $("billToPhone").value.trim(),
-      billing_address_line_1: $("billToAddress").value.trim(),
-      administrative_notes: $("billToNotes").value.trim()
-    };
-    state.billingParty = billing.billing_party_id
-      ? await api(`/api/billing-parties/${billing.billing_party_id}`, { method: "POST", body: JSON.stringify(payload) })
-      : await api("/api/billing-parties", { method: "POST", body: JSON.stringify(payload) });
-    $("billingInput").value = state.billingParty.billing_name;
-    $("billingEditor").hidden = true;
-    markDirty("billing");
-  };
-  $("cancelBillToForm").onclick = () => $("billingEditor").hidden = true;
-}
-
-async function savePersonSection() {
-  const primary = state.participants[0];
-  if (!primary) return alert("Add or select a person first.");
-  let payload = { person: { person_id: primary.person_id, display_name: primary.display_name || primary.participant_name } };
-  const updated = await api(`/api/review/candidates/${state.selected}/save-person`, { method: "POST", body: JSON.stringify(payload) });
-  const sessionDraft = collectSessionDraftValues();
-  state.detail = updated;
-  state.participants = updated.participants.map(participantState);
-  renderInspector(updated);
-  restoreSessionDraftValues(sessionDraft);
-  markSaved("relationship", "Person saved. Suggestions refreshed.");
-  await loadList();
+function openBillingRelationshipEditor() {
+  const returnContext = persistReturnContext(buildReturnContext());
+  if (!returnContext) {
+    location.hash = "clients";
+    showClients();
+    return;
+  }
+  const accountId = state.account && state.account.account_id;
+  if (accountId) {
+    location.hash = returnContextHash({ ...returnContext, accountId });
+    openAccountRecord(accountId, { returnContext });
+    return;
+  }
+  location.hash = returnContextHash(returnContext);
+  showClients();
 }
 
 async function saveRelationshipSection() {
@@ -539,16 +612,18 @@ async function saveRelationshipSection() {
   state.participants = updated.participants.map(participantState);
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
-  markSaved("relationship", "Relationship saved. Session suggestions refreshed.");
+  markSaved("relationship", "Client(s) saved. Session suggestions refreshed.");
   await loadList();
 }
 
 async function saveBillingSection() {
   await resolveTypedSelections();
+  const selectedPersonId = $("billToClientSelect").value;
+  if (!selectedPersonId) return alert("Choose a confirmed client before saving Bill To.");
   const sessionDraft = collectSessionDraftValues();
   const updated = await api(`/api/review/candidates/${state.selected}/save-billing`, {
     method: "POST",
-    body: JSON.stringify({ billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null })
+    body: JSON.stringify({ bill_to_person_id: selectedPersonId })
   });
   state.detail = updated;
   state.billingParty = updated.billing_party;
@@ -621,10 +696,6 @@ async function resolveTypedSelections() {
   const accountName = $("accountInput").value.trim();
   if (accountName && (!state.account || state.account.account_name !== accountName)) {
     state.account = await findOrCreate("/api/accounts", "account_name", accountName, { account_name: accountName, account_type: accountName.toLowerCase().includes("family") ? "family" : "individual" });
-  }
-  const billingName = $("billingInput").value.trim();
-  if (billingName && (!state.billingParty || state.billingParty.billing_name !== billingName)) {
-    state.billingParty = await findOrCreate("/api/billing-parties", "billing_name", billingName, { billing_name: billingName, billing_party_type: "person" });
   }
 }
 
@@ -783,21 +854,69 @@ function showReviewWorkbench() {
   }
 }
 
+function renderClientsLanding(returnContext = null) {
+  if (!returnContext) {
+    $("accountRecord").innerHTML = `<div class="empty-state">Open a billing relationship record.</div>`;
+    return;
+  }
+  const names = (returnContext.participants || []).map(p => fmt(p.display_name)).join(", ");
+  $("accountRecord").innerHTML = `
+    <div class="record-banner">
+      <a href="#" class="return-link" id="returnToReviewFromClients">← Return to review</a>
+      <h3>Finish billing relationship for this session</h3>
+      <div class="help">Session ID ${fmt(returnContext.sessionId)}${names ? ` • Clients: ${names}` : ""}</div>
+      <div class="record-actions">
+        <button id="createRelationshipForReturn" class="save">Create Billing Relationship</button>
+      </div>
+    </div>
+  `;
+  $("returnToReviewFromClients").onclick = async (event) => {
+    event.preventDefault();
+    const current = readReturnContext();
+    if (!validReturnContext(current)) {
+      clearReturnContext();
+      location.hash = "";
+      showReviewWorkbench();
+      return;
+    }
+    location.hash = "";
+    await showReviewWorkbench();
+    await selectCandidate(current.candidateId);
+  };
+  $("createRelationshipForReturn").onclick = async () => {
+    const current = readReturnContext();
+    const suggested = relationshipNameSuggestion(current);
+    const name = prompt("Billing relationship name", suggested);
+    if (!name) return;
+    const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
+    const nextContext = persistReturnContext({ ...current, accountId: account.account_id });
+    location.hash = returnContextHash(nextContext);
+    await loadClients();
+    await openAccountRecord(account.account_id, { returnContext: nextContext });
+  };
+}
+
 async function showClients() {
   hideViews();
   document.getElementById("clientsView").hidden = false;
   document.getElementById("clientsNav").classList.add("active");
-  $("pageTitle").textContent = "Clients & Accounts";
+  $("pageTitle").textContent = "Billing Relationships";
   $("pageSubtitle").textContent = "Relationship and shared billing records";
+  document.title = "Jordana Billing - Billing Relationships";
+  const returnContext = readReturnContext();
+  renderClientsLanding(returnContext);
   await loadClients();
+  if (validReturnContext(returnContext) && returnContext.accountId) {
+    await openAccountRecord(returnContext.accountId, { returnContext });
+  }
 }
 
 async function showPeople() {
   hideViews();
   document.getElementById("peopleView").hidden = false;
   document.getElementById("peopleNav").classList.add("active");
-  $("pageTitle").textContent = "People";
-  $("pageSubtitle").textContent = "Permanent people and billing relationships";
+  $("pageTitle").textContent = "Clients";
+  $("pageSubtitle").textContent = "Permanent clients and billing relationships";
   await loadPeople();
 }
 
@@ -946,23 +1065,51 @@ $("newInvoiceBtn").onclick = startInvoiceBuilder;
 $("invoiceStatusFilter").onchange = loadInvoices;
 document.getElementById("rateRuleForm").onsubmit = async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const payload = Object.fromEntries(form.entries());
-  if (payload.applies_to === "account" && payload.applies_to_search) {
-    const rows = await api(`/api/accounts?q=${encodeURIComponent(payload.applies_to_search)}`);
-    const match = rows.find(row => row.account_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
-    if (match) payload.client_account_id = match.account_id;
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const payload = Object.fromEntries(data.entries());
+  const message = $("rateFormMessage");
+  try {
+    const amount = Number(String(payload.amount).replace(/[$,]/g, ""));
+    if (!payload.amount || Number.isNaN(amount) || amount <= 0) {
+      throw new Error("Amount is required and must be greater than 0.");
+    }
+    if (!payload.duration_minutes) {
+      throw new Error("Duration is required.");
+    }
+    if (!payload.billing_session_type) {
+      throw new Error("Session type is required.");
+    }
+    if (!payload.effective_from || !/^\d{4}-\d{2}-\d{2}$/.test(payload.effective_from)) {
+      throw new Error("Effective date is required in YYYY-MM-DD format.");
+    }
+    if (payload.applies_to === "account" && payload.applies_to_search) {
+      const rows = await api(`/api/accounts?q=${encodeURIComponent(payload.applies_to_search)}`);
+      const match = rows.find(row => row.account_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
+      if (match) payload.client_account_id = match.account_id;
+    }
+    if (payload.applies_to === "person" && payload.applies_to_search) {
+      const rows = await api(`/api/people?q=${encodeURIComponent(payload.applies_to_search)}`);
+      const match = rows.find(row => row.display_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
+      if (match) payload.person_id = match.person_id;
+    }
+    await api("/api/rate-rules", { method: "POST", body: JSON.stringify(payload) });
+    form.reset();
+    form.effective_from.value = "2026-01-01";
+    message.textContent = "Rate rule saved.";
+    message.className = "rate-form-message success";
+    await loadRateRules();
+  } catch (err) {
+    message.textContent = err.message || "Failed to save rate rule.";
+    message.className = "rate-form-message";
   }
-  if (payload.applies_to === "person" && payload.applies_to_search) {
-    const rows = await api(`/api/people?q=${encodeURIComponent(payload.applies_to_search)}`);
-    const match = rows.find(row => row.display_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
-    if (match) payload.person_id = match.person_id;
-  }
-  await api("/api/rate-rules", { method: "POST", body: JSON.stringify(payload) });
-  event.currentTarget.reset();
-  event.currentTarget.effective_from.value = "2026-01-01";
-  await loadRateRules();
 };
+$("rateAppliesTo").addEventListener("change", () => {
+  const mode = $("rateAppliesTo").value;
+  $("rateAppliesSearch").hidden = mode === "everyone";
+  $("rateAppliesSearch").required = mode !== "everyone";
+  if (mode === "everyone") $("rateAppliesSearch").value = "";
+});
 document.getElementById("rateAppliesSearch").addEventListener("input", debounce(async e => {
   const mode = $("rateAppliesTo").value;
   const rows = mode === "person"
@@ -977,7 +1124,7 @@ async function loadRateRules() {
     <tr>
       <td>$${row.amount}</td>
       <td>${row.duration_minutes || "Any"}</td>
-      <td>${serviceLabel(row.service_mode || row.rate_group || "Any")}</td>
+      <td>${billingTypeShort(row.billing_session_type || "Any")}</td>
       <td>${timeLabel(row.time_category)}</td>
       <td>${row.participant_names || row.account_name || row.display_name || "Everyone"}</td>
       <td>${row.effective_from}</td>
@@ -1002,38 +1149,167 @@ async function loadClients() {
       <td>${row.active ? "Active" : "Inactive"}</td>
     </tr>
   `).join("");
-  document.querySelectorAll("#clientRows tr").forEach(row => row.onclick = () => openAccountRecord(row.dataset.account));
+  document.querySelectorAll("#clientRows tr").forEach(row => row.onclick = () => openAccountRecord(row.dataset.account, { returnContext: readReturnContext() }));
 }
 
-async function openAccountRecord(accountId) {
-  if (!accountId) return alert("Select or create an account first.");
+async function openAccountRecord(accountId, options = {}) {
+  if (!accountId) return alert("Select or create a billing relationship first.");
+  const returnContext = validReturnContext(options.returnContext) ? persistReturnContext(options.returnContext) : readReturnContext();
+  if (returnContext) {
+    persistReturnContext({ ...returnContext, accountId });
+    if (!location.hash.startsWith("#clients?")) location.hash = returnContextHash({ ...returnContext, accountId });
+  }
   state.returnCandidate = state.selected;
   const data = await api(`/api/accounts/${accountId}`);
+  const payerOptions = payerDisplayOptions(data.members || [], returnContext);
+  const billingDraft = recordBillingPartyDraft(data, payerOptions, returnContext);
   $("accountRecord").innerHTML = `
-    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
+    ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
     <h3>${fmt(data.account.account_name)}</h3>
     <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span><span>${data.account.active ? "Active" : "Inactive"}</span></div>
-    <div class="record-actions"><button id="editAccountRecord" class="save">Save Account</button><button id="addMemberRecord">Add Member</button></div>
+    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Member</button></div>
     <div class="field-grid">
-      <label class="field">Account Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
+      <label class="field">Relationship Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
       <label class="field">Type<select id="recordAccountType">${optionSet(["individual","household","family","couple","organization","other"], data.account.account_type)}</select></label>
       <label class="field wide">Admin Notes<input id="recordAccountNotes" value="${data.account.administrative_notes || ""}"></label>
     </div>
     <h4>Members</h4><div class="compact-list">${data.members.map(m => `<div><span>${fmt(m.display_name)} ${m.is_primary ? "(Primary)" : ""}</span><span>${fmt(m.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No members yet.</span>"}</div>
-    <h4>Billing</h4><div class="kv"><label>Default payer</label><span>${fmt(data.billing_party?.billing_name)}</span><label>Email</label><span>${fmt(data.billing_party?.billing_email)}</span><label>Phone</label><span>${fmt(data.billing_party?.billing_phone)}</span></div>
-    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No account-specific rates.</span>"}</div>
+    <h4>Billing</h4>
+    <div class="field-grid">
+      <label class="field">Payer Type<select id="recordBillingPartyType">
+        <option value="person" ${billingDraft.billing_party_type === "person" ? "selected" : ""}>Client payer</option>
+        <option value="organization" ${billingDraft.billing_party_type === "organization" ? "selected" : ""}>Organization payer</option>
+      </select></label>
+      <label class="field" id="recordPayerPersonField">Bill-to client<select id="recordPayerPersonId">
+        <option value="">Select client payer</option>
+        ${payerOptions.map(option => `<option value="${option.person_id}" ${option.person_id === billingDraft.person_id ? "selected" : ""}>${fmt(option.display_name)}</option>`).join("")}
+      </select></label>
+      <label class="field" id="recordOrgNameField">Organization name<input id="recordOrganizationName" value="${billingDraft.organization_name || ""}"></label>
+      <label class="field">Payer name<input id="recordBillingName" value="${billingDraft.billing_name || ""}"></label>
+      <label class="field">Email<input id="recordBillingEmail" value="${billingDraft.billing_email || ""}"></label>
+      <label class="field">Phone<input id="recordBillingPhone" value="${billingDraft.billing_phone || ""}"></label>
+    </div>
+    <div class="kv"><label>Current default payer</label><span>${fmt(data.billing_party?.billing_name)}</span><label>Current email</label><span>${fmt(data.billing_party?.billing_email)}</span><label>Current phone</label><span>${fmt(data.billing_party?.billing_phone)}</span></div>
+    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No relationship-specific rates.</span>"}</div>
     <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.duration_minutes)} min ${serviceLabel(s.service_mode)} ${timeLabel(s.time_category)}</span><span>${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
     <h4>Active Rate Exceptions</h4><div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${fmt(r.effective_from)} ${fmt(r.duration_minutes || "Any")} min ${serviceLabel(r.service_mode || r.rate_group || "Any")}</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No person-specific rate exceptions.</span>"}</div>
     <h4>Shared Rate Exceptions</h4><div class="compact-list">${(data.joint_rate_exceptions || []).map(r => `<div><span>${fmt(r.participant_names)} ${fmt(r.duration_minutes || "Any")} min</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No joint-session exceptions.</span>"}</div>
     <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
   `;
-  if ($("returnFromAccount")) $("returnFromAccount").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
+  const syncBillingPartyFields = () => {
+    const mode = $("recordBillingPartyType").value;
+    $("recordPayerPersonField").hidden = mode !== "person";
+    $("recordOrgNameField").hidden = mode !== "organization";
+    if (mode === "person") {
+      const payer = payerOptions.find(option => option.person_id === $("recordPayerPersonId").value) || payerOptions[0];
+      if (payer && !$("recordBillingName").value) $("recordBillingName").value = payer.display_name;
+    }
+  };
+  $("recordBillingPartyType").onchange = syncBillingPartyFields;
+  if ($("recordPayerPersonId")) {
+    $("recordPayerPersonId").onchange = () => {
+      const payer = payerOptions.find(option => option.person_id === $("recordPayerPersonId").value);
+      if (payer) $("recordBillingName").value = payer.display_name;
+      syncBillingPartyFields();
+    };
+  }
+  syncBillingPartyFields();
+  if ($("returnFromAccount")) $("returnFromAccount").onclick = async (event) => {
+    event.preventDefault();
+    if (!validReturnContext(returnContext)) {
+      clearReturnContext();
+      location.hash = "";
+      showReviewWorkbench();
+      return;
+    }
+    location.hash = "";
+    await showReviewWorkbench();
+    await selectCandidate(returnContext.candidateId);
+  };
   $("editAccountRecord").onclick = async () => {
-    await api(`/api/accounts/${accountId}`, { method: "POST", body: JSON.stringify({ account_name: $("recordAccountName").value, account_type: $("recordAccountType").value, administrative_notes: $("recordAccountNotes").value }) });
+    const accountPayload = {
+      account_name: $("recordAccountName").value,
+      account_type: $("recordAccountType").value,
+      administrative_notes: $("recordAccountNotes").value
+    };
+    const payerMode = $("recordBillingPartyType").value;
+    const selectedPayerPersonId = $("recordPayerPersonId")?.value || "";
+    const orgBillingName = $("recordBillingName").value.trim();
+    if (validReturnContext(returnContext) && payerMode === "person" && !selectedPayerPersonId) {
+      alert("Select the bill-to client before saving this billing relationship.");
+      return;
+    }
+    if (validReturnContext(returnContext) && payerMode === "organization" && !orgBillingName) {
+      alert("Enter the payer name before saving this billing relationship.");
+      return;
+    }
+    await api(`/api/accounts/${accountId}`, { method: "POST", body: JSON.stringify(accountPayload) });
+    if (validReturnContext(returnContext)) {
+      const currentContext = persistReturnContext({ ...returnContext, accountId });
+      const relationshipPayload = {
+        participants: (currentContext.participants || []).map((participant, index) => ({
+          person_id: participant.person_id,
+          display_name: participant.display_name,
+          is_primary: participant.is_primary || index === 0,
+          relationship_role: participant.relationship_role || (index === 0 ? "primary" : "family_member")
+        })),
+        account_id: accountId,
+        primary_person_id: (currentContext.participants || []).find(participant => participant.is_primary)?.person_id || currentContext.participants?.[0]?.person_id || null
+      };
+      await api(`/api/review/candidates/${currentContext.candidateId}/save-relationship`, { method: "POST", body: JSON.stringify(relationshipPayload) });
+      if (payerMode === "person") {
+        await api(`/api/review/candidates/${currentContext.candidateId}/save-billing`, {
+          method: "POST",
+          body: JSON.stringify({ bill_to_person_id: selectedPayerPersonId })
+        });
+      } else {
+        const billingPayload = {
+          billing_party_id: billingDraft.billing_party_id || "",
+          billing_party_type: "organization",
+          organization_name: $("recordOrganizationName").value.trim() || null,
+          billing_name: orgBillingName,
+          billing_email: $("recordBillingEmail").value.trim() || null,
+          billing_phone: $("recordBillingPhone").value.trim() || null
+        };
+        const billingResult = billingPayload.billing_party_id
+          ? await api(`/api/billing-parties/${billingPayload.billing_party_id}`, { method: "POST", body: JSON.stringify(billingPayload) })
+          : await api("/api/billing-parties", { method: "POST", body: JSON.stringify(billingPayload) });
+        await api(`/api/accounts/${accountId}`, {
+          method: "POST",
+          body: JSON.stringify({ ...accountPayload, default_billing_party_id: billingResult.billing_party_id })
+        });
+        await api(`/api/review/candidates/${currentContext.candidateId}/save-billing`, {
+          method: "POST",
+          body: JSON.stringify({ billing_party_id: billingResult.billing_party_id })
+        });
+      }
+      clearReturnContext();
+      location.hash = "";
+      await loadList();
+      await showReviewWorkbench();
+      await selectCandidate(currentContext.candidateId);
+      return;
+    }
     await openAccountRecord(accountId);
     await loadClients();
   };
-  if (location.hash !== "#clients") {
+  $("addMemberRecord").onclick = async () => {
+    const name = prompt("Add which existing client to this billing relationship?");
+    if (!name) return;
+    const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
+    const match = rows.find(row => row.display_name.toLowerCase() === name.toLowerCase()) || rows[0];
+    if (!match) {
+      alert("No matching client found.");
+      return;
+    }
+    await api("/api/account-members", {
+      method: "POST",
+      body: JSON.stringify({ account_id: accountId, person_id: match.person_id, relationship_role: "family_member", is_primary: false })
+    });
+    await loadClients();
+    await openAccountRecord(accountId, { returnContext });
+  };
+  if (!location.hash.startsWith("#clients")) {
     location.hash = "clients";
     showClients();
   }
@@ -1056,12 +1332,6 @@ async function loadPeople() {
   document.querySelectorAll("#peopleRows tr").forEach(row => row.onclick = () => openPersonRecord(row.dataset.person));
 }
 
-function openPrimaryPersonRecord() {
-  const primary = state.participants.find(p => p.is_primary && p.person_id) || state.participants.find(p => p.person_id);
-  if (!primary) return alert("Select or create a person first.");
-  openPersonRecord(primary.person_id);
-}
-
 async function openPersonRecord(personId) {
   state.returnCandidate = state.selected;
   const data = await api(`/api/people/${personId}`);
@@ -1078,8 +1348,8 @@ async function openPersonRecord(personId) {
       <label class="field">Phone<input id="recordPersonPhone" value="${data.person.billing_phone || ""}"></label>
       <label class="field wide">Admin Notes<input id="recordPersonNotes" value="${data.person.administrative_notes || ""}"></label>
     </div>
-    <div class="record-actions"><button id="savePersonRecord" class="save">Save Person</button></div>
-    <h4>Accounts</h4><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)}</span><span>${fmt(a.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No accounts yet.</span>"}</div>
+    <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
+    <h4>Billing Relationships</h4><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)}</span><span>${fmt(a.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No relationships yet.</span>"}</div>
     <h4>Billing Relationships</h4><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)}</span><span>${fmt(b.billing_email)}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
     <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.raw_calendar_title)}</span><span>${money(centString(s.approved_rate_cents))}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
     <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
@@ -1106,14 +1376,19 @@ async function openPersonRecord(personId) {
 }
 ["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? loadClients() : loadPeople(), 180)));
 $("newAccountBtn").onclick = async () => {
-  const name = prompt("Account name");
+  const returnContext = readReturnContext();
+  const name = prompt("Billing relationship name", relationshipNameSuggestion(returnContext));
   if (!name) return;
   const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
+  if (validReturnContext(returnContext)) {
+    persistReturnContext({ ...returnContext, accountId: account.account_id });
+    location.hash = returnContextHash({ ...returnContext, accountId: account.account_id });
+  }
   await loadClients();
-  await openAccountRecord(account.account_id);
+  await openAccountRecord(account.account_id, { returnContext });
 };
 $("newPersonBtn").onclick = async () => {
-  const name = prompt("Person display name");
+  const name = prompt("Client display name");
   if (!name) return;
   const person = await api("/api/people", { method: "POST", body: JSON.stringify({ display_name: name }) });
   await loadPeople();
@@ -1133,8 +1408,8 @@ window.addEventListener("beforeunload", event => {
 });
 
 function ruleExplanation(row) {
-  const scope = row.participant_names ? row.participant_names : row.account_name ? `account ${row.account_name}` : row.display_name ? `person ${row.display_name}` : "everyone";
-  return `Applies to ${scope}; ${row.duration_minutes || "any"} minutes; ${serviceLabel(row.service_mode || row.rate_group || "any")}; ${timeLabel(row.time_category)}.`;
+  const scope = row.participant_names ? row.participant_names : row.account_name ? `billing relationship ${row.account_name}` : row.display_name ? `client ${row.display_name}` : "everyone";
+  return `Applies to ${scope}; ${row.duration_minutes || "any"} minutes; ${billingTypeShort(row.billing_session_type || "any")}; ${timeLabel(row.time_category)}.`;
 }
 
 function rateSourceDescription(session, participants = []) {

@@ -648,6 +648,7 @@ def maybe_insert_session(
         conn,
         session_date=session_date,
         duration_minutes=result.proposed_duration_minutes,
+        billing_session_type=result.billing_session_type,
         service_mode=result.service_mode,
         rate_group=result.rate_group,
         time_category=result.time_category,

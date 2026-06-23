@@ -287,6 +287,7 @@ CREATE TABLE IF NOT EXISTS rate_rules (
   client_account_id TEXT REFERENCES client_accounts(account_id),
   person_id TEXT REFERENCES people(person_id),
   duration_minutes INTEGER,
+  billing_session_type TEXT,
   service_mode TEXT,
   rate_group TEXT,
   time_category TEXT NOT NULL DEFAULT 'standard',
@@ -717,6 +718,13 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "billing_session_type_snapshot": "TEXT",
             "custom_service_description_snapshot": "TEXT",
             "custom_service_code_snapshot": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "rate_rules",
+        {
+            "billing_session_type": "TEXT",
         },
     )
     conn.execute(

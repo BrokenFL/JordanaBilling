@@ -85,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     rate_parser.add_argument("--amount", required=True, help="Dollar amount, for example 150 or 150.00.")
     rate_parser.add_argument("--effective-from", required=True)
     rate_parser.add_argument("--duration-minutes", type=int)
+    rate_parser.add_argument("--billing-session-type")
     rate_parser.add_argument("--service-mode")
     rate_parser.add_argument("--rate-group")
     rate_parser.add_argument("--time-category", default="standard")
@@ -192,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
             amount_cents=dollars_to_cents(args.amount),
             effective_from=args.effective_from,
             duration_minutes=args.duration_minutes,
+            billing_session_type=args.billing_session_type,
             service_mode=args.service_mode,
             rate_group=args.rate_group,
             time_category=args.time_category,

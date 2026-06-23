@@ -1,0 +1,396 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from jordana_invoice.db import connect, init_db
+from jordana_invoice.importer import import_rows
+from jordana_invoice.invoice_services import (
+    create_invoice_draft,
+    finalize_invoice,
+    get_invoice,
+    save_business_profile,
+)
+from jordana_invoice.review_services import (
+    approve_candidate,
+    create_account,
+    create_billing_party,
+    create_person,
+    create_rate_rule_from_payload,
+    get_review_candidate,
+    list_review_candidates,
+    save_relationship_section,
+    save_session_draft,
+)
+
+
+def raw_row(
+    snapshot_key,
+    title,
+    start="2026-01-15T18:30:00-05:00",
+    end="2026-01-15T19:30:00-05:00",
+    duration="60",
+):
+    return {
+        "ingested_at": "2026-06-22T02:00:00.000Z",
+        "snapshot_key": snapshot_key,
+        "run_id": f"run-{snapshot_key}",
+        "batch_name": "test",
+        "capture_window": "next_2_days",
+        "captured_at": "2026-06-22T01:00:00.000Z",
+        "source_device": "test",
+        "timezone": "America/New_York",
+        "calendar_event_id": "",
+        "event_fingerprint": f"fp-{snapshot_key}",
+        "event_title": title,
+        "start_at": start,
+        "end_at": end,
+        "duration_minutes": duration,
+        "calendar": "Jordana Calendar",
+        "payload_version": "2",
+        "raw_json": "{}",
+    }
+
+
+class RateCardDefaultTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self.temp.name) / "rate-card.sqlite3")
+        init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def import_one(
+        self,
+        key,
+        title,
+        start="2026-01-15T18:30:00-05:00",
+        end="2026-01-15T19:30:00-05:00",
+        duration="60",
+    ):
+        """Import a single raw row and return its candidate_id.
+
+        The title must parse as a client_session (e.g. 'Fred 630 60') so that
+        a session row is created.  list_review_candidates only surfaces
+        session-backed candidates, so a StopIteration here means the title
+        failed to produce a session.
+        """
+        import_rows(self.conn, [raw_row(key, title, start, end, duration)], "test")
+        rows = list_review_candidates(self.conn)["items"]
+        return next(row["candidate_id"] for row in rows if row["raw_title"] == title)
+
+    def _create_default_rule(self):
+        return create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "350",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "everyone",
+                "effective_from": "2026-01-01",
+            },
+        )
+
+    # ── Rule creation ────────────────────────────────────────────────────────
+
+    def test_create_default_rate_rule(self):
+        rule = self._create_default_rule()
+        self.assertEqual(rule["amount_cents"], 35000)
+        self.assertEqual(rule["duration_minutes"], 60)
+        self.assertEqual(rule["billing_session_type"], "psychotherapy")
+        self.assertEqual(rule["time_category"], "standard")
+        self.assertIsNone(rule["client_account_id"])
+        self.assertIsNone(rule["person_id"])
+
+    # ── Rate matching ────────────────────────────────────────────────────────
+
+    def test_default_rate_applies_to_matching_unapproved_session(self):
+        # Weekday, 6:30 PM EST → not evening (< 20:00) → billing_session_type = psychotherapy
+        candidate_id = self.import_one("snap-match", "Fred 630 60")
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(detail["session"]["rate_source"], "default")
+        self.assertIsNone(detail["session"]["approved_rate_cents"])
+
+    def test_later_matching_session_gets_same_suggestion(self):
+        # Rule exists before the session is imported.
+        # With billing_session_type now passed at import time, the rule is
+        # matched immediately in maybe_insert_session.
+        self._create_default_rule()
+        # 2026-02-10 is a Tuesday; 7:30 PM EST → hour 19 < 20 → not evening → psychotherapy
+        # (February avoids the March DST transition that would shift hour to 20)
+        candidate_id = self.import_one(
+            "snap-later",
+            "Fred 730 60",
+            start="2026-02-10T19:30:00-05:00",
+            end="2026-02-10T20:30:00-05:00",
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(detail["session"]["rate_source"], "default")
+
+    def test_default_rate_effective_date_boundary(self):
+        # Session on 2025-12-31 is before effective_from 2026-01-01 → no match
+        # Session on 2026-01-01 is on effective_from → matches
+        before_id = self.import_one(
+            "snap-before",
+            "Before 530 60",
+            start="2025-12-31T17:30:00-05:00",
+            end="2025-12-31T18:30:00-05:00",
+        )
+        on_id = self.import_one(
+            "snap-on",
+            "After 530 60",
+            start="2026-01-01T17:30:00-05:00",
+            end="2026-01-01T18:30:00-05:00",
+        )
+        self._create_default_rule()
+        before = get_review_candidate(self.conn, before_id)
+        on = get_review_candidate(self.conn, on_id)
+        self.assertNotEqual(before["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(before["session"]["rate_needs_review"], 1)
+        self.assertEqual(on["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(on["session"]["rate_needs_review"], 0)
+
+    def test_default_rate_does_not_apply_different_duration(self):
+        # Title "Fred 630 90" → explicit duration=90 from title; rule requires 60 → no match
+        candidate_id = self.import_one("snap-90", "Fred 630 90")
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertNotEqual(detail["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(detail["session"]["rate_needs_review"], 1)
+
+    def test_default_rate_does_not_apply_different_session_type(self):
+        # 2026-01-17 is a Saturday → is_weekend=True → billing_session_type=psychotherapy_weekend
+        # Rule is psychotherapy only → no match
+        candidate_id = self.import_one(
+            "snap-wknd",
+            "Fred 530 60",
+            start="2026-01-17T14:00:00-05:00",
+            end="2026-01-17T15:00:00-05:00",
+        )
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertNotEqual(detail["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(detail["session"]["rate_needs_review"], 1)
+
+    # ── Priority overrides ───────────────────────────────────────────────────
+
+    def test_client_specific_rule_overrides_default(self):
+        candidate_id = self.import_one("snap-acct", "Fred 630 60")
+        account = create_account(self.conn, "Fred Household", "household")
+        self.conn.execute(
+            "UPDATE sessions SET account_id = ? WHERE candidate_id = ?",
+            (account["account_id"], candidate_id),
+        )
+        self.conn.commit()
+        self._create_default_rule()
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "400",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "account",
+                "client_account_id": account["account_id"],
+                "effective_from": "2026-01-01",
+            },
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 40000)
+        self.assertEqual(detail["session"]["rate_source"], "account")
+
+    def test_person_specific_rule_overrides_default(self):
+        candidate_id = self.import_one("snap-person", "Fred 630 60")
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Colin", "person_id": fred["person_id"]})
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+            },
+        )
+        self._create_default_rule()
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "500",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "person",
+                "person_id": fred["person_id"],
+                "effective_from": "2026-01-01",
+            },
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 50000)
+        self.assertEqual(detail["session"]["rate_source"], "person_exception")
+
+    def test_participant_combination_rule_overrides_default(self):
+        # "Bobsey and Fred 630 60" → multi-person but still client_session
+        candidate_id = self.import_one("snap-joint", "Bobsey and Fred 630 60")
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Colin", "display_name": "Bobsey Colin"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Colin", "person_id": fred["person_id"]})
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [
+                    {"person_id": fred["person_id"], "display_name": "Fred Colin", "is_primary": True},
+                    {"person_id": bobsey["person_id"], "display_name": "Bobsey Colin"},
+                ],
+                "billing_party_id": payer["billing_party_id"],
+            },
+        )
+        self._create_default_rule()
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "450",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "participants",
+                "participant_person_ids": [fred["person_id"], bobsey["person_id"]],
+                "effective_from": "2026-01-01",
+            },
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 45000)
+        self.assertEqual(detail["session"]["rate_source"], "participant_combination_exception")
+
+    def test_session_specific_approved_rate_overrides_default(self):
+        # A manually-entered approved_rate survives recalculation: approved_rate_cents
+        # is preserved while suggested_rate_cents is updated to the rule value.
+        candidate_id = self.import_one("snap-manual", "Fred 630 60")
+        save_session_draft(
+            self.conn,
+            candidate_id,
+            {
+                "approved_duration_minutes": 60,
+                "service_mode": "phone",
+                "time_category": "standard",
+                "approved_rate": "425.00",
+                "payment_status": "unpaid",
+            },
+        )
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["approved_rate_cents"], 42500)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
+
+    # ── Immutability ─────────────────────────────────────────────────────────
+
+    def test_approved_session_rate_is_unchanged_by_new_default(self):
+        candidate_id = self.import_one("snap-approved", "Fred 630 60")
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Colin", "person_id": fred["person_id"]})
+        approve_candidate(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "phone",
+                "time_category": "standard",
+                "approved_rate": "425.00",
+                "payment_status": "unpaid",
+            },
+        )
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["approved_rate_cents"], 42500)
+        self.assertEqual(detail["session"]["rate_cents_snapshot"], 42500)
+        self.assertEqual(detail["session"]["review_status"], "approved")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_invoice_snapshot_unchanged_by_new_default(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        # 2026-06-01 is a Monday; 6:30 PM EDT (hour 18 < 20) → not evening → psychotherapy
+        candidate_id = self.import_one(
+            "snap-invoice",
+            "Fred 630 60",
+            start="2026-06-01T18:30:00-04:00",
+            end="2026-06-01T19:30:00-04:00",
+        )
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        payer = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "person_id": fred["person_id"],
+            "preferred_delivery_method": "email",
+        })
+        approved = approve_candidate(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "phone",
+                "time_category": "standard",
+                "approved_rate": "425.00",
+                "payment_status": "unpaid",
+            },
+        )
+        save_business_profile(self.conn, {
+            "business_name": "Test Practice",
+            "provider_display_name": "Test Provider",
+            "invoice_total_label": "TOTAL DUE",
+            "invoice_number_format": "YYYY-NNNN",
+        })
+        invoice = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "delivery_method": "email",
+            "session_ids": [approved["session"]["id"]],
+        })
+        final = finalize_invoice(self.conn, invoice["invoice"]["invoice_id"])
+        line_amount_before = final["lines"][0]["line_amount_cents"]
+        self._create_default_rule()
+        after = get_invoice(self.conn, invoice["invoice"]["invoice_id"])
+        self.assertEqual(after["invoice"]["status"], "finalized")
+        self.assertEqual(after["lines"][0]["line_amount_cents"], line_amount_before)
+        self.assertEqual(after["lines"][0]["line_amount_cents"], 42500)
+
+    # ── Duplicate / validation ───────────────────────────────────────────────
+
+    def test_repeated_default_rule_creation_blocked(self):
+        self._create_default_rule()
+        with self.assertRaises(ValueError):
+            self._create_default_rule()
+
+    def test_invalid_rate_rule_payload_raises(self):
+        with self.assertRaises(ValueError):
+            create_rate_rule_from_payload(self.conn, {
+                "amount": "",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "everyone",
+                "effective_from": "2026-01-01",
+            })
+        with self.assertRaises(ValueError):
+            create_rate_rule_from_payload(self.conn, {
+                "amount": "350",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "everyone",
+                "effective_from": "not-a-date",
+            })
+
+
+if __name__ == "__main__":
+    unittest.main()

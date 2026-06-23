@@ -1,6 +1,6 @@
-# People
+# Clients
 
-People are actual humans, not calendar shorthand. Parser candidates do not become permanent people until Jordana or the reviewer confirms them.
+Clients are actual human records, not calendar shorthand. The backend table is still `people` for compatibility. Parser candidates do not become permanent people/clients until Jordana or the reviewer confirms them.
 
 Names are stored as:
 
@@ -9,9 +9,9 @@ Names are stored as:
 - `preferred_name`
 - `display_name`
 
-The People list sorts by last name and shows person code, last name, first name, display name, accounts, billing relationships, last session, and active status.
+The Clients list sorts by last name and shows client code, last name, first name, display name, billing relationships, bill-to links, last session, and active status.
 
-Person records show contact information, accounts, relationship roles, sessions, billing relationships, aliases, administrative notes, merge status, active status, actual charged-rate history, and active future rate exceptions.
+Client records show contact information, billing relationships, relationship roles, sessions, bill-to links, aliases, administrative notes, merge status, active status, actual charged-rate history, and active future rate exceptions.
 
 Session history uses approved session values. It must not reconstruct historical charges from current rate rules.
 

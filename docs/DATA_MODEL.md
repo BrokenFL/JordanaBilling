@@ -68,7 +68,7 @@ Reusable reviewed aliases for client names, household aliases, or personal/admin
 
 ## `rate_rules`
 
-Effective-dated suggested-rate rules. Rules can be global, account-specific, person-specific, duration-specific, service-mode-specific, rate-group-specific, time-category-specific, or an exact participant-combination exception.
+Effective-dated suggested-rate rules. Rules can be global, account-specific, person-specific, duration-specific, billing-session-type-specific, service-mode-specific, rate-group-specific, time-category-specific, or an exact participant-combination exception.
 
 ## `rate_rule_participants`
 
