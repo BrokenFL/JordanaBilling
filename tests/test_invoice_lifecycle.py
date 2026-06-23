@@ -88,7 +88,7 @@ class InvoiceLifecycleTests(unittest.TestCase):
         init_db(self.conn)
         tables = {row[0] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({"business_profile", "service_catalog", "invoices", "invoice_line_items", "invoice_sequences"} <= tables)
-        self.assertEqual(len(list_services(self.conn)), 8)
+        self.assertEqual(len(list_services(self.conn)), 13)
         self.assertEqual(self.conn.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_legacy_billing_party_migration_adds_delivery_to_correct_table(self):

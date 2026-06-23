@@ -252,6 +252,8 @@ CREATE TABLE IF NOT EXISTS service_catalog (
   normalized_name TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL,
   description TEXT,
+  catalog_type TEXT NOT NULL DEFAULT 'appointment_method',
+  legacy_appointment_method INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
   usage_count INTEGER NOT NULL DEFAULT 0,
   first_used_at TEXT,
@@ -517,10 +519,13 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
   participants_snapshot TEXT NOT NULL,
   service_catalog_id TEXT REFERENCES service_catalog(service_catalog_id),
   service_name_snapshot TEXT NOT NULL,
+  billing_session_type_snapshot TEXT,
   time_category_snapshot TEXT,
   appointment_status_snapshot TEXT,
   duration_minutes INTEGER,
   description_snapshot TEXT NOT NULL,
+  custom_service_description_snapshot TEXT,
+  custom_service_code_snapshot TEXT,
   quantity INTEGER NOT NULL DEFAULT 1,
   unit_amount_cents INTEGER NOT NULL,
   line_amount_cents INTEGER NOT NULL,
@@ -537,6 +542,21 @@ CREATE INDEX IF NOT EXISTS idx_invoice_line_items_source_session
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_line_items_invoice_session
   ON invoice_line_items(invoice_id, source_session_id)
   WHERE source_session_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS custom_service_mappings (
+  mapping_id TEXT PRIMARY KEY,
+  person_id TEXT NOT NULL REFERENCES people(person_id),
+  duration_choice TEXT NOT NULL,
+  custom_description TEXT NOT NULL,
+  custom_code TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(person_id, duration_choice, active) 
+);
+
+CREATE INDEX IF NOT EXISTS idx_custom_service_mappings_person
+  ON custom_service_mappings(person_id, duration_choice, active);
 """
 
 
@@ -612,6 +632,12 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "calendar_is_preferred_work": "INTEGER NOT NULL DEFAULT 0",
             "hidden_from_review": "INTEGER NOT NULL DEFAULT 0",
             "reconciliation_status": "TEXT",
+            "billing_session_type": "TEXT",
+            "appointment_method": "TEXT",
+            "duration_choice": "TEXT",
+            "house_call_suggested": "INTEGER NOT NULL DEFAULT 0",
+            "billing_type_source": "TEXT",
+            "location_text": "TEXT",
         },
     )
     add_columns(
@@ -665,6 +691,32 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "calendar_is_preferred_work": "INTEGER NOT NULL DEFAULT 0",
             "hidden_from_review": "INTEGER NOT NULL DEFAULT 0",
             "raw_calendar_title": "TEXT",
+            "billing_session_type": "TEXT",
+            "appointment_method": "TEXT",
+            "duration_choice": "TEXT",
+            "custom_duration_minutes": "INTEGER",
+            "house_call_suggested": "INTEGER NOT NULL DEFAULT 0",
+            "billing_type_source": "TEXT",
+            "custom_service_description": "TEXT",
+            "custom_service_code": "TEXT",
+            "location_text": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "service_catalog",
+        {
+            "catalog_type": "TEXT NOT NULL DEFAULT 'appointment_method'",
+            "legacy_appointment_method": "INTEGER NOT NULL DEFAULT 0",
+        },
+    )
+    add_columns(
+        conn,
+        "invoice_line_items",
+        {
+            "billing_session_type_snapshot": "TEXT",
+            "custom_service_description_snapshot": "TEXT",
+            "custom_service_code_snapshot": "TEXT",
         },
     )
     conn.execute(
@@ -682,25 +734,33 @@ def seed_service_catalog(conn: sqlite3.Connection) -> None:
     from .util import new_id, now_iso
 
     now = now_iso()
-    for canonical, display in (
-        ("office", "Office"),
-        ("phone", "Phone"),
-        ("facetime", "FaceTime"),
-        ("house_call", "House Call"),
-        ("correspondence", "Correspondence"),
-        ("preparation", "Preparation"),
-        ("mediation", "Mediation"),
-        ("other", "Other"),
+    for canonical, display, catalog_type, legacy in (
+        ("psychotherapy", "Psychotherapy Session", "billing_session_type", 0),
+        ("psychotherapy_house_call", "Psychotherapy Session / House Call", "billing_session_type", 0),
+        ("psychotherapy_weekend", "Psychotherapy Session / Weekend", "billing_session_type", 0),
+        ("psychotherapy_evening", "Psychotherapy Session / Evening", "billing_session_type", 0),
+        ("custom", "Custom", "billing_session_type", 0),
+        ("office", "Office", "appointment_method", 1),
+        ("phone", "Phone", "appointment_method", 1),
+        ("facetime", "FaceTime", "appointment_method", 1),
+        ("house_call", "House Call", "appointment_method", 0),
+        ("correspondence", "Correspondence", "appointment_method", 0),
+        ("preparation", "Preparation", "appointment_method", 0),
+        ("mediation", "Mediation", "appointment_method", 0),
+        ("other", "Other", "appointment_method", 0),
     ):
         conn.execute(
             """
             INSERT INTO service_catalog (
               service_catalog_id, canonical_name, normalized_name, display_name,
-              active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 1, ?, ?)
-            ON CONFLICT(normalized_name) DO NOTHING
+              catalog_type, legacy_appointment_method, active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(normalized_name) DO UPDATE SET
+              catalog_type = excluded.catalog_type,
+              legacy_appointment_method = excluded.legacy_appointment_method,
+              updated_at = excluded.updated_at
             """,
-            (new_id(), canonical, canonical, display, now, now),
+            (new_id(), canonical, canonical, display, catalog_type, legacy, now, now),
         )
 
 

@@ -408,6 +408,12 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
     service = learn_service(conn, service_mode, increment_usage=False)
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
+    billing_session_type = payload.get("billing_session_type") or (session["billing_session_type"] if "billing_session_type" in session.keys() else None) or "psychotherapy"
+    appointment_method = payload.get("appointment_method") or (session["appointment_method"] if "appointment_method" in session.keys() else None) or derive_appointment_method_from_service(service_mode)
+    duration_choice = payload.get("duration_choice") or (session["duration_choice"] if "duration_choice" in session.keys() else None) or derive_duration_choice_from_minutes(duration)
+    custom_duration_minutes = int(payload["custom_duration_minutes"]) if payload.get("custom_duration_minutes") else None
+    custom_service_description = payload.get("custom_service_description") or None
+    custom_service_code = payload.get("custom_service_code") or None
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
     billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
@@ -478,6 +484,13 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             service_catalog_id = ?,
             rate_group = ?,
             time_category = ?,
+            billing_session_type = ?,
+            appointment_method = ?,
+            duration_choice = ?,
+            custom_duration_minutes = ?,
+            custom_service_description = ?,
+            custom_service_code = ?,
+            billing_type_source = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
             approved_rate_cents = ?,
             approved_rate_source = ?,
@@ -500,6 +513,13 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
             service["service_catalog_id"],
             rate_group_for(service_mode),
             time_category,
+            billing_session_type,
+            appointment_method,
+            duration_choice,
+            custom_duration_minutes,
+            custom_service_description,
+            custom_service_code,
+            "manual" if payload.get("billing_session_type") else (session["billing_type_source"] if "billing_type_source" in session.keys() else None) or "auto",
             suggested_rate_cents,
             approved_rate_cents,
             approved_source,
@@ -2094,6 +2114,20 @@ def normalize_time_category(value: str) -> str:
 
 def rate_group_for(service_mode: str) -> str:
     return {"phone": "remote", "facetime": "remote", "office": "office", "house_call": "house_call"}.get(service_mode, "")
+
+
+def derive_appointment_method_from_service(service_mode: str) -> str:
+    if service_mode in {"phone", "facetime", "office"}:
+        return service_mode
+    if service_mode == "house_call":
+        return "office"
+    return "unknown"
+
+
+def derive_duration_choice_from_minutes(duration_minutes: int) -> str:
+    if duration_minutes in {30, 60, 90, 120}:
+        return str(duration_minutes)
+    return "custom"
 
 
 def money_payload_to_cents(value: Any) -> int | None:

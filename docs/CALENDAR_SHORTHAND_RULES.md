@@ -50,7 +50,38 @@ Future format examples:
 2. Calendar start/end or `duration_minutes`
 3. Default 60 minutes
 
-Recognized explicit durations include common billing increments such as 30, 45, 60, and 90.
+### Standard Duration Choices
+
+Standard billing durations are **30, 60, 90, and 120 minutes**.
+
+Non-standard durations (e.g., 45, 75) are classified as **Custom** and require review confirmation.
+
+## Billing Session Types
+
+Sessions are automatically classified into one of five billing session types based on priority:
+
+1. **Custom** — Manual override only; not auto-derived
+2. **Psychotherapy Session / House Call** — Explicit "House Call" text OR nonblank location field
+3. **Psychotherapy Session / Weekend** — Saturday or Sunday
+4. **Psychotherapy Session / Evening** — Weekday starting at 8:00 PM or later
+5. **Psychotherapy Session** — Default for standard weekday daytime sessions
+
+### Priority Rules
+
+- House Call overrides Weekend and Evening
+- Weekend overrides Evening (Saturday 8 PM = Weekend, not Evening)
+- Location-based House Call detection suggests confirmation but does not auto-approve
+
+### Appointment Methods vs Billing Types
+
+**Appointment methods** (Office, Phone, FaceTime) are internal evidence, not billing types.
+All three are treated identically for billing rates.
+
+**Billing session types** determine the invoice line description and any premium considerations.
+
+### Late Evening Warning
+
+Sessions starting at 10:00 PM or later trigger a review warning to verify the time is correct.
 
 ## Time Handling
 

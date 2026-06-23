@@ -370,6 +370,12 @@ def insert_candidate(
                 calendar_is_preferred_work = ?,
                 hidden_from_review = ?,
                 reconciliation_status = ?,
+                billing_session_type = ?,
+                appointment_method = ?,
+                duration_choice = ?,
+                house_call_suggested = ?,
+                billing_type_source = ?,
+                location_text = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -414,6 +420,12 @@ def insert_candidate(
                 1 if calendar_disposition.is_preferred_work else 0,
                 1 if calendar_disposition.hidden_from_review else 0,
                 reconciliation_status(conn, latest, result),
+                result.billing_session_type,
+                result.appointment_method,
+                result.duration_choice,
+                1 if result.house_call_suggested else 0,
+                result.billing_type_source,
+                result.location_text,
                 now,
                 candidate_id,
             ),
@@ -438,8 +450,10 @@ def insert_candidate(
           appointment_status, billing_treatment, title_time_text,
           title_time_normalized, title_time_matches_calendar,
           calendar_disposition, calendar_is_preferred_work, hidden_from_review,
-          reconciliation_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          reconciliation_status, billing_session_type, appointment_method,
+          duration_choice, house_call_suggested, billing_type_source,
+          location_text, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         candidate_values(
             candidate_id,
@@ -484,6 +498,12 @@ def insert_candidate(
             1 if calendar_disposition.is_preferred_work else 0,
             1 if calendar_disposition.hidden_from_review else 0,
             reconciliation_status(conn, latest, result),
+            result.billing_session_type,
+            result.appointment_method,
+            result.duration_choice,
+            1 if result.house_call_suggested else 0,
+            result.billing_type_source,
+            result.location_text,
             now,
             now,
         ),
@@ -535,6 +555,12 @@ def candidate_values(
     calendar_is_preferred_work: int,
     hidden_from_review: int,
     reconciliation_status_value: str,
+    billing_session_type: str,
+    appointment_method: str,
+    duration_choice: str,
+    house_call_suggested: int,
+    billing_type_source: str,
+    location_text: str | None,
     created_at: str,
     updated_at: str,
 ) -> tuple:
@@ -581,6 +607,12 @@ def candidate_values(
         calendar_is_preferred_work,
         hidden_from_review,
         reconciliation_status_value,
+        billing_session_type,
+        appointment_method,
+        duration_choice,
+        house_call_suggested,
+        billing_type_source,
+        location_text,
         created_at,
         updated_at,
     )
@@ -672,6 +704,13 @@ def maybe_insert_session(
                 calendar_disposition = ?,
                 calendar_is_preferred_work = ?,
                 hidden_from_review = ?,
+                billing_session_type = CASE WHEN review_status = 'approved' THEN billing_session_type ELSE ? END,
+                appointment_method = CASE WHEN review_status = 'approved' THEN appointment_method ELSE ? END,
+                duration_choice = CASE WHEN review_status = 'approved' THEN duration_choice ELSE ? END,
+                custom_duration_minutes = CASE WHEN review_status = 'approved' THEN custom_duration_minutes ELSE ? END,
+                house_call_suggested = ?,
+                billing_type_source = CASE WHEN review_status = 'approved' THEN billing_type_source ELSE ? END,
+                location_text = ?,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -706,6 +745,13 @@ def maybe_insert_session(
                 candidate["calendar_disposition"] if candidate else "review_normally",
                 candidate["calendar_is_preferred_work"] if candidate else 0,
                 candidate["hidden_from_review"] if candidate else 0,
+                result.billing_session_type,
+                result.appointment_method,
+                result.duration_choice,
+                result.custom_duration_minutes,
+                1 if result.house_call_suggested else 0,
+                result.billing_type_source,
+                result.location_text,
                 now,
                 existing["id"],
             ),
@@ -730,8 +776,10 @@ def maybe_insert_session(
           appointment_status, billing_treatment, title_time_text,
           title_time_normalized, title_time_matches_calendar, calendar_name,
           calendar_disposition, calendar_is_preferred_work, hidden_from_review,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          billing_session_type, appointment_method, duration_choice,
+          custom_duration_minutes, house_call_suggested, billing_type_source,
+          location_text, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -767,6 +815,13 @@ def maybe_insert_session(
             candidate["calendar_disposition"] if candidate else "review_normally",
             candidate["calendar_is_preferred_work"] if candidate else 0,
             candidate["hidden_from_review"] if candidate else 0,
+            result.billing_session_type,
+            result.appointment_method,
+            result.duration_choice,
+            result.custom_duration_minutes,
+            1 if result.house_call_suggested else 0,
+            result.billing_type_source,
+            result.location_text,
             now,
             now,
         ),

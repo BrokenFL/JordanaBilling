@@ -211,16 +211,21 @@ def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids
             description = _service_description(session, service_name)
             amount = session["rate_cents_snapshot"] if session["rate_cents_snapshot"] is not None else session["approved_rate_cents"]
             now = now_iso()
+            billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
+            custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
+            custom_code = session["custom_service_code"] if "custom_service_code" in session.keys() else None
             conn.execute(
                 """INSERT INTO invoice_line_items (
                   invoice_line_item_id, invoice_id, source_session_id, sort_order, service_date,
-                  participants_snapshot, service_catalog_id, service_name_snapshot, time_category_snapshot,
-                  appointment_status_snapshot, duration_minutes, description_snapshot, quantity,
+                  participants_snapshot, service_catalog_id, service_name_snapshot, billing_session_type_snapshot,
+                  time_category_snapshot, appointment_status_snapshot, duration_minutes, description_snapshot,
+                  custom_service_description_snapshot, custom_service_code_snapshot, quantity,
                   unit_amount_cents, line_amount_cents, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
                 (new_id(), invoice_id, session_id, order, session["session_date"], participants,
-                 catalog["service_catalog_id"], service_name, session["time_category"], session["appointment_status"],
-                 session["approved_duration_minutes"] or session["duration_minutes"], description, amount, amount, now, now),
+                 catalog["service_catalog_id"], service_name, billing_type, session["time_category"],
+                 session["appointment_status"], session["approved_duration_minutes"] or session["duration_minutes"],
+                 description, custom_desc, custom_code, amount, amount, now, now),
             )
             order += 1
         _recalculate(conn, invoice_id)
@@ -371,9 +376,31 @@ def _participant_names(conn: sqlite3.Connection, session_id: str) -> str:
     return " & ".join(row["name"] for row in rows if row["name"])
 
 
+BILLING_SESSION_TYPE_LABELS = {
+    "psychotherapy": "Psychotherapy Session",
+    "psychotherapy_house_call": "Psychotherapy Session / House Call",
+    "psychotherapy_weekend": "Psychotherapy Session / Weekend",
+    "psychotherapy_evening": "Psychotherapy Session / Evening",
+    "custom": "Custom",
+}
+
+
 def _service_description(session: sqlite3.Row, service_name: str) -> str:
-    if session["appointment_status"] == "no_show": return f"No Show - {service_name}"
-    if session["appointment_status"] == "cancelled": return f"Cancelled Session - {service_name}"
+    billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
+    custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
+
+    if session["appointment_status"] == "no_show":
+        base = custom_desc or BILLING_SESSION_TYPE_LABELS.get(billing_type) or service_name
+        return f"No Show - {base}"
+    if session["appointment_status"] == "cancelled":
+        base = custom_desc or BILLING_SESSION_TYPE_LABELS.get(billing_type) or service_name
+        return f"Cancelled Session - {base}"
+
+    if billing_type == "custom" and custom_desc:
+        return custom_desc
+    if billing_type and billing_type in BILLING_SESSION_TYPE_LABELS:
+        return BILLING_SESSION_TYPE_LABELS[billing_type]
+
     category = session["time_category"]
     suffix = {"evening": "Evening", "weekend": "Weekend", "weekend_evening": "Weekend Evening"}.get(category)
     return f"{service_name} - {suffix}" if suffix else service_name

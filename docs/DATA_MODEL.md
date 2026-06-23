@@ -136,3 +136,50 @@ Additive tables/fields for this round:
 - `calendar_disposition`, `calendar_is_preferred_work`, `hidden_from_review`: review filtering metadata.
 
 Do not use `payment_status` for cancellation/no-show meaning. Do not delete raw snapshots when a calendar is personal/admin or hidden.
+
+## Billing Session Type Additions
+
+Additive fields for session normalization:
+
+### `calendar_event_candidates` and `sessions`
+
+- `billing_session_type`: One of `psychotherapy`, `psychotherapy_house_call`, `psychotherapy_weekend`, `psychotherapy_evening`, `custom`.
+- `appointment_method`: One of `office`, `phone`, `facetime`, `unknown`. Internal evidence, not a billing type.
+- `duration_choice`: One of `30`, `60`, `90`, `120`, `custom`. Standard billing increments.
+- `custom_duration_minutes`: Actual minutes when `duration_choice=custom`.
+- `house_call_suggested`: Boolean flag when location suggests House Call but explicit confirmation needed.
+- `billing_type_source`: One of `auto`, `manual`, `location_inferred`.
+- `location_text`: Preserved location field for House Call detection.
+
+### `sessions` only
+
+- `custom_service_description`: User-provided description for Custom billing type.
+- `custom_service_code`: Optional admin code for future insurance integration.
+
+### `service_catalog`
+
+- `catalog_type`: One of `billing_session_type`, `appointment_method`.
+- `legacy_appointment_method`: Boolean flag marking Office/Phone/FaceTime as legacy appointment methods.
+
+### `invoice_line_items`
+
+- `billing_session_type_snapshot`: Frozen billing type at finalization.
+- `custom_service_description_snapshot`: Frozen custom description.
+- `custom_service_code_snapshot`: Frozen custom code.
+
+### `custom_service_mappings`
+
+New table for person+duration custom code foundation:
+
+- `mapping_id`: Primary key.
+- `person_id`: References `people`.
+- `duration_choice`: Standard or custom duration.
+- `custom_description`: Reusable custom service description.
+- `custom_code`: Optional admin code.
+- `active`: Boolean for soft delete.
+
+This table enables future insurance coding by storing per-person, per-duration custom service mappings.
+
+### Schema Change Policy
+
+All changes are additive. The existing `service_mode` column is preserved for backward compatibility. New `billing_session_type` and `appointment_method` columns separate billing concerns from appointment evidence.

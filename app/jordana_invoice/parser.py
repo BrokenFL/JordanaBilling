@@ -36,6 +36,25 @@ REVIEW_STATUSES = {
 }
 
 KNOWN_DURATION_MINUTES = {15, 20, 30, 45, 50, 60, 75, 90, 120}
+STANDARD_DURATION_CHOICES = {30, 60, 90, 120}
+
+BILLING_SESSION_TYPES = {
+    "psychotherapy",
+    "psychotherapy_house_call",
+    "psychotherapy_weekend",
+    "psychotherapy_evening",
+    "custom",
+}
+
+BILLING_SESSION_TYPE_LABELS = {
+    "psychotherapy": "Psychotherapy Session",
+    "psychotherapy_house_call": "Psychotherapy Session / House Call",
+    "psychotherapy_weekend": "Psychotherapy Session / Weekend",
+    "psychotherapy_evening": "Psychotherapy Session / Evening",
+    "custom": "Custom",
+}
+
+APPOINTMENT_METHODS = {"office", "phone", "facetime", "unknown"}
 PERSONAL_KEYWORDS = {
     "mani",
     "pedi",
@@ -151,6 +170,14 @@ class ParseResult:
     is_weekend: bool = False
     standardized_title_format: bool = False
     relationship_review_required: bool = False
+    billing_session_type: str = "psychotherapy"
+    appointment_method: str = "unknown"
+    duration_choice: str = "60"
+    custom_duration_minutes: int | None = None
+    house_call_suggested: bool = False
+    billing_type_source: str = "auto"
+    location_text: str | None = None
+    late_evening_warning: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -182,6 +209,14 @@ class ParseResult:
             "is_weekend": self.is_weekend,
             "standardized_title_format": self.standardized_title_format,
             "relationship_review_required": self.relationship_review_required,
+            "billing_session_type": self.billing_session_type,
+            "appointment_method": self.appointment_method,
+            "duration_choice": self.duration_choice,
+            "custom_duration_minutes": self.custom_duration_minutes,
+            "house_call_suggested": self.house_call_suggested,
+            "billing_type_source": self.billing_type_source,
+            "location_text": self.location_text,
+            "late_evening_warning": self.late_evening_warning,
         }
 
 
@@ -296,6 +331,28 @@ def parse_event(row: dict[str, object]) -> ParseResult:
         if unknown_status:
             confidence -= 0.2
 
+        location_text = text(row.get("location"))
+        billing_type, billing_source, house_call_suggested = derive_billing_session_type(
+            service_mode=service_mode,
+            is_weekend=time_info["is_weekend"],
+            is_evening=time_info["is_evening"],
+            house_call_explicit=(service_mode == "house_call"),
+            location_text=location_text,
+        )
+        appointment_method = derive_appointment_method(service_mode)
+        duration_choice, custom_duration = derive_duration_choice(proposed_duration)
+        late_evening = check_late_evening(start_at)
+
+        if house_call_suggested:
+            fields.append("house_call_confirmation")
+            explanation_parts.append("Location suggests House Call; confirm billing type.")
+        if late_evening:
+            fields.append("late_evening_time")
+            explanation_parts.append("Session starts after 10 PM; verify time is correct.")
+        if duration_choice == "custom":
+            fields.append("custom_duration")
+            explanation_parts.append(f"Duration {proposed_duration} min is non-standard; confirm or adjust.")
+
         return finalize_result(
             ParseResult(
                 classification="client_session",
@@ -319,6 +376,14 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
                 standardized_title_format=standardized,
                 relationship_review_required=relationship_review,
+                billing_session_type=billing_type,
+                appointment_method=appointment_method,
+                duration_choice=duration_choice,
+                custom_duration_minutes=custom_duration,
+                house_call_suggested=house_call_suggested,
+                billing_type_source=billing_source,
+                location_text=location_text or None,
+                late_evening_warning=late_evening,
                 **time_info,
             )
         )
@@ -692,6 +757,73 @@ def extract_admin_person(title: str) -> str | None:
         return None
     candidate = canonicalize_name(match.group(1))
     return candidate or None
+
+
+def derive_billing_session_type(
+    service_mode: str,
+    is_weekend: bool,
+    is_evening: bool,
+    house_call_explicit: bool = False,
+    location_text: str | None = None,
+) -> tuple[str, str, bool]:
+    """
+    Derive billing session type using priority order:
+    1. Custom (manual only, not auto-derived)
+    2. House Call (explicit text OR nonblank location)
+    3. Weekend (Saturday/Sunday)
+    4. Evening (weekday >= 8 PM)
+    5. Standard Psychotherapy Session
+
+    Returns: (billing_session_type, billing_type_source, house_call_suggested)
+    """
+    house_call_from_mode = service_mode == "house_call"
+    house_call_from_location = bool(location_text and location_text.strip())
+    house_call_suggested = house_call_from_location and not house_call_from_mode
+
+    if house_call_explicit or house_call_from_mode:
+        return "psychotherapy_house_call", "auto", False
+    if house_call_from_location:
+        return "psychotherapy_house_call", "location_inferred", True
+    if is_weekend:
+        return "psychotherapy_weekend", "auto", False
+    if is_evening:
+        return "psychotherapy_evening", "auto", False
+    return "psychotherapy", "auto", False
+
+
+def derive_appointment_method(service_mode: str) -> str:
+    """
+    Map service_mode to appointment_method.
+    Office/Phone/FaceTime are appointment methods, not billing types.
+    """
+    if service_mode in {"phone", "facetime", "office"}:
+        return service_mode
+    if service_mode == "house_call":
+        return "office"
+    return "unknown"
+
+
+def derive_duration_choice(duration_minutes: int | None) -> tuple[str, int | None]:
+    """
+    Map duration to standard choice or custom.
+    Standard: 30, 60, 90, 120
+    Custom: anything else
+
+    Returns: (duration_choice, custom_duration_minutes)
+    """
+    if duration_minutes is None:
+        return "60", None
+    if duration_minutes in STANDARD_DURATION_CHOICES:
+        return str(duration_minutes), None
+    return "custom", duration_minutes
+
+
+def check_late_evening(start_at: str) -> bool:
+    """Check if start time is after 10 PM (22:00) for review warning."""
+    start = parse_datetime(start_at)
+    if not start:
+        return False
+    return start.hour >= 22
 
 
 def finalize_result(result: ParseResult) -> ParseResult:

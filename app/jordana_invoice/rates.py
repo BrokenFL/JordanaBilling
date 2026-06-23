@@ -10,6 +10,26 @@ from .util import new_id, now_iso, parse_int, text
 WEEKEND_EVENING_POLICY = "weekend_evening_policy"
 DEFAULT_WEEKEND_EVENING_POLICY = "manual_review"
 
+EQUIVALENT_APPOINTMENT_METHODS = {"office", "phone", "facetime"}
+EQUIVALENT_RATE_GROUPS = {"remote", "office"}
+
+
+def normalize_rate_inputs(
+    service_mode: str | None,
+    rate_group: str | None,
+) -> tuple[str | None, str | None, bool]:
+    """
+    Normalize service_mode and rate_group for rate matching.
+    Office/Phone/FaceTime are treated identically for billing rates.
+    
+    Returns: (normalized_service_mode, normalized_rate_group, is_equivalent_method)
+    
+    When is_equivalent_method is True, rate matching should ignore
+    service_mode and rate_group specificity for these appointment methods.
+    """
+    is_equivalent = service_mode in EQUIVALENT_APPOINTMENT_METHODS
+    return service_mode, rate_group, is_equivalent
+
 
 @dataclass
 class RateSuggestion:
@@ -106,6 +126,8 @@ def suggest_rate(
     person_id: str | None = None,
     participant_person_ids: list[str] | None = None,
 ) -> RateSuggestion:
+    _, _, is_equivalent_method = normalize_rate_inputs(service_mode, rate_group)
+
     if time_category == "weekend_evening":
         policy = get_rate_policy(conn, WEEKEND_EVENING_POLICY)
         if policy == "manual_review":
