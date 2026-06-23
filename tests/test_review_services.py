@@ -11,6 +11,7 @@ from jordana_invoice.review_services import (
     create_person,
     get_review_candidate,
     list_review_candidates,
+    save_relationship_section,
     save_interpretation,
 )
 
@@ -107,6 +108,102 @@ class ReviewServiceTests(unittest.TestCase):
     def test_approval_fails_when_required_fields_missing(self):
         with self.assertRaises(ValueError):
             approve_candidate(self.conn, self.candidate_id, {"participants": []})
+
+    def test_parser_candidate_appears_as_proposed_participant_without_creating_person(self):
+        candidate_id = self.import_without_persisted_participants("snap-leah", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        self.assertEqual(detail["participants"][0]["display_name"], "Leah Grossman")
+        self.assertTrue(detail["participants"][0]["is_proposed"])
+        self.assertEqual(count(self.conn, "people"), 0)
+
+    def test_confirming_exact_existing_person_links_without_duplication(self):
+        candidate_id = self.import_without_persisted_participants("snap-existing", "Leah Grossman 630 30")
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+
+        self.assertEqual(saved["participants"][0]["person_id"], person["person_id"])
+        self.assertEqual(count(self.conn, "people"), 1)
+
+    def test_confirming_new_complete_name_creates_person_once_and_links(self):
+        candidate_id = self.import_without_persisted_participants("snap-new", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        first = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+        second = save_relationship_section(self.conn, candidate_id, {"participants": first["participants"]})
+
+        self.assertEqual(count(self.conn, "people"), 1)
+        self.assertEqual(first["participants"][0]["person_id"], second["participants"][0]["person_id"])
+        person = self.conn.execute("SELECT * FROM people").fetchone()
+        self.assertEqual(person["display_name"], "Leah Grossman")
+        self.assertTrue(person["person_code"])
+
+    def test_incomplete_or_ambiguous_name_stays_uncoded_session_participant(self):
+        candidate_id = self.import_without_persisted_participants("snap-short", "Fred 630")
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+
+        self.assertEqual(count(self.conn, "people"), 0)
+        self.assertIsNone(saved["participants"][0]["person_id"])
+        self.assertEqual(saved["participants"][0]["participant_name"], "Fred")
+
+    def test_editing_proposed_name_before_save_uses_edited_confirmed_name(self):
+        candidate_id = self.import_without_persisted_participants("snap-edit", "Leah Grossman 630 30")
+        detail = get_review_candidate(self.conn, candidate_id)
+        detail["participants"][0]["display_name"] = "Leah Goldberg"
+        detail["participants"][0]["participant_name"] = "Leah Goldberg"
+
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+
+        self.assertEqual(saved["participants"][0]["display_name"], "Leah Goldberg")
+        self.assertEqual(count(self.conn, "people"), 1)
+        person = self.conn.execute("SELECT * FROM people").fetchone()
+        self.assertEqual(person["display_name"], "Leah Goldberg")
+
+    def test_saving_empty_participant_list_clears_participants_and_suppresses_proposal(self):
+        candidate_id = self.import_without_persisted_participants("snap-empty", "Leah Grossman 630 30")
+
+        saved = save_relationship_section(self.conn, candidate_id, {"participants": []})
+
+        session_id = saved["session"]["id"]
+        self.assertEqual(saved["participants"], [])
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM session_participants WHERE session_id = ?", (session_id,)).fetchone()["count"],
+            0,
+        )
+        self.assertEqual(get_review_candidate(self.conn, candidate_id)["participants"], [])
+
+    def test_confirming_participant_preserves_raw_calendar_evidence(self):
+        candidate_id = self.import_without_persisted_participants("snap-raw", "Leah Grossman 630 30")
+        before = self.raw_snapshot_for_candidate(candidate_id)
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        save_relationship_section(self.conn, candidate_id, {"participants": detail["participants"]})
+
+        after = self.raw_snapshot_for_candidate(candidate_id)
+        self.assertEqual(dict(before), dict(after))
+
+    def import_without_persisted_participants(self, snapshot_key, title):
+        import_rows(self.conn, [raw_row(snapshot_key, title=title)], "test")
+        candidate_id = next(row["candidate_id"] for row in list_review_candidates(self.conn)["items"] if row["raw_title"] == title)
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        self.conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session["id"],))
+        self.conn.commit()
+        return candidate_id
+
+    def raw_snapshot_for_candidate(self, candidate_id):
+        return self.conn.execute(
+            """
+            SELECT r.event_title, r.start_at, r.end_at, r.duration_minutes, r.raw_json
+            FROM calendar_event_candidates c
+            JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
+            WHERE c.id = ?
+            """,
+            (candidate_id,),
+        ).fetchone()
 
 
 def count(conn, table):

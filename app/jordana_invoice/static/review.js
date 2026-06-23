@@ -8,6 +8,7 @@ const billingTypeShort = (v) => ({psychotherapy:"Standard", psychotherapy_house_
 const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || v || "Unknown");
 const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || v || "Unknown");
 const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || v || "Standard");
+const participantState = (p) => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary, is_proposed: !!p.is_proposed, source: p.source || "", relationship_role: p.relationship_role });
 
 async function api(path, options = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -74,7 +75,7 @@ async function selectCandidate(candidateId) {
   document.querySelectorAll("#candidateRows tr").forEach(row => row.classList.toggle("selected", row.dataset.id === candidateId));
   const data = await api(`/api/review/candidates/${candidateId}`);
   state.detail = data;
-  state.participants = data.participants.map(p => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary }));
+  state.participants = data.participants.map(participantState);
   state.account = data.account;
   state.billingParty = data.billing_party;
   renderInspector(data);
@@ -252,8 +253,8 @@ function markSaved(section, message = "Saved") {
 }
 
 function renderParticipantChips() {
-  $("participantChips").innerHTML = state.participants.map((p, i) => `<span class="chip">${p.display_name || p.participant_name}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
-  document.querySelectorAll("#participantChips button[data-i]").forEach(btn => btn.onclick = () => { state.participants.splice(Number(btn.dataset.i), 1); renderParticipantChips(); renderRelationshipEditor(state.detail); });
+  $("participantChips").innerHTML = state.participants.map((p, i) => `<span class="chip ${p.is_proposed ? "proposed" : "linked"}">${p.display_name || p.participant_name}${p.is_proposed ? '<small>proposed</small>' : ''}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
+  document.querySelectorAll("#participantChips button[data-i]").forEach(btn => btn.onclick = () => { state.participants.splice(Number(btn.dataset.i), 1); renderParticipantChips(); renderRelationshipEditor(state.detail); markDirty("relationship"); });
   document.querySelectorAll("#participantChips button[data-edit]").forEach(btn => btn.onclick = () => showPersonEditor(Number(btn.dataset.edit)));
 }
 
@@ -363,8 +364,9 @@ function showPersonEditor(index) {
   `;
   $("savePersonEdit").onclick = async () => {
     if (!p.person_id) {
-      const created = await api("/api/people", { method: "POST", body: JSON.stringify({ display_name: $("editPersonDisplay").value }) });
-      state.participants[index] = { ...p, person_id: created.person_id, display_name: created.display_name };
+      const display = $("editPersonDisplay").value.trim();
+      state.participants[index] = { ...p, display_name: display, participant_name: display };
+      markDirty("relationship");
     } else {
       const updated = await api(`/api/people/${p.person_id}`, { method: "POST", body: JSON.stringify({
         display_name: $("editPersonDisplay").value,
@@ -374,10 +376,10 @@ function showPersonEditor(index) {
         active: true
       }) });
       state.participants[index] = { ...p, ...updated, display_name: updated.display_name };
+      markSaved("relationship", "Person saved");
     }
     $("personEditor").hidden = true;
     renderParticipantChips();
-    markSaved("relationship", "Person saved");
   };
   $("cancelPersonEdit").onclick = () => $("personEditor").hidden = true;
   $("mergePersonBtn").onclick = async () => {
@@ -495,7 +497,7 @@ async function savePersonSection() {
   const updated = await api(`/api/review/candidates/${state.selected}/save-person`, { method: "POST", body: JSON.stringify(payload) });
   const sessionDraft = collectSessionDraftValues();
   state.detail = updated;
-  state.participants = updated.participants.map(p => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary }));
+  state.participants = updated.participants.map(participantState);
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
   markSaved("relationship", "Person saved. Suggestions refreshed.");
@@ -518,7 +520,7 @@ async function saveRelationshipSection() {
   state.detail = updated;
   state.account = updated.account;
   state.billingParty = updated.billing_party;
-  state.participants = updated.participants.map(p => ({ person_id: p.person_id, display_name: p.display_name || p.participant_name, participant_name: p.participant_name, is_primary: !!p.is_primary, relationship_role: p.relationship_role }));
+  state.participants = updated.participants.map(participantState);
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
   markSaved("relationship", "Relationship saved. Session suggestions refreshed.");

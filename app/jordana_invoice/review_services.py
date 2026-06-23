@@ -245,13 +245,17 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
     ).fetchone()
     if not row:
         return get_candidate_only(conn, candidate_id)
+    participants = get_session_participants(conn, row["id"])
+    display_participants = participants
+    if not display_participants and not participants_were_explicitly_saved(conn, row["id"]):
+        display_participants = proposed_participants_from_candidate(row)
     return {
         "session": dict(row),
-        "participants": get_session_participants(conn, row["id"]),
+        "participants": display_participants,
         "account": get_account(conn, row["account_id"]),
         "account_members": get_account_members(conn, row["account_id"]),
         "billing_party": get_billing_party(conn, row["billing_party_id"]),
-        "checklist": checklist_for(row, get_session_participants(conn, row["id"])),
+        "checklist": checklist_for(row, display_participants),
         "audit": audit_history(conn, row["id"], row["candidate_id"]),
     }
 
@@ -406,7 +410,7 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
     }
     return {
         "session": session,
-        "participants": [],
+        "participants": proposed_participants_from_candidate(row),
         "account": None,
         "account_members": [],
         "billing_party": None,
@@ -450,8 +454,8 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
 
     conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session_id,))
     for index, participant in enumerate(participants):
-        person_id = participant.get("person_id")
         participant_name = participant.get("display_name") or participant.get("participant_name")
+        person_id = resolve_confirmed_participant_person(conn, participant.get("person_id"), participant_name)
         conn.execute(
             """
             INSERT INTO session_participants (
@@ -652,16 +656,17 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
     primary_person_id = payload.get("primary_person_id")
     if account_id:
         conn.execute("UPDATE sessions SET account_id = ?, updated_at = ? WHERE id = ?", (account_id, now, session["id"]))
-    if participants:
+    if "participants" in payload:
         conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session["id"],))
         for index, participant in enumerate(participants):
-            person_id = participant.get("person_id")
+            participant_name = participant.get("display_name") or participant.get("participant_name") or ""
+            person_id = resolve_confirmed_participant_person(conn, participant.get("person_id"), participant_name)
             is_primary = bool(participant.get("is_primary")) or (primary_person_id and person_id == primary_person_id) or (index == 0 and len(participants) == 1)
             add_session_participant(
                 conn,
                 session["id"],
                 person_id,
-                participant.get("display_name") or participant.get("participant_name") or "",
+                participant_name,
                 is_primary,
                 participant.get("participant_role") or ("primary" if is_primary else "participant"),
             )
@@ -1506,6 +1511,82 @@ def add_session_participant(
         (participant_id, session_id, person_id, display_name, participant_role, 1 if is_primary else 0, now, now),
     )
     return participant_id
+
+
+def proposed_participants_from_candidate(row: sqlite3.Row) -> list[dict[str, Any]]:
+    names = parse_json(row["candidate_person_names"] if "candidate_person_names" in row.keys() else None, [])
+    if not isinstance(names, list) or not names:
+        proposed = text(row["proposed_client_name"] if "proposed_client_name" in row.keys() else "")
+        names = [proposed] if proposed else []
+    participants = []
+    for index, name in enumerate(names):
+        display_name = text(name)
+        if not display_name:
+            continue
+        participants.append(
+            {
+                "session_participant_id": None,
+                "session_id": row["id"] if "id" in row.keys() else None,
+                "person_id": None,
+                "participant_name": display_name,
+                "display_name": display_name,
+                "participant_role": "primary" if index == 0 else "participant",
+                "is_primary": index == 0,
+                "is_proposed": True,
+                "source": "parser_candidate",
+            }
+        )
+    return participants
+
+
+def participants_were_explicitly_saved(conn: sqlite3.Connection, session_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM audit_log
+        WHERE entity_type = 'session'
+          AND entity_id = ?
+          AND action IN ('relationship_section_saved', 'interpretation_saved')
+          AND details LIKE '%"participants"%'
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    return bool(row)
+
+
+def resolve_confirmed_participant_person(
+    conn: sqlite3.Connection,
+    person_id: str | None,
+    participant_name: str,
+) -> str | None:
+    if person_id:
+        return person_id
+    display_name = text(participant_name)
+    if not display_name:
+        return None
+    existing = conn.execute(
+        "SELECT person_id FROM people WHERE lower(display_name) = lower(?) AND active = 1 LIMIT 1",
+        (display_name,),
+    ).fetchone()
+    if existing:
+        return existing["person_id"]
+    if not is_usable_new_person_name(display_name):
+        return None
+    created = create_person(conn, {"display_name": display_name})
+    return created["person_id"]
+
+
+def is_usable_new_person_name(display_name: str) -> bool:
+    name = text(display_name)
+    if not name:
+        return False
+    lowered = f" {name.lower()} "
+    ambiguous_tokens = (" + ", " & ", " and ", ",", "/", "\\", ";", " for ")
+    if any(token in lowered for token in ambiguous_tokens):
+        return False
+    first, last = split_name(name)
+    return bool(first and last)
 
 
 def refresh_candidate_suggestions(

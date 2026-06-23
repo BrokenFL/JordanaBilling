@@ -69,6 +69,8 @@ House Call overrides Weekend and Evening. Weekend overrides Evening.
 
 Participants are people connected to one session. The bill-to party is the person or organization responsible for receiving and paying the invoice, and does not have to be a participant. A separate client/account field is not required for routine approval.
 
+Parser-derived names may appear in Participants as proposed participants before anything has been saved. Showing a proposed participant does not create a permanent person, approve the session, or change raw calendar evidence. When Jordana clicks Save Participants, exact matches are linked to existing people. A new permanent person is created only when the confirmed participant name has a usable first and last name; incomplete or ambiguous names remain reviewable session participant text until completed.
+
 ## Relationship Review
 
 Titles with multiple names or relationship phrases stay reviewable.
@@ -113,6 +115,8 @@ The routine inspector order is:
 6. Session Actions
 
 Save Participants, Save Bill To, and Save Session Draft are independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, and review status.
+
+Removing all participants and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
 
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.
 

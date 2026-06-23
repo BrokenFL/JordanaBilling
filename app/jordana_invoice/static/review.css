@@ -129,6 +129,8 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .mini { min-width: 36px; padding: 0 10px; color: var(--blue); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 8px; background: #f2f6fb; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.chip.proposed { background: #fff8e8; border-color: #f4d391; }
+.chip small { color: #8a5a00; font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .chip button { min-height: 20px; width: 20px; border: none; padding: 0; color: var(--muted); }
 .hint { background: #edf9ef; border: 1px solid #c9ebd0; border-radius: 7px; padding: 10px 12px; font-size: 13px; color: #184729; }
 .checklist { display: grid; gap: 7px; }

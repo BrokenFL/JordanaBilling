@@ -6,7 +6,9 @@ The Review Queue resolves one calendar event. Each section can be saved independ
 
 Used for one or more people who attended the session. Saving participants persists immediately, writes audit history, and refreshes bill-to defaults, rate suggestions, unresolved fields, checklist, and review status.
 
-Creating or correcting a person from the Participants workflow saves directly to SQLite. Person codes are generated only after first and last name are confirmed.
+Parser-derived names can appear here as proposed participants without writing to SQLite. Saving Participants is the confirmation boundary: exact existing-person matches are linked, confirmed complete first-and-last names may create a permanent person, and incomplete or ambiguous names remain uncoded session participant text. Person codes are generated only after first and last name are confirmed.
+
+Saving an empty participant list clears participants and does not recreate the parser proposal.
 
 ## Save Relationship
 
