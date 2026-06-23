@@ -101,7 +101,24 @@ class Phase2RateTests(unittest.TestCase):
             rate_group="remote",
             time_category="weekend_evening",
         )
+        self.assertTrue(suggestion.rate_needs_review)
+        seed_rate_rule(
+            self.conn,
+            amount_cents=25000,
+            effective_from="2026-01-01",
+            duration_minutes=60,
+            time_category="weekend_evening",
+        )
+        suggestion = suggest_rate(
+            self.conn,
+            session_date="2026-06-20",
+            duration_minutes=60,
+            service_mode="phone",
+            rate_group="remote",
+            time_category="weekend_evening",
+        )
         self.assertFalse(suggestion.rate_needs_review)
+        self.assertEqual(suggestion.suggested_rate_cents, 25000)
 
 
 if __name__ == "__main__":

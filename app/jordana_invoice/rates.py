@@ -13,11 +13,6 @@ DEFAULT_WEEKEND_EVENING_POLICY = "manual_review"
 
 EQUIVALENT_APPOINTMENT_METHODS = {"office", "phone", "facetime"}
 EQUIVALENT_RATE_GROUPS = {"remote", "office"}
-BASE_BILLING_SESSION_TYPE_FALLBACKS = {
-    "psychotherapy_evening": "psychotherapy",
-    "psychotherapy_weekend": "psychotherapy",
-    "psychotherapy_house_call": "psychotherapy",
-}
 
 
 def normalize_rate_inputs(
@@ -46,11 +41,6 @@ class RateSuggestion:
 
 
 def billing_session_type_candidates(billing_session_type: str | None) -> list[str | None]:
-    if billing_session_type in BASE_BILLING_SESSION_TYPE_FALLBACKS:
-        return [
-            billing_session_type,
-            BASE_BILLING_SESSION_TYPE_FALLBACKS[billing_session_type],
-        ]
     return [billing_session_type]
 
 
@@ -247,7 +237,7 @@ def find_matching_participant_rule(
           AND (rr.effective_through IS NULL OR rr.effective_through = '' OR rr.effective_through >= ?)
           AND (rr.duration_minutes IS NULL OR rr.duration_minutes = ?)
           AND (rr.billing_session_type IS NULL OR rr.billing_session_type = ?)
-          AND (rr.time_category = 'standard' OR rr.time_category = ?)
+          AND rr.time_category = ?
           AND rrp.person_id IN ({placeholders})
         GROUP BY rr.rate_rule_id
         HAVING COUNT(DISTINCT rrp.person_id) = ?
@@ -322,7 +312,7 @@ def find_matching_rule(
           AND (effective_through IS NULL OR effective_through = '' OR effective_through >= ?)
           AND (duration_minutes IS NULL OR duration_minutes = ?)
           AND (billing_session_type IS NULL OR billing_session_type = ?)
-          AND (time_category = 'standard' OR time_category = ?)
+          AND time_category = ?
         ORDER BY
           CASE WHEN person_id IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN client_account_id IS NOT NULL THEN 1 ELSE 0 END DESC,

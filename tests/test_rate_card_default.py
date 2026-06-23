@@ -203,7 +203,7 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertNotEqual(detail["session"]["suggested_rate_cents"], 35000)
         self.assertEqual(detail["session"]["rate_needs_review"], 1)
 
-    def test_evening_without_specific_rule_falls_back_to_base(self):
+    def test_evening_without_exact_rule_needs_rate(self):
         candidate_id = self.import_one(
             "snap-evening-fallback",
             "Fred 830 60",
@@ -213,8 +213,8 @@ class RateCardDefaultTests(unittest.TestCase):
         self._create_default_rule()
         detail = get_review_candidate(self.conn, candidate_id)
         self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy_evening")
-        self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
-        self.assertEqual(detail["session"]["rate_source"], "default")
+        self.assertIsNone(detail["session"]["suggested_rate_cents"])
+        self.assertEqual(detail["session"]["rate_needs_review"], 1)
 
     def test_evening_specific_rule_overrides_base(self):
         candidate_id = self.import_one(
@@ -234,7 +234,7 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertEqual(detail["session"]["suggested_rate_cents"], 42500)
         self.assertEqual(detail["session"]["rate_source"], "default")
 
-    def test_weekend_and_house_call_fall_back_to_base(self):
+    def test_weekend_and_house_call_without_exact_rule_need_rate(self):
         weekend_id = self.import_one(
             "snap-weekend-fallback",
             "Fred 530 60",
@@ -251,9 +251,11 @@ class RateCardDefaultTests(unittest.TestCase):
         weekend = get_review_candidate(self.conn, weekend_id)
         house_call = get_review_candidate(self.conn, house_call_id)
         self.assertEqual(weekend["session"]["billing_session_type"], "psychotherapy_weekend")
-        self.assertEqual(weekend["session"]["suggested_rate_cents"], 35000)
+        self.assertIsNone(weekend["session"]["suggested_rate_cents"])
+        self.assertEqual(weekend["session"]["rate_needs_review"], 1)
         self.assertEqual(house_call["session"]["billing_session_type"], "psychotherapy_house_call")
-        self.assertEqual(house_call["session"]["suggested_rate_cents"], 35000)
+        self.assertIsNone(house_call["session"]["suggested_rate_cents"])
+        self.assertEqual(house_call["session"]["rate_needs_review"], 1)
 
     def test_different_duration_does_not_fall_back_from_evening_to_base(self):
         candidate_id = self.import_one(
@@ -603,6 +605,47 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertIsNone(after["session"]["suggested_rate_cents"])
         self.assertEqual(after["session"]["rate_source"], "none")
         self.assertEqual(after["session"]["rate_needs_review"], 1)
+
+    # ── Exact dimension matching ─────────────────────────────────────────────
+
+    def test_standard_rule_does_not_match_evening_session(self):
+        candidate_id = self.import_one(
+            "snap-exact-eve-neg",
+            "Fred 830 60",
+            start="2026-02-10T20:30:00-05:00",
+            end="2026-02-10T21:30:00-05:00",
+        )
+        self._create_default_rule()  # psychotherapy / standard / 60-min
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy_evening")
+        self.assertIsNone(detail["session"]["suggested_rate_cents"])
+        self.assertEqual(detail["session"]["rate_needs_review"], 1)
+
+    def test_exact_standard_rule_matches_standard_session(self):
+        candidate_id = self.import_one("snap-exact-std", "Fred 630 60")
+        self._create_default_rule()  # psychotherapy / standard / 60-min
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy")
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(detail["session"]["rate_needs_review"], 0)
+
+    def test_exact_evening_rule_matches_evening_session(self):
+        candidate_id = self.import_one(
+            "snap-exact-eve-pos",
+            "Fred 830 60",
+            start="2026-02-10T20:30:00-05:00",
+            end="2026-02-10T21:30:00-05:00",
+        )
+        self._create_rate_rule(
+            amount=425,
+            duration_minutes=60,
+            billing_session_type="psychotherapy_evening",
+            time_category="evening",
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy_evening")
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 42500)
+        self.assertEqual(detail["session"]["rate_needs_review"], 0)
 
     def test_phone_facetime_and_office_share_equivalent_rate_matching(self):
         create_rate_rule_from_payload(self.conn, {
