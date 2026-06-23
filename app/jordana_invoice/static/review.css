@@ -159,7 +159,7 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .cal-badge.cal-hidden { background: #ebebf5; color: #5050a0; }
 .cal-badge.cal-personal { background: #f0f5e8; color: #507020; }
 
-.rate-card-view, .crm-view, .invoice-view, .settings-view { padding: 22px 26px; }
+.rate-card-view, .crm-view, .invoice-view, .settings-view, .calendar-import-view { padding: 22px 26px; }
 .rate-card-header { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 16px; }
 .rate-card-header h2 { margin: 0 0 4px; font-size: 22px; }
 .rate-card-header p { margin: 0; color: var(--muted); }
@@ -313,6 +313,18 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 }
 .settings-message.success {
   color: var(--green);
+}
+.calendar-import-layout {
+  display: grid;
+  gap: 16px;
+  max-width: 920px;
+}
+.sync-status-grid {
+  grid-template-columns: 180px 1fr;
+}
+.sync-status-grid span {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .crm-layout { display: grid; grid-template-columns: minmax(760px, 1fr) 390px; gap: 16px; align-items: start; }
 .crm-table { min-width: 1060px; }

@@ -12,7 +12,7 @@
         <div class="brand"><span class="brand-mark">JB</span><strong>Jordana Billing</strong></div>
         <nav>
           <a class="active" href="/review" id="reviewNav">Review Queue <span id="navNeeds" class="count">0</span></a>
-          <a>Calendar Import</a>
+          <a href="#" id="calendarImportNav">Calendar Import</a>
           <a href="#" id="clientsNav">Billing Relationships</a>
           <a href="#" id="peopleNav">Clients</a>
           <a href="#" id="rateCardNav">Rate Card</a>
@@ -153,6 +153,39 @@
             </thead>
             <tbody id="rateRows"></tbody>
           </table>
+        </section>
+
+        <section class="calendar-import-view" id="calendarImportView" hidden>
+          <div class="settings-header">
+            <div>
+              <h2>Calendar Import</h2>
+              <p>Pull completed calendar snapshots into local review without changing Apple Calendar.</p>
+            </div>
+          </div>
+          <div class="settings-notice">
+            Sync Now pulls snapshots already sent by the iPhone Shortcut. It does not trigger the Shortcut and does not edit Apple Calendar.
+          </div>
+          <div class="calendar-import-layout">
+            <section class="settings-card">
+              <h3>Sync status</h3>
+              <div class="kv sync-status-grid">
+                <label>Last attempt</label><span id="syncLastAttempt">-</span>
+                <label>Last success</label><span id="syncLastSuccess">-</span>
+                <label>Total rows imported</label><span id="syncTotalRowsImported">0</span>
+                <label>Raw snapshot count</label><span id="syncRawSnapshotCount">0</span>
+                <label>Open review count</label><span id="syncOpenReviewCount">0</span>
+                <label>Last error</label><span id="syncLastError">-</span>
+              </div>
+            </section>
+            <section class="settings-card">
+              <h3>Sync now</h3>
+              <p class="help">Use this after the Shortcut has already written snapshots to Google Sheets through Apps Script.</p>
+              <div class="settings-actions">
+                <button type="button" class="save" id="syncNowBtn">Sync Now</button>
+                <div class="settings-message" id="syncRunMessage" aria-live="polite"></div>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="crm-view" id="clientsView" hidden>

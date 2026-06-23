@@ -291,9 +291,7 @@ def count_raw_rows(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) AS count FROM raw_calendar_snapshots").fetchone()["count"])
 
 
-def get_sync_status(config: SyncConfig | None = None) -> dict[str, Any]:
-    config = config or load_config()
-    conn = connect(config.database_path)
+def sync_status_for_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     init_db(conn)
     row = conn.execute(
         "SELECT * FROM sync_state WHERE source_name = ?",
@@ -301,8 +299,28 @@ def get_sync_status(config: SyncConfig | None = None) -> dict[str, Any]:
     ).fetchone()
     status = dict(row) if row else {"source_name": SOURCE_NAME}
     status["raw_snapshot_count"] = count_raw_rows(conn)
-    status["unresolved_count"] = get_unresolved_count(config)
+    open_review = conn.execute(
+        "SELECT COUNT(*) AS count FROM review_queue WHERE status = 'open'"
+    ).fetchone()
+    status["unresolved_count"] = int(open_review["count"])
     return status
+
+
+def get_sync_status(config: SyncConfig | None = None) -> dict[str, Any]:
+    config = config or load_config()
+    conn = connect(config.database_path)
+    return sync_status_for_connection(conn)
+
+
+def public_sync_status(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "last_attempt": text(status.get("last_attempt_at")),
+        "last_success": text(status.get("last_success_at")),
+        "total_rows_imported": int(status.get("rows_imported") or 0),
+        "raw_snapshot_count": int(status.get("raw_snapshot_count") or 0),
+        "open_review_count": int(status.get("unresolved_count") or 0),
+        "last_error": text(status.get("last_error")),
+    }
 
 
 def get_last_success_time(config: SyncConfig | None = None) -> str:

@@ -109,6 +109,8 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 - `/clients`
 - `/people`
 
+The `Calendar Import` sidebar screen shows local sync status and a single `Sync Now` action. That button only pulls completed snapshot rows already staged by the iPhone Shortcut through Apps Script; it does not trigger the Shortcut and does not edit Apple Calendar.
+
 The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 
 Calendar filters can show all calendars, the preferred work calendar, other calendars, personal/admin calendars, and hidden calendars. Hidden means hidden from the normal queue only; records remain searchable and recoverable.

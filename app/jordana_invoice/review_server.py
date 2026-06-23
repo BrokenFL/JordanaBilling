@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .db import connect, init_db
+from .google_sync import get_sync_status, public_sync_status, sync_now
 from .review_services import (
     add_account_member,
     approve_candidate,
@@ -130,6 +131,9 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/business-profile":
                     self.send_json(get_business_profile(self.conn()))
                     return
+                if parsed.path == "/api/sync/status":
+                    self.send_json(public_sync_status(get_sync_status()))
+                    return
                 if parsed.path == "/api/service-catalog":
                     self.send_json(list_services(self.conn(), first(parse_qs(parsed.query), "include_inactive") == "1"))
                     return
@@ -200,6 +204,16 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/business-profile":
                     self.send_json(save_business_profile(self.conn(), data))
+                    return
+                if parsed.path == "/api/sync/run":
+                    result = sync_now()
+                    self.send_json(
+                        {
+                            "rows_fetched": result.rows_fetched,
+                            "rows_imported": result.rows_imported,
+                            "status": public_sync_status(get_sync_status()),
+                        }
+                    )
                     return
                 if parsed.path.startswith("/api/service-catalog/"):
                     parts = parsed.path.strip("/").split("/")

@@ -9,7 +9,9 @@ from jordana_invoice.google_sync import (
     SyncConfig,
     SyncError,
     get_cursor,
+    public_sync_status,
     sync_with_connection,
+    sync_status_for_connection,
 )
 
 
@@ -243,6 +245,52 @@ class SyncTests(unittest.TestCase):
         self.assertTrue((self.reports_dir / "Jordana_Client_Sessions_2026.csv").exists())
         self.assertTrue((self.reports_dir / "Jordana_Client_Summary_2026.csv").exists())
         self.assertFalse(list(self.reports_dir.glob("*.tmp")))
+
+    def test_public_sync_status_exposes_only_safe_summary_fields(self):
+        sync_with_connection(
+            self.conn,
+            self.config,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [row("snap-1")],
+                        "next_cursor": "2026-06-23T01:06:00.000Z",
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+        self.conn.execute(
+            """
+            UPDATE sync_state
+            SET last_attempt_at = ?, last_success_at = ?, last_error = ?, rows_imported = ?
+            WHERE source_name = ?
+            """,
+            (
+                "2026-06-23T01:05:00.000Z",
+                "2026-06-23T01:06:00.000Z",
+                "network down",
+                7,
+                SOURCE_NAME,
+            ),
+        )
+        self.conn.commit()
+
+        status = public_sync_status(sync_status_for_connection(self.conn))
+
+        self.assertEqual(
+            status,
+            {
+                "last_attempt": "2026-06-23T01:05:00.000Z",
+                "last_success": "2026-06-23T01:06:00.000Z",
+                "total_rows_imported": 7,
+                "raw_snapshot_count": 1,
+                "open_review_count": 1,
+                "last_error": "network down",
+            },
+        )
 
 
 def count(conn, table):

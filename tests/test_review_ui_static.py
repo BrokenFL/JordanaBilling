@@ -227,6 +227,23 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('if (state.settingsSaving) return;', js)
         self.assertIn('if (location.hash === "#settings") showSettings();', js)
 
+    def test_calendar_import_screen_uses_sync_status_and_run_api(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="calendarImportNav">Calendar Import</a>', html)
+        self.assertIn('id="calendarImportView"', html)
+        self.assertIn('id="syncNowBtn"', html)
+        self.assertIn('id="syncRunMessage"', html)
+        self.assertIn("does not trigger the Shortcut", html)
+        self.assertIn("does not edit Apple Calendar", html)
+        self.assertIn('location.hash = "calendar-import";', js)
+        self.assertIn('await api("/api/sync/status")', js)
+        self.assertIn('await api("/api/sync/run", { method: "POST"', js)
+        self.assertIn('if (state.syncRunning) return;', js)
+        self.assertIn('await refreshDashboardStatus();', js)
+        self.assertIn('if (location.hash === "#calendar-import") showCalendarImport();', js)
+
 
 if __name__ == "__main__":
     unittest.main()

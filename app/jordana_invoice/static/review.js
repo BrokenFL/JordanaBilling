@@ -1,4 +1,4 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], editSteps: { clients: false, session: false }, settingsSaving: false };
+const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], editSteps: { clients: false, session: false }, settingsSaving: false, syncRunning: false };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
   business_name: "",
@@ -27,6 +27,7 @@ const BUSINESS_PROFILE_DEFAULTS = {
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
 const money = (v) => v ? `$${v}` : "—";
+const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
 const billingTypeLabel = (v) => ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || v || "Psychotherapy Session");
 const billingTypeShort = (v) => ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || v || "Standard");
 const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || v || "Unknown");
@@ -72,12 +73,17 @@ async function loadList() {
 
 function renderStatus(s) {
   $("demoBanner").hidden = !s.demo_mode;
-  $("lastSync").textContent = s.last_sync ? new Date(s.last_sync).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
+  $("lastSync").textContent = fmtDateTime(s.last_sync);
   $("needsReview").textContent = s.needs_review;
   $("navNeeds").textContent = s.needs_review;
   $("readyApprove").textContent = s.ready_to_approve;
   $("approvedMonth").textContent = s.approved_this_month;
   $("personalAdmin").textContent = s.personal_admin;
+}
+
+async function refreshDashboardStatus() {
+  const status = await api("/api/status");
+  renderStatus(status);
 }
 
 function renderRows(items, total) {
@@ -871,6 +877,11 @@ function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = se
 ["searchBox","statusFilter","serviceFilter","timeFilter","calendarFilter"].forEach(id => $(id).addEventListener("input", () => { state.offset = 0; loadList(); }));
 $("prevPage").onclick = () => { state.offset = Math.max(0, state.offset - state.limit); loadList(); };
 $("nextPage").onclick = () => { state.offset += state.limit; loadList(); };
+document.getElementById("calendarImportNav").onclick = (event) => {
+  event.preventDefault();
+  location.hash = "calendar-import";
+  showCalendarImport();
+};
 document.getElementById("rateCardNav").onclick = (event) => {
   event.preventDefault();
   location.hash = "rate-card";
@@ -902,8 +913,8 @@ document.getElementById("reviewNav").onclick = () => {
 };
 
 function hideViews() {
-  ["reviewWorkbench","rateCardView","clientsView","peopleView","invoicesView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","rateCardNav","clientsNav","peopleNav","invoicesNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","invoicesView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","invoicesNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -1000,6 +1011,62 @@ async function showInvoices() {
   $("pageSubtitle").textContent = "Draft, finalize, and preserve invoice history";
   document.title = "Jordana Billing - Invoices";
   await loadInvoices();
+}
+
+function renderSyncStatus(status) {
+  $("syncLastAttempt").textContent = fmtDateTime(status.last_attempt);
+  $("syncLastSuccess").textContent = fmtDateTime(status.last_success);
+  $("syncTotalRowsImported").textContent = String(status.total_rows_imported || 0);
+  $("syncRawSnapshotCount").textContent = String(status.raw_snapshot_count || 0);
+  $("syncOpenReviewCount").textContent = String(status.open_review_count || 0);
+  $("syncLastError").textContent = status.last_error || "-";
+}
+
+function setSyncRunMessage(message, isSuccess = false) {
+  const node = $("syncRunMessage");
+  node.textContent = message;
+  node.className = isSuccess ? "settings-message success" : "settings-message";
+}
+
+function setSyncRunning(isRunning) {
+  state.syncRunning = isRunning;
+  $("syncNowBtn").disabled = isRunning;
+  $("syncNowBtn").textContent = isRunning ? "Syncing..." : "Sync Now";
+}
+
+async function loadSyncStatus() {
+  setSyncRunMessage("");
+  const status = await api("/api/sync/status");
+  renderSyncStatus(status);
+}
+
+async function runSyncNow() {
+  if (state.syncRunning) return;
+  setSyncRunning(true);
+  setSyncRunMessage("");
+  try {
+    const result = await api("/api/sync/run", { method: "POST", body: JSON.stringify({}) });
+    renderSyncStatus(result.status);
+    setSyncRunMessage(`Sync complete. Fetched ${result.rows_fetched} row(s); imported ${result.rows_imported} new row(s).`, true);
+    await refreshDashboardStatus();
+  } catch (err) {
+    setSyncRunMessage(err.message || "Sync failed.");
+    try {
+      renderSyncStatus(await api("/api/sync/status"));
+    } catch (_) {}
+  } finally {
+    setSyncRunning(false);
+  }
+}
+
+async function showCalendarImport() {
+  hideViews();
+  $("calendarImportView").hidden = false;
+  $("calendarImportNav").classList.add("active");
+  $("pageTitle").textContent = "Calendar Import";
+  $("pageSubtitle").textContent = "Pull Shortcut snapshots already staged in Google Sheets";
+  document.title = "Jordana Billing - Calendar Import";
+  await loadSyncStatus();
 }
 
 function businessProfileFromResponse(profile) {
@@ -1693,6 +1760,7 @@ $("newPersonBtn").onclick = async () => {
   await loadPeople();
   await openPersonRecord(person.person_id);
 };
+document.getElementById("syncNowBtn").onclick = runSyncNow;
 document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
 [
   "businessNameInput",
@@ -1719,6 +1787,7 @@ document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
 ].forEach(id => $(id).addEventListener("input", renderBusinessProfileReadiness));
 
 loadList();
+if (location.hash === "#calendar-import") showCalendarImport();
 if (location.hash === "#rate-card") showRateCard();
 if (location.hash === "#clients" || location.pathname === "/clients") showClients();
 if (location.hash === "#people" || location.pathname === "/people") showPeople();
