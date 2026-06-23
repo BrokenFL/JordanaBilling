@@ -85,6 +85,7 @@ def make_handler(database_path: str):
                             query=first(query, "q"),
                             review_status=first(query, "review_status"),
                             service_mode=first(query, "service_mode"),
+                            billing_session_type=first(query, "billing_session_type"),
                             time_category=first(query, "time_category"),
                             payment_status=first(query, "payment_status"),
                             calendar_filter=first(query, "calendar_filter"),

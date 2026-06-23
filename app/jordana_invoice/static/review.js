@@ -3,6 +3,9 @@ const state = { items: [], selected: null, offset: 0, limit: 25, participants: [
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
 const money = (v) => v ? `$${v}` : "—";
+const billingTypeLabel = (v) => ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || v || "Psychotherapy Session");
+const billingTypeShort = (v) => ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || v || "Standard");
+const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || v || "Unknown");
 const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || v || "Unknown");
 const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || v || "Standard");
 
@@ -17,7 +20,7 @@ async function loadList() {
   const params = new URLSearchParams({
     q: $("searchBox").value,
     review_status: $("statusFilter").value,
-    service_mode: $("serviceFilter").value,
+    billing_session_type: $("serviceFilter").value,
     time_category: $("timeFilter").value,
     calendar_filter: $("calendarFilter").value,
     limit: state.limit,
@@ -50,7 +53,7 @@ function renderRows(items, total) {
       <td>${fmt(item.raw_title)}</td>
       <td><span class="primary">${fmt(item.suggested_client)}</span></td>
       <td>${fmt(item.duration_minutes)}</td>
-      <td>${serviceLabel(item.service_mode)}</td>
+      <td>${billingTypeShort(item.billing_session_type || item.service_mode)}</td>
       <td>${timeLabel(item.time_category)}</td>
       <td>${money(item.rate)}</td>
       <td><span class="confidence ${item.confidence >= 90 ? "good" : "low"}">${item.confidence || 0}%</span></td>
@@ -138,8 +141,12 @@ function renderInspector(data) {
     <section class="section">
       <div class="section-title-row"><h3>Session Details</h3><span class="save-state" id="sessionState">Needs review</span></div>
       <div class="field-grid">
-        <label class="field">Duration (min)<input id="durationInput" type="number" value="${s.approved_duration_minutes || s.duration_minutes || ""}"></label>
-        <label class="field">Session Type<select id="serviceInput">${optionSet(["phone","facetime","office","house_call","unknown"], s.service_mode)}</select></label>
+        <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
+        <label class="field">Duration<select id="durationChoiceInput">${durationOptions(s.duration_choice || durationToChoice(s.approved_duration_minutes || s.duration_minutes))}</select></label>
+        <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || ""}"></label>
+        <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${s.custom_service_description || ""}"></label>
+        <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${s.custom_service_code || ""}"></label>
+        <label class="field">Appointment Method<span class="help">Internal evidence (Office/Phone/FaceTime)</span><span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label>
         <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend","weekend_evening"], s.time_category)}</select></label>
         <label class="field">Suggested Rate<span class="help">${rateSourceDescription(s, data.participants)}</span><input id="suggestedRateInput" value="${centString(s.suggested_rate_cents)}"></label>
         <label class="field">Suggested/editable rate<span class="help">The final amount saved for this session.</span><input id="approvedRateInput" value="${centString(s.approved_rate_cents || s.suggested_rate_cents)}"></label>
@@ -148,6 +155,7 @@ function renderInspector(data) {
         <label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label>
         <label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>
       </div>
+      ${houseCallSuggestion(s)}
       <div class="rate-scope" id="rateScope">
         <strong>Apply this rate to:</strong>
         <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
@@ -555,9 +563,16 @@ async function save(approve) {
 }
 
 function collectSessionDraftValues() {
+  const durationChoice = $("durationChoiceInput")?.value || "60";
+  const customMinutes = $("customDurationInput")?.value || "";
+  const approvedMinutes = durationChoice === "custom" ? customMinutes : durationChoice;
   return {
-    approved_duration_minutes: $("durationInput")?.value || "",
-    service_mode: $("serviceInput")?.value || "",
+    approved_duration_minutes: approvedMinutes,
+    billing_session_type: $("billingTypeInput")?.value || "psychotherapy",
+    duration_choice: durationChoice,
+    custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
+    custom_service_description: $("customDescInput")?.value || "",
+    custom_service_code: $("customCodeInput")?.value || "",
     time_category: $("timeCategoryInput")?.value || "",
     suggested_rate: $("suggestedRateInput")?.value || "",
     approved_rate: $("approvedRateInput")?.value || "",
@@ -570,8 +585,11 @@ function collectSessionDraftValues() {
 
 function restoreSessionDraftValues(values) {
   if (!values) return;
-  if ($("durationInput")) $("durationInput").value = values.approved_duration_minutes;
-  if ($("serviceInput")) $("serviceInput").value = values.service_mode;
+  if ($("billingTypeInput")) $("billingTypeInput").value = values.billing_session_type;
+  if ($("durationChoiceInput")) $("durationChoiceInput").value = values.duration_choice;
+  if ($("customDurationInput")) $("customDurationInput").value = values.custom_duration_minutes;
+  if ($("customDescInput")) $("customDescInput").value = values.custom_service_description;
+  if ($("customCodeInput")) $("customCodeInput").value = values.custom_service_code;
   if ($("timeCategoryInput")) $("timeCategoryInput").value = values.time_category;
   if ($("suggestedRateInput")) $("suggestedRateInput").value = values.suggested_rate;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
@@ -598,10 +616,17 @@ async function mark(classification) {
 }
 
 function collectPayload() {
+  const durationChoice = $("durationChoiceInput")?.value || "60";
+  const customMinutes = $("customDurationInput")?.value || "";
+  const approvedMinutes = durationChoice === "custom" ? customMinutes : durationChoice;
   return {
     ...collectRelationshipPayload(),
-    approved_duration_minutes: $("durationInput").value,
-    service_mode: $("serviceInput").value,
+    approved_duration_minutes: approvedMinutes,
+    billing_session_type: $("billingTypeInput").value,
+    duration_choice: durationChoice,
+    custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
+    custom_service_description: $("customDescInput")?.value || "",
+    custom_service_code: $("customCodeInput")?.value || "",
     time_category: $("timeCategoryInput").value,
     suggested_rate: $("suggestedRateInput").value,
     approved_rate: $("approvedRateInput").value,
@@ -646,6 +671,41 @@ async function findOrCreate(path, label, value, createPayload) {
 
 function optionSet(options, selected) {
   return options.map(v => `<option value="${v}" ${v === selected ? "selected" : ""}>${timeLabel(serviceLabel(v))}</option>`).join("");
+}
+function billingTypeOptions(selected) {
+  const types = [
+    {value: "psychotherapy", label: "Psychotherapy Session"},
+    {value: "psychotherapy_house_call", label: "Psychotherapy Session / House Call"},
+    {value: "psychotherapy_weekend", label: "Psychotherapy Session / Weekend"},
+    {value: "psychotherapy_evening", label: "Psychotherapy Session / Evening"},
+    {value: "custom", label: "Custom"}
+  ];
+  return types.map(t => `<option value="${t.value}" ${t.value === selected ? "selected" : ""}>${t.label}</option>`).join("");
+}
+function durationOptions(selected) {
+  const choices = [
+    {value: "30", label: "30 minutes"},
+    {value: "60", label: "60 minutes"},
+    {value: "90", label: "90 minutes"},
+    {value: "120", label: "120 minutes"},
+    {value: "custom", label: "Custom"}
+  ];
+  return choices.map(c => `<option value="${c.value}" ${c.value === selected ? "selected" : ""}>${c.label}</option>`).join("");
+}
+function durationToChoice(minutes) {
+  if (!minutes) return "60";
+  if ([30, 60, 90, 120].includes(Number(minutes))) return String(minutes);
+  return "custom";
+}
+function mapLegacyToType(s) {
+  if (s.service_mode === "house_call") return "psychotherapy_house_call";
+  if (s.is_weekend) return "psychotherapy_weekend";
+  if (s.is_evening) return "psychotherapy_evening";
+  return "psychotherapy";
+}
+function houseCallSuggestion(s) {
+  if (!s.house_call_suggested) return "";
+  return `<div class="suggestion-note"><strong>Location suggests House Call:</strong> ${s.location_text || "Location field present"}. Please confirm the session type.</div>`;
 }
 function centString(cents) { return cents ? (Number(cents) / 100).toFixed(2) : ""; }
 function safeList(raw) { try { return Array.isArray(raw) ? raw : JSON.parse(raw || "[]"); } catch { return []; } }

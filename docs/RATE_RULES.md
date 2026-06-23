@@ -4,13 +4,28 @@ Rates are stored in SQLite as effective-dated `rate_rules`. Suggested rates are 
 
 ## Matching Inputs
 
-The normalizer considers participant combinations, person, account, duration, service mode, rate group, time category, and effective date.
+The normalizer considers participant combinations, person, account, duration, billing session type, time category, and effective date.
 
-Service modes: `phone`, `facetime`, `office`, `house_call`, `unknown`.
+### Billing Session Types (for rate matching)
 
-Rate groups: `remote`, `office`, `house_call`.
+- `psychotherapy` — Standard session
+- `psychotherapy_house_call` — House call
+- `psychotherapy_weekend` — Weekend session
+- `psychotherapy_evening` — Evening session (weekday >= 8 PM)
+- `custom` — Custom session type
 
-Time categories: `standard`, `evening`, `weekend`, `weekend_evening`.
+### Appointment Methods (internal evidence)
+
+Office, Phone, and FaceTime are **appointment methods**, not billing session types. They are treated identically for rate matching purposes. The rate engine does not distinguish among these three methods.
+
+Legacy service modes (`phone`, `facetime`, `office`) and rate groups (`remote`, `office`) are preserved for historical rate rules but are not exposed as new selectable billing types.
+
+### Time Categories
+
+- `standard`
+- `evening`
+- `weekend`
+- `weekend_evening`
 
 ## Precedence
 

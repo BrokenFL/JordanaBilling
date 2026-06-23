@@ -25,12 +25,47 @@ Routine review uses Jordana's normal mental model:
 
 1. Participants
 2. Bill to
-3. Duration
-4. Session type
-5. Time category
-6. Suggested/editable rate
-7. Payment status
-8. Approve
+3. Session Type (exactly 5 choices)
+4. Duration (exactly 5 choices)
+5. Suggested/editable rate
+6. Payment status
+7. Approve
+
+### Session Type Choices
+
+The system offers exactly **5 Session Type choices**:
+
+1. **Psychotherapy Session** — Standard weekday daytime session
+2. **Psychotherapy Session / House Call** — Explicit house call or location-based
+3. **Psychotherapy Session / Weekend** — Saturday or Sunday
+4. **Psychotherapy Session / Evening** — Weekday starting at 8:00 PM or later
+5. **Custom** — Manual override with custom description
+
+**No other session type may ever appear in active UI controls.** Office, Phone, FaceTime are appointment methods (internal evidence), not billing session types.
+
+### Duration Choices
+
+The system offers exactly **5 Duration choices**:
+
+1. **30 minutes**
+2. **60 minutes**
+3. **90 minutes**
+4. **120 minutes**
+5. **Custom** — Requires actual minutes input
+
+When no duration is parsed from the calendar title, the system suggests 60 minutes.
+
+### Session Type Priority
+
+Automatic derivation uses this priority:
+
+1. Custom (manual only)
+2. House Call (explicit text or nonblank location)
+3. Weekend (Saturday or Sunday)
+4. Evening (weekday >= 8:00 PM)
+5. Standard Psychotherapy Session
+
+House Call overrides Weekend and Evening. Weekend overrides Evening.
 
 Participants are people connected to one session. The bill-to party is the person or organization responsible for receiving and paying the invoice, and does not have to be a participant. A separate client/account field is not required for routine approval.
 

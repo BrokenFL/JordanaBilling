@@ -199,8 +199,9 @@ class InvoiceLifecycleTests(unittest.TestCase):
         try:
             from PIL import Image
             from pypdf import PdfReader
+            import reportlab
         except ImportError:
-            self.skipTest("PDF inspection dependencies are not installed")
+            self.skipTest("PDF inspection dependencies are not installed (requires PIL, pypdf, reportlab)")
         png = io.BytesIO()
         Image.new("RGB", (40, 20), "white").save(png, format="PNG")
         logo = self.root / "sanitized-logo.svg"

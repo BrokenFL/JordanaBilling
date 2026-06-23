@@ -57,12 +57,12 @@
                 <option value="excluded">Excluded</option>
               </select>
               <select id="serviceFilter">
-                <option value="">All Service Types</option>
-                <option value="phone">Phone</option>
-                <option value="facetime">FaceTime</option>
-                <option value="office">Office</option>
-                <option value="house_call">House Call</option>
-                <option value="unknown">Unknown</option>
+                <option value="">All Session Types</option>
+                <option value="psychotherapy">Psychotherapy Session</option>
+                <option value="psychotherapy_house_call">House Call</option>
+                <option value="psychotherapy_weekend">Weekend</option>
+                <option value="psychotherapy_evening">Evening</option>
+                <option value="custom">Custom</option>
               </select>
               <select id="timeFilter">
                 <option value="">All Time Categories</option>
@@ -118,16 +118,17 @@
             <select name="duration_minutes">
               <option value="">Any length</option>
               <option value="30">30 min</option>
-              <option value="45">45 min</option>
               <option value="60">60 min</option>
               <option value="90">90 min</option>
+              <option value="120">120 min</option>
             </select>
-            <select name="service_mode">
-              <option value="">Any service</option>
-              <option value="phone">Phone</option>
-              <option value="facetime">FaceTime</option>
-              <option value="office">Office</option>
-              <option value="house_call">House Call</option>
+            <select name="billing_session_type">
+              <option value="">Any session type</option>
+              <option value="psychotherapy">Psychotherapy Session</option>
+              <option value="psychotherapy_house_call">House Call</option>
+              <option value="psychotherapy_weekend">Weekend</option>
+              <option value="psychotherapy_evening">Evening</option>
+              <option value="custom">Custom</option>
             </select>
             <select name="time_category">
               <option value="standard">Standard</option>

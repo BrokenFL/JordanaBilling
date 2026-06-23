@@ -7,12 +7,46 @@ from typing import Any
 from .util import new_id, now_iso
 
 
+SEEDED_APPOINTMENT_METHODS = frozenset({
+    "office", "phone", "facetime", "house_call",
+    "correspondence", "preparation", "mediation", "other",
+})
+
+
 def normalize_service_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.strip().casefold()).strip("_")
 
 
 def list_services(conn: sqlite3.Connection, include_inactive: bool = False) -> list[dict[str, Any]]:
     where = "" if include_inactive else "WHERE active = 1"
+    rows = conn.execute(
+        f"SELECT * FROM service_catalog {where} ORDER BY display_name COLLATE NOCASE"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_billing_session_types(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """
+    Return only the 5 allowed billing session types.
+    This is the only source for session type dropdowns.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM service_catalog
+        WHERE catalog_type = 'billing_session_type' AND active = 1
+        ORDER BY display_name COLLATE NOCASE
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_appointment_methods(conn: sqlite3.Connection, include_legacy: bool = False) -> list[dict[str, Any]]:
+    """
+    Return appointment methods (internal evidence, not billing types).
+    """
+    where = "WHERE catalog_type = 'appointment_method' AND active = 1"
+    if not include_legacy:
+        where += " AND legacy_appointment_method = 0"
     rows = conn.execute(
         f"SELECT * FROM service_catalog {where} ORDER BY display_name COLLATE NOCASE"
     ).fetchall()
@@ -52,18 +86,22 @@ def learn_service(
             ).fetchone()
         )
     service_id = new_id()
+    is_seeded_method = normalized in SEEDED_APPOINTMENT_METHODS
     conn.execute(
         """
         INSERT INTO service_catalog (
           service_catalog_id, canonical_name, normalized_name, display_name,
+          catalog_type, legacy_appointment_method,
           active, usage_count, first_used_at, last_used_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
         """,
         (
             service_id,
             normalized,
             normalized,
             display,
+            "appointment_method",
+            1 if is_seeded_method else 0,
             1 if increment_usage else 0,
             now if increment_usage else None,
             now if increment_usage else None,

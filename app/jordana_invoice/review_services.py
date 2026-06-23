@@ -12,6 +12,15 @@ from .csv_reports import write_reports
 from .db import init_db
 from .rates import cents_to_dollars, dollars_to_cents, seed_rate_rule, suggest_rate
 from .service_catalog import learn_service
+from .session_types import (
+    ALLOWED_BILLING_SESSION_TYPES,
+    ALLOWED_DURATION_CHOICES,
+    BILLING_SESSION_TYPE_OPTIONS,
+    DURATION_CHOICE_OPTIONS,
+    validate_billing_session_type,
+    validate_duration_choice,
+    duration_choice_to_minutes,
+)
 from .util import json_dumps, new_id, now_iso, text
 
 
@@ -24,6 +33,16 @@ REQUIRED_APPROVAL_FIELDS = {
     "approved_rate_cents",
     "payment_status",
 }
+
+
+def get_session_type_options() -> list[dict[str, str]]:
+    """Return the exactly 5 allowed billing session type options for UI dropdowns."""
+    return list(BILLING_SESSION_TYPE_OPTIONS)
+
+
+def get_duration_options() -> list[dict[str, str]]:
+    """Return the exactly 5 allowed duration choice options for UI dropdowns."""
+    return list(DURATION_CHOICE_OPTIONS)
 
 
 def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -97,6 +116,7 @@ def list_review_candidates(
     query: str = "",
     review_status: str = "",
     service_mode: str = "",
+    billing_session_type: str = "",
     time_category: str = "",
     payment_status: str = "",
     calendar_filter: str = "",
@@ -117,7 +137,10 @@ def list_review_candidates(
     if review_status:
         filters.append("s.review_status = ?")
         params.append(review_status)
-    if service_mode:
+    if billing_session_type:
+        filters.append("s.billing_session_type = ?")
+        params.append(billing_session_type)
+    elif service_mode:
         filters.append("s.service_mode = ?")
         params.append(service_mode)
     if time_category:
@@ -148,6 +171,7 @@ def list_review_candidates(
           s.end_at,
           s.duration_minutes,
           s.service_mode,
+          s.billing_session_type,
           s.time_category,
           s.payment_status,
           s.appointment_status,
@@ -250,6 +274,7 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "account_code": row["account_code"] or "",
         "duration_minutes": row["duration_minutes"],
         "service_mode": row["service_mode"] or "unknown",
+        "billing_session_type": row["billing_session_type"] if "billing_session_type" in row.keys() else None,
         "time_category": row["time_category"] or "standard",
         "payment_status": row["payment_status"] or "unresolved",
         "appointment_status": row["appointment_status"] or "unresolved",
@@ -408,10 +433,12 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
     service = learn_service(conn, service_mode, increment_usage=False)
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
-    billing_session_type = payload.get("billing_session_type") or (session["billing_session_type"] if "billing_session_type" in session.keys() else None) or "psychotherapy"
+    raw_billing_type = payload.get("billing_session_type") or (session["billing_session_type"] if "billing_session_type" in session.keys() else None) or "psychotherapy"
+    billing_session_type = validate_billing_session_type(raw_billing_type)
     appointment_method = payload.get("appointment_method") or (session["appointment_method"] if "appointment_method" in session.keys() else None) or derive_appointment_method_from_service(service_mode)
-    duration_choice = payload.get("duration_choice") or (session["duration_choice"] if "duration_choice" in session.keys() else None) or derive_duration_choice_from_minutes(duration)
-    custom_duration_minutes = int(payload["custom_duration_minutes"]) if payload.get("custom_duration_minutes") else None
+    raw_duration_choice = payload.get("duration_choice") or (session["duration_choice"] if "duration_choice" in session.keys() else None) or derive_duration_choice_from_minutes(duration)
+    raw_custom_minutes = int(payload["custom_duration_minutes"]) if payload.get("custom_duration_minutes") else None
+    duration_choice, custom_duration_minutes = validate_duration_choice(raw_duration_choice, raw_custom_minutes)
     custom_service_description = payload.get("custom_service_description") or None
     custom_service_code = payload.get("custom_service_code") or None
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
