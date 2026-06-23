@@ -883,16 +883,35 @@ def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any
     ).fetchall()
     sessions = conn.execute(
         """
-        SELECT s.session_date, s.start_at, s.duration_minutes, s.service_mode, s.time_category,
-               s.approved_rate_cents, s.approved_rate_source, s.rate_source,
-               s.payment_status, s.review_status, s.raw_calendar_title
+        SELECT
+          s.id AS session_id,
+          s.candidate_id,
+          s.session_date,
+          s.start_at,
+          s.duration_minutes,
+          s.service_mode,
+          s.billing_session_type,
+          s.time_category,
+          s.approved_rate_cents,
+          s.approved_rate_source,
+          s.rate_source,
+          s.payment_status,
+          s.review_status,
+          s.raw_calendar_title,
+          (
+            SELECT GROUP_CONCAT(COALESCE(p2.display_name, sp2.participant_name), ', ')
+            FROM session_participants sp2
+            LEFT JOIN people p2 ON p2.person_id = sp2.person_id
+            WHERE sp2.session_id = s.id
+              AND COALESCE(sp2.person_id, '') != ?
+          ) AS other_participant_names
         FROM session_participants sp
         JOIN sessions s ON s.id = sp.session_id
         WHERE sp.person_id = ?
         ORDER BY s.start_at DESC
         LIMIT 50
         """,
-        (person_id,),
+        (person_id, person_id),
     ).fetchall()
     aliases = conn.execute(
         "SELECT * FROM calendar_aliases WHERE person_id = ? ORDER BY updated_at DESC LIMIT 50",
@@ -1558,7 +1577,7 @@ def proposed_participants_from_candidate(
         display_name = text(name)
         if not display_name:
             continue
-        matches = find_active_people_by_exact_normalized_name(conn, display_name)
+        matches = find_active_people_by_exact_identity_match(conn, display_name)
         participant = {
             "session_participant_id": None,
             "session_id": row["id"] if "id" in row.keys() else None,
@@ -1615,7 +1634,7 @@ def resolve_confirmed_participant_person(
     display_name = text(participant_name)
     if not display_name:
         return None
-    matches = find_active_people_by_exact_normalized_name(conn, display_name)
+    matches = find_active_people_by_exact_identity_match(conn, display_name)
     if len(matches) == 1:
         return matches[0]["person_id"]
     if len(matches) > 1:
@@ -1637,7 +1656,7 @@ def resolve_confirmed_participant_person(
 
 
 def normalize_exact_participant_name(value: str) -> str:
-    return " ".join(text(value).split()).casefold()
+    return normalize_alias(value)
 
 
 def find_active_people_by_exact_normalized_name(
@@ -1659,6 +1678,38 @@ def find_active_people_by_exact_normalized_name(
         for row in rows
         if normalize_exact_participant_name(row["display_name"]) == normalized
     ]
+
+
+def find_active_people_by_exact_approved_alias(
+    conn: sqlite3.Connection,
+    raw_alias: str,
+) -> list[sqlite3.Row]:
+    normalized = normalize_exact_participant_name(raw_alias)
+    if not normalized:
+        return []
+    rows = conn.execute(
+        """
+        SELECT DISTINCT p.person_id, p.display_name, p.first_name, p.last_name, p.billing_email, p.billing_phone
+        FROM calendar_aliases ca
+        JOIN people p ON p.person_id = ca.person_id
+        WHERE ca.approved_by_user = 1
+          AND ca.normalized_alias = ?
+          AND p.active = 1
+        ORDER BY p.display_name
+        """,
+        (normalized,),
+    ).fetchall()
+    return list(rows)
+
+
+def find_active_people_by_exact_identity_match(
+    conn: sqlite3.Connection,
+    display_name: str,
+) -> list[sqlite3.Row]:
+    name_matches = find_active_people_by_exact_normalized_name(conn, display_name)
+    if name_matches:
+        return name_matches
+    return find_active_people_by_exact_approved_alias(conn, display_name)
 
 
 def is_usable_new_person_name(display_name: str) -> bool:
@@ -2618,6 +2669,83 @@ def create_rate_rule_from_payload(conn: sqlite3.Connection, data: dict[str, Any]
     record_audit(conn, "rate_rule", rule_id, "created_inline", data)
     _recalc_unapproved_session_rates(conn)
     conn.commit()
+    return dict(conn.execute("SELECT * FROM rate_rules WHERE rate_rule_id = ?", (rule_id,)).fetchone())
+
+
+def save_person_alias(
+    conn: sqlite3.Connection,
+    person_id: str,
+    *,
+    raw_alias: str,
+    approved_by_user: bool = True,
+    alias_id: str | None = None,
+) -> dict[str, Any]:
+    init_db(conn)
+    person = conn.execute(
+        "SELECT person_id FROM people WHERE person_id = ? AND active = 1",
+        (person_id,),
+    ).fetchone()
+    if not person:
+        raise ValueError("Person not found.")
+    normalized_alias = normalize_alias(raw_alias)
+    if not normalized_alias:
+        raise ValueError("Alias is required.")
+    now = now_iso()
+    existing = conn.execute(
+        """
+        SELECT ca.alias_id, ca.person_id, ca.approved_by_user, p.active
+        FROM calendar_aliases ca
+        LEFT JOIN people p ON p.person_id = ca.person_id
+        WHERE ca.normalized_alias = ?
+        """,
+        (normalized_alias,),
+    ).fetchone()
+    if alias_id:
+        owned = conn.execute(
+            "SELECT * FROM calendar_aliases WHERE alias_id = ? AND person_id = ?",
+            (alias_id, person_id),
+        ).fetchone()
+        if not owned:
+            raise ValueError("Alias not found for this person.")
+        conn.execute(
+            """
+            UPDATE calendar_aliases
+            SET approved_by_user = ?, updated_at = ?
+            WHERE alias_id = ?
+            """,
+            (1 if approved_by_user else 0, now, alias_id),
+        )
+        record_audit(
+            conn,
+            "person",
+            person_id,
+            "alias_updated",
+            {"alias_id": alias_id, "raw_alias": owned["raw_alias"], "approved_by_user": 1 if approved_by_user else 0},
+        )
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM calendar_aliases WHERE alias_id = ?", (alias_id,)).fetchone())
+    if existing and existing["person_id"] != person_id and existing["approved_by_user"] and existing["active"]:
+        raise ValueError("Alias is already approved for another active client.")
+    upsert_calendar_alias(
+        conn,
+        raw_alias=raw_alias,
+        person_id=person_id,
+        classification="client_session",
+        approved=approved_by_user,
+    )
+    row = conn.execute(
+        "SELECT * FROM calendar_aliases WHERE normalized_alias = ?",
+        (normalized_alias,),
+    ).fetchone()
+    record_audit(
+        conn,
+        "person",
+        person_id,
+        "alias_saved",
+        {"alias_id": row["alias_id"], "raw_alias": row["raw_alias"], "approved_by_user": row["approved_by_user"]},
+    )
+    conn.commit()
+    return dict(row)
     return dict(conn.execute("SELECT * FROM rate_rules WHERE rate_rule_id = ?", (rule_id,)).fetchone())
 
 

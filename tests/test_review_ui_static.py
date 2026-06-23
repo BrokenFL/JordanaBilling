@@ -62,6 +62,23 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('const mergeButton = !p.is_proposed && p.person_id ? \'<button id="mergePersonBtn">Merge...</button>\' : "";', editor)
         self.assertIn('if ($("mergePersonBtn")) $("mergePersonBtn").onclick = async () => {', editor)
 
+    def test_client_record_ui_has_new_sections_and_collapsed_advanced(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("Client Details", person_record)
+        self.assertIn("Billing Summary", person_record)
+        self.assertIn("Bill-To Records", person_record)
+        self.assertIn("Recent Sessions", person_record)
+        self.assertIn("Client Rate Overrides", person_record)
+        self.assertIn("Uses standard Rate Card. No client-specific override.", person_record)
+        self.assertIn("<details>", person_record)
+        self.assertIn("<summary>Advanced</summary>", person_record)
+        self.assertIn("Known Calendar Names", person_record)
+        self.assertEqual(person_record.count("<h5>Billing Relationships</h5>"), 1)
+
     def test_billing_relationship_round_trip_uses_stable_return_context(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 

@@ -78,6 +78,8 @@ PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 set-r
 
 The local Rate Card supports amount, session length, session type, time category, applies-to scope, and effective date. Applies-to can be everyone, a specific account, or a specific person. Joint exceptions created from review are stored as `rate_rules` plus `rate_rule_participants` rows.
 
+Client records reuse this same `rate_rules` system for person-specific overrides. A client override is just a `person_id`-scoped active rule with the same matching dimensions and precedence as any other person-specific exception. If no client-specific rule matches, the standard Rate Card still applies.
+
 Creating a rule with the same scope, dimensions, and effective date as an existing active rule is blocked to prevent duplicate active rules. Validation errors and API failures are surfaced in the UI instead of failing silently.
 
 The Rate Card form is responsive: all controls and the **Add Rate Rule** button remain visible and clickable at normal laptop/browser widths.

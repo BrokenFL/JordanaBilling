@@ -1362,13 +1362,30 @@ async function loadPeople() {
   document.querySelectorAll("#peopleRows tr").forEach(row => row.onclick = () => openPersonRecord(row.dataset.person));
 }
 
-async function openPersonRecord(personId) {
+function billingAddressSummary(billingParty) {
+  if (!billingParty) return "";
+  const cityLine = [billingParty.billing_city, billingParty.billing_state, billingParty.billing_postal_code].filter(Boolean).join(", ").replace(", ,", ",");
+  return [
+    billingParty.billing_address_line_1,
+    billingParty.billing_address_line_2,
+    cityLine
+  ].filter(Boolean).join(" • ");
+}
+
+function personRateOverrideLine(rule) {
+  return `${money(centString(rule.amount_cents))} • ${billingTypeLabel(rule.billing_session_type)} • ${fmt(rule.duration_minutes)} min • ${timeLabel(rule.time_category)} • ${fmt(rule.effective_from)}`;
+}
+
+async function openPersonRecord(personId, options = {}) {
+  const showAllSessions = !!options.showAllSessions;
   state.returnCandidate = state.selected;
   const data = await api(`/api/people/${personId}`);
+  const visibleSessions = showAllSessions ? data.sessions : data.sessions.slice(0, 10);
   $("personRecord").innerHTML = `
     ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
     <h3>${fmt(data.person.display_name)}</h3>
     <div class="meta"><span>${fmt(data.person.person_code)}</span><span>${fmt(data.person.active_status)}</span></div>
+    <h4>Client Details</h4>
     <div class="field-grid">
       <label class="field">First Name<input id="recordFirstName" value="${data.person.first_name || ""}"></label>
       <label class="field">Last Name<input id="recordLastName" value="${data.person.last_name || ""}"></label>
@@ -1376,15 +1393,52 @@ async function openPersonRecord(personId) {
       <label class="field">Display Name<input id="recordDisplayName" value="${data.person.display_name || ""}"></label>
       <label class="field">Email<input id="recordPersonEmail" value="${data.person.billing_email || ""}"></label>
       <label class="field">Phone<input id="recordPersonPhone" value="${data.person.billing_phone || ""}"></label>
+      <label class="field">Status<input value="${data.person.active_status || ""}" readonly></label>
       <label class="field wide">Admin Notes<input id="recordPersonNotes" value="${data.person.administrative_notes || ""}"></label>
     </div>
     <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
-    <h4>Billing Relationships</h4><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)}</span><span>${fmt(a.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No relationships yet.</span>"}</div>
-    <h4>Billing Relationships</h4><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)}</span><span>${fmt(b.billing_email)}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
-    <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.raw_calendar_title)}</span><span>${money(centString(s.approved_rate_cents))}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
-    <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
+    <h4>Billing Summary</h4>
+    <h5>Billing Relationships</h5><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${a.account_id}">Open</button></div>`).join("") || "<span class='readonly-note'>No relationships yet.</span>"}</div>
+    <h5>Bill-To Records</h5><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)} • ${fmt(b.billing_email)} • ${fmt(b.billing_phone)} • ${fmt(b.preferred_delivery_method)}${billingAddressSummary(b) ? ` • ${fmt(billingAddressSummary(b))}` : ""}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
+    <h4>Recent Sessions</h4><div class="compact-list">${visibleSessions.map(s => `<div><span>${fmt(s.session_date)} • ${fmt(s.raw_calendar_title)} • ${billingTypeShort(s.billing_session_type)} • ${fmt(s.duration_minutes)} min${s.other_participant_names ? ` • With ${fmt(s.other_participant_names)}` : ""} • ${fmt(s.payment_status)} • ${fmt(s.review_status)} • ${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    ${data.sessions.length > 10 ? `<div class="record-actions"><button id="toggleAllSessions">${showAllSessions ? "Show newest 10" : "Show all"}</button></div>` : ""}
+    <h4>Client Rate Overrides</h4>
+    <div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${personRateOverrideLine(r)}</span></div>`).join("") || "<span class='readonly-note'>Uses standard Rate Card. No client-specific override.</span>"}</div>
+    <details>
+      <summary>Add Custom Rate</summary>
+      <div class="field-grid">
+        <label class="field">Session type<select id="personRateSessionType">${billingTypeOptions("psychotherapy")}</select></label>
+        <label class="field">Duration<select id="personRateDuration"><option value="30">30 minutes</option><option value="60" selected>60 minutes</option><option value="90">90 minutes</option><option value="120">120 minutes</option></select></label>
+        <label class="field">Time category<select id="personRateTimeCategory">${optionSet(["standard","evening","weekend","weekend_evening"], "standard")}</select></label>
+        <label class="field">Amount<input id="personRateAmount" placeholder="350.00"></label>
+        <label class="field">Effective date<input id="personRateEffectiveFrom" type="date"></label>
+      </div>
+      <div class="record-actions"><button id="savePersonRateRule" class="save">Save Client Rate Override</button></div>
+    </details>
+    <details>
+      <summary>Advanced</summary>
+      <h5>Known Calendar Names</h5>
+      <div class="combobox"><input id="personAliasInput" placeholder="Add approved calendar name"><button class="mini" id="savePersonAlias">+</button></div>
+      <div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${a.alias_id}" data-raw-alias="${escapeHtml(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
+      <h5>Audit History</h5>
+      <div class="compact-list">${(data.audit || []).map(entry => `<div><span>${fmt(entry.created_at)} • ${fmt(entry.action)}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
+    </details>
   `;
   if ($("returnFromPerson")) $("returnFromPerson").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
+  document.querySelectorAll("[data-open-account]").forEach(button => {
+    button.onclick = async () => {
+      await openAccountRecord(button.dataset.openAccount);
+    };
+  });
+  document.querySelectorAll("[data-open-candidate]").forEach(button => {
+    button.onclick = async () => {
+      location.hash = "";
+      await loadList();
+      await showReviewWorkbench();
+      await selectCandidate(button.dataset.openCandidate);
+    };
+  });
+  if ($("toggleAllSessions")) $("toggleAllSessions").onclick = async () => openPersonRecord(personId, { showAllSessions: !showAllSessions });
   $("savePersonRecord").onclick = async () => {
     await api(`/api/people/${personId}`, { method: "POST", body: JSON.stringify({
       first_name: $("recordFirstName").value,
@@ -1399,6 +1453,39 @@ async function openPersonRecord(personId) {
     await openPersonRecord(personId);
     await loadPeople();
   };
+  if ($("savePersonRateRule")) $("savePersonRateRule").onclick = async () => {
+    await api("/api/rate-rules", {
+      method: "POST",
+      body: JSON.stringify({
+        person_id: personId,
+        billing_session_type: $("personRateSessionType").value,
+        duration_minutes: $("personRateDuration").value,
+        time_category: $("personRateTimeCategory").value,
+        amount: $("personRateAmount").value,
+        effective_from: $("personRateEffectiveFrom").value
+      })
+    });
+    await openPersonRecord(personId, { showAllSessions });
+  };
+  if ($("savePersonAlias")) $("savePersonAlias").onclick = async () => {
+    const rawAlias = $("personAliasInput").value.trim();
+    if (!rawAlias) return;
+    await api(`/api/people/${personId}/aliases`, {
+      method: "POST",
+      body: JSON.stringify({ raw_alias: rawAlias, approved_by_user: true })
+    });
+    await openPersonRecord(personId, { showAllSessions });
+  };
+  document.querySelectorAll("[data-alias-id]").forEach(button => {
+    button.onclick = async () => {
+      if (button.dataset.approved !== "1") return;
+      await api(`/api/people/${personId}/aliases`, {
+        method: "POST",
+        body: JSON.stringify({ alias_id: button.dataset.aliasId, raw_alias: button.dataset.rawAlias || "", approved_by_user: false })
+      });
+      await openPersonRecord(personId, { showAllSessions });
+    };
+  });
   if (location.hash !== "#people") {
     location.hash = "people";
     showPeople();

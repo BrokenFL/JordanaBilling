@@ -69,7 +69,7 @@ House Call overrides Weekend and Evening. Weekend overrides Evening.
 
 Clients in this session are permanent human client records connected to one session. The bill-to party is the person or organization responsible for receiving and paying the invoice, and does not have to be an attending client. A separate billing relationship is not required for a simple self-paying client.
 
-Parser-derived names may appear in Clients in this session as proposed clients before anything has been saved. Showing a proposed client does not create a permanent person, approve the session, or change raw calendar evidence. When Jordana clicks Save Client(s), exact normalized case-and-whitespace matches are linked to an existing active person only when there is exactly one such match. Ambiguous duplicate names remain proposed for manual choice. A new permanent person/client is created only when the confirmed client name has a usable first and last name; incomplete or ambiguous names remain reviewable session participant text until completed.
+Parser-derived names may appear in Clients in this session as proposed clients before anything has been saved. Showing a proposed client does not create a permanent person, approve the session, or change raw calendar evidence. When Jordana clicks Save Client(s), the matcher checks exact normalized case-and-whitespace active client names first, then exact normalized approved calendar aliases. Only exactly one active client auto-links; ambiguous or missing matches remain proposed for manual choice. A new permanent person/client is created only when the confirmed client name has a usable first and last name; incomplete or ambiguous names remain reviewable session participant text until completed.
 
 ## Relationship Review
 
@@ -102,6 +102,8 @@ PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve
 ```
 
 It supports save without approval, approval validation, proposed client editing before confirmation, billing relationship maintenance, and structured audit records.
+
+The Clients record view is the durable place to review client details, bill-to links, recent sessions, person-specific rate overrides, and approved calendar aliases. The inline session participant editor remains intentionally simple.
 
 ## Section-Level Saves
 

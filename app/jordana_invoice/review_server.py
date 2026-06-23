@@ -28,6 +28,7 @@ from .review_services import (
     refresh_candidate_suggestions,
     save_billing_section,
     save_interpretation,
+    save_person_alias,
     save_person_section,
     save_relationship_section,
     save_session_draft,
@@ -152,6 +153,18 @@ def make_handler(database_path: str):
             try:
                 if parsed.path == "/api/people":
                     self.send_json(create_person(self.conn(), data))
+                    return
+                if parsed.path.startswith("/api/people/") and parsed.path.endswith("/aliases"):
+                    person_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(
+                        save_person_alias(
+                            self.conn(),
+                            person_id,
+                            raw_alias=data.get("raw_alias", ""),
+                            approved_by_user=bool(data.get("approved_by_user", True)),
+                            alias_id=data.get("alias_id"),
+                        )
+                    )
                     return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/merge"):
                     survivor_id = parsed.path.strip("/").split("/")[2]

@@ -9,8 +9,11 @@ from jordana_invoice.review_services import (
     create_account,
     create_billing_party,
     create_person,
+    create_rate_rule_from_payload,
+    get_person_record,
     get_review_candidate,
     list_review_candidates,
+    save_person_alias,
     save_billing_section,
     save_relationship_section,
     save_interpretation,
@@ -127,7 +130,7 @@ class ReviewServiceTests(unittest.TestCase):
 
         self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
         self.assertEqual(detail["participants"][0]["display_name"], "Leah Grossman")
-        self.assertFalse(detail["participants"][0]["is_proposed"])
+        self.assertFalse(detail["participants"][0].get("is_proposed", False))
         self.assertEqual(count(self.conn, "people"), 1)
 
     def test_case_and_extra_space_exact_match_auto_links(self):
@@ -137,7 +140,7 @@ class ReviewServiceTests(unittest.TestCase):
         detail = get_review_candidate(self.conn, candidate_id)
 
         self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
-        self.assertFalse(detail["participants"][0]["is_proposed"])
+        self.assertFalse(detail["participants"][0].get("is_proposed", False))
 
     def test_multiple_exact_matches_do_not_auto_link(self):
         candidate_id = self.import_without_persisted_participants("snap-duplicate-match", "Leah Grossman 630 30")
@@ -300,6 +303,106 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(reloaded["session"]["id"], saved_participants["session"]["id"])
         self.assertEqual(reloaded["billing_party"]["billing_name"], "Leah Grossman")
         self.assertNotEqual(reloaded["billing_party"]["billing_name"], "Simon Household")
+
+    def test_person_record_returns_enriched_session_history(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        save_interpretation(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [
+                    {"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True},
+                    {"person_id": bobsey["person_id"], "display_name": "Bobsey Smith"},
+                ],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "unpaid",
+            },
+        )
+
+        record = get_person_record(self.conn, fred["person_id"])
+
+        session = record["sessions"][0]
+        self.assertEqual(session["candidate_id"], self.candidate_id)
+        self.assertTrue(session["session_id"])
+        self.assertEqual(session["billing_session_type"], "psychotherapy")
+        self.assertEqual(session["duration_minutes"], 60)
+        self.assertEqual(session["payment_status"], "unpaid")
+        self.assertIn("review_status", session)
+        self.assertEqual(session["other_participant_names"], "Bobsey Smith")
+
+    def test_custom_client_rate_creates_person_scoped_rate_rule(self):
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+
+        rule = create_rate_rule_from_payload(
+            self.conn,
+            {
+                "person_id": person["person_id"],
+                "amount": "425",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy_evening",
+                "time_category": "evening",
+                "effective_from": "2026-01-01",
+            },
+        )
+        record = get_person_record(self.conn, person["person_id"])
+
+        self.assertEqual(rule["person_id"], person["person_id"])
+        self.assertIsNone(rule["client_account_id"])
+        self.assertEqual(record["active_rate_exceptions"][0]["person_id"], person["person_id"])
+        self.assertEqual(record["active_rate_exceptions"][0]["amount_cents"], 42500)
+
+    def test_approved_alias_exact_match_auto_links(self):
+        candidate_id = self.import_without_persisted_participants("snap-alias-match", "Leah Green 630 30")
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+        save_person_alias(self.conn, person["person_id"], raw_alias="Leah Green", approved_by_user=True)
+
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
+        self.assertFalse(detail["participants"][0].get("is_proposed", False))
+
+    def test_unapproved_alias_does_not_match(self):
+        candidate_id = self.import_without_persisted_participants("snap-alias-unapproved", "Leah Green 630 30")
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+        save_person_alias(self.conn, person["person_id"], raw_alias="Leah Green", approved_by_user=False)
+
+        detail = get_review_candidate(self.conn, candidate_id)
+
+        self.assertIsNone(detail["participants"][0]["person_id"])
+        self.assertTrue(detail["participants"][0]["is_proposed"])
+
+    def test_conflicting_alias_is_rejected(self):
+        first = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+        second = create_person(self.conn, {"first_name": "Mia", "last_name": "Grossman", "display_name": "Mia Grossman"})
+        save_person_alias(self.conn, first["person_id"], raw_alias="Leah Green", approved_by_user=True)
+
+        with self.assertRaises(ValueError):
+            save_person_alias(self.conn, second["person_id"], raw_alias="Leah Green", approved_by_user=True)
+
+    def test_alias_deactivation_preserves_row_but_stops_matching(self):
+        candidate_id = self.import_without_persisted_participants("snap-alias-deactivated", "Leah Green 630 30")
+        person = create_person(self.conn, {"first_name": "Leah", "last_name": "Grossman", "display_name": "Leah Grossman"})
+        alias = save_person_alias(self.conn, person["person_id"], raw_alias="Leah Green", approved_by_user=True)
+
+        save_person_alias(
+            self.conn,
+            person["person_id"],
+            alias_id=alias["alias_id"],
+            raw_alias="Leah Green",
+            approved_by_user=False,
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        stored = self.conn.execute("SELECT * FROM calendar_aliases WHERE alias_id = ?", (alias["alias_id"],)).fetchone()
+
+        self.assertEqual(stored["approved_by_user"], 0)
+        self.assertIsNone(detail["participants"][0]["person_id"])
+        self.assertTrue(detail["participants"][0]["is_proposed"])
 
     def test_saving_empty_participant_list_clears_participants_and_suppresses_proposal(self):
         candidate_id = self.import_without_persisted_participants("snap-empty", "Leah Grossman 630 30")
