@@ -128,7 +128,7 @@ class IdentityRelationshipTests(unittest.TestCase):
 
     def test_personal_admin_rows_are_reviewable(self):
         import_rows(self.conn, [raw_row("snap-p", title="Mani pedi 4", start="2026-06-17T16:00:00-04:00")], "test")
-        rows = list_review_candidates(self.conn)["items"]
+        rows = list_review_candidates(self.conn, calendar_filter="all")["items"]
         self.assertTrue(any(row["classification"] == "personal" for row in rows))
         personal = next(row for row in rows if row["classification"] == "personal")
         mark_candidate(self.conn, personal["candidate_id"], classification="personal", reason="confirmed personal")

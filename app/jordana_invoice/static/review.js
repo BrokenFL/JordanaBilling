@@ -44,7 +44,7 @@ function renderRows(items, total) {
   $("resultCount").textContent = `Showing ${items.length ? state.offset + 1 : 0} to ${state.offset + items.length} of ${total} results`;
   $("candidateRows").innerHTML = items.map(item => `
     <tr data-id="${item.candidate_id}" class="${state.selected === item.candidate_id ? "selected" : ""}">
-      <td><span class="dot ${statusColor(item.status, item.classification)}"></span></td>
+      <td><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
       <td>${fmt(item.date)}</td>
       <td>${fmt(item.time)}</td>
       <td>${fmt(item.raw_title)}</td>
@@ -1077,6 +1077,12 @@ function rateSourceDescription(session, participants = []) {
 function appointmentBadge(status) {
   const labels = {scheduled:"Scheduled", completed:"Completed", cancelled:"Cancelled", no_show:"No Show", unresolved:"Status unresolved"};
   return labels[status] || labels.unresolved;
+}
+
+function calendarBadge(item) {
+  if (item.hidden_from_review) return '<span class="cal-badge cal-hidden">hidden cal</span>';
+  if (item.calendar_disposition === 'usually_personal_admin') return '<span class="cal-badge cal-personal">personal cal</span>';
+  return '';
 }
 
 function calendarLabel(session) {

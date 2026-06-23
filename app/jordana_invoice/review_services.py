@@ -128,8 +128,6 @@ def list_review_candidates(
         params.append(payment_status)
     if calendar_filter:
         add_calendar_filter(filters, params, calendar_filter, "s")
-    else:
-        filters.append("COALESCE(s.hidden_from_review, 0) = 0")
     where = "WHERE " + " AND ".join(filters) if filters else ""
     session_total = conn.execute(
         f"""
@@ -276,9 +274,13 @@ def list_candidate_only_rows(
     review_status: str = "",
     calendar_filter: str = "",
 ) -> list[dict[str, Any]]:
+    if calendar_filter in ("personal_admin", "all", "hidden"):
+        class_sql = "c.classification IN ('personal', 'administrative', 'nonbillable', 'cancelled', 'no_show', 'unresolved')"
+    else:
+        class_sql = "c.classification IN ('unresolved', 'cancelled', 'no_show')"
     filters = [
         "c.id NOT IN (SELECT candidate_id FROM sessions)",
-        "c.classification IN ('personal', 'administrative', 'nonbillable', 'cancelled', 'no_show', 'unresolved')",
+        class_sql,
     ]
     params: list[Any] = []
     if query:
@@ -290,8 +292,6 @@ def list_candidate_only_rows(
         params.append(review_status)
     if calendar_filter:
         add_calendar_filter(filters, params, calendar_filter, "c")
-    else:
-        filters.append("COALESCE(c.hidden_from_review, 0) = 0")
     rows = conn.execute(
         f"""
         SELECT c.*, r.calendar_name
