@@ -94,6 +94,27 @@ class RateCardDefaultTests(unittest.TestCase):
             },
         )
 
+    def _create_rate_rule(
+        self,
+        *,
+        amount,
+        duration_minutes,
+        billing_session_type,
+        time_category="standard",
+        applies_to="everyone",
+        **extra,
+    ):
+        payload = {
+            "amount": str(amount),
+            "duration_minutes": str(duration_minutes),
+            "billing_session_type": billing_session_type,
+            "time_category": time_category,
+            "applies_to": applies_to,
+            "effective_from": "2026-01-01",
+        }
+        payload.update(extra)
+        return create_rate_rule_from_payload(self.conn, payload)
+
     # ── Rule creation ────────────────────────────────────────────────────────
 
     def test_create_default_rate_rule(self):
@@ -164,19 +185,115 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertNotEqual(detail["session"]["suggested_rate_cents"], 35000)
         self.assertEqual(detail["session"]["rate_needs_review"], 1)
 
-    def test_default_rate_does_not_apply_different_session_type(self):
-        # 2026-01-17 is a Saturday → is_weekend=True → billing_session_type=psychotherapy_weekend
-        # Rule is psychotherapy only → no match
+    def test_default_rate_does_not_apply_custom_session_type(self):
         candidate_id = self.import_one(
-            "snap-wknd",
-            "Fred 530 60",
-            start="2026-01-17T14:00:00-05:00",
-            end="2026-01-17T15:00:00-05:00",
+            "snap-custom",
+            "Fred 630 60",
         )
+        self.conn.execute(
+            "UPDATE sessions SET billing_session_type = ? WHERE candidate_id = ?",
+            ("custom", candidate_id),
+        )
+        self.conn.commit()
         self._create_default_rule()
         detail = get_review_candidate(self.conn, candidate_id)
         self.assertNotEqual(detail["session"]["suggested_rate_cents"], 35000)
         self.assertEqual(detail["session"]["rate_needs_review"], 1)
+
+    def test_evening_without_specific_rule_falls_back_to_base(self):
+        candidate_id = self.import_one(
+            "snap-evening-fallback",
+            "Fred 830 60",
+            start="2026-02-10T20:30:00-05:00",
+            end="2026-02-10T21:30:00-05:00",
+        )
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy_evening")
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(detail["session"]["rate_source"], "default")
+
+    def test_evening_specific_rule_overrides_base(self):
+        candidate_id = self.import_one(
+            "snap-evening-specific",
+            "Fred 830 60",
+            start="2026-02-10T20:30:00-05:00",
+            end="2026-02-10T21:30:00-05:00",
+        )
+        self._create_default_rule()
+        self._create_rate_rule(
+            amount=425,
+            duration_minutes=60,
+            billing_session_type="psychotherapy_evening",
+            time_category="evening",
+        )
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 42500)
+        self.assertEqual(detail["session"]["rate_source"], "default")
+
+    def test_weekend_and_house_call_fall_back_to_base(self):
+        weekend_id = self.import_one(
+            "snap-weekend-fallback",
+            "Fred 530 60",
+            start="2026-01-17T14:00:00-05:00",
+            end="2026-01-17T15:00:00-05:00",
+        )
+        house_call_id = self.import_one("snap-house-fallback", "Fred 630 60")
+        self.conn.execute(
+            "UPDATE sessions SET billing_session_type = ? WHERE candidate_id = ?",
+            ("psychotherapy_house_call", house_call_id),
+        )
+        self.conn.commit()
+        self._create_default_rule()
+        weekend = get_review_candidate(self.conn, weekend_id)
+        house_call = get_review_candidate(self.conn, house_call_id)
+        self.assertEqual(weekend["session"]["billing_session_type"], "psychotherapy_weekend")
+        self.assertEqual(weekend["session"]["suggested_rate_cents"], 35000)
+        self.assertEqual(house_call["session"]["billing_session_type"], "psychotherapy_house_call")
+        self.assertEqual(house_call["session"]["suggested_rate_cents"], 35000)
+
+    def test_different_duration_does_not_fall_back_from_evening_to_base(self):
+        candidate_id = self.import_one(
+            "snap-evening-90",
+            "Fred 830 90",
+            start="2026-02-10T20:30:00-05:00",
+            end="2026-02-10T22:00:00-05:00",
+            duration="90",
+        )
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy_evening")
+        self.assertIsNone(detail["session"]["suggested_rate_cents"])
+        self.assertEqual(detail["session"]["rate_needs_review"], 1)
+
+    def test_approved_historical_evening_rate_remains_unchanged(self):
+        candidate_id = self.import_one(
+            "snap-approved-evening",
+            "Fred 830 60",
+            start="2026-02-10T20:30:00-05:00",
+            end="2026-02-10T21:30:00-05:00",
+        )
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Colin", "person_id": fred["person_id"]})
+        approve_candidate(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "phone",
+                "time_category": "evening",
+                "approved_rate": "425.00",
+                "payment_status": "unpaid",
+            },
+        )
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["billing_session_type"], "psychotherapy_evening")
+        self.assertEqual(detail["session"]["approved_rate_cents"], 42500)
+        self.assertEqual(detail["session"]["rate_cents_snapshot"], 42500)
+        self.assertEqual(detail["session"]["review_status"], "approved")
 
     # ── Priority overrides ───────────────────────────────────────────────────
 

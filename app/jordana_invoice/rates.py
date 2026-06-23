@@ -12,6 +12,11 @@ DEFAULT_WEEKEND_EVENING_POLICY = "manual_review"
 
 EQUIVALENT_APPOINTMENT_METHODS = {"office", "phone", "facetime"}
 EQUIVALENT_RATE_GROUPS = {"remote", "office"}
+BASE_BILLING_SESSION_TYPE_FALLBACKS = {
+    "psychotherapy_evening": "psychotherapy",
+    "psychotherapy_weekend": "psychotherapy",
+    "psychotherapy_house_call": "psychotherapy",
+}
 
 
 def normalize_rate_inputs(
@@ -38,6 +43,15 @@ class RateSuggestion:
     rate_source: str
     rate_needs_review: bool
     explanation: str
+
+
+def billing_session_type_candidates(billing_session_type: str | None) -> list[str | None]:
+    if billing_session_type in BASE_BILLING_SESSION_TYPE_FALLBACKS:
+        return [
+            billing_session_type,
+            BASE_BILLING_SESSION_TYPE_FALLBACKS[billing_session_type],
+        ]
+    return [billing_session_type]
 
 
 def seed_rate_rule(
@@ -143,53 +157,54 @@ def suggest_rate(
             )
 
     participant_ids = sorted(set(pid for pid in (participant_person_ids or []) if pid))
-    if len(participant_ids) > 1:
-        joint = find_matching_participant_rule(
-            conn,
-            participant_ids,
-            session_date,
-            duration_minutes,
-            billing_session_type,
-            service_mode,
-            rate_group,
-            time_category,
-        )
-        if joint:
-            return RateSuggestion(
-                suggested_rate_cents=int(joint["amount_cents"]),
-                rate_rule_id=joint["rate_rule_id"],
-                rate_source="participant_combination_exception",
-                rate_needs_review=False,
-                explanation="Matched joint participant rate exception.",
+    for billing_session_type_candidate in billing_session_type_candidates(billing_session_type):
+        if len(participant_ids) > 1:
+            joint = find_matching_participant_rule(
+                conn,
+                participant_ids,
+                session_date,
+                duration_minutes,
+                billing_session_type_candidate,
+                service_mode,
+                rate_group,
+                time_category,
             )
+            if joint:
+                return RateSuggestion(
+                    suggested_rate_cents=int(joint["amount_cents"]),
+                    rate_rule_id=joint["rate_rule_id"],
+                    rate_source="participant_combination_exception",
+                    rate_needs_review=False,
+                    explanation="Matched joint participant rate exception.",
+                )
 
-    scopes = [
-        ("person_exception", "person_id = ?", person_id),
-        ("account", "client_account_id = ?", account_id),
-        ("default", "person_id IS NULL AND client_account_id IS NULL", None),
-    ]
-    for source, condition, value in scopes:
-        if value is None and "?" in condition:
-            continue
-        row = find_matching_rule(
-            conn,
-            condition,
-            value,
-            session_date,
-            duration_minutes,
-            billing_session_type,
-            service_mode,
-            rate_group,
-            time_category,
-        )
-        if row:
-            return RateSuggestion(
-                suggested_rate_cents=int(row["amount_cents"]),
-                rate_rule_id=row["rate_rule_id"],
-                rate_source=source,
-                rate_needs_review=False,
-                explanation=rate_explanation(source),
+        scopes = [
+            ("person_exception", "person_id = ?", person_id),
+            ("account", "client_account_id = ?", account_id),
+            ("default", "person_id IS NULL AND client_account_id IS NULL", None),
+        ]
+        for source, condition, value in scopes:
+            if value is None and "?" in condition:
+                continue
+            row = find_matching_rule(
+                conn,
+                condition,
+                value,
+                session_date,
+                duration_minutes,
+                billing_session_type_candidate,
+                service_mode,
+                rate_group,
+                time_category,
             )
+            if row:
+                return RateSuggestion(
+                    suggested_rate_cents=int(row["amount_cents"]),
+                    rate_rule_id=row["rate_rule_id"],
+                    rate_source=source,
+                    rate_needs_review=False,
+                    explanation=rate_explanation(source),
+                )
 
     return RateSuggestion(
         None,

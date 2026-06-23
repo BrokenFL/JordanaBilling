@@ -31,6 +31,8 @@ Legacy service modes (`phone`, `facetime`, `office`) and rate groups (`remote`, 
 
 A rule with `time_category = 'standard'` matches any time category unless a more specific rule exists. A rule with `time_category = 'evening'` matches only evening sessions, and so on.
 
+For `psychotherapy_evening`, `psychotherapy_weekend`, and `psychotherapy_house_call`, the matcher first looks for the exact modified billing session type at the same duration. If none exists, it falls back to the same-duration base `psychotherapy` rule for that same scope. Different durations do not inherit the base rate.
+
 ## Precedence
 
 1. Approved session override (the session's manually saved or approved `approved_rate_cents`)
