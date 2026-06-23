@@ -38,7 +38,7 @@ For `psychotherapy_evening`, `psychotherapy_weekend`, and `psychotherapy_house_c
 1. Approved session override (the session's manually saved or approved `approved_rate_cents`)
 2. Exact participant-combination exception
 3. Person-specific matching rule
-4. Account-specific matching rule
+4. Billing-relationship matching rule
 5. Global/default matching rule
 6. No match means rate review is required
 
@@ -76,7 +76,11 @@ PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 set-r
 
 ## Review UI Rate Card
 
-The local Rate Card supports amount, session length, session type, time category, applies-to scope, and effective date. Applies-to can be everyone, a specific account, or a specific person. Joint exceptions created from review are stored as `rate_rules` plus `rate_rule_participants` rows.
+The local Rate Card supports amount, session length, session type, time category, applies-to scope, and effective date. Applies-to can be Everyone, One Client, Clients Together, or Billing Relationship. Specific scopes require an explicit resolved UUID-backed selection in the UI; the app does not silently pick the first search result or fall back to Everyone.
+
+Custom rate rules can store `custom_service_description` and optional `custom_service_code`. Custom matching uses code first when present, otherwise a normalized description match. Custom rows should display the entered description and actual minutes everywhere instead of a generic `Custom` label.
+
+Replace ends the old active rule on the day before the new `effective_from` date and creates a new same-scope rule. End sets `effective_through` without deleting history. Both actions immediately recalculate unapproved session suggestions and refresh the local reports. If no active rule still matches, stale rule-derived suggestions are cleared and the session returns to `needs_rate`.
 
 Client records reuse this same `rate_rules` system for person-specific overrides. A client override is just a `person_id`-scoped active rule with the same matching dimensions and precedence as any other person-specific exception. If no client-specific rule matches, the standard Rate Card still applies.
 

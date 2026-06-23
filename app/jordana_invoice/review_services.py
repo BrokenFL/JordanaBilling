@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -13,7 +13,14 @@ from .backfill import backfill_phase2
 from .calendar_preferences import upsert_calendar_preference
 from .csv_reports import write_reports
 from .db import init_db
-from .rates import cents_to_dollars, dollars_to_cents, seed_rate_rule, suggest_rate
+from .rates import (
+    cents_to_dollars,
+    dollars_to_cents,
+    normalize_custom_service_code,
+    normalize_custom_service_description,
+    seed_rate_rule,
+    suggest_rate,
+)
 from .service_catalog import learn_service
 from .session_types import (
     ALLOWED_BILLING_SESSION_TYPES,
@@ -24,7 +31,7 @@ from .session_types import (
     validate_duration_choice,
     duration_choice_to_minutes,
 )
-from .util import json_dumps, new_id, now_iso, text
+from .util import json_dumps, new_id, now_iso, parse_int, text
 
 
 REQUIRED_APPROVAL_FIELDS = {
@@ -668,6 +675,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
         payment_status=payment_status,
         appointment_status=session["appointment_status"],
         billing_treatment=billing_treatment,
+        custom_service_description=custom_service_description,
     )
     review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
     conn.execute(
@@ -768,6 +776,7 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
         payment_status=session["payment_status"],
         appointment_status=session["appointment_status"],
         billing_treatment=session["billing_treatment"],
+        custom_service_description=session["custom_service_description"] if "custom_service_description" in session.keys() else None,
     )
     if unresolved:
         raise ValueError("Cannot approve until required fields are complete: " + ", ".join(unresolved))
@@ -905,6 +914,17 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     suggested_rate_cents = money_payload_to_cents(payload.get("suggested_rate"))
     duration = int(payload.get("approved_duration_minutes") or payload.get("duration_minutes") or session["duration_minutes"])
     service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
+    service = learn_service(conn, service_mode, increment_usage=False)
+    billing_session_type = validate_billing_session_type(
+        payload.get("billing_session_type")
+        or (session["billing_session_type"] if "billing_session_type" in session.keys() else None)
+        or "psychotherapy"
+    )
+    raw_duration_choice = payload.get("duration_choice") or (session["duration_choice"] if "duration_choice" in session.keys() else None) or derive_duration_choice_from_minutes(duration)
+    raw_custom_minutes = int(payload["custom_duration_minutes"]) if payload.get("custom_duration_minutes") else None
+    duration_choice, custom_duration_minutes = validate_duration_choice(raw_duration_choice, raw_custom_minutes)
+    custom_service_description = text(payload.get("custom_service_description") or session["custom_service_description"] or "").strip() or None
+    custom_service_code = text(payload.get("custom_service_code") or session["custom_service_code"] or "").strip() or None
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
     payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
@@ -917,8 +937,14 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
         SET approved_duration_minutes = ?,
             duration_minutes = ?,
             service_mode = ?,
+            service_catalog_id = ?,
             rate_group = ?,
             time_category = ?,
+            billing_session_type = ?,
+            duration_choice = ?,
+            custom_duration_minutes = ?,
+            custom_service_description = ?,
+            custom_service_code = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
             approved_rate_cents = ?,
             approved_rate_source = ?,
@@ -935,8 +961,14 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             duration,
             duration,
             service_mode,
+            service["service_catalog_id"],
             rate_group_for(service_mode),
             time_category,
+            billing_session_type,
+            duration_choice,
+            custom_duration_minutes,
+            custom_service_description,
+            custom_service_code,
             suggested_rate_cents,
             approved_rate_cents,
             approved_source,
@@ -1061,8 +1093,10 @@ def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any
           s.session_date,
           s.start_at,
           s.duration_minutes,
+          s.custom_duration_minutes,
           s.service_mode,
           s.billing_session_type,
+          s.custom_service_description,
           s.time_category,
           s.approved_rate_cents,
           s.approved_rate_source,
@@ -1919,6 +1953,8 @@ def refresh_candidate_suggestions(
     duration = session["approved_duration_minutes"] or session["duration_minutes"]
     service_mode = normalize_service_mode(session["service_mode"])
     billing_session_type = session["billing_session_type"] or None
+    custom_service_description = session["custom_service_description"] if "custom_service_description" in session.keys() else None
+    custom_service_code = session["custom_service_code"] if "custom_service_code" in session.keys() else None
     time_category = normalize_time_category(session["time_category"])
     participant_person_ids = [p["person_id"] for p in participants if p.get("person_id")]
     suggestion = suggest_rate(
@@ -1926,6 +1962,8 @@ def refresh_candidate_suggestions(
         session_date=session["session_date"] or text(session["start_at"])[:10],
         duration_minutes=duration,
         billing_session_type=billing_session_type,
+        custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
         service_mode=service_mode,
         rate_group=session["rate_group"] or rate_group_for(service_mode),
         time_category=time_category,
@@ -1956,6 +1994,28 @@ def refresh_candidate_suggestions(
                 session["id"],
             ),
         )
+    else:
+        should_clear_rule_suggestion = text(session["rate_source"]) in {
+            "default",
+            "person_exception",
+            "billing_relationship",
+            "account",
+            "participant_combination_exception",
+            "none",
+        }
+        if should_clear_rule_suggestion:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET suggested_rate_cents = NULL,
+                    rate_rule_id = NULL,
+                    rate_source = 'none',
+                    rate_needs_review = CASE WHEN approved_rate_cents IS NULL THEN 1 ELSE 0 END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, session["id"]),
+            )
 
     refreshed = session_for_candidate(conn, candidate_id)
     unresolved = unresolved_from_values(
@@ -1974,6 +2034,7 @@ def refresh_candidate_suggestions(
         payment_status=refreshed["payment_status"],
         appointment_status=refreshed["appointment_status"],
         billing_treatment=refreshed["billing_treatment"],
+        custom_service_description=refreshed["custom_service_description"] if "custom_service_description" in refreshed.keys() else None,
     )
     review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
     conn.execute(
@@ -2205,6 +2266,8 @@ def unresolved_from_values(**values: Any) -> list[str]:
     billing_type = values.get("billing_session_type") or map_service_mode_to_billing_type(values.get("service_mode"))
     if billing_type not in ALLOWED_BILLING_SESSION_TYPES:
         unresolved.append("service_mode")
+    if billing_type == "custom" and not text(values.get("custom_service_description")).strip():
+        unresolved.append("custom_service_description")
     if not values["time_category"]:
         unresolved.append("time_category")
     if values["approved_rate_cents"] is None and not (
@@ -2226,6 +2289,8 @@ def status_from_unresolved(unresolved: list[str]) -> str:
     if "billing_party_id" in unresolved:
         return "needs_billing_party"
     if "service_mode" in unresolved:
+        return "needs_service_mode"
+    if "custom_service_description" in unresolved:
         return "needs_service_mode"
     if "approved_rate_cents" in unresolved:
         return "needs_rate"
@@ -2548,6 +2613,13 @@ def maybe_save_rate_scope(
     person_ids = [p["person_id"] for p in participants if p.get("person_id")]
     duration = int(payload.get("approved_duration_minutes") or payload.get("duration_minutes") or session["duration_minutes"])
     service_mode = normalize_service_mode(payload.get("service_mode") or session["service_mode"])
+    billing_session_type = validate_billing_session_type(
+        payload.get("billing_session_type")
+        or (session["billing_session_type"] if "billing_session_type" in session.keys() else None)
+        or "psychotherapy"
+    )
+    custom_service_description = text(payload.get("custom_service_description") or session["custom_service_description"] or "").strip() or None
+    custom_service_code = text(payload.get("custom_service_code") or session["custom_service_code"] or "").strip() or None
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
     effective_from = session["session_date"] or text(session["start_at"])[:10]
 
@@ -2563,6 +2635,9 @@ def maybe_save_rate_scope(
             approved_rate_cents,
             effective_from,
             duration,
+            billing_session_type,
+            custom_service_description,
+            custom_service_code,
             service_mode,
             time_category,
         )
@@ -2577,6 +2652,9 @@ def maybe_save_rate_scope(
             approved_rate_cents,
             effective_from,
             duration,
+            billing_session_type,
+            custom_service_description,
+            custom_service_code,
             service_mode,
             time_category,
         )
@@ -2617,6 +2695,9 @@ def upsert_person_rate_exception(
     amount_cents: int,
     effective_from: str,
     duration_minutes: int,
+    billing_session_type: str,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
     service_mode: str,
     time_category: str,
 ) -> str:
@@ -2628,22 +2709,38 @@ def upsert_person_rate_exception(
           AND person_id = ?
           AND client_account_id IS NULL
           AND COALESCE(duration_minutes, -1) = ?
-          AND COALESCE(service_mode, '') = ?
+          AND COALESCE(billing_session_type, '') = ?
+          AND COALESCE(custom_service_description, '') = ?
+          AND COALESCE(custom_service_code, '') = ?
           AND time_category = ?
           AND rate_rule_id NOT IN (SELECT rate_rule_id FROM rate_rule_participants)
         ORDER BY effective_from DESC
         LIMIT 1
         """,
-        (person_id, duration_minutes, service_mode, time_category),
+        (
+            person_id,
+            duration_minutes,
+            billing_session_type,
+            text(custom_service_description).strip(),
+            text(custom_service_code).strip(),
+            time_category,
+        ),
     ).fetchone()
     if row:
         conn.execute(
             """
             UPDATE rate_rules
-            SET amount_cents = ?, effective_from = ?, updated_at = ?
+            SET amount_cents = ?, effective_from = ?, custom_service_description = ?, custom_service_code = ?, updated_at = ?
             WHERE rate_rule_id = ?
             """,
-            (amount_cents, effective_from, now_iso(), row["rate_rule_id"]),
+            (
+                amount_cents,
+                effective_from,
+                text(custom_service_description).strip() or None,
+                text(custom_service_code).strip() or None,
+                now_iso(),
+                row["rate_rule_id"],
+            ),
         )
         return row["rate_rule_id"]
     return seed_rate_rule(
@@ -2651,8 +2748,9 @@ def upsert_person_rate_exception(
         amount_cents=amount_cents,
         effective_from=effective_from,
         duration_minutes=duration_minutes,
-        service_mode=service_mode,
-        rate_group=rate_group_for(service_mode),
+        billing_session_type=billing_session_type,
+        custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
         time_category=time_category,
         person_id=person_id,
         priority=10,
@@ -2665,6 +2763,9 @@ def upsert_joint_rate_exception(
     amount_cents: int,
     effective_from: str,
     duration_minutes: int,
+    billing_session_type: str,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
     service_mode: str,
     time_category: str,
 ) -> str:
@@ -2676,7 +2777,9 @@ def upsert_joint_rate_exception(
         JOIN rate_rule_participants rrp ON rrp.rate_rule_id = rr.rate_rule_id
         WHERE rr.active = 1
           AND COALESCE(rr.duration_minutes, -1) = ?
-          AND COALESCE(rr.service_mode, '') = ?
+          AND COALESCE(rr.billing_session_type, '') = ?
+          AND COALESCE(rr.custom_service_description, '') = ?
+          AND COALESCE(rr.custom_service_code, '') = ?
           AND rr.time_category = ?
           AND rrp.person_id IN ({placeholders})
         GROUP BY rr.rate_rule_id
@@ -2688,16 +2791,32 @@ def upsert_joint_rate_exception(
         ORDER BY rr.effective_from DESC
         LIMIT 1
         """,
-        (duration_minutes, service_mode, time_category, *person_ids, len(person_ids), len(person_ids)),
+        (
+            duration_minutes,
+            billing_session_type,
+            text(custom_service_description).strip(),
+            text(custom_service_code).strip(),
+            time_category,
+            *person_ids,
+            len(person_ids),
+            len(person_ids),
+        ),
     ).fetchone()
     if row:
         conn.execute(
             """
             UPDATE rate_rules
-            SET amount_cents = ?, effective_from = ?, updated_at = ?
+            SET amount_cents = ?, effective_from = ?, custom_service_description = ?, custom_service_code = ?, updated_at = ?
             WHERE rate_rule_id = ?
             """,
-            (amount_cents, effective_from, now_iso(), row["rate_rule_id"]),
+            (
+                amount_cents,
+                effective_from,
+                text(custom_service_description).strip() or None,
+                text(custom_service_code).strip() or None,
+                now_iso(),
+                row["rate_rule_id"],
+            ),
         )
         return row["rate_rule_id"]
     return seed_rate_rule(
@@ -2705,8 +2824,9 @@ def upsert_joint_rate_exception(
         amount_cents=amount_cents,
         effective_from=effective_from,
         duration_minutes=duration_minutes,
-        service_mode=service_mode,
-        rate_group=rate_group_for(service_mode),
+        billing_session_type=billing_session_type,
+        custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
         time_category=time_category,
         participant_person_ids=person_ids,
         priority=5,
@@ -2721,82 +2841,405 @@ def list_rate_rules(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         FROM rate_rules rr
         LEFT JOIN client_accounts ca ON ca.account_id = rr.client_account_id
         LEFT JOIN people p ON p.person_id = rr.person_id
-        WHERE rr.active = 1
-        ORDER BY rr.effective_from DESC, rr.priority ASC, rr.duration_minutes
+        ORDER BY
+          CASE
+            WHEN rr.effective_through IS NOT NULL AND rr.effective_through != '' AND rr.effective_through < date('now', 'localtime') THEN 1
+            ELSE 0
+          END ASC,
+          rr.effective_from DESC,
+          rr.priority ASC,
+          rr.duration_minutes
         """
     ).fetchall()
-    output = []
-    for row in rows:
-        item = dict(row)
-        item["amount"] = cents_to_dollars(row["amount_cents"])
-        participants = conn.execute(
-            """
-            SELECT p.display_name
-            FROM rate_rule_participants rrp
-            JOIN people p ON p.person_id = rrp.person_id
-            WHERE rrp.rate_rule_id = ?
-            ORDER BY p.display_name
-            """,
-            (row["rate_rule_id"],),
-        ).fetchall()
-        item["participant_names"] = " + ".join(p["display_name"] for p in participants)
-        output.append(item)
-    return output
+    return [serialize_rate_rule(conn, row) for row in rows]
+
+
+def preview_rate_suggestion(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    duration_minutes = parse_rate_rule_duration_minutes(data)
+    billing_session_type = validate_billing_session_type(text(data.get("billing_session_type")) or "psychotherapy")
+    custom_service_description = normalize_optional_custom_description(
+        data.get("custom_service_description")
+    )
+    custom_service_code = normalize_optional_custom_code(data.get("custom_service_code"))
+    if billing_session_type == "custom" and not custom_service_description:
+        raise ValueError("Custom session type requires a description.")
+    time_category = normalize_time_category(data.get("time_category") or "standard")
+    participant_person_ids = normalize_participant_ids(data.get("participant_person_ids") or [])
+    person_id = text(data.get("person_id")) or None
+    account_id = text(data.get("client_account_id") or data.get("account_id")) or None
+    session_date = text(data.get("session_date")) or date.today().isoformat()
+    service_mode = normalize_service_mode(data.get("service_mode") or "office")
+    suggestion = suggest_rate(
+        conn,
+        session_date=session_date,
+        duration_minutes=duration_minutes,
+        billing_session_type=billing_session_type,
+        custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
+        service_mode=service_mode,
+        rate_group=rate_group_for(service_mode),
+        time_category=time_category,
+        account_id=account_id,
+        person_id=person_id,
+        participant_person_ids=participant_person_ids,
+    )
+    return {
+        "amount": cents_to_dollars(suggestion.suggested_rate_cents),
+        "amount_cents": suggestion.suggested_rate_cents,
+        "rate_rule_id": suggestion.rate_rule_id,
+        "rate_source": suggestion.rate_source,
+        "rate_needs_review": suggestion.rate_needs_review,
+        "explanation": suggestion.explanation,
+    }
 
 
 def create_rate_rule_from_payload(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
-    amount_cents = money_payload_to_cents(data.get("amount"))
-    if amount_cents is None or amount_cents <= 0:
-        raise ValueError("Amount is required and must be greater than 0.")
-    duration_minutes = int(data["duration_minutes"]) if text(data.get("duration_minutes")) else None
-    billing_session_type = text(data.get("billing_session_type")) or None
-    if billing_session_type:
-        validate_billing_session_type(billing_session_type)
-    service_mode = normalize_service_mode(data.get("service_mode")) if data.get("service_mode") else None
-    rate_group = text(data.get("rate_group")) or None
-    time_category = normalize_time_category(data.get("time_category") or "standard")
-    effective_from = text(data.get("effective_from")) or "2026-01-01"
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", effective_from):
-        raise ValueError("Effective date must be in YYYY-MM-DD format.")
-    client_account_id = data.get("client_account_id") or None
-    person_id = data.get("person_id") or None
-    participant_person_ids = data.get("participant_person_ids") or None
-    priority = int(data.get("priority") or 100)
+    payload = normalized_rate_rule_payload(data)
 
     duplicate = _find_duplicate_active_rate_rule(
         conn,
-        client_account_id=client_account_id,
-        person_id=person_id,
-        participant_person_ids=participant_person_ids,
-        duration_minutes=duration_minutes,
-        billing_session_type=billing_session_type,
-        service_mode=service_mode,
-        rate_group=rate_group,
-        time_category=time_category,
-        effective_from=effective_from,
+        client_account_id=payload["client_account_id"],
+        person_id=payload["person_id"],
+        participant_person_ids=payload["participant_person_ids"],
+        duration_minutes=payload["duration_minutes"],
+        billing_session_type=payload["billing_session_type"],
+        custom_service_description=payload["custom_service_description"],
+        custom_service_code=payload["custom_service_code"],
+        service_mode=payload["service_mode"],
+        rate_group=payload["rate_group"],
+        time_category=payload["time_category"],
+        effective_from=payload["effective_from"],
     )
     if duplicate:
         raise ValueError("An active rate rule with the same scope and dimensions already exists.")
 
     rule_id = seed_rate_rule(
         conn,
-        amount_cents=amount_cents,
-        effective_from=effective_from,
-        duration_minutes=duration_minutes,
-        billing_session_type=billing_session_type,
-        service_mode=service_mode,
-        rate_group=rate_group,
-        time_category=time_category,
-        client_account_id=client_account_id,
-        person_id=person_id,
-        participant_person_ids=participant_person_ids,
-        priority=priority,
+        amount_cents=payload["amount_cents"],
+        effective_from=payload["effective_from"],
+        duration_minutes=payload["duration_minutes"],
+        billing_session_type=payload["billing_session_type"],
+        custom_service_description=payload["custom_service_description"],
+        custom_service_code=payload["custom_service_code"],
+        service_mode=payload["service_mode"],
+        rate_group=payload["rate_group"],
+        time_category=payload["time_category"],
+        client_account_id=payload["client_account_id"],
+        person_id=payload["person_id"],
+        participant_person_ids=payload["participant_person_ids"],
+        priority=payload["priority"],
     )
-    record_audit(conn, "rate_rule", rule_id, "created_inline", data)
+    record_audit(conn, "rate_rule", rule_id, "created_inline", payload)
     _recalc_unapproved_session_rates(conn)
+    write_reports(conn)
     conn.commit()
-    return dict(conn.execute("SELECT * FROM rate_rules WHERE rate_rule_id = ?", (rule_id,)).fetchone())
+    return serialize_rate_rule(conn, get_rate_rule_row(conn, rule_id))
+
+
+def replace_rate_rule_from_payload(conn: sqlite3.Connection, rule_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    existing = get_rate_rule_row(conn, rule_id)
+    payload = normalized_rate_rule_payload(data, scope_override=rate_rule_scope_ids(conn, existing))
+    if payload["effective_from"] <= text(existing["effective_from"]):
+        raise ValueError("Replacement effective date must be after the existing rule start date.")
+    duplicate = _find_duplicate_active_rate_rule(
+        conn,
+        client_account_id=payload["client_account_id"],
+        person_id=payload["person_id"],
+        participant_person_ids=payload["participant_person_ids"],
+        duration_minutes=payload["duration_minutes"],
+        billing_session_type=payload["billing_session_type"],
+        custom_service_description=payload["custom_service_description"],
+        custom_service_code=payload["custom_service_code"],
+        service_mode=payload["service_mode"],
+        rate_group=payload["rate_group"],
+        time_category=payload["time_category"],
+        effective_from=payload["effective_from"],
+        exclude_rate_rule_id=rule_id,
+    )
+    if duplicate:
+        raise ValueError("An active rate rule with the same scope and dimensions already exists.")
+    replacement_start = datetime.strptime(payload["effective_from"], "%Y-%m-%d").date()
+    prior_end = (replacement_start - timedelta(days=1)).isoformat()
+    conn.execute(
+        "UPDATE rate_rules SET effective_through = ?, updated_at = ? WHERE rate_rule_id = ?",
+        (prior_end, now_iso(), rule_id),
+    )
+    new_rule_id = seed_rate_rule(
+        conn,
+        amount_cents=payload["amount_cents"],
+        effective_from=payload["effective_from"],
+        duration_minutes=payload["duration_minutes"],
+        billing_session_type=payload["billing_session_type"],
+        custom_service_description=payload["custom_service_description"],
+        custom_service_code=payload["custom_service_code"],
+        service_mode=payload["service_mode"],
+        rate_group=payload["rate_group"],
+        time_category=payload["time_category"],
+        client_account_id=payload["client_account_id"],
+        person_id=payload["person_id"],
+        participant_person_ids=payload["participant_person_ids"],
+        priority=payload["priority"],
+    )
+    record_audit(
+        conn,
+        "rate_rule",
+        rule_id,
+        "replaced",
+        {"replacement_rate_rule_id": new_rule_id, "effective_through": prior_end},
+    )
+    record_audit(
+        conn,
+        "rate_rule",
+        new_rule_id,
+        "replacement_created",
+        {"replaced_rate_rule_id": rule_id, "payload": payload},
+    )
+    _recalc_unapproved_session_rates(conn)
+    write_reports(conn)
+    conn.commit()
+    return serialize_rate_rule(conn, get_rate_rule_row(conn, new_rule_id))
+
+
+def end_rate_rule(conn: sqlite3.Connection, rule_id: str, effective_through: str) -> dict[str, Any]:
+    init_db(conn)
+    existing = get_rate_rule_row(conn, rule_id)
+    validate_effective_date(effective_through)
+    if effective_through < text(existing["effective_from"]):
+        raise ValueError("End date cannot be before the rule start date.")
+    conn.execute(
+        "UPDATE rate_rules SET effective_through = ?, updated_at = ? WHERE rate_rule_id = ?",
+        (effective_through, now_iso(), rule_id),
+    )
+    record_audit(
+        conn,
+        "rate_rule",
+        rule_id,
+        "ended",
+        {"effective_through": effective_through},
+    )
+    _recalc_unapproved_session_rates(conn)
+    write_reports(conn)
+    conn.commit()
+    return serialize_rate_rule(conn, get_rate_rule_row(conn, rule_id))
+
+
+def serialize_rate_rule(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    item = dict(row)
+    participant_rows = conn.execute(
+        """
+        SELECT p.person_id, p.display_name
+        FROM rate_rule_participants rrp
+        JOIN people p ON p.person_id = rrp.person_id
+        WHERE rrp.rate_rule_id = ?
+        ORDER BY p.display_name
+        """,
+        (row["rate_rule_id"],),
+    ).fetchall()
+    participant_names = [text(p["display_name"]) for p in participant_rows if text(p["display_name"])]
+    participant_ids = [p["person_id"] for p in participant_rows if p["person_id"]]
+    item["participant_names"] = " + ".join(participant_names)
+    item["participant_person_ids"] = participant_ids
+    item["amount"] = cents_to_dollars(row["amount_cents"])
+    item["scope_type"] = rate_rule_scope_type(item, participant_ids)
+    item["scope_label"] = rate_rule_scope_label(item)
+    item["duration_label"] = (
+        f"{item['duration_minutes']} minutes" if item.get("duration_minutes") else "Unknown duration"
+    )
+    item["session_type_label"] = rate_rule_session_type_label(item)
+    item["ended"] = bool(
+        text(item.get("effective_through"))
+        and text(item["effective_through"]) < date.today().isoformat()
+    )
+    return item
+
+
+def rate_rule_scope_type(item: dict[str, Any], participant_ids: list[str]) -> str:
+    if participant_ids:
+        return "participants"
+    if item.get("person_id"):
+        return "person"
+    if item.get("client_account_id"):
+        return "account"
+    return "everyone"
+
+
+def rate_rule_scope_label(item: dict[str, Any]) -> str:
+    scope_type = rate_rule_scope_type(item, item.get("participant_person_ids") or [])
+    if scope_type == "participants":
+        return item.get("participant_names") or "Clients Together"
+    if scope_type == "person":
+        return text(item.get("display_name")) or "One Client"
+    if scope_type == "account":
+        return text(item.get("account_name")) or "Billing Relationship"
+    return "Everyone"
+
+
+def rate_rule_session_type_label(item: dict[str, Any]) -> str:
+    if item.get("billing_session_type") == "custom":
+        return text(item.get("custom_service_description")) or "Custom"
+    return {
+        "psychotherapy": "Psychotherapy Session",
+        "psychotherapy_house_call": "Psychotherapy Session / House Call",
+        "psychotherapy_weekend": "Psychotherapy Session / Weekend",
+        "psychotherapy_evening": "Psychotherapy Session / Evening",
+        "custom": "Custom",
+    }.get(text(item.get("billing_session_type")), text(item.get("billing_session_type")))
+
+
+def normalized_rate_rule_payload(
+    data: dict[str, Any],
+    *,
+    scope_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    amount_cents = money_payload_to_cents(data.get("amount"))
+    if amount_cents is None or amount_cents <= 0:
+        raise ValueError("Amount is required and must be greater than 0.")
+    duration_minutes = parse_rate_rule_duration_minutes(data)
+    billing_session_type = validate_billing_session_type(text(data.get("billing_session_type")) or "")
+    custom_service_description = normalize_optional_custom_description(data.get("custom_service_description"))
+    custom_service_code = normalize_optional_custom_code(data.get("custom_service_code"))
+    if billing_session_type == "custom" and not custom_service_description:
+        raise ValueError("Custom session type requires a description.")
+    time_category = normalize_time_category(data.get("time_category") or "")
+    effective_from = text(data.get("effective_from")) or date.today().isoformat()
+    validate_effective_date(effective_from)
+    scope = infer_rate_scope(data, scope_override=scope_override)
+    client_account_id = text(scope.get("client_account_id")) or None
+    person_id = text(scope.get("person_id")) or None
+    participant_person_ids = normalize_participant_ids(scope.get("participant_person_ids") or [])
+    return {
+        "amount_cents": amount_cents,
+        "duration_minutes": duration_minutes,
+        "billing_session_type": billing_session_type,
+        "custom_service_description": custom_service_description,
+        "custom_service_code": custom_service_code,
+        "service_mode": None,
+        "rate_group": None,
+        "time_category": time_category,
+        "effective_from": effective_from,
+        "client_account_id": client_account_id,
+        "person_id": person_id,
+        "participant_person_ids": participant_person_ids,
+        "priority": int(data.get("priority") or 100),
+        "applies_to": scope["applies_to"],
+    }
+
+
+def parse_rate_rule_duration_minutes(data: dict[str, Any]) -> int:
+    duration_choice = text(data.get("duration_choice"))
+    if duration_choice == "custom":
+        minutes = parse_positive_int(data.get("custom_duration_minutes"))
+        if minutes is None:
+            raise ValueError("Custom duration requires actual minutes.")
+        return minutes
+    if duration_choice:
+        minutes = parse_positive_int(duration_choice)
+        if minutes is None:
+            raise ValueError("Duration is required.")
+        return minutes
+    minutes = parse_positive_int(data.get("duration_minutes"))
+    if minutes is None:
+        raise ValueError("Duration is required.")
+    return minutes
+
+
+def parse_positive_int(value: object) -> int | None:
+    parsed = parse_int(text(value)) if text(value) else None
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+def normalize_optional_custom_description(value: object) -> str | None:
+    normalized = text(value).strip()
+    return normalized or None
+
+
+def normalize_optional_custom_code(value: object) -> str | None:
+    normalized = text(value).strip()
+    return normalized or None
+
+
+def infer_rate_scope(
+    data: dict[str, Any],
+    *,
+    scope_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if scope_override:
+        return scope_override
+    applies_to = text(data.get("applies_to"))
+    client_account_id = text(data.get("client_account_id") or data.get("account_id")) or None
+    person_id = text(data.get("person_id")) or None
+    participant_person_ids = normalize_participant_ids(data.get("participant_person_ids") or [])
+    if not applies_to:
+        if participant_person_ids:
+            applies_to = "participants"
+        elif person_id:
+            applies_to = "person"
+        elif client_account_id:
+            applies_to = "account"
+        else:
+            applies_to = "everyone"
+    if applies_to == "everyone":
+        return {"applies_to": applies_to, "client_account_id": None, "person_id": None, "participant_person_ids": []}
+    if applies_to == "person":
+        if not person_id:
+            raise ValueError("Select one resolved client for a One Client rule.")
+        return {"applies_to": applies_to, "client_account_id": None, "person_id": person_id, "participant_person_ids": []}
+    if applies_to == "participants":
+        if len(participant_person_ids) < 2:
+            raise ValueError("Select at least two resolved clients for a Clients Together rule.")
+        return {"applies_to": applies_to, "client_account_id": None, "person_id": None, "participant_person_ids": participant_person_ids}
+    if applies_to in {"account", "billing_relationship"}:
+        if not client_account_id:
+            raise ValueError("Select one resolved billing relationship for this rule.")
+        return {"applies_to": "account", "client_account_id": client_account_id, "person_id": None, "participant_person_ids": []}
+    raise ValueError("Choose a valid rate scope.")
+
+
+def normalize_participant_ids(values: list[Any]) -> list[str]:
+    return sorted({text(value) for value in values if text(value)})
+
+
+def validate_effective_date(value: str) -> None:
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", value):
+        raise ValueError("Effective date must be in YYYY-MM-DD format.")
+
+
+def get_rate_rule_row(conn: sqlite3.Connection, rule_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        """
+        SELECT rr.*, ca.account_name, p.display_name
+        FROM rate_rules rr
+        LEFT JOIN client_accounts ca ON ca.account_id = rr.client_account_id
+        LEFT JOIN people p ON p.person_id = rr.person_id
+        WHERE rr.rate_rule_id = ?
+        """,
+        (rule_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError("Rate rule not found.")
+    return row
+
+
+def rate_rule_scope_ids(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    participant_ids = [
+        participant["person_id"]
+        for participant in conn.execute(
+            "SELECT person_id FROM rate_rule_participants WHERE rate_rule_id = ? ORDER BY person_id",
+            (row["rate_rule_id"],),
+        ).fetchall()
+    ]
+    if participant_ids:
+        return {"applies_to": "participants", "participant_person_ids": participant_ids}
+    if row["person_id"]:
+        return {"applies_to": "person", "person_id": row["person_id"]}
+    if row["client_account_id"]:
+        return {"applies_to": "account", "client_account_id": row["client_account_id"]}
+    return {"applies_to": "everyone"}
 
 
 def save_person_alias(
@@ -2883,12 +3326,14 @@ def _find_duplicate_active_rate_rule(
     participant_person_ids: list[str] | None,
     duration_minutes: int | None,
     billing_session_type: str | None,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
     effective_from: str,
+    exclude_rate_rule_id: str | None = None,
 ) -> str | None:
-    """Return an existing active rule_id that duplicates the requested scope and dimensions."""
     if participant_person_ids:
         ids = sorted(set(p for p in participant_person_ids if p))
         placeholders = ",".join("?" for _ in ids)
@@ -2902,10 +3347,13 @@ def _find_duplicate_active_rate_rule(
               AND rr.person_id IS NULL
               AND COALESCE(rr.duration_minutes, -1) = ?
               AND COALESCE(rr.billing_session_type, '') = ?
+              AND COALESCE(rr.custom_service_description, '') = ?
+              AND COALESCE(rr.custom_service_code, '') = ?
               AND COALESCE(rr.service_mode, '') = ?
               AND COALESCE(rr.rate_group, '') = ?
               AND rr.time_category = ?
               AND rr.effective_from = ?
+              AND (? IS NULL OR rr.rate_rule_id != ?)
               AND rrp.person_id IN ({placeholders})
             GROUP BY rr.rate_rule_id
             HAVING COUNT(DISTINCT rrp.person_id) = ?
@@ -2918,10 +3366,14 @@ def _find_duplicate_active_rate_rule(
             (
                 duration_minutes if duration_minutes is not None else -1,
                 billing_session_type or "",
+                custom_service_description or "",
+                custom_service_code or "",
                 service_mode or "",
                 rate_group or "",
                 time_category,
                 effective_from,
+                exclude_rate_rule_id,
+                exclude_rate_rule_id,
                 *ids,
                 len(ids),
                 len(ids),
@@ -2938,10 +3390,13 @@ def _find_duplicate_active_rate_rule(
           AND COALESCE(person_id, '') = ?
           AND COALESCE(duration_minutes, -1) = ?
           AND COALESCE(billing_session_type, '') = ?
+          AND COALESCE(custom_service_description, '') = ?
+          AND COALESCE(custom_service_code, '') = ?
           AND COALESCE(service_mode, '') = ?
           AND COALESCE(rate_group, '') = ?
           AND time_category = ?
           AND effective_from = ?
+          AND (? IS NULL OR rate_rule_id != ?)
           AND rate_rule_id NOT IN (SELECT rate_rule_id FROM rate_rule_participants)
         LIMIT 1
         """,
@@ -2950,21 +3405,20 @@ def _find_duplicate_active_rate_rule(
             person_id or "",
             duration_minutes if duration_minutes is not None else -1,
             billing_session_type or "",
+            custom_service_description or "",
+            custom_service_code or "",
             service_mode or "",
             rate_group or "",
             time_category,
             effective_from,
+            exclude_rate_rule_id,
+            exclude_rate_rule_id,
         ),
     ).fetchone()
     return row["rate_rule_id"] if row else None
 
 
 def _recalc_unapproved_session_rates(conn: sqlite3.Connection) -> int:
-    """Refresh rate suggestions for all unapproved sessions after a rate rule change.
-
-    Approved and excluded sessions are intentionally skipped so historical approved
-    rates and explicit exclusions are never rewritten by new rate rules.
-    """
     rows = conn.execute(
         """
         SELECT id, candidate_id

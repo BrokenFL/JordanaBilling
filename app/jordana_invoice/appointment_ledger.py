@@ -87,6 +87,7 @@ def list_appointment_ledger_rows(
           COALESCE(s.raw_calendar_title, c.title, r.event_title, '') AS calendar_title,
           COALESCE(s.approved_duration_minutes, s.duration_minutes, c.proposed_duration_minutes, c.calendar_duration_minutes) AS session_length,
           s.billing_session_type,
+          s.custom_service_description,
           COALESCE(s.service_mode, c.service_mode, '') AS service_mode,
           s.approved_rate_cents,
           s.suggested_rate_cents,
@@ -215,7 +216,11 @@ def ledger_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "calendar_title": row["calendar_title"] or "",
         "client_participants": client_participants_text(row),
         "session_length": row["session_length"] or "",
-        "session_type": session_type_text(row["billing_session_type"], row["service_mode"]),
+        "session_type": session_type_text(
+            row["billing_session_type"],
+            row["service_mode"],
+            row["custom_service_description"],
+        ),
         "rate": cents_to_dollars(first_rate_cents(row)),
         "payment_status": row["payment_status"] or "unresolved",
         "review_status": row["review_status"] or "needs_review",
@@ -270,9 +275,15 @@ def first_rate_cents(row: sqlite3.Row) -> int | None:
     return row["approved_rate_cents"] or row["suggested_rate_cents"]
 
 
-def session_type_text(billing_session_type: object, service_mode: object) -> str:
+def session_type_text(
+    billing_session_type: object,
+    service_mode: object,
+    custom_service_description: object = None,
+) -> str:
     billing = text(billing_session_type)
     if billing:
+        if billing == "custom" and text(custom_service_description):
+            return text(custom_service_description)
         return {
             "psychotherapy": "Psychotherapy Session",
             "psychotherapy_house_call": "Psychotherapy Session / House Call",

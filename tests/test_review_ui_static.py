@@ -202,6 +202,50 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("Session type is required", js)
         self.assertIn("Effective date is required", js)
 
+    def test_rate_card_requires_explicit_scope_resolution_and_shows_preview(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Rate changes affect future and unapproved sessions only. Approved sessions and finalized invoices remain unchanged.", html)
+        self.assertIn(">Everyone</option>", html)
+        self.assertIn(">One Client</option>", html)
+        self.assertIn(">Clients Together</option>", html)
+        self.assertIn(">Billing Relationship</option>", html)
+        self.assertIn('id="rateRulePreview"', html)
+        self.assertIn("Select one resolved client for a One Client rule.", js)
+        self.assertIn("Select at least two resolved clients for a Clients Together rule.", js)
+        self.assertIn("Select one resolved billing relationship for this rule.", js)
+        self.assertIn("This will", js)
+
+    def test_rate_card_supports_custom_duration_and_custom_description(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('value="custom">Custom</option>', html)
+        self.assertIn('id="rateCustomDurationMinutes"', html)
+        self.assertIn('id="rateCustomDescription"', html)
+        self.assertIn('id="rateCustomCode"', html)
+        self.assertIn("Custom session type requires a description.", js)
+        self.assertIn("Custom duration requires actual minutes.", js)
+
+    def test_rate_card_groups_rules_and_supports_replace_and_end_actions(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Standard Rates", html)
+        self.assertIn("Client, joint-client, and billing-relationship Exceptions", html)
+        self.assertIn("Collapsed Ended Rates", html)
+        self.assertIn("Replacing", js)
+        self.assertIn("Saving will end the old rule on the day before the new effective date.", js)
+        self.assertIn("End this rule on which date?", js)
+
+    def test_review_queue_uses_rate_preview_endpoint_for_session_changes(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('await api("/api/rate-rules/preview"', js)
+        self.assertIn('id="sessionRatePreview"', js)
+        self.assertIn("Suggested by Rate Card:", js)
+
     def test_settings_screen_uses_existing_business_profile_api_and_defaults(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
         js = Path("app/jordana_invoice/static/review.js").read_text()

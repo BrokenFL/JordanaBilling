@@ -17,8 +17,11 @@ from jordana_invoice.review_services import (
     create_billing_party,
     create_person,
     create_rate_rule_from_payload,
+    end_rate_rule,
     get_review_candidate,
     list_review_candidates,
+    preview_rate_suggestion,
+    replace_rate_rule_from_payload,
     save_relationship_section,
     save_session_draft,
 )
@@ -320,7 +323,7 @@ class RateCardDefaultTests(unittest.TestCase):
         )
         detail = get_review_candidate(self.conn, candidate_id)
         self.assertEqual(detail["session"]["suggested_rate_cents"], 40000)
-        self.assertEqual(detail["session"]["rate_source"], "account")
+        self.assertEqual(detail["session"]["rate_source"], "billing_relationship")
 
     def test_person_specific_rule_overrides_default(self):
         candidate_id = self.import_one("snap-person", "Fred 630 60")
@@ -507,6 +510,118 @@ class RateCardDefaultTests(unittest.TestCase):
                 "applies_to": "everyone",
                 "effective_from": "not-a-date",
             })
+        with self.assertRaises(ValueError):
+            create_rate_rule_from_payload(self.conn, {
+                "amount": "350",
+                "duration_choice": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "person",
+                "effective_from": "2026-01-01",
+            })
+        with self.assertRaises(ValueError):
+            create_rate_rule_from_payload(self.conn, {
+                "amount": "350",
+                "duration_choice": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "applies_to": "participants",
+                "participant_person_ids": [],
+                "effective_from": "2026-01-01",
+            })
+
+    def test_preview_rate_suggestion_uses_global_rule(self):
+        self._create_default_rule()
+        preview = preview_rate_suggestion(self.conn, {
+            "duration_choice": "60",
+            "billing_session_type": "psychotherapy",
+            "time_category": "standard",
+            "service_mode": "office",
+            "session_date": "2026-06-18",
+        })
+        self.assertEqual(preview["amount_cents"], 35000)
+        self.assertEqual(preview["rate_source"], "default")
+
+    def test_custom_rule_matches_by_code_then_description(self):
+        create_rate_rule_from_payload(self.conn, {
+            "amount": "275",
+            "duration_choice": "custom",
+            "custom_duration_minutes": "75",
+            "billing_session_type": "custom",
+            "custom_service_description": "Parent coaching",
+            "custom_service_code": "PC-75",
+            "time_category": "standard",
+            "applies_to": "everyone",
+            "effective_from": "2026-01-01",
+        })
+        by_code = preview_rate_suggestion(self.conn, {
+            "duration_choice": "custom",
+            "custom_duration_minutes": "75",
+            "billing_session_type": "custom",
+            "custom_service_description": "Something Else",
+            "custom_service_code": "PC-75",
+            "time_category": "standard",
+            "service_mode": "office",
+            "session_date": "2026-06-18",
+        })
+        by_description = preview_rate_suggestion(self.conn, {
+            "duration_choice": "custom",
+            "custom_duration_minutes": "75",
+            "billing_session_type": "custom",
+            "custom_service_description": " parent   coaching ",
+            "time_category": "standard",
+            "service_mode": "office",
+            "session_date": "2026-06-18",
+        })
+        self.assertEqual(by_code["amount_cents"], 27500)
+        self.assertEqual(by_description["amount_cents"], 27500)
+
+    def test_replace_rule_ends_old_day_before_new_effective_date(self):
+        original = self._create_default_rule()
+        replacement = replace_rate_rule_from_payload(self.conn, original["rate_rule_id"], {
+            "amount": "390",
+            "duration_choice": "60",
+            "billing_session_type": "psychotherapy",
+            "time_category": "standard",
+            "effective_from": "2026-03-01",
+        })
+        old_row = self.conn.execute(
+            "SELECT effective_through FROM rate_rules WHERE rate_rule_id = ?",
+            (original["rate_rule_id"],),
+        ).fetchone()
+        self.assertEqual(old_row["effective_through"], "2026-02-28")
+        self.assertEqual(replacement["amount_cents"], 39000)
+
+    def test_end_rule_sets_effective_through_and_clears_stale_rule_suggestion(self):
+        candidate_id = self.import_one("snap-end", "Fred 630 60")
+        rule = self._create_default_rule()
+        before = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(before["session"]["suggested_rate_cents"], 35000)
+        ended = end_rate_rule(self.conn, rule["rate_rule_id"], "2026-01-14")
+        after = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(ended["effective_through"], "2026-01-14")
+        self.assertIsNone(after["session"]["suggested_rate_cents"])
+        self.assertEqual(after["session"]["rate_source"], "none")
+        self.assertEqual(after["session"]["rate_needs_review"], 1)
+
+    def test_phone_facetime_and_office_share_equivalent_rate_matching(self):
+        create_rate_rule_from_payload(self.conn, {
+            "amount": "200",
+            "duration_choice": "60",
+            "billing_session_type": "psychotherapy",
+            "time_category": "standard",
+            "applies_to": "everyone",
+            "effective_from": "2026-01-01",
+        })
+        for service_mode in ("phone", "facetime", "office"):
+            preview = preview_rate_suggestion(self.conn, {
+                "duration_choice": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "service_mode": service_mode,
+                "session_date": "2026-06-18",
+            })
+            self.assertEqual(preview["amount_cents"], 20000)
 
 
 if __name__ == "__main__":

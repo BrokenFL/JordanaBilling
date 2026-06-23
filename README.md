@@ -29,7 +29,7 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 - Structured review-state engine
 - Section-level saves for people, relationships, billing, and session drafts
 - Human-readable person codes and account codes
-- Clients & Accounts and People CRM views
+- Billing Relationships and Clients CRM views
 - Initial client, alias, rate, session, review, and audit tables
 - Local CSV reports after successful sync
 - Acceptance report for June-style data
@@ -113,6 +113,8 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 The `Calendar Import` sidebar screen shows local sync status and a single `Sync Now` action. That button only pulls completed snapshot rows already staged by the iPhone Shortcut through Apps Script; it does not trigger the Shortcut and does not edit Apple Calendar.
 
 The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
+
+The `Rate Card` sidebar screen supports global rates plus one-client, clients-together, and billing-relationship exceptions. Replace and End actions preserve rate-rule history, immediately refresh unapproved session suggestions, and never rewrite approved sessions or finalized invoices.
 
 The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 

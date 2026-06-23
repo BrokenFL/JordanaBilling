@@ -110,27 +110,32 @@
           <div class="rate-card-header">
             <div>
               <h2>Rate Card</h2>
-              <p>Set suggested rates by duration, service type, time category, client, billing relationship, and effective date.</p>
+              <p>Set suggested rates by duration, session type, time category, scope, and effective date.</p>
             </div>
           </div>
+          <div class="settings-notice">
+            Rate changes affect future and unapproved sessions only. Approved sessions and finalized invoices remain unchanged.
+          </div>
           <form class="rate-form" id="rateRuleForm">
-            <input name="amount" placeholder="Amount, e.g. 150.00" required />
-            <select name="duration_minutes">
-              <option value="">Any length</option>
-              <option value="30">30 min</option>
-              <option value="60">60 min</option>
-              <option value="90">90 min</option>
-              <option value="120">120 min</option>
-            </select>
-            <select name="billing_session_type">
-              <option value="">Any session type</option>
-              <option value="psychotherapy">Psychotherapy Session</option>
-              <option value="psychotherapy_house_call">House Call</option>
-              <option value="psychotherapy_weekend">Weekend</option>
-              <option value="psychotherapy_evening">Evening</option>
+            <input name="amount" id="rateAmountInput" placeholder="Amount, e.g. 150.00" required />
+            <select name="duration_choice" id="rateDurationChoice" required>
+              <option value="30">30 minutes</option>
+              <option value="60">60 minutes</option>
+              <option value="90">90 minutes</option>
+              <option value="120">120 minutes</option>
               <option value="custom">Custom</option>
             </select>
-            <select name="time_category">
+            <input name="custom_duration_minutes" id="rateCustomDurationMinutes" type="number" min="1" placeholder="Custom minutes" hidden />
+            <select name="billing_session_type" id="rateBillingSessionType" required>
+              <option value="psychotherapy">Psychotherapy Session</option>
+              <option value="psychotherapy_house_call">Psychotherapy Session / House Call</option>
+              <option value="psychotherapy_weekend">Psychotherapy Session / Weekend</option>
+              <option value="psychotherapy_evening">Psychotherapy Session / Evening</option>
+              <option value="custom">Custom</option>
+            </select>
+            <input name="custom_service_description" id="rateCustomDescription" placeholder="Custom description" hidden />
+            <input name="custom_service_code" id="rateCustomCode" placeholder="Optional custom code" hidden />
+            <select name="time_category" id="rateTimeCategory" required>
               <option value="standard">Standard</option>
               <option value="evening">Evening</option>
               <option value="weekend">Weekend</option>
@@ -138,21 +143,50 @@
             </select>
             <select name="applies_to" id="rateAppliesTo">
               <option value="everyone">Everyone</option>
-              <option value="account">Specific Billing Relationship</option>
-              <option value="person">Specific Client</option>
+              <option value="person">One Client</option>
+              <option value="participants">Clients Together</option>
+              <option value="account">Billing Relationship</option>
             </select>
-            <input name="applies_to_search" id="rateAppliesSearch" placeholder="Billing relationship or client name" list="rateAppliesList" />
-            <datalist id="rateAppliesList"></datalist>
-            <input name="effective_from" placeholder="Effective from YYYY-MM-DD" value="2026-01-01" />
+            <div id="rateScopeResolver" class="field wide" hidden>
+              <input name="applies_to_search" id="rateAppliesSearch" placeholder="Search..." autocomplete="off" />
+              <div id="rateScopeResolved" class="help"></div>
+              <div id="rateScopeResults" class="compact-list"></div>
+              <div id="rateParticipantSelections" class="chips"></div>
+            </div>
+            <input name="effective_from" id="rateEffectiveFrom" type="date" required />
+            <div class="help wide" id="rateRulePreview">Rule preview will appear here before saving.</div>
             <button type="submit" class="save">Add Rate Rule</button>
             <div class="rate-form-message" id="rateFormMessage"></div>
           </form>
-          <table class="review-table rate-table">
-            <thead>
-              <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Applies To</th><th>Effective</th><th>Explanation</th></tr>
-            </thead>
-            <tbody id="rateRows"></tbody>
-          </table>
+          <section class="section">
+            <h3>Standard Rates</h3>
+            <table class="review-table rate-table">
+              <thead>
+                <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="rateRowsStandard"></tbody>
+            </table>
+          </section>
+          <section class="section">
+            <h3>Client, joint-client, and billing-relationship Exceptions</h3>
+            <table class="review-table rate-table">
+              <thead>
+                <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="rateRowsExceptions"></tbody>
+            </table>
+          </section>
+          <section class="section">
+            <details>
+              <summary>Collapsed Ended Rates</summary>
+              <table class="review-table rate-table">
+                <thead>
+                  <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="rateRowsEnded"></tbody>
+              </table>
+            </details>
+          </section>
         </section>
 
         <section class="calendar-import-view" id="calendarImportView" hidden>

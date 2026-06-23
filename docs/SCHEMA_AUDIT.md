@@ -70,8 +70,8 @@ These legacy tables remain intact for compatibility. They should not be deleted 
 
 - Exists: yes.
 - Sanitized fixture row count: 0 after sample import.
-- Key columns: `rate_rule_id`, `client_account_id`, `person_id`, `billing_session_type`, duration, service, rate group, time category, amount, effective dates, priority, active.
-- Indexes: primary key and `idx_rate_rules_match`.
+- Key columns: `rate_rule_id`, `client_account_id`, `person_id`, `billing_session_type`, `custom_service_description`, `custom_service_code`, duration, service, rate group, time category, amount, effective dates, priority, active.
+- Indexes: primary key, `idx_rate_rules_match`, and `idx_rate_rules_custom_match`.
 - Foreign-key references from: `sessions.rate_rule_id`, `sessions.approved_rate_rule_id`, `rate_rule_participants`.
 - Read paths: rate suggestion engine, Rate Card, person/account CRM records.
 - Write paths: Rate Card, CLI seeding, manual rate-scope memory.

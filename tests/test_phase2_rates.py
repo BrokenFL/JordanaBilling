@@ -79,7 +79,7 @@ class Phase2RateTests(unittest.TestCase):
             account_id=account_id,
         )
         self.assertEqual(suggestion.suggested_rate_cents, 17500)
-        self.assertEqual(suggestion.rate_source, "account")
+        self.assertEqual(suggestion.rate_source, "billing_relationship")
 
     def test_weekend_evening_defaults_to_manual_review(self):
         seed_rate_rule(self.conn, amount_cents=20000, effective_from="2026-01-01", duration_minutes=60)

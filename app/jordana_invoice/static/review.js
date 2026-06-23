@@ -1,4 +1,30 @@
-const state = { items: [], selected: null, offset: 0, limit: 25, participants: [], account: null, billingParty: null, dirty: new Set(), returnCandidate: null, returnContext: null, detail: null, invoice: null, eligibleSessions: [], sessions: { items: [], offset: 0, limit: 30, total: 0 }, editSteps: { clients: false, session: false }, settingsSaving: false, syncRunning: false };
+const state = {
+  items: [],
+  selected: null,
+  offset: 0,
+  limit: 25,
+  participants: [],
+  account: null,
+  billingParty: null,
+  dirty: new Set(),
+  returnCandidate: null,
+  returnContext: null,
+  detail: null,
+  invoice: null,
+  eligibleSessions: [],
+  sessions: { items: [], offset: 0, limit: 30, total: 0 },
+  editSteps: { clients: false, session: false },
+  settingsSaving: false,
+  syncRunning: false,
+  rateCard: {
+    mode: "create",
+    replacingRuleId: null,
+    resolvedPerson: null,
+    resolvedAccount: null,
+    participantSelections: [],
+    scopeResults: []
+  }
+};
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
   business_name: "",
@@ -28,8 +54,14 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v) => v || "-";
 const money = (v) => v ? `$${v}` : "—";
 const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
-const billingTypeLabel = (v) => ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || v || "Psychotherapy Session");
-const billingTypeShort = (v) => ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || v || "Standard");
+const billingTypeLabel = (v, customDescription = "") => {
+  if (v === "custom" && customDescription) return customDescription;
+  return ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || v || "Psychotherapy Session");
+};
+const billingTypeShort = (v, customDescription = "") => {
+  if (v === "custom" && customDescription) return customDescription;
+  return ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || v || "Standard");
+};
 const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || v || "Unknown");
 const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || v || "Unknown");
 const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || v || "Standard");
@@ -206,7 +238,7 @@ function renderInspector(data) {
       ${sessionLocked
         ? `<div class="readonly-note">${!readiness.clients_ready ? "Confirm Client(s) first." : "Confirm Bill To first."}</div>`
         : readiness.session_ready && !sessionEditing
-          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${billingTypeLabel(s.billing_session_type || mapLegacyToType(s))} • ${fmt(s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)} • ${fmt(s.payment_status)}</div></div>
+          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${billingTypeLabel(s.billing_session_type || mapLegacyToType(s), s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)} • ${fmt(s.payment_status)}</div></div>
              <div class="inline-actions"><button id="changeSessionBtn">Change</button></div>`
           : `<div class="field-grid">
                <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
@@ -215,7 +247,7 @@ function renderInspector(data) {
                <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${s.custom_service_description || ""}"></label>
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${s.custom_service_code || ""}"></label>
                <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend","weekend_evening"], s.time_category)}</select></label>
-               <label class="field">Rate for this session<input id="approvedRateInput" value="${currentRate}"><span class="help">${rateSourceDescription(s, data.participants)}</span></label>
+               <label class="field">Rate for this session<input id="approvedRateInput" value="${currentRate}"><span class="help" id="sessionRateHelp">${rateSourceDescription(s, data.participants)}</span><span class="help" id="sessionRatePreview"></span></label>
                <label class="field">Payment Status<select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
                ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
                <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label><label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label></div></details>
@@ -284,9 +316,23 @@ function wireInspector() {
     "overrideReasonInput"
   ].forEach(id => {
     const element = $(id);
-    if (element) element.addEventListener("input", () => markDirty("session"));
+    if (element) element.addEventListener("input", async () => {
+      markDirty("session");
+      syncSessionCustomFields();
+      await updateSessionRatePreview();
+    });
   });
   if ($("billToClientSelect")) $("billToClientSelect").addEventListener("input", () => markDirty("billing"));
+  syncSessionCustomFields();
+  updateSessionRatePreview();
+}
+
+function syncSessionCustomFields() {
+  const billingType = $("billingTypeInput")?.value;
+  const durationChoice = $("durationChoiceInput")?.value;
+  if ($("customDurationField")) $("customDurationField").hidden = durationChoice !== "custom";
+  if ($("customDescField")) $("customDescField").hidden = billingType !== "custom";
+  if ($("customCodeField")) $("customCodeField").hidden = billingType !== "custom";
 }
 
 function markDirty(section) {
@@ -757,6 +803,33 @@ function restoreSessionDraftValues(values) {
   if ($("overrideReasonInput")) $("overrideReasonInput").value = values.rate_override_reason;
 }
 
+async function updateSessionRatePreview() {
+  if (!$("sessionRatePreview") || !state.detail?.session?.id) return;
+  const participantIds = confirmedSessionClients().map(p => p.person_id).filter(Boolean);
+  const payload = {
+    session_date: state.detail.session.session_date || state.detail.session.start_at?.slice(0, 10) || "",
+    duration_choice: $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes),
+    custom_duration_minutes: $("customDurationInput")?.value || "",
+    billing_session_type: $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy",
+    custom_service_description: $("customDescInput")?.value || "",
+    custom_service_code: $("customCodeInput")?.value || "",
+    time_category: $("timeCategoryInput")?.value || state.detail.session.time_category || "standard",
+    participant_person_ids: participantIds,
+    person_id: participantIds.length === 1 ? participantIds[0] : "",
+    client_account_id: state.account?.account_id || state.detail.session.account_id || "",
+    service_mode: state.detail.session.service_mode || "office"
+  };
+  try {
+    const preview = await api("/api/rate-rules/preview", { method: "POST", body: JSON.stringify(payload) });
+    const previewText = preview.amount
+      ? `Suggested by Rate Card: $${preview.amount} (${preview.explanation})`
+      : "No matching Rate Card rule. This session will stay marked Needs Rate unless you enter one.";
+    $("sessionRatePreview").textContent = previewText;
+  } catch (err) {
+    $("sessionRatePreview").textContent = err.message || "Unable to preview suggested rate.";
+  }
+}
+
 async function resolveTypedSelections() {
   const accountField = $("accountInput");
   if (!accountField) return;
@@ -926,6 +999,10 @@ function showRateCard() {
   hideViews();
   document.getElementById("rateCardView").hidden = false;
   document.getElementById("rateCardNav").classList.add("active");
+  $("pageTitle").textContent = "Rate Card";
+  $("pageSubtitle").textContent = "Manage standard rates and exceptions";
+  document.title = "Jordana Billing - Rate Card";
+  resetRateCardForm();
   loadRateRules();
 }
 
@@ -1402,38 +1479,15 @@ $("sessionsNextPage").onclick = () => {
 };
 document.getElementById("rateRuleForm").onsubmit = async (event) => {
   event.preventDefault();
-  const form = event.currentTarget;
-  const data = new FormData(form);
-  const payload = Object.fromEntries(data.entries());
   const message = $("rateFormMessage");
   try {
-    const amount = Number(String(payload.amount).replace(/[$,]/g, ""));
-    if (!payload.amount || Number.isNaN(amount) || amount <= 0) {
-      throw new Error("Amount is required and must be greater than 0.");
-    }
-    if (!payload.duration_minutes) {
-      throw new Error("Duration is required.");
-    }
-    if (!payload.billing_session_type) {
-      throw new Error("Session type is required.");
-    }
-    if (!payload.effective_from || !/^\d{4}-\d{2}-\d{2}$/.test(payload.effective_from)) {
-      throw new Error("Effective date is required in YYYY-MM-DD format.");
-    }
-    if (payload.applies_to === "account" && payload.applies_to_search) {
-      const rows = await api(`/api/accounts?q=${encodeURIComponent(payload.applies_to_search)}`);
-      const match = rows.find(row => row.account_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
-      if (match) payload.client_account_id = match.account_id;
-    }
-    if (payload.applies_to === "person" && payload.applies_to_search) {
-      const rows = await api(`/api/people?q=${encodeURIComponent(payload.applies_to_search)}`);
-      const match = rows.find(row => row.display_name.toLowerCase() === payload.applies_to_search.toLowerCase()) || rows[0];
-      if (match) payload.person_id = match.person_id;
-    }
-    await api("/api/rate-rules", { method: "POST", body: JSON.stringify(payload) });
-    form.reset();
-    form.effective_from.value = "2026-01-01";
-    message.textContent = "Rate rule saved.";
+    const payload = buildRateRulePayload();
+    const endpoint = state.rateCard.mode === "replace" && state.rateCard.replacingRuleId
+      ? `/api/rate-rules/${state.rateCard.replacingRuleId}/replace`
+      : "/api/rate-rules";
+    await api(endpoint, { method: "POST", body: JSON.stringify(payload) });
+    resetRateCardForm();
+    message.textContent = state.rateCard.mode === "replace" ? "Rate rule replaced." : "Rate rule saved.";
     message.className = "rate-form-message success";
     await loadRateRules();
   } catch (err) {
@@ -1442,32 +1496,249 @@ document.getElementById("rateRuleForm").onsubmit = async (event) => {
   }
 };
 $("rateAppliesTo").addEventListener("change", () => {
-  const mode = $("rateAppliesTo").value;
-  $("rateAppliesSearch").hidden = mode === "everyone";
-  $("rateAppliesSearch").required = mode !== "everyone";
-  if (mode === "everyone") $("rateAppliesSearch").value = "";
+  clearRateScopeSelections();
+  syncRateCardScopeUi();
+  renderRateRulePreview();
 });
 document.getElementById("rateAppliesSearch").addEventListener("input", debounce(async e => {
   const mode = $("rateAppliesTo").value;
-  const rows = mode === "person"
-    ? await api(`/api/people?q=${encodeURIComponent(e.target.value)}`)
-    : await api(`/api/accounts?q=${encodeURIComponent(e.target.value)}`);
-  fillDatalist("rateAppliesList", rows, mode === "person" ? "display_name" : "account_name");
+  const query = e.target.value.trim();
+  if (!query || mode === "everyone") {
+    state.rateCard.scopeResults = [];
+    renderRateScopeResults();
+    return;
+  }
+  const rows = mode === "account"
+    ? await api(`/api/accounts?q=${encodeURIComponent(query)}`)
+    : await api(`/api/people?q=${encodeURIComponent(query)}`);
+  state.rateCard.scopeResults = rows;
+  renderRateScopeResults();
 }, 160));
+
+["rateAmountInput","rateDurationChoice","rateCustomDurationMinutes","rateBillingSessionType","rateCustomDescription","rateCustomCode","rateTimeCategory","rateEffectiveFrom"].forEach(id => {
+  $(id).addEventListener("input", () => {
+    syncRateCardCustomFields();
+    renderRateRulePreview();
+  });
+});
 
 async function loadRateRules() {
   const rows = await api("/api/rate-rules");
-  document.getElementById("rateRows").innerHTML = rows.map(row => `
+  renderRateRuleTable("rateRowsStandard", rows.filter(row => row.scope_type === "everyone" && !row.ended));
+  renderRateRuleTable("rateRowsExceptions", rows.filter(row => row.scope_type !== "everyone" && !row.ended));
+  renderRateRuleTable("rateRowsEnded", rows.filter(row => row.ended));
+}
+
+function renderRateRuleTable(targetId, rows) {
+  $(targetId).innerHTML = rows.map(row => `
     <tr>
       <td>$${row.amount}</td>
-      <td>${row.duration_minutes || "Any"}</td>
-      <td>${billingTypeShort(row.billing_session_type || "Any")}</td>
+      <td>${fmt(row.duration_label)}</td>
+      <td>${fmt(row.session_type_label)}</td>
       <td>${timeLabel(row.time_category)}</td>
-      <td>${row.participant_names || row.account_name || row.display_name || "Everyone"}</td>
-      <td>${row.effective_from}</td>
-      <td>${ruleExplanation(row)}</td>
+      <td>${fmt(row.scope_label)}</td>
+      <td>${fmt(row.effective_from)}${row.effective_through ? ` to ${fmt(row.effective_through)}` : ""}</td>
+      <td>${row.ended ? '<span class="readonly-note">Ended</span>' : `<button class="mini" data-replace-rate="${row.rate_rule_id}">Replace</button><button class="mini danger" data-end-rate="${row.rate_rule_id}">End</button>`}</td>
     </tr>
-  `).join("");
+  `).join("") || `<tr><td colspan="7" class="readonly-note">No rate rules in this section.</td></tr>`;
+  document.querySelectorAll(`#${targetId} [data-replace-rate]`).forEach(button => {
+    button.onclick = () => startRateRuleReplacement(rows.find(row => row.rate_rule_id === button.dataset.replaceRate));
+  });
+  document.querySelectorAll(`#${targetId} [data-end-rate]`).forEach(button => {
+    button.onclick = () => promptToEndRateRule(button.dataset.endRate);
+  });
+}
+
+function buildRateRulePayload() {
+  const appliesTo = $("rateAppliesTo").value;
+  const amountValue = Number(String($("rateAmountInput").value || "").replace(/[$,]/g, ""));
+  const payload = {
+    amount: $("rateAmountInput").value,
+    duration_choice: $("rateDurationChoice").value,
+    custom_duration_minutes: $("rateCustomDurationMinutes").value,
+    billing_session_type: $("rateBillingSessionType").value,
+    custom_service_description: $("rateCustomDescription").value,
+    custom_service_code: $("rateCustomCode").value,
+    time_category: $("rateTimeCategory").value,
+    applies_to: appliesTo,
+    effective_from: $("rateEffectiveFrom").value
+  };
+  if (!payload.amount || Number.isNaN(amountValue) || amountValue <= 0) {
+    throw new Error("Amount is required and must be greater than 0.");
+  }
+  if (!payload.duration_choice) throw new Error("Duration is required.");
+  if (payload.duration_choice === "custom" && !$("rateCustomDurationMinutes").value) {
+    throw new Error("Custom duration requires actual minutes.");
+  }
+  if (!payload.billing_session_type) throw new Error("Session type is required.");
+  if (payload.billing_session_type === "custom" && !$("rateCustomDescription").value.trim()) {
+    throw new Error("Custom session type requires a description.");
+  }
+  if (!payload.time_category) throw new Error("Time category is required.");
+  if (!payload.effective_from || !/^\d{4}-\d{2}-\d{2}$/.test(payload.effective_from)) {
+    throw new Error("Effective date is required in YYYY-MM-DD format.");
+  }
+  if (appliesTo === "person") {
+    if (!state.rateCard.resolvedPerson?.person_id) throw new Error("Select one resolved client for a One Client rule.");
+    payload.person_id = state.rateCard.resolvedPerson.person_id;
+  } else if (appliesTo === "participants") {
+    if (state.rateCard.participantSelections.length < 2) throw new Error("Select at least two resolved clients for a Clients Together rule.");
+    payload.participant_person_ids = state.rateCard.participantSelections.map(person => person.person_id);
+  } else if (appliesTo === "account") {
+    if (!state.rateCard.resolvedAccount?.account_id) throw new Error("Select one resolved billing relationship for this rule.");
+    payload.client_account_id = state.rateCard.resolvedAccount.account_id;
+  }
+  return payload;
+}
+
+function syncRateCardCustomFields() {
+  const customType = $("rateBillingSessionType").value === "custom";
+  const customDuration = $("rateDurationChoice").value === "custom";
+  $("rateCustomDescription").hidden = !customType;
+  $("rateCustomCode").hidden = !customType;
+  $("rateCustomDurationMinutes").hidden = !customDuration;
+}
+
+function syncRateCardScopeUi() {
+  const mode = $("rateAppliesTo").value;
+  $("rateScopeResolver").hidden = mode === "everyone";
+  $("rateAppliesSearch").placeholder = mode === "account" ? "Search billing relationships..." : "Search clients...";
+  renderRateScopeResults();
+  renderResolvedRateScope();
+}
+
+function clearRateScopeSelections() {
+  state.rateCard.resolvedPerson = null;
+  state.rateCard.resolvedAccount = null;
+  state.rateCard.participantSelections = [];
+  state.rateCard.scopeResults = [];
+  $("rateAppliesSearch").value = "";
+  renderResolvedRateScope();
+  renderRateScopeResults();
+}
+
+function renderResolvedRateScope() {
+  const mode = $("rateAppliesTo").value;
+  if (mode === "person") {
+    $("rateScopeResolved").textContent = state.rateCard.resolvedPerson ? `Resolved client: ${state.rateCard.resolvedPerson.display_name}` : "No client resolved yet.";
+  } else if (mode === "account") {
+    $("rateScopeResolved").textContent = state.rateCard.resolvedAccount ? `Resolved billing relationship: ${state.rateCard.resolvedAccount.account_name}` : "No billing relationship resolved yet.";
+  } else if (mode === "participants") {
+    $("rateScopeResolved").textContent = state.rateCard.participantSelections.length ? "Resolved clients together:" : "Add at least two resolved clients.";
+  } else {
+    $("rateScopeResolved").textContent = "";
+  }
+  $("rateParticipantSelections").innerHTML = state.rateCard.participantSelections.map(person => `<span class="chip linked">${person.display_name}<button data-remove-rate-participant="${person.person_id}">×</button></span>`).join("");
+  document.querySelectorAll("[data-remove-rate-participant]").forEach(button => {
+    button.onclick = () => {
+      state.rateCard.participantSelections = state.rateCard.participantSelections.filter(person => person.person_id !== button.dataset.removeRateParticipant);
+      renderResolvedRateScope();
+      renderRateRulePreview();
+    };
+  });
+}
+
+function renderRateScopeResults() {
+  const mode = $("rateAppliesTo").value;
+  const rows = state.rateCard.scopeResults || [];
+  $("rateScopeResults").innerHTML = rows.map(row => {
+    const label = mode === "account" ? row.account_name : row.display_name;
+    const code = row.account_code || row.person_code || "";
+    return `<button type="button" class="mini" data-rate-scope-pick="${mode}:${mode === "account" ? row.account_id : row.person_id}">${fmt(label)}${code ? ` (${code})` : ""}</button>`;
+  }).join("");
+  document.querySelectorAll("[data-rate-scope-pick]").forEach(button => {
+    button.onclick = () => {
+      const [pickMode, id] = button.dataset.rateScopePick.split(":");
+      const picked = rows.find(row => (pickMode === "account" ? row.account_id : row.person_id) === id);
+      if (!picked) return;
+      if (pickMode === "account") {
+        state.rateCard.resolvedAccount = picked;
+      } else if (pickMode === "person") {
+        state.rateCard.resolvedPerson = picked;
+      } else if (!state.rateCard.participantSelections.some(person => person.person_id === picked.person_id)) {
+        state.rateCard.participantSelections = [...state.rateCard.participantSelections, picked];
+      }
+      $("rateAppliesSearch").value = "";
+      state.rateCard.scopeResults = [];
+      renderRateScopeResults();
+      renderResolvedRateScope();
+      renderRateRulePreview();
+    };
+  });
+}
+
+function renderRateRulePreview() {
+  syncRateCardCustomFields();
+  const scope = $("rateAppliesTo").value;
+  const duration = $("rateDurationChoice").value === "custom"
+    ? `${$("rateCustomDurationMinutes").value || "?"} minutes`
+    : `${$("rateDurationChoice").value || "?"} minutes`;
+  const sessionType = billingTypeLabel($("rateBillingSessionType").value, $("rateCustomDescription").value.trim());
+  const timeCategory = timeLabel($("rateTimeCategory").value);
+  const amount = $("rateAmountInput").value.trim() || "?";
+  const effective = $("rateEffectiveFrom").value || "today";
+  let scopeText = "for everyone";
+  if (scope === "person") scopeText = state.rateCard.resolvedPerson ? `for client ${state.rateCard.resolvedPerson.display_name}` : "for one resolved client";
+  if (scope === "participants") scopeText = state.rateCard.participantSelections.length ? `for clients ${state.rateCard.participantSelections.map(person => person.display_name).join(" + ")}` : "for resolved clients together";
+  if (scope === "account") scopeText = state.rateCard.resolvedAccount ? `for billing relationship ${state.rateCard.resolvedAccount.account_name}` : "for one resolved billing relationship";
+  const action = state.rateCard.mode === "replace" ? "replace the selected rule with" : "save";
+  $("rateRulePreview").textContent = `This will ${action} a ${timeCategory.toLowerCase()} ${sessionType.toLowerCase()} rate of $${amount} for ${duration} ${scopeText}, effective ${effective}.`;
+}
+
+function resetRateCardForm() {
+  state.rateCard.mode = "create";
+  state.rateCard.replacingRuleId = null;
+  $("rateRuleForm").reset();
+  $("rateDurationChoice").value = "60";
+  $("rateBillingSessionType").value = "psychotherapy";
+  $("rateTimeCategory").value = "standard";
+  $("rateAppliesTo").value = "everyone";
+  $("rateEffectiveFrom").value = new Date().toISOString().slice(0, 10);
+  clearRateScopeSelections();
+  syncRateCardCustomFields();
+  syncRateCardScopeUi();
+  renderRateRulePreview();
+}
+
+function startRateRuleReplacement(row) {
+  if (!row) return;
+  state.rateCard.mode = "replace";
+  state.rateCard.replacingRuleId = row.rate_rule_id;
+  $("rateAmountInput").value = row.amount;
+  if ([30, 60, 90, 120].includes(Number(row.duration_minutes))) {
+    $("rateDurationChoice").value = String(row.duration_minutes);
+    $("rateCustomDurationMinutes").value = "";
+  } else {
+    $("rateDurationChoice").value = "custom";
+    $("rateCustomDurationMinutes").value = row.duration_minutes || "";
+  }
+  $("rateBillingSessionType").value = row.billing_session_type;
+  $("rateCustomDescription").value = row.custom_service_description || "";
+  $("rateCustomCode").value = row.custom_service_code || "";
+  $("rateTimeCategory").value = row.time_category;
+  $("rateEffectiveFrom").value = new Date().toISOString().slice(0, 10);
+  $("rateAppliesTo").value = row.scope_type === "everyone" ? "everyone" : row.scope_type;
+  state.rateCard.resolvedPerson = row.scope_type === "person" ? { person_id: row.person_id, display_name: row.display_name } : null;
+  state.rateCard.resolvedAccount = row.scope_type === "account" ? { account_id: row.client_account_id, account_name: row.account_name } : null;
+  state.rateCard.participantSelections = row.scope_type === "participants"
+    ? (row.participant_person_ids || []).map((personId, index) => ({ person_id: personId, display_name: (row.participant_names || "").split(" + ")[index] || personId }))
+    : [];
+  $("rateFormMessage").textContent = `Replacing ${row.scope_label}. Saving will end the old rule on the day before the new effective date.`;
+  $("rateFormMessage").className = "rate-form-message";
+  syncRateCardCustomFields();
+  syncRateCardScopeUi();
+  renderResolvedRateScope();
+  renderRateRulePreview();
+  $("rateAmountInput").focus();
+}
+
+async function promptToEndRateRule(ruleId) {
+  const effectiveThrough = prompt("End this rule on which date? Use YYYY-MM-DD.", new Date().toISOString().slice(0, 10));
+  if (!effectiveThrough) return;
+  await api(`/api/rate-rules/${ruleId}/end`, { method: "POST", body: JSON.stringify({ effective_through: effectiveThrough }) });
+  $("rateFormMessage").textContent = "Rate rule ended.";
+  $("rateFormMessage").className = "rate-form-message success";
+  await loadRateRules();
 }
 
 async function loadClients() {
@@ -1680,7 +1951,8 @@ function billingAddressSummary(billingParty) {
 }
 
 function personRateOverrideLine(rule) {
-  return `${money(centString(rule.amount_cents))} • ${billingTypeLabel(rule.billing_session_type)} • ${fmt(rule.duration_minutes)} min • ${timeLabel(rule.time_category)} • ${fmt(rule.effective_from)}`;
+  const duration = rule.custom_duration_minutes || rule.duration_minutes;
+  return `${money(centString(rule.amount_cents))} • ${billingTypeLabel(rule.billing_session_type, rule.custom_service_description || "")} • ${fmt(duration)} min • ${timeLabel(rule.time_category)} • ${fmt(rule.effective_from)}`;
 }
 
 async function openPersonRecord(personId, options = {}) {
@@ -1707,7 +1979,7 @@ async function openPersonRecord(personId, options = {}) {
     <h4>Billing Summary</h4>
     <h5>Billing Relationships</h5><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${a.account_id}">Open</button></div>`).join("") || "<span class='readonly-note'>No relationships yet.</span>"}</div>
     <h5>Bill-To Records</h5><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)} • ${fmt(b.billing_email)} • ${fmt(b.billing_phone)} • ${fmt(b.preferred_delivery_method)}${billingAddressSummary(b) ? ` • ${fmt(billingAddressSummary(b))}` : ""}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
-    <h4>Recent Sessions</h4><div class="compact-list">${visibleSessions.map(s => `<div><span>${fmt(s.session_date)} • ${fmt(s.raw_calendar_title)} • ${billingTypeShort(s.billing_session_type)} • ${fmt(s.duration_minutes)} min${s.other_participant_names ? ` • With ${fmt(s.other_participant_names)}` : ""} • ${fmt(s.payment_status)} • ${fmt(s.review_status)} • ${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    <h4>Recent Sessions</h4><div class="compact-list">${visibleSessions.map(s => `<div><span>${fmt(s.session_date)} • ${fmt(s.raw_calendar_title)} • ${billingTypeShort(s.billing_session_type, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.duration_minutes)} min${s.other_participant_names ? ` • With ${fmt(s.other_participant_names)}` : ""} • ${fmt(s.payment_status)} • ${fmt(s.review_status)} • ${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
     ${data.sessions.length > 10 ? `<div class="record-actions"><button id="toggleAllSessions">${showAllSessions ? "Show newest 10" : "Show all"}</button></div>` : ""}
     <h4>Client Rate Overrides</h4>
     <div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${personRateOverrideLine(r)}</span></div>`).join("") || "<span class='readonly-note'>Uses standard Rate Card. No client-specific override.</span>"}</div>
@@ -1764,6 +2036,7 @@ async function openPersonRecord(personId, options = {}) {
     await api("/api/rate-rules", {
       method: "POST",
       body: JSON.stringify({
+        applies_to: "person",
         person_id: personId,
         billing_session_type: $("personRateSessionType").value,
         duration_minutes: $("personRateDuration").value,
@@ -1871,6 +2144,7 @@ function rateSourceDescription(session, participants = []) {
   const source = session.approved_rate_source || session.rate_source;
   if (source === "person_exception") return `${first} exception`;
   if (source === "participant_combination_exception") return `${joined} joint-session exception`;
+  if (source === "billing_relationship" || source === "account") return "Billing relationship rule";
   if (source === "evening_rule") return "Evening rate";
   if (source === "weekend_rule") return "Weekend rate";
   if (source === "service_rule") return `${serviceLabel(session.service_mode)} rate`;

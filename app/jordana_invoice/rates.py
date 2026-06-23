@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
@@ -23,17 +24,16 @@ def normalize_rate_inputs(
     service_mode: str | None,
     rate_group: str | None,
 ) -> tuple[str | None, str | None, bool]:
-    """
-    Normalize service_mode and rate_group for rate matching.
-    Office/Phone/FaceTime are treated identically for billing rates.
-    
-    Returns: (normalized_service_mode, normalized_rate_group, is_equivalent_method)
-    
-    When is_equivalent_method is True, rate matching should ignore
-    service_mode and rate_group specificity for these appointment methods.
-    """
     is_equivalent = service_mode in EQUIVALENT_APPOINTMENT_METHODS
     return service_mode, rate_group, is_equivalent
+
+
+def normalize_custom_service_description(value: str | None) -> str:
+    return re.sub(r"\s+", " ", text(value).strip()).lower()
+
+
+def normalize_custom_service_code(value: str | None) -> str:
+    return re.sub(r"\s+", "", text(value).strip()).upper()
 
 
 @dataclass
@@ -60,6 +60,8 @@ def seed_rate_rule(
     effective_from: str,
     duration_minutes: int | None = None,
     billing_session_type: str | None = None,
+    custom_service_description: str | None = None,
+    custom_service_code: str | None = None,
     service_mode: str | None = None,
     rate_group: str | None = None,
     time_category: str = "standard",
@@ -74,9 +76,10 @@ def seed_rate_rule(
         """
         INSERT INTO rate_rules (
           rate_rule_id, client_account_id, person_id, duration_minutes,
-          billing_session_type, service_mode, rate_group, time_category, amount_cents,
+          billing_session_type, custom_service_description, custom_service_code,
+          service_mode, rate_group, time_category, amount_cents,
           effective_from, priority, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         """,
         (
             rule_id,
@@ -84,6 +87,8 @@ def seed_rate_rule(
             person_id,
             duration_minutes,
             billing_session_type,
+            text(custom_service_description).strip() or None,
+            text(custom_service_code).strip() or None,
             service_mode,
             rate_group,
             time_category,
@@ -136,6 +141,8 @@ def suggest_rate(
     session_date: str,
     duration_minutes: int | None,
     billing_session_type: str | None = None,
+    custom_service_description: str | None = None,
+    custom_service_code: str | None = None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
@@ -143,8 +150,6 @@ def suggest_rate(
     person_id: str | None = None,
     participant_person_ids: list[str] | None = None,
 ) -> RateSuggestion:
-    _, _, is_equivalent_method = normalize_rate_inputs(service_mode, rate_group)
-
     if time_category == "weekend_evening":
         policy = get_rate_policy(conn, WEEKEND_EVENING_POLICY)
         if policy == "manual_review":
@@ -165,6 +170,8 @@ def suggest_rate(
                 session_date,
                 duration_minutes,
                 billing_session_type_candidate,
+                custom_service_description,
+                custom_service_code,
                 service_mode,
                 rate_group,
                 time_category,
@@ -180,7 +187,7 @@ def suggest_rate(
 
         scopes = [
             ("person_exception", "person_id = ?", person_id),
-            ("account", "client_account_id = ?", account_id),
+            ("billing_relationship", "client_account_id = ?", account_id),
             ("default", "person_id IS NULL AND client_account_id IS NULL", None),
         ]
         for source, condition, value in scopes:
@@ -193,6 +200,8 @@ def suggest_rate(
                 session_date,
                 duration_minutes,
                 billing_session_type_candidate,
+                custom_service_description,
+                custom_service_code,
                 service_mode,
                 rate_group,
                 time_category,
@@ -221,12 +230,14 @@ def find_matching_participant_rule(
     session_date: str,
     duration_minutes: int | None,
     billing_session_type: str | None,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
 ) -> sqlite3.Row | None:
     placeholders = ",".join("?" for _ in participant_ids)
-    return conn.execute(
+    rows = conn.execute(
         f"""
         SELECT rr.*
         FROM rate_rules rr
@@ -236,8 +247,6 @@ def find_matching_participant_rule(
           AND (rr.effective_through IS NULL OR rr.effective_through = '' OR rr.effective_through >= ?)
           AND (rr.duration_minutes IS NULL OR rr.duration_minutes = ?)
           AND (rr.billing_session_type IS NULL OR rr.billing_session_type = ?)
-          AND (rr.service_mode IS NULL OR rr.service_mode = ?)
-          AND (rr.rate_group IS NULL OR rr.rate_group = ?)
           AND (rr.time_category = 'standard' OR rr.time_category = ?)
           AND rrp.person_id IN ({placeholders})
         GROUP BY rr.rate_rule_id
@@ -254,22 +263,27 @@ def find_matching_participant_rule(
           CASE WHEN rr.time_category = ? THEN 1 ELSE 0 END DESC,
           rr.priority ASC,
           rr.effective_from DESC
-        LIMIT 1
         """,
         (
             session_date,
             session_date,
             duration_minutes,
             billing_session_type,
-            service_mode,
-            rate_group,
             time_category,
             *participant_ids,
             len(participant_ids),
             len(participant_ids),
             time_category,
         ),
-    ).fetchone()
+    ).fetchall()
+    return first_matching_candidate_rule(
+        rows,
+        billing_session_type=billing_session_type,
+        custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
+        service_mode=service_mode,
+        rate_group=rate_group,
+    )
 
 
 def find_matching_rule(
@@ -279,6 +293,8 @@ def find_matching_rule(
     session_date: str,
     duration_minutes: int | None,
     billing_session_type: str | None,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
     service_mode: str | None,
     rate_group: str | None,
     time_category: str,
@@ -292,23 +308,20 @@ def find_matching_rule(
             session_date,
             duration_minutes,
             billing_session_type,
-            service_mode,
-            rate_group,
             time_category,
         ]
     )
-    return conn.execute(
+    rows = conn.execute(
         f"""
         SELECT *
         FROM rate_rules
         WHERE active = 1
           AND {scope_condition}
+          AND rate_rule_id NOT IN (SELECT rate_rule_id FROM rate_rule_participants)
           AND effective_from <= ?
           AND (effective_through IS NULL OR effective_through = '' OR effective_through >= ?)
           AND (duration_minutes IS NULL OR duration_minutes = ?)
           AND (billing_session_type IS NULL OR billing_session_type = ?)
-          AND (service_mode IS NULL OR service_mode = ?)
-          AND (rate_group IS NULL OR rate_group = ?)
           AND (time_category = 'standard' OR time_category = ?)
         ORDER BY
           CASE WHEN person_id IS NOT NULL THEN 1 ELSE 0 END DESC,
@@ -320,17 +333,91 @@ def find_matching_rule(
           CASE WHEN time_category = ? THEN 1 ELSE 0 END DESC,
           priority ASC,
           effective_from DESC
-        LIMIT 1
         """,
         (*params, time_category),
-    ).fetchone()
+    ).fetchall()
+    return first_matching_candidate_rule(
+        rows,
+        billing_session_type=billing_session_type,
+        custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
+        service_mode=service_mode,
+        rate_group=rate_group,
+    )
+
+
+def first_matching_candidate_rule(
+    rows: list[sqlite3.Row],
+    *,
+    billing_session_type: str | None,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
+    service_mode: str | None,
+    rate_group: str | None,
+) -> sqlite3.Row | None:
+    for row in rows:
+        if not rule_matches_custom_fields(
+            row,
+            billing_session_type=billing_session_type,
+            custom_service_description=custom_service_description,
+            custom_service_code=custom_service_code,
+        ):
+            continue
+        if not rule_matches_method_equivalence(
+            row,
+            service_mode=service_mode,
+            rate_group=rate_group,
+        ):
+            continue
+        return row
+    return None
+
+
+def rule_matches_custom_fields(
+    row: sqlite3.Row,
+    *,
+    billing_session_type: str | None,
+    custom_service_description: str | None,
+    custom_service_code: str | None,
+) -> bool:
+    if text(row["billing_session_type"]) != "custom" and billing_session_type != "custom":
+        return True
+    if billing_session_type != "custom":
+        return False
+    session_code = normalize_custom_service_code(custom_service_code)
+    session_desc = normalize_custom_service_description(custom_service_description)
+    rule_code = normalize_custom_service_code(row["custom_service_code"])
+    rule_desc = normalize_custom_service_description(row["custom_service_description"])
+    if session_code:
+        return bool(rule_code and rule_code == session_code)
+    return bool(session_desc and rule_desc and rule_desc == session_desc)
+
+
+def rule_matches_method_equivalence(
+    row: sqlite3.Row,
+    *,
+    service_mode: str | None,
+    rate_group: str | None,
+) -> bool:
+    row_service_mode = text(row["service_mode"]) or None
+    row_rate_group = text(row["rate_group"]) or None
+    if row_service_mode is None and row_rate_group is None:
+        return True
+    normalized_service_mode, normalized_rate_group, is_equivalent_method = normalize_rate_inputs(service_mode, rate_group)
+    if is_equivalent_method:
+        service_ok = row_service_mode is None or row_service_mode in EQUIVALENT_APPOINTMENT_METHODS
+        group_ok = row_rate_group is None or row_rate_group in EQUIVALENT_RATE_GROUPS
+        return service_ok and group_ok
+    service_ok = row_service_mode is None or row_service_mode == normalized_service_mode
+    group_ok = row_rate_group is None or row_rate_group == normalized_rate_group
+    return service_ok and group_ok
 
 
 def rate_explanation(source: str) -> str:
     return {
         "default": "Default matching rate.",
         "person_exception": "Person-specific rate exception.",
-        "account": "Account-specific rate rule.",
+        "billing_relationship": "Billing-relationship rate rule.",
     }.get(source, "Matched rate rule.")
 
 

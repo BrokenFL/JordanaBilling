@@ -288,6 +288,8 @@ CREATE TABLE IF NOT EXISTS rate_rules (
   person_id TEXT REFERENCES people(person_id),
   duration_minutes INTEGER,
   billing_session_type TEXT,
+  custom_service_description TEXT,
+  custom_service_code TEXT,
   service_mode TEXT,
   rate_group TEXT,
   time_category TEXT NOT NULL DEFAULT 'standard',
@@ -725,6 +727,8 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
         "rate_rules",
         {
             "billing_session_type": "TEXT",
+            "custom_service_description": "TEXT",
+            "custom_service_code": "TEXT",
         },
     )
     conn.execute(
@@ -735,6 +739,9 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rate_rules_custom_match ON rate_rules(active, billing_session_type, custom_service_code)"
     )
 
 

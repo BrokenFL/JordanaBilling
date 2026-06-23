@@ -23,6 +23,7 @@ from .review_services import (
     create_person,
     create_rate_rule_from_payload,
     dashboard_status,
+    end_rate_rule,
     get_account_record,
     get_person_record,
     get_review_candidate,
@@ -33,7 +34,9 @@ from .review_services import (
     list_rate_rules,
     mark_candidate,
     merge_people,
+    preview_rate_suggestion,
     refresh_candidate_suggestions,
+    replace_rate_rule_from_payload,
     save_billing_section,
     save_interpretation,
     save_person_alias,
@@ -227,6 +230,19 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/rate-rules":
                     self.send_json(create_rate_rule_from_payload(self.conn(), data))
                     return
+                if parsed.path == "/api/rate-rules/preview":
+                    self.send_json(preview_rate_suggestion(self.conn(), data))
+                    return
+                if parsed.path.startswith("/api/rate-rules/"):
+                    parts = parsed.path.strip("/").split("/")
+                    rule_id = parts[2]
+                    action = parts[3] if len(parts) > 3 else ""
+                    if action == "replace":
+                        self.send_json(replace_rate_rule_from_payload(self.conn(), rule_id, data))
+                        return
+                    if action == "end":
+                        self.send_json(end_rate_rule(self.conn(), rule_id, data.get("effective_through") or ""))
+                        return
                 if parsed.path == "/api/business-profile":
                     self.send_json(save_business_profile(self.conn(), data))
                     return
