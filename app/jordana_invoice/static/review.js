@@ -3075,21 +3075,25 @@ function billingModalTrapKeydown(e) {
   }
 }
 
-function renderModalSearchResults(containerId, rows, selectedPersonId, onSelect) {
+function renderModalSearchResults(containerId, rows, selectedPersonId, onSelect, knownIds) {
   const container = document.getElementById(containerId);
   if (!container) return;
   if (!rows.length) {
     container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>';
     return;
   }
-  container.innerHTML = rows.map(row => `
-    <div class="modal-result-row ${row.person_id === selectedPersonId ? "selected" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
+  const known = knownIds || new Set();
+  container.innerHTML = rows.map(row => {
+    const isIncluded = known.has(row.person_id);
+    return `
+    <div class="modal-result-row ${row.person_id === selectedPersonId ? "selected" : ""} ${isIncluded ? "already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="${isIncluded ? "-1" : "0"}" role="${isIncluded ? "text" : "button"}">
       <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
-      ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
-    </div>
-  `).join("");
+      ${isIncluded ? '<span class="help already-included-label">Already included</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+    </div>`;
+  }).join("");
   container.querySelectorAll(".modal-result-row").forEach(el => {
     const personId = el.dataset.personId;
+    if (known.has(personId)) return;
     const clickHandler = () => onSelect(personId);
     el.addEventListener("click", clickHandler);
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clickHandler(); } });
@@ -3172,32 +3176,47 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     }
     submitBtn.disabled = true;
     errorDisplay.textContent = "";
+    const errorBox = document.getElementById("billingModalError");
+    const actionsBox = document.querySelector(".modal-actions");
     try {
       const safeName = `${selectedPerson.display_name} Billing Relationship`;
-      const account = await api("/api/accounts", {
+      const res = await fetch("/api/accounts/from-client", {
         method: "POST",
-        body: JSON.stringify({ account_name: safeName, account_type: "individual" })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ person_id: selectedPerson.person_id, account_name: safeName, account_type: "individual" })
       });
-      await api("/api/account-members", {
-        method: "POST",
-        body: JSON.stringify({
-          account_id: account.account_id,
-          person_id: selectedPerson.person_id,
-          relationship_role: "primary",
-          is_primary: true
-        })
-      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) throw json;
+      const accountId = json.account_id;
       let nextContext = returnContext;
       if (validReturnContext(returnContext)) {
-        nextContext = persistReturnContext({ ...returnContext, accountId: account.account_id });
+        nextContext = persistReturnContext({ ...returnContext, accountId });
         location.hash = returnContextHash(nextContext);
       }
       closeBillingModal();
       await loadClients();
-      await openAccountRecord(account.account_id, { returnContext: nextContext });
+      await openAccountRecord(accountId, { returnContext: nextContext });
     } catch (err) {
-      errorDisplay.textContent = err.message || "Failed to create billing relationship.";
       submitBtn.disabled = false;
+      if (err && err.existing && err.account_id) {
+        const existingAccountId = err.account_id;
+        errorBox.innerHTML = `A billing relationship already exists for this client. <button type="button" id="billingModalOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+        const openBtn = document.getElementById("billingModalOpenExisting");
+        if (openBtn) {
+          openBtn.addEventListener("click", async () => {
+            let nextContext = returnContext;
+            if (validReturnContext(returnContext)) {
+              nextContext = persistReturnContext({ ...returnContext, accountId: existingAccountId });
+              location.hash = returnContextHash(nextContext);
+            }
+            closeBillingModal();
+            await loadClients();
+            await openAccountRecord(existingAccountId, { returnContext: nextContext });
+          });
+        }
+      } else {
+        errorBox.textContent = (err && err.error) || (err && err.message) || "Failed to create billing relationship.";
+      }
     }
   });
 
@@ -3254,7 +3273,7 @@ function openAddClientModal(accountId, returnContext, originatingBtn, existingMe
     selectedDisplay.innerHTML = `Selected client: <strong>${escapeHtml(person.display_name)}</strong>`;
     submitBtn.disabled = false;
     errorDisplay.textContent = "";
-    renderModalSearchResults("billingModalResults", searchRows, personId, handleSelect);
+    renderModalSearchResults("billingModalResults", searchRows, personId, handleSelect, knownIds);
   };
 
   const doSearch = debounce(async (q) => {
@@ -3266,7 +3285,7 @@ function openAddClientModal(accountId, returnContext, originatingBtn, existingMe
     }
     try {
       searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
-      renderModalSearchResults("billingModalResults", searchRows, selectedPerson ? selectedPerson.person_id : null, handleSelect);
+      renderModalSearchResults("billingModalResults", searchRows, selectedPerson ? selectedPerson.person_id : null, handleSelect, knownIds);
     } catch (err) {
       errorDisplay.textContent = err.message || "Search failed.";
     }

@@ -22,8 +22,11 @@ from jordana_invoice.review_server import make_handler
 from jordana_invoice.review_services import (
     add_account_member,
     create_account,
+    create_account_or_return_existing,
     create_person,
+    find_equivalent_account,
     get_account_record,
+    list_account_records,
 )
 
 
@@ -280,6 +283,260 @@ class TestRound1CssStatic(unittest.TestCase):
         self.assertIn(".modal-result-row", css)
         self.assertIn(".modal-error", css)
         self.assertIn(".modal-actions", css)
+
+
+class TestDuplicateRelationshipPrevention(unittest.TestCase):
+    """Backend: preventing duplicate billing relationships for the same client."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "test.db"
+        self.conn = connect(str(self.db_path))
+        init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_create_account_or_return_existing_creates_new(self):
+        """First creation for a client creates a new account with primary member."""
+        person = create_person(self.conn, {"display_name": "New Client"})
+        result = create_account_or_return_existing(
+            self.conn, person["person_id"], "New Client Billing Relationship", "individual"
+        )
+        self.assertFalse(result["existing"])
+        self.assertTrue(result["account"]["account_id"])
+        record = get_account_record(self.conn, result["account"]["account_id"])
+        self.assertEqual(len(record["members"]), 1)
+        self.assertEqual(record["members"][0]["person_id"], person["person_id"])
+        self.assertTrue(record["members"][0]["is_primary"])
+
+    def test_create_account_or_return_existing_returns_existing(self):
+        """Second creation for the same client returns the existing account."""
+        person = create_person(self.conn, {"display_name": "Dup Client"})
+        first = create_account_or_return_existing(
+            self.conn, person["person_id"], "Dup Client Billing Relationship", "individual"
+        )
+        self.assertFalse(first["existing"])
+        second = create_account_or_return_existing(
+            self.conn, person["person_id"], "Dup Client Billing Relationship 2", "individual"
+        )
+        self.assertTrue(second["existing"])
+        self.assertEqual(second["account"]["account_id"], first["account"]["account_id"])
+
+    def test_no_additional_account_row_created(self):
+        """Repeated create calls do not add new account rows."""
+        person = create_person(self.conn, {"display_name": "Repeat Client"})
+        create_account_or_return_existing(
+            self.conn, person["person_id"], "Repeat Client Billing", "individual"
+        )
+        create_account_or_return_existing(
+            self.conn, person["person_id"], "Repeat Client Billing 2", "individual"
+        )
+        create_account_or_return_existing(
+            self.conn, person["person_id"], "Repeat Client Billing 3", "individual"
+        )
+        accounts = list_account_records(self.conn)
+        individual_accounts = [a for a in accounts if a["account_type"] == "individual"]
+        self.assertEqual(len(individual_accounts), 1)
+
+    def test_find_equivalent_account_finds_sole_member(self):
+        """find_equivalent_account finds an account where the person is the sole member."""
+        person = create_person(self.conn, {"display_name": "Sole Test"})
+        account = create_account(self.conn, "Sole Test Billing", "individual")
+        add_account_member(self.conn, account["account_id"], person["person_id"], "primary", True)
+        found = find_equivalent_account(self.conn, person["person_id"], "individual")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["account_id"], account["account_id"])
+
+    def test_find_equivalent_account_finds_primary_member(self):
+        """find_equivalent_account finds an account where the person is primary among multiple members."""
+        person_a = create_person(self.conn, {"display_name": "Primary Test"})
+        person_b = create_person(self.conn, {"display_name": "Secondary Test"})
+        account = create_account(self.conn, "Family Billing", "individual")
+        add_account_member(self.conn, account["account_id"], person_a["person_id"], "primary", True)
+        add_account_member(self.conn, account["account_id"], person_b["person_id"], "family_member", False)
+        found = find_equivalent_account(self.conn, person_a["person_id"], "individual")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["account_id"], account["account_id"])
+
+    def test_find_equivalent_account_returns_none_for_non_primary(self):
+        """find_equivalent_account does not return an account where the person is a non-primary member."""
+        person_a = create_person(self.conn, {"display_name": "Primary A"})
+        person_b = create_person(self.conn, {"display_name": "Non Primary B"})
+        account = create_account(self.conn, "Family Billing 2", "individual")
+        add_account_member(self.conn, account["account_id"], person_a["person_id"], "primary", True)
+        add_account_member(self.conn, account["account_id"], person_b["person_id"], "family_member", False)
+        found = find_equivalent_account(self.conn, person_b["person_id"], "individual")
+        self.assertIsNone(found)
+
+    def test_find_equivalent_account_ignores_inactive(self):
+        """find_equivalent_account ignores inactive accounts."""
+        person = create_person(self.conn, {"display_name": "Inactive Test"})
+        account = create_account(self.conn, "Inactive Test Billing", "individual")
+        add_account_member(self.conn, account["account_id"], person["person_id"], "primary", True)
+        self.conn.execute("UPDATE client_accounts SET active = 0 WHERE account_id = ?", (account["account_id"],))
+        self.conn.commit()
+        found = find_equivalent_account(self.conn, person["person_id"], "individual")
+        self.assertIsNone(found)
+
+
+class TestDuplicateRelationshipApi(unittest.TestCase):
+    """API-level: /api/accounts/from-client rejects duplicate creation."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "test.db"
+        self.conn = connect(str(self.db_path))
+        init_db(self.conn)
+        handler_cls = make_handler(str(self.db_path))
+        self.server = HTTPServer(("127.0.0.1", 0), handler_cls)
+        self.port = self.server.server_address[1]
+        import threading
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _post(self, path, body):
+        import urllib.request
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_api_creates_new_for_new_client(self):
+        person = create_person(self.conn, {"display_name": "API New"})
+        status, body = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "API New Billing",
+            "account_type": "individual",
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(body.get("ok"))
+        self.assertFalse(body.get("existing"))
+        self.assertTrue(body.get("account_id"))
+
+    def test_api_returns_409_for_duplicate(self):
+        person = create_person(self.conn, {"display_name": "API Dup"})
+        self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "API Dup Billing",
+            "account_type": "individual",
+        })
+        status, body = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "API Dup Billing 2",
+            "account_type": "individual",
+        })
+        self.assertEqual(status, 409)
+        self.assertFalse(body.get("ok", True))
+        self.assertTrue(body.get("existing"))
+        self.assertIn("already exists", body.get("error", ""))
+        self.assertTrue(body.get("account_id"))
+
+    def test_repeated_create_clicks_no_duplicate_accounts(self):
+        """Multiple calls to /api/accounts/from-client for same person produce only one account."""
+        person = create_person(self.conn, {"display_name": "Repeat API"})
+        for i in range(5):
+            self._post("/api/accounts/from-client", {
+                "person_id": person["person_id"],
+                "account_name": f"Repeat API Billing {i}",
+                "account_type": "individual",
+            })
+        accounts = list_account_records(self.conn)
+        individual = [a for a in accounts if a["account_type"] == "individual"]
+        self.assertEqual(len(individual), 1)
+
+
+class TestRound1CorrectionJsStatic(unittest.TestCase):
+    """Static JS checks for Round 1 correction: duplicate prevention and Add Client fixes."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+
+    def test_create_modal_uses_from_client_endpoint(self):
+        self.assertIn("/api/accounts/from-client", self.js)
+
+    def test_create_modal_handles_existing_flag(self):
+        self.assertIn("err.existing", self.js)
+        self.assertIn("err.account_id", self.js)
+
+    def test_create_modal_has_open_existing_button(self):
+        self.assertIn("billingModalOpenExisting", self.js)
+        self.assertIn("Open existing relationship", self.js)
+
+    def test_create_modal_duplicate_message(self):
+        self.assertIn("A billing relationship already exists for this client.", self.js)
+
+    def test_create_modal_preserves_context_on_existing(self):
+        """The Open existing handler preserves return context."""
+        start = self.js.index("billingModalOpenExisting")
+        end = self.js.index("});", start) + 3
+        block = self.js[start:end]
+        self.assertIn("returnContext", block)
+        self.assertIn("persistReturnContext", block)
+
+    def test_render_modal_search_results_supports_known_ids(self):
+        self.assertIn("knownIds", self.js)
+        self.assertIn("already-included", self.js)
+        self.assertIn("Already included", self.js)
+
+    def test_existing_members_not_clickable(self):
+        """renderModalSearchResults skips attaching click handlers for known members."""
+        start = self.js.index("function renderModalSearchResults")
+        end = self.js.index("}", self.js.index("container.querySelectorAll", start))
+        func_body = self.js[start:end]
+        self.assertIn("if (known.has(personId)) return;", func_body)
+
+    def test_add_client_modal_passes_known_ids_to_render(self):
+        start = self.js.index("function openAddClientModal")
+        end = self.js.index("function openBillingRelationshipEditor")
+        if end < start:
+            end = len(self.js)
+        func_body = self.js[start:end]
+        self.assertIn("handleSelect, knownIds)", func_body)
+
+    def test_add_client_modal_stays_open_on_backend_error(self):
+        """The catch block in Add Client submit does not call closeBillingModal."""
+        modal_start = self.js.index("function openAddClientModal")
+        modal_end = self.js.index("\n}", modal_start + 10)
+        modal_body = self.js[modal_start:modal_end]
+        submit_start = modal_body.rindex('submitBtn.addEventListener("click"')
+        handler = modal_body[submit_start:]
+        self.assertIn("catch", handler)
+        catch_start = handler.index("catch")
+        catch_block = handler[catch_start:]
+        self.assertNotIn("closeBillingModal", catch_block)
+        self.assertIn("submitBtn.disabled = false", catch_block)
+
+    def test_no_api_accounts_post_in_create_modal(self):
+        """The create modal no longer uses the old /api/accounts POST directly."""
+        start = self.js.index("function openCreateRelationshipModal")
+        end = self.js.index("function openAddClientModal")
+        func_body = self.js[start:end]
+        self.assertNotIn('api("/api/accounts"', func_body)
+        self.assertNotIn('api("/api/account-members"', func_body)
+
+
+class TestRound1CorrectionCssStatic(unittest.TestCase):
+    """Static CSS checks for Round 1 correction styles."""
+
+    def test_already_included_css_exists(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".already-included", css)
+        self.assertIn(".already-included-label", css)
+
+    def test_modal_link_btn_css_exists(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".modal-link-btn", css)
 
 
 if __name__ == "__main__":

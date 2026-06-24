@@ -21,6 +21,7 @@ from .review_services import (
     BillingPartyNotFoundError,
     BillingPartyTypeError,
     create_account,
+    create_account_or_return_existing,
     create_billing_party,
     create_person,
     create_rate_rule_from_payload,
@@ -262,6 +263,18 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/accounts":
                     self.send_json(create_account(self.conn(), data["account_name"], data.get("account_type", "individual")))
+                    return
+                if parsed.path == "/api/accounts/from-client":
+                    result = create_account_or_return_existing(
+                        self.conn(),
+                        data["person_id"],
+                        data["account_name"],
+                        data.get("account_type", "individual"),
+                    )
+                    if result["existing"]:
+                        self.send_json({"ok": False, "existing": True, "error": "A billing relationship already exists for this client.", "account_id": result["account"]["account_id"], "account_name": result["account"]["account_name"]}, status=409)
+                    else:
+                        self.send_json({"ok": True, "existing": False, "account_id": result["account"]["account_id"], "account_name": result["account"]["account_name"]})
                     return
                 if parsed.path.startswith("/api/accounts/"):
                     account_id = parsed.path.rsplit("/", 1)[-1]

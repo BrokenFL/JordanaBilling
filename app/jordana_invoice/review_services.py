@@ -1894,6 +1894,59 @@ def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, A
     }
 
 
+def find_equivalent_account(
+    conn: sqlite3.Connection,
+    person_id: str,
+    account_type: str = "individual",
+) -> dict[str, Any] | None:
+    """Find an active account where the given person is the primary or sole member.
+
+    Returns the account dict if found, None otherwise.
+    """
+    init_db(conn)
+    rows = conn.execute(
+        """
+        SELECT DISTINCT a.* FROM client_accounts a
+        JOIN account_members m ON m.account_id = a.account_id
+        WHERE m.person_id = ? AND a.active = 1 AND a.account_type = ?
+        """,
+        (person_id, account_type),
+    ).fetchall()
+    for row in rows:
+        account = dict(row)
+        members = conn.execute(
+            "SELECT * FROM account_members WHERE account_id = ?",
+            (account["account_id"],),
+        ).fetchall()
+        if len(members) == 1:
+            return account
+        primary = [m for m in members if m["is_primary"]]
+        if primary and primary[0]["person_id"] == person_id:
+            return account
+    return None
+
+
+def create_account_or_return_existing(
+    conn: sqlite3.Connection,
+    person_id: str,
+    account_name: str,
+    account_type: str = "individual",
+) -> dict[str, Any]:
+    """Create a billing relationship for a client, or return an existing equivalent.
+
+    If an active equivalent account already exists for this person (primary or sole
+    member of an active individual account), return it with an ``existing`` flag
+    instead of creating a duplicate.
+    """
+    init_db(conn)
+    equivalent = find_equivalent_account(conn, person_id, account_type)
+    if equivalent:
+        return {"existing": True, "account": equivalent}
+    account = create_account(conn, account_name, account_type)
+    member_id = add_account_member(conn, account["account_id"], person_id, "primary", True)
+    return {"existing": False, "account": account, "account_member_id": member_id}
+
+
 def create_account(conn: sqlite3.Connection, account_name: str, account_type: str = "individual") -> dict[str, Any]:
     init_db(conn)
     existing = conn.execute(

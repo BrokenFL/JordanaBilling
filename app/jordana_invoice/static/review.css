@@ -590,3 +590,7 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .billing-modal .modal-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
 .billing-modal .modal-actions .modal-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .billing-modal .modal-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 12px; }
+.billing-modal .modal-result-row.already-included { opacity: 0.55; cursor: default; }
+.billing-modal .modal-result-row.already-included:hover { background: transparent; }
+.billing-modal .already-included-label { color: var(--muted); font-style: italic; }
+.billing-modal .modal-link-btn { background: none; border: none; color: var(--blue); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 4px; }

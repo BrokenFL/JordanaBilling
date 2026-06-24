@@ -213,10 +213,16 @@ The modal contains:
 - Inline validation and error messages
 
 When a client is selected and Create is pressed:
-- The account is created via the existing `/api/accounts` endpoint with a safe default name (`{DisplayName} Billing Relationship`) and type `individual`
-- The selected client is added as the primary account member via `/api/account-members`
+- The request goes to `/api/accounts/from-client` which checks for an existing equivalent relationship before creating
+- If no equivalent exists: a new account is created with a safe default name (`{DisplayName} Billing Relationship`) and type `individual`, and the selected client is added as the primary account member
 - The account editor opens
 - Return-to-review context is preserved when creation began from Session Review
+
+#### Duplicate Relationship Prevention
+
+If the selected client is already the primary or sole member of an active individual billing relationship, the backend returns a 409 response with the existing account's identifier. The modal shows an inline message: "A billing relationship already exists for this client." with an "Open existing relationship" button. Clicking it opens the existing record and preserves return-to-review context. No duplicate account is created.
+
+The backend enforces this through `find_equivalent_account` and `create_account_or_return_existing` in `review_services.py`. Repeated Create clicks for the same client produce only one account.
 
 ### Add Client
 
@@ -225,8 +231,11 @@ The former "Add Member" browser prompt has been replaced with an in-page client 
 The modal:
 - Searches existing clients through the `/api/people` API
 - Shows explicit selectable result rows
+- Existing members are visually marked "Already included" and are not clickable
+- The Add button remains disabled until a non-duplicate client is selected
 - Shows the selected client before saving
-- Prevents adding a person already in the relationship (shows "This client is already included in this billing relationship.")
+- If a duplicate request reaches the backend, displays "This client is already included in this billing relationship." inline (no `alert()`)
+- The modal remains open after a duplicate validation error so the user can try again
 - Never silently chooses the first fuzzy match
 - Refreshes the relationship record after a successful add
 
