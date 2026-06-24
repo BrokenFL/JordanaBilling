@@ -1122,9 +1122,12 @@ function renderSessions(rows, total) {
   $("sessionsResultCount").textContent = `Showing ${rows.length ? state.sessions.offset + 1 : 0} to ${state.sessions.offset + rows.length} of ${total} results`;
   $("sessionsRows").innerHTML = rows.map(row => {
     const canRestore = row.review_status === "excluded" && row.candidate_id;
-    const actionCell = canRestore
-      ? `<td><button class="restore-session-btn link-btn" data-cid="${row.candidate_id}">Return to Review</button></td>`
-      : `<td></td>`;
+    const canPromote = !row.session_id && row.review_status === "needs_classification" && row.candidate_id;
+    let actionCell = `<td></td>`;
+    if (canRestore)
+      actionCell = `<td><button class="restore-session-btn link-btn" data-cid="${row.candidate_id}">Return to Review</button></td>`;
+    else if (canPromote)
+      actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${row.candidate_id}">Send to Review</button></td>`;
     return `
     <tr>
       <td>${fmt(row.date)}</td>
@@ -1141,6 +1144,9 @@ function renderSessions(rows, total) {
   $("sessionsRows").querySelectorAll(".restore-session-btn").forEach(btn => {
     btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
   });
+  $("sessionsRows").querySelectorAll(".send-session-to-review-btn").forEach(btn => {
+    btn.addEventListener("click", () => sendSessionRowToReview(btn.dataset.cid));
+  });
 }
 
 async function restoreSessionRow(candidateId) {
@@ -1149,6 +1155,15 @@ async function restoreSessionRow(candidateId) {
     await loadSessions();
   } catch (err) {
     alert("Could not restore session: " + err.message);
+  }
+}
+
+async function sendSessionRowToReview(candidateId) {
+  try {
+    await api(`/api/review/candidates/${candidateId}/send-to-review`, { method: "POST", body: JSON.stringify({ reason: "Promoted to review queue from Sessions view" }) });
+    await loadSessions();
+  } catch (err) {
+    alert("Could not promote to review: " + err.message);
   }
 }
 

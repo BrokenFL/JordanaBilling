@@ -320,6 +320,14 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("/send-to-review", js)
         self.assertIn("!isSession", js)
 
+    def test_sessions_table_has_send_to_review_for_unclassified_candidate_only_rows(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("send-session-to-review-btn", js)
+        self.assertIn("sendSessionRowToReview", js)
+        self.assertIn('!row.session_id && row.review_status === "needs_classification"', js)
+        self.assertIn("/send-to-review", js)
+
 
 if __name__ == "__main__":
     unittest.main()
