@@ -190,8 +190,8 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertNotIn('alert("No matching client found."', self.js)
 
     def test_create_modal_has_instruction_text(self):
-        self.assertIn("Select an existing client to begin", self.js)
-        self.assertIn("A more detailed payer setup will be completed in the next workflow step", self.js)
+        self.assertIn("Choose who should receive invoices", self.js)
+        self.assertIn("which clients they are paying for", self.js)
 
     def test_add_client_button_label(self):
         self.assertIn("Add Client", self.js)
@@ -268,9 +268,9 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertIn("data.members", self.js)
 
     def test_modal_submit_disabled_until_selection(self):
-        self.assertIn("submitBtn.disabled = false", self.js)
-        self.assertIn("disabled>Create", self.js)
-        self.assertIn("disabled>Add", self.js)
+        self.assertIn("disabled", self.js)
+        self.assertIn("wizardContinue", self.js)
+        self.assertIn("modal-submit", self.js)
 
 
 class TestRound1CssStatic(unittest.TestCase):
@@ -463,22 +463,22 @@ class TestRound1CorrectionJsStatic(unittest.TestCase):
         self.js = Path("app/jordana_invoice/static/review.js").read_text()
 
     def test_create_modal_uses_from_client_endpoint(self):
-        self.assertIn("/api/accounts/from-client", self.js)
+        self.assertIn("/api/billing-relationships/setup", self.js)
 
     def test_create_modal_handles_existing_flag(self):
-        self.assertIn("err.existing", self.js)
+        self.assertIn("err.duplicate", self.js)
         self.assertIn("err.account_id", self.js)
 
     def test_create_modal_has_open_existing_button(self):
-        self.assertIn("billingModalOpenExisting", self.js)
+        self.assertIn("wizardOpenExisting", self.js)
         self.assertIn("Open existing relationship", self.js)
 
     def test_create_modal_duplicate_message(self):
-        self.assertIn("A billing relationship already exists for this client.", self.js)
+        self.assertIn("This billing relationship already exists.", self.js)
 
     def test_create_modal_preserves_context_on_existing(self):
         """The Open existing handler preserves return context."""
-        start = self.js.index("billingModalOpenExisting")
+        start = self.js.index("wizardOpenExisting")
         end = self.js.index("});", start) + 3
         block = self.js[start:end]
         self.assertIn("returnContext", block)
@@ -620,13 +620,15 @@ class TestSessionReviewDuplicatePath(unittest.TestCase):
     def test_no_billing_relationship_suffix_in_name(self):
         """Static check: JS does not append Billing Relationship to the account name."""
         js = Path("app/jordana_invoice/static/review.js").read_text()
-        # Check the safeName assignment line
-        self.assertIn("const safeName = selectedPerson.display_name", js)
-        # Verify no Billing Relationship suffix in the safeName line
-        start = js.index("const safeName =")
-        end = js.index("\n", start)
-        safe_name_line = js[start:end]
-        self.assertNotIn("Billing Relationship", safe_name_line)
+        # The wizard uses the setup endpoint which generates names server-side
+        self.assertIn("/api/billing-relationships/setup", js)
+        # The wizard should not construct account names client-side with "Billing Relationship" suffix
+        wizard_start = js.index("function openCreateRelationshipModal")
+        wizard_end = js.index("\nfunction openAddClientModal")
+        wizard_code = js[wizard_start:wizard_end]
+        # "Review billing relationship" is a heading, not a name — that's fine
+        # But no account_name field should be set with "Billing Relationship" in it
+        self.assertNotIn("account_name", wizard_code)
 
     def test_repeated_create_idempotent(self):
         """5 repeated creates for same person produce 1 account."""

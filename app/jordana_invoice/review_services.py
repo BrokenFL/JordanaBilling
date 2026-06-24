@@ -2044,6 +2044,25 @@ def search_billing_parties(conn: sqlite3.Connection, query: str = "") -> list[di
     return search_table(conn, "billing_parties", "billing_party_id", "billing_name", query)
 
 
+def search_organization_billing_parties(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
+    """Search active organization billing parties only."""
+    init_db(conn)
+    like = f"%{query}%"
+    rows = conn.execute(
+        """
+        SELECT billing_party_id, billing_name, organization_name
+        FROM billing_parties
+        WHERE billing_name LIKE ?
+          AND billing_party_type = 'organization'
+          AND active = 1
+        ORDER BY billing_name
+        LIMIT 20
+        """,
+        (like,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _normalize_optional_text(value: Any) -> str | None:
     if value is None:
         return None

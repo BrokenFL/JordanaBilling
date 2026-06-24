@@ -347,18 +347,83 @@ Helper functions (`create_account`, `create_billing_party`, `add_account_member`
 
 #### Not Implemented in Round 2B
 
-- Frontend wizard (3-step guided UI)
+- Frontend wizard (3-step guided UI) — implemented in Round 2C
 - Creating new people or organizations from the setup endpoint
 - Session Review attachment (linking the relationship to a review candidate)
 - Calendar alias creation for future-session matching
 
+### Round 2C: Guided Billing Relationship Wizard
+
+A three-step wizard replaces the basic Create Billing Relationship modal. The wizard uses existing records only — no new people or organizations are created.
+
+#### Wizard Steps
+
+**Step 1 — Who receives the invoice?**
+
+Three selectable choices: A client, Another person, An organization. Each choice reveals a search input:
+
+- A client / Another person → searches `/api/people` (existing active people)
+- An organization → searches `/api/organization-billing-parties` (active billing parties with `billing_party_type = "organization"` only; person-linked billing parties are excluded)
+
+All active people appear in client/person search because the current schema does not formally distinguish clients from non-clients. This is a known limitation.
+
+**Step 2 — Who are they paying for?**
+
+Searchable multi-select of existing active people via `/api/people`. Selected clients appear as removable chips. At least one selection is required.
+
+Defaults:
+- Client payer → client is preselected under Pays for
+- Person payer → no automatic preselection
+- Organization payer → no automatic preselection
+- If return context contains confirmed Session Review participants, those participants are preselected
+- Navigating Back and Forward preserves existing selections
+
+**Step 3 — Review and save**
+
+Shows invoice recipient, Pays for list, and a future-sessions checkbox. Save calls `POST /api/billing-relationships/setup` with the Round 2B payload.
+
+#### Save Behavior
+
+- Save button disables and shows "Saving…" during submission
+- New relationship (`created: true`) → wizard closes, new relationship record opens, return context preserved
+- Exact duplicate (`duplicate: true` or `created: false`) → inline message "This billing relationship already exists." with "Open existing relationship" button; wizard stays open
+- API error → inline error text; wizard stays open
+- No `alert()` or `prompt()` used in the wizard workflow
+
+#### Navigation and Cancel
+
+- Back preserves all valid selections
+- Cancel with no changes closes immediately
+- Cancel after selections shows an in-page confirmation (not a browser `confirm()` dialog)
+- Escape follows the same safe-cancel behavior
+- Return focus to the initiating control after cancellation
+- Only one wizard overlay may be open at a time
+
+#### Accessibility
+
+- Proper `<label>` elements, semantic buttons and radio controls
+- Keyboard operable with focus trap
+- Visible focus states
+- User-controlled values escaped via `escapeHtml()` before rendering
+- No browser `prompt()` or `alert()` in the wizard
+
+#### New API Endpoint
+
+`GET /api/organization-billing-parties?q=<query>` — returns active organization billing parties only (billing_party_type = "organization", active = 1). Person-linked billing parties are excluded.
+
+#### Not Implemented in Round 2C
+
+- Creating new clients, people, or organizations from the wizard (planned for Round 2D)
+- Session Review relationship attachment
+- Automatic return to Session Review after save
+- Saved relationship editor redesign
+- Delete or deactivate controls
+
 ### Out of Scope (Remaining)
 
-The following remain planned and were not started in Round 2B:
+The following remain planned and were not started:
 
-- Frontend guided "Who pays?" wizard
-- Creating new clients from the wizard
-- Creating new organizations from the wizard
+- In-wizard record creation (new clients, people, organizations) — Round 2D
 - Session Review attachment via the setup endpoint
 - Automatic payer classification
 - Full right-panel redesign

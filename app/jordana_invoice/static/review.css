@@ -594,3 +594,43 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .billing-modal .modal-result-row.already-included:hover { background: transparent; }
 .billing-modal .already-included-label { color: var(--muted); font-style: italic; }
 .billing-modal .modal-link-btn { background: none; border: none; color: var(--blue); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 4px; }
+
+/* ─── Round 2C: Wizard styles ─── */
+.billing-wizard { max-width: 520px; }
+.billing-wizard .wizard-progress { font-size: 12px; color: var(--muted); margin-bottom: 12px; font-weight: 600; }
+.billing-wizard .wizard-step-heading { margin: 0 0 6px; font-size: 14px; }
+.billing-wizard .wizard-payer-types { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.billing-wizard .wizard-payer-choice {
+  padding: 12px 14px; border: 2px solid var(--line); border-radius: 8px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; transition: border-color 0.15s, background 0.15s;
+}
+.billing-wizard .wizard-payer-choice:hover { border-color: var(--blue); background: var(--soft); }
+.billing-wizard .wizard-payer-choice.selected { border-color: var(--blue); background: #e8f0fe; }
+.billing-wizard .wizard-payer-choice strong { font-size: 14px; }
+.billing-wizard .wizard-payer-choice .help { font-size: 12px; color: var(--muted); }
+.billing-wizard .wizard-covered-selected { margin-bottom: 8px; }
+.billing-wizard .wizard-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.billing-wizard .wizard-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px;
+  background: #e8f0fe; border: 1px solid var(--blue); border-radius: 16px; font-size: 12px;
+}
+.billing-wizard .wizard-chip-remove {
+  background: none; border: none; cursor: pointer; font-size: 16px; line-height: 1;
+  color: var(--muted); padding: 0; margin-left: 2px;
+}
+.billing-wizard .wizard-chip-remove:hover { color: var(--red); }
+.billing-wizard .wizard-review-section { margin-bottom: 12px; }
+.billing-wizard .wizard-review-label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.billing-wizard .wizard-review-value { font-size: 14px; font-weight: 500; }
+.billing-wizard .wizard-checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.billing-wizard .wizard-checkbox-label input { margin: 0; }
+.billing-wizard .wizard-confirm-cancel {
+  margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft);
+}
+.billing-wizard .wizard-confirm-cancel p { margin: 0 0 8px; font-size: 13px; }
+.billing-wizard .wizard-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.billing-wizard .wizard-confirm-actions button { min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+.billing-wizard .wizard-confirm-actions .modal-cancel { background: white; color: var(--text); }
+.billing-wizard .wizard-confirm-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-wizard .modal-actions .modal-back { background: white; color: var(--text); border: 1px solid var(--line); }
+.billing-wizard .modal-actions .modal-back:hover { background: var(--soft); }

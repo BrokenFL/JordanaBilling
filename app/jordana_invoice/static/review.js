@@ -3106,87 +3106,406 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
   overlay.id = "billingModalOverlay";
   overlay.className = "billing-modal-overlay";
   overlay.innerHTML = `
-    <div class="billing-modal" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingModalTitle">
-      <h3 id="billingModalTitle">Create Billing Relationship</h3>
-      <p class="modal-instruction">Select an existing client to begin. A more detailed payer setup will be completed in the next workflow step.</p>
-      <div class="modal-search-wrap">
-        <label for="billingModalSearch">Search existing clients</label>
-        <input id="billingModalSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
-      </div>
-      <div class="modal-results" id="billingModalResults"></div>
-      <div class="modal-selected" id="billingModalSelected" hidden></div>
+    <div class="billing-modal billing-wizard" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingModalTitle">
+      <h3 id="billingModalTitle">Set up who pays</h3>
+      <p class="modal-instruction">Choose who should receive invoices and which clients they are paying for.</p>
+      <div class="wizard-progress" id="wizardProgress">Step 1 of 3</div>
+      <div class="wizard-body" id="wizardBody"></div>
       <div class="modal-error" id="billingModalError" role="alert"></div>
-      <div class="modal-actions">
-        <button type="button" class="modal-cancel" id="billingModalCancel">Cancel</button>
-        <button type="button" class="modal-submit" id="billingModalSubmit" disabled>Create</button>
-      </div>
+      <div class="modal-actions" id="wizardActions"></div>
     </div>
   `;
   document.body.appendChild(overlay);
   document.body.style.overflow = "hidden";
 
-  let selectedPerson = null;
-  let searchRows = [];
-
-  const searchInput = document.getElementById("billingModalSearch");
-  const resultsContainer = document.getElementById("billingModalResults");
-  const selectedDisplay = document.getElementById("billingModalSelected");
   const errorDisplay = document.getElementById("billingModalError");
-  const submitBtn = document.getElementById("billingModalSubmit");
-  const cancelBtn = document.getElementById("billingModalCancel");
+  const actionsBox = document.getElementById("wizardActions");
+  const bodyBox = document.getElementById("wizardBody");
+  const progressBox = document.getElementById("wizardProgress");
 
-  const handleSelect = (personId) => {
-    const person = searchRows.find(r => r.person_id === personId);
+  let step = 1;
+  let payerType = null;
+  let payerPerson = null;
+  let payerOrg = null;
+  let coveredClients = [];
+  let useFuture = true;
+  let saving = false;
+
+  const hasChanges = () => payerType || payerPerson || payerOrg || coveredClients.length > 0;
+
+  function doCancel() {
+    if (hasChanges()) {
+      const confirmBox = document.getElementById("wizardConfirmCancel");
+      if (!confirmBox) {
+        const confirmEl = document.createElement("div");
+        confirmEl.id = "wizardConfirmCancel";
+        confirmEl.className = "wizard-confirm-cancel";
+        confirmEl.innerHTML = `
+          <p>You have unsaved selections. Are you sure you want to cancel?</p>
+          <div class="wizard-confirm-actions">
+            <button type="button" id="wizardCancelNo" class="modal-cancel">Keep editing</button>
+            <button type="button" id="wizardCancelYes" class="modal-submit">Yes, cancel</button>
+          </div>
+        `;
+        bodyBox.appendChild(confirmEl);
+        document.getElementById("wizardCancelNo").onclick = () => { confirmEl.remove(); };
+        document.getElementById("wizardCancelYes").onclick = () => { closeBillingModal(); if (originatingBtn) originatingBtn.focus(); };
+      }
+    } else {
+      closeBillingModal();
+      if (originatingBtn) originatingBtn.focus();
+    }
+  }
+
+  function renderActions() {
+    let html = `<button type="button" class="modal-cancel" id="billingModalCancel">Cancel</button>`;
+    if (step === 1) {
+      html += `<button type="button" class="modal-submit" id="wizardContinue" disabled>Continue</button>`;
+    } else if (step === 2) {
+      html += `<button type="button" class="modal-back" id="wizardBack">Back</button>`;
+      html += `<button type="button" class="modal-submit" id="wizardContinue" disabled>Continue</button>`;
+    } else if (step === 3) {
+      html += `<button type="button" class="modal-back" id="wizardBack">Back</button>`;
+      html += `<button type="button" class="modal-submit" id="wizardSave">Save Billing Relationship</button>`;
+    }
+    actionsBox.innerHTML = html;
+
+    const cancelBtn = document.getElementById("billingModalCancel");
+    cancelBtn.onclick = doCancel;
+
+    if (step === 1 || step === 2) {
+      const cont = document.getElementById("wizardContinue");
+      if (cont) cont.onclick = () => { errorDisplay.textContent = ""; goNext(); };
+    }
+    if (step === 2 || step === 3) {
+      const back = document.getElementById("wizardBack");
+      if (back) back.onclick = () => { errorDisplay.textContent = ""; goBack(); };
+    }
+    if (step === 3) {
+      const save = document.getElementById("wizardSave");
+      if (save) save.onclick = doSave;
+    }
+  }
+
+  function goNext() {
+    if (step === 1) {
+      if (!payerType) { errorDisplay.textContent = "Select who receives the invoice."; return; }
+      if (payerType === "client" && !payerPerson) { errorDisplay.textContent = "Select a client."; return; }
+      if (payerType === "person" && !payerPerson) { errorDisplay.textContent = "Select a person."; return; }
+      if (payerType === "organization" && !payerOrg) { errorDisplay.textContent = "Select an organization."; return; }
+      step = 2;
+      renderStep();
+    } else if (step === 2) {
+      if (coveredClients.length === 0) { errorDisplay.textContent = "Select at least one client."; return; }
+      step = 3;
+      renderStep();
+    }
+  }
+
+  function goBack() {
+    if (step > 1) { step--; renderStep(); }
+  }
+
+  function renderStep() {
+    progressBox.textContent = `Step ${step} of 3`;
+    errorDisplay.textContent = "";
+    if (step === 1) renderStep1();
+    else if (step === 2) renderStep2();
+    else if (step === 3) renderStep3();
+    renderActions();
+  }
+
+  function renderStep1() {
+    bodyBox.innerHTML = `
+      <div class="wizard-payer-types" id="wizardPayerTypes">
+        <div class="wizard-payer-choice ${payerType === "client" ? "selected" : ""}" data-type="client" tabindex="0" role="radio" aria-checked="${payerType === "client"}">
+          <strong>A client</strong>
+          <span class="help">Someone who attends sessions and pays for themselves or others</span>
+        </div>
+        <div class="wizard-payer-choice ${payerType === "person" ? "selected" : ""}" data-type="person" tabindex="0" role="radio" aria-checked="${payerType === "person"}">
+          <strong>Another person</strong>
+          <span class="help">Someone who receives invoices but does not need to attend sessions</span>
+        </div>
+        <div class="wizard-payer-choice ${payerType === "organization" ? "selected" : ""}" data-type="organization" tabindex="0" role="radio" aria-checked="${payerType === "organization"}">
+          <strong>An organization</strong>
+          <span class="help">A company or agency that receives invoices on behalf of clients</span>
+        </div>
+      </div>
+      <div id="wizardPayerSearch" hidden></div>
+      <div id="wizardPayerSelected" hidden></div>
+    `;
+
+    const choices = bodyBox.querySelectorAll(".wizard-payer-choice");
+    choices.forEach(el => {
+      const clickHandler = () => selectPayerType(el.dataset.type);
+      el.addEventListener("click", clickHandler);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clickHandler(); } });
+    });
+
+    if (payerType) showPayerSearch();
+    updateContinueDisabled();
+  }
+
+  function selectPayerType(type) {
+    if (payerType !== type) {
+      payerType = type;
+      if (type !== "client") payerPerson = null;
+      if (type !== "person") payerPerson = null;
+      if (type !== "organization") payerOrg = null;
+      if (type === "client" && payerPerson) {
+        coveredClients = [{ person_id: payerPerson.person_id, display_name: payerPerson.display_name }];
+      } else if (type === "person" || type === "organization") {
+        coveredClients = [];
+      }
+    }
+    renderStep1();
+  }
+
+  function showPayerSearch() {
+    const searchDiv = document.getElementById("wizardPayerSearch");
+    const selectedDiv = document.getElementById("wizardPayerSelected");
+    if (!payerType) { searchDiv.hidden = true; return; }
+    searchDiv.hidden = false;
+
+    if (payerType === "client" || payerType === "person") {
+      const label = payerType === "client" ? "Search existing clients" : "Search existing people";
+      const placeholder = payerType === "client" ? "Type a client name..." : "Type a person name...";
+      searchDiv.innerHTML = `
+        <div class="modal-search-wrap">
+          <label for="wizardPayerInput">${escapeHtml(label)}</label>
+          <input id="wizardPayerInput" class="modal-search" type="search" placeholder="${escapeHtml(placeholder)}" autocomplete="off">
+        </div>
+        <div class="modal-results" id="wizardPayerResults"></div>
+      `;
+      const input = document.getElementById("wizardPayerInput");
+      const results = document.getElementById("wizardPayerResults");
+      let searchRows = [];
+      const doSearch = debounce(async (q) => {
+        if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+        try {
+          searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+          renderPayerResults(results, searchRows, "person");
+        } catch (err) { errorDisplay.textContent = err.message || "Search failed."; }
+      }, 200);
+      input.addEventListener("input", (e) => doSearch(e.target.value));
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+      if (payerPerson) showPayerSelected(selectedDiv, payerPerson.display_name, "client");
+      input.focus();
+    } else if (payerType === "organization") {
+      searchDiv.innerHTML = `
+        <div class="modal-search-wrap">
+          <label for="wizardPayerInput">Search existing organizations</label>
+          <input id="wizardPayerInput" class="modal-search" type="search" placeholder="Type an organization name..." autocomplete="off">
+        </div>
+        <div class="modal-results" id="wizardPayerResults"></div>
+      `;
+      const input = document.getElementById("wizardPayerInput");
+      const results = document.getElementById("wizardPayerResults");
+      let searchRows = [];
+      const doSearch = debounce(async (q) => {
+        if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+        try {
+          searchRows = await api(`/api/organization-billing-parties?q=${encodeURIComponent(q)}`);
+          renderPayerResults(results, searchRows, "organization");
+        } catch (err) { errorDisplay.textContent = err.message || "Search failed."; }
+      }, 200);
+      input.addEventListener("input", (e) => doSearch(e.target.value));
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+      if (payerOrg) showPayerSelected(selectedDiv, payerOrg.billing_name || payerOrg.organization_name, "organization");
+      input.focus();
+    }
+  }
+
+  function renderPayerResults(container, rows, kind) {
+    if (!rows.length) { container.innerHTML = '<div class="modal-empty">No results found. Try a different search.</div>'; return; }
+    const selectedId = kind === "person" ? (payerPerson ? payerPerson.person_id : null) : (payerOrg ? payerOrg.billing_party_id : null);
+    container.innerHTML = rows.map(row => {
+      const id = kind === "person" ? row.person_id : row.billing_party_id;
+      const name = kind === "person" ? (row.display_name || "Unnamed") : (row.organization_name || row.billing_name || "Unnamed");
+      const sub = kind === "person" ? (row.person_code || "") : (row.billing_name || "");
+      return `<div class="modal-result-row ${id === selectedId ? "selected" : ""}" data-id="${escapeHtml(id)}" tabindex="0" role="button">
+        <span>${escapeHtml(name)}</span>
+        ${sub ? `<span class="help">${escapeHtml(sub)}</span>` : ""}
+      </div>`;
+    }).join("");
+    container.querySelectorAll(".modal-result-row").forEach(el => {
+      const id = el.dataset.id;
+      el.addEventListener("click", () => selectPayer(id, rows, kind));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+    });
+  }
+
+  function selectPayer(id, rows, kind) {
+    if (kind === "person") {
+      const person = rows.find(r => r.person_id === id);
+      if (!person) return;
+      payerPerson = person;
+      if (payerType === "client") {
+        coveredClients = [{ person_id: person.person_id, display_name: person.display_name }];
+      }
+      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
+    } else {
+      const org = rows.find(r => r.billing_party_id === id);
+      if (!org) return;
+      payerOrg = org;
+      showPayerSelected(document.getElementById("wizardPayerSelected"), org.organization_name || org.billing_name, "organization");
+    }
+    updateContinueDisabled();
+  }
+
+  function showPayerSelected(container, name, kind) {
+    container.hidden = false;
+    const label = kind === "client" ? "Selected client" : kind === "organization" ? "Selected organization" : "Selected person";
+    container.innerHTML = `${escapeHtml(label)}: <strong>${escapeHtml(name)}</strong>`;
+  }
+
+  function updateContinueDisabled() {
+    const cont = document.getElementById("wizardContinue");
+    if (!cont) return;
+    let disabled = true;
+    if (step === 1) {
+      if (payerType === "client" || payerType === "person") disabled = !payerPerson;
+      else if (payerType === "organization") disabled = !payerOrg;
+      else disabled = true;
+    } else if (step === 2) {
+      disabled = coveredClients.length === 0;
+    }
+    cont.disabled = disabled;
+  }
+
+  function renderStep2() {
+    bodyBox.innerHTML = `
+      <h4 class="wizard-step-heading">Who are they paying for?</h4>
+      <p class="modal-instruction">Select the clients whose sessions this payer should cover.</p>
+      <div class="modal-search-wrap">
+        <label for="wizardCoveredSearch">Search clients to add</label>
+        <input id="wizardCoveredSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
+      </div>
+      <div class="modal-results" id="wizardCoveredResults"></div>
+      <div class="wizard-covered-selected" id="wizardCoveredSelected"></div>
+    `;
+    renderCoveredChips();
+    const input = document.getElementById("wizardCoveredSearch");
+    const results = document.getElementById("wizardCoveredResults");
+    let searchRows = [];
+    const selectedIds = new Set(coveredClients.map(c => c.person_id));
+    const doSearch = debounce(async (q) => {
+      if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+      try {
+        searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+        renderCoveredResults(results, searchRows, selectedIds);
+      } catch (err) { errorDisplay.textContent = err.message || "Search failed."; }
+    }, 200);
+    input.addEventListener("input", (e) => doSearch(e.target.value));
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+    input.focus();
+    updateContinueDisabled();
+  }
+
+  function renderCoveredResults(container, rows, selectedIds) {
+    if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>'; return; }
+    container.innerHTML = rows.map(row => {
+      const isSelected = selectedIds.has(row.person_id);
+      return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="${isSelected ? "-1" : "0"}" role="${isSelected ? "text" : "button"}">
+        <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
+        ${isSelected ? '<span class="help already-included-label">Selected</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+      </div>`;
+    }).join("");
+    container.querySelectorAll(".modal-result-row").forEach(el => {
+      if (selectedIds.has(el.dataset.personId)) return;
+      el.addEventListener("click", () => addCoveredClient(el.dataset.personId, rows));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+    });
+  }
+
+  function addCoveredClient(personId, rows) {
+    if (coveredClients.some(c => c.person_id === personId)) return;
+    const person = rows.find(r => r.person_id === personId);
     if (!person) return;
-    selectedPerson = person;
-    selectedDisplay.hidden = false;
-    selectedDisplay.innerHTML = `Selected client: <strong>${escapeHtml(person.display_name)}</strong>`;
-    submitBtn.disabled = false;
-    errorDisplay.textContent = "";
-    renderModalSearchResults("billingModalResults", searchRows, personId, handleSelect);
-  };
+    coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
+    renderCoveredChips();
+    renderStep2();
+  }
 
-  const doSearch = debounce(async (q) => {
-    errorDisplay.textContent = "";
-    if (!q.trim()) {
-      searchRows = [];
-      resultsContainer.innerHTML = "";
+  function removeCoveredClient(personId) {
+    coveredClients = coveredClients.filter(c => c.person_id !== personId);
+    renderCoveredChips();
+    renderStep2();
+  }
+
+  function renderCoveredChips() {
+    const container = document.getElementById("wizardCoveredSelected");
+    if (!container) return;
+    if (!coveredClients.length) {
+      container.innerHTML = '<div class="modal-empty">No clients selected yet.</div>';
       return;
     }
-    try {
-      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
-      renderModalSearchResults("billingModalResults", searchRows, selectedPerson ? selectedPerson.person_id : null, handleSelect);
-    } catch (err) {
-      errorDisplay.textContent = err.message || "Search failed.";
-    }
-  }, 200);
+    container.innerHTML = `<div class="wizard-chips">${coveredClients.map(c => `
+      <span class="wizard-chip" data-person-id="${escapeHtml(c.person_id)}">
+        ${escapeHtml(c.display_name)}
+        <button type="button" class="wizard-chip-remove" aria-label="Remove ${escapeHtml(c.display_name)}">&times;</button>
+      </span>`).join("")}</div>`;
+    container.querySelectorAll(".wizard-chip-remove").forEach(btn => {
+      btn.onclick = () => removeCoveredClient(btn.parentElement.dataset.personId);
+    });
+  }
 
-  searchInput.addEventListener("input", (e) => doSearch(e.target.value));
-  searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  function renderStep3() {
+    const recipientName = payerType === "organization"
+      ? (payerOrg ? (payerOrg.organization_name || payerOrg.billing_name) : "")
+      : (payerPerson ? payerPerson.display_name : "");
+    const coveredNames = coveredClients.map(c => escapeHtml(c.display_name)).join(", ");
+    bodyBox.innerHTML = `
+      <h4 class="wizard-step-heading">Review billing relationship</h4>
+      <div class="wizard-review-section">
+        <div class="wizard-review-label">Invoice recipient</div>
+        <div class="wizard-review-value">${escapeHtml(recipientName)}</div>
+      </div>
+      <div class="wizard-review-section">
+        <div class="wizard-review-label">Pays for</div>
+        <div class="wizard-review-value">${coveredNames || "None"}</div>
+      </div>
+      <div class="wizard-review-section">
+        <label class="wizard-checkbox-label">
+          <input type="checkbox" id="wizardFutureSessions" ${useFuture ? "checked" : ""}>
+          Use this billing relationship for future sessions involving these clients
+        </label>
+      </div>
+    `;
+    const futureCb = document.getElementById("wizardFutureSessions");
+    if (futureCb) futureCb.addEventListener("change", () => { useFuture = futureCb.checked; });
+    renderActions();
+  }
 
-  cancelBtn.addEventListener("click", () => {
-    closeBillingModal();
-    if (originatingBtn) originatingBtn.focus();
-  });
-
-  submitBtn.addEventListener("click", async () => {
-    if (!selectedPerson) {
-      errorDisplay.textContent = "Select a client before creating.";
-      return;
-    }
-    submitBtn.disabled = true;
+  async function doSave() {
+    if (saving) return;
+    const saveBtn = document.getElementById("wizardSave");
+    if (!saveBtn) return;
+    saving = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
     errorDisplay.textContent = "";
-    const errorBox = document.getElementById("billingModalError");
-    const actionsBox = document.querySelector(".modal-actions");
+
+    const payload = {
+      payer_kind: payerType,
+      covered_client_ids: coveredClients.map(c => c.person_id),
+      use_for_future_sessions: useFuture,
+    };
+    if (payerType === "client" || payerType === "person") {
+      payload.payer_person_id = payerPerson.person_id;
+    } else if (payerType === "organization") {
+      payload.organization_billing_party_id = payerOrg.billing_party_id;
+    }
+
     try {
-      const safeName = selectedPerson.display_name;
-      const res = await fetch("/api/accounts/from-client", {
+      const res = await fetch("/api/billing-relationships/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ person_id: selectedPerson.person_id, account_name: safeName, account_type: "individual" })
+        body: JSON.stringify(payload),
       });
       const json = await res.json();
       if (!res.ok || json.ok === false) throw json;
+
       const accountId = json.account_id;
       let nextContext = returnContext;
       if (validReturnContext(returnContext)) {
@@ -3197,11 +3516,13 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       await loadClients();
       await openAccountRecord(accountId, { returnContext: nextContext });
     } catch (err) {
-      submitBtn.disabled = false;
-      if (err && err.existing && err.account_id) {
+      saving = false;
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save Billing Relationship";
+      if (err && (err.duplicate || (err.created === false))) {
         const existingAccountId = err.account_id;
-        errorBox.innerHTML = `A billing relationship already exists for this client. <button type="button" id="billingModalOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
-        const openBtn = document.getElementById("billingModalOpenExisting");
+        errorDisplay.innerHTML = `This billing relationship already exists. <button type="button" id="wizardOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+        const openBtn = document.getElementById("wizardOpenExisting");
         if (openBtn) {
           openBtn.addEventListener("click", async () => {
             let nextContext = returnContext;
@@ -3215,14 +3536,14 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
           });
         }
       } else {
-        errorBox.textContent = (err && err.error) || (err && err.message) || "Failed to create billing relationship.";
+        errorDisplay.textContent = (err && err.error) || (err && err.message) || "Failed to save billing relationship.";
       }
     }
-  });
+  }
 
-  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) cancelBtn.click(); });
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) doCancel(); });
   document.addEventListener("keydown", billingModalTrapKeydown);
-  searchInput.focus();
+  renderStep();
 }
 
 function openAddClientModal(accountId, returnContext, originatingBtn, existingMemberPersonIds) {

@@ -54,6 +54,7 @@ from .review_services import (
     save_session_draft,
     search_accounts,
     search_billing_parties,
+    search_organization_billing_parties,
     search_people,
     setup_billing_relationship,
     update_account,
@@ -159,6 +160,9 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(search_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
+                    return
+                if parsed.path == "/api/organization-billing-parties":
+                    self.send_json(search_organization_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
                     return
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
