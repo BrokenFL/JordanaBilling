@@ -1087,13 +1087,10 @@ class OrganizationPanelUiTests(unittest.TestCase):
         for field in ["organization_name", "billing_email", "billing_phone", "preferred_delivery_method", "administrative_notes"]:
             self.assertIn(field, org_js)
 
-    def test_no_edit_save_delete_deactivate_controls(self):
+    def test_no_delete_controls(self):
         org_js = self._org_js()
-        self.assertNotIn("editOrganization", org_js)
-        self.assertNotIn("saveOrganization", org_js)
         self.assertNotIn("deleteOrganization", org_js)
-        self.assertNotIn("deactivateOrganization", org_js)
-        self.assertNotIn("reactivateOrganization", org_js)
+        self.assertNotIn("hardDelete", org_js)
 
     # ---- Billing summary ----
 
@@ -1233,6 +1230,158 @@ class OrganizationPanelUiTests(unittest.TestCase):
         start = self.html.index('id="organizationRecord"')
         snippet = self.html[start-30:start+50]
         self.assertIn("record-pane", snippet)
+
+    # ---- Editable org panel: action buttons ----
+
+    def test_edit_button_renders_for_organizations(self):
+        org_js = self._org_js()
+        self.assertIn("orgEditBtn", org_js)
+        self.assertIn("showOrgEditForm", org_js)
+
+    def test_active_record_has_deactivate(self):
+        org_js = self._org_js()
+        self.assertIn("orgDeactivateBtn", org_js)
+        self.assertIn("Deactivate", org_js)
+
+    def test_inactive_record_has_reactivate(self):
+        org_js = self._org_js()
+        self.assertIn("orgReactivateBtn", org_js)
+        self.assertIn("Reactivate", org_js)
+
+    def test_deactivate_and_reactivate_are_conditional(self):
+        org_js = self._org_js()
+        self.assertIn("bp.active", org_js)
+
+    # ---- Edit form ----
+
+    def test_org_form_is_prefilled(self):
+        org_js = self._org_js()
+        self.assertIn("orgFormName", org_js)
+        self.assertIn("orgFormBillingName", org_js)
+        self.assertIn("orgFormEmail", org_js)
+        self.assertIn("orgFormPhone", org_js)
+        self.assertIn("orgFormAddr1", org_js)
+        self.assertIn("orgFormAddr2", org_js)
+        self.assertIn("orgFormCity", org_js)
+        self.assertIn("orgFormState", org_js)
+        self.assertIn("orgFormPostal", org_js)
+        self.assertIn("orgFormDelivery", org_js)
+        self.assertIn("orgFormNotes", org_js)
+
+    def test_org_form_has_all_delivery_options(self):
+        org_js = self._org_js()
+        self.assertIn('value="unresolved"', org_js)
+        self.assertIn('value="email"', org_js)
+        self.assertIn('value="mail"', org_js)
+        self.assertIn('value="both"', org_js)
+
+    def test_org_and_billing_names_are_required(self):
+        org_js = self._org_js()
+        self.assertIn("Organization name is required.", org_js)
+        self.assertIn("Billing name is required.", org_js)
+
+    def test_no_person_type_account_selectors_in_org_form(self):
+        org_js = self._org_js()
+        form_start = org_js.index("showOrgEditForm")
+        form_end = org_js.index("async function openOrganizationRecord")
+        form_section = org_js[form_start:form_end]
+        self.assertNotIn("person_id", form_section)
+        self.assertNotIn("personId", form_section)
+        self.assertNotIn("account_id", form_section)
+        self.assertNotIn("accountId", form_section)
+        self.assertNotIn("data-open-person", form_section)
+
+    # ---- Update payload behavior ----
+
+    def test_update_uses_billing_parties_api(self):
+        org_js = self._org_js()
+        self.assertIn("/api/billing-parties/", org_js)
+        self.assertIn("POST", org_js)
+
+    def test_payload_preserves_billing_party_type_organization(self):
+        org_js = self._org_js()
+        self.assertIn('billing_party_type: "organization"', org_js)
+
+    def test_payload_does_not_include_person_id(self):
+        org_js = self._org_js()
+        form_start = org_js.index("const payload = {")
+        form_end = org_js.index("};", form_start) + 2
+        payload_section = org_js[form_start:form_end]
+        self.assertNotIn("person_id", payload_section)
+
+    def test_blank_optional_fields_submitted_for_clearing(self):
+        org_js = self._org_js()
+        self.assertIn("billing_email:", org_js)
+        self.assertIn("billing_phone:", org_js)
+        self.assertIn("billing_address_line_1:", org_js)
+        self.assertIn("billing_address_line_2:", org_js)
+        self.assertIn("billing_city:", org_js)
+        self.assertIn("billing_state:", org_js)
+        self.assertIn("billing_postal_code:", org_js)
+        self.assertIn("administrative_notes:", org_js)
+
+    # ---- Cancel and duplicate submission ----
+
+    def test_cancel_clears_form_without_saving(self):
+        org_js = self._org_js()
+        self.assertIn("orgFormCancelBtn", org_js)
+        self.assertIn('container.innerHTML = ""', org_js)
+
+    def test_duplicate_submission_blocked(self):
+        org_js = self._org_js()
+        self.assertIn("orgSaving", org_js)
+        self.assertIn("if (orgSaving) return;", org_js)
+
+    # ---- Success and error messages ----
+
+    def test_visible_success_and_error_messages_render(self):
+        org_js = self._org_js()
+        self.assertIn("showOrgMessage", org_js)
+        self.assertIn("orgMessage", org_js)
+        self.assertIn("billing-setup-message", org_js)
+
+    # ---- Deactivate/reactivate behavior ----
+
+    def test_deactivate_sends_active_false(self):
+        org_js = self._org_js()
+        self.assertIn("{ active: false }", org_js)
+
+    def test_reactivate_sends_active_true(self):
+        org_js = self._org_js()
+        self.assertIn("{ active: true }", org_js)
+
+    def test_confirmation_explains_historical_preservation(self):
+        org_js = self._org_js()
+        self.assertIn("Historical sessions and invoices will remain unchanged.", org_js)
+
+    def test_successful_actions_refresh_both_panel_and_directory(self):
+        org_js = self._org_js()
+        self.assertIn("openOrganizationRecord(bp.billing_party_id)", org_js)
+        self.assertIn("loadClients()", org_js)
+
+    # ---- Read-only sections remain intact ----
+
+    def test_read_only_sessions_invoices_summary_remain_intact(self):
+        org_js = self._org_js()
+        self.assertIn("Billing Summary", org_js)
+        self.assertIn("Covered Clients", org_js)
+        self.assertIn("Sessions", org_js)
+        self.assertIn("Invoice History", org_js)
+        self.assertIn("Administrative History", org_js)
+
+    def test_no_payment_finalization_delete_controls(self):
+        org_js = self._org_js()
+        self.assertNotIn("finalizeInvoice", org_js)
+        self.assertNotIn("markPaid", org_js)
+        self.assertNotIn("deleteInvoice", org_js)
+
+    # ---- Account and person navigation unchanged ----
+
+    def test_account_and_person_navigation_remain_unchanged(self):
+        org_js = self._org_js()
+        self.assertIn("data-open-person", org_js)
+        self.assertIn("data-open-account", org_js)
+        self.assertIn("openAccountRecord", org_js)
 
 
 if __name__ == "__main__":

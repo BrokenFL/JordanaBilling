@@ -75,8 +75,56 @@ The panel fetches data from `GET /api/billing-parties/{billing_party_id}`. This 
 - Invoices may be opened read-only via the existing invoice view.
 - No payment or finalization controls are available.
 - Outstanding Balance currently uses the no-payments convention.
-- Organization editing remains deferred.
 - No schema migration was required.
+
+### Organization Editing
+
+Existing organization billing records are editable from the organization detail panel. The Edit button opens an inline form prefilled with current values.
+
+**Editable fields:**
+
+- Organization name (required)
+- Billing name (required)
+- Billing email
+- Billing phone
+- Address line 1
+- Address line 2
+- City
+- State
+- Postal code
+- Preferred delivery method (Email, Mail, Email and mail, Unresolved)
+- Administrative billing notes
+
+**Not exposed in the form:**
+
+- Billing-party type selector
+- Person selector
+- Account controls
+- Primary/default controls
+
+The form always preserves `billing_party_type: "organization"` and never sends `person_id`.
+
+**Field clearing:** Blank optional fields are submitted as empty strings and stored as NULL. The organization name and billing name are required and cannot be blank.
+
+**Cancel** closes the form without saving. **Duplicate submissions** are blocked while a save is in progress. Visible success and error messages appear in the panel.
+
+**After save**, the panel re-fetches the organization detail endpoint and the Billing Relationships directory row refreshes.
+
+**Deactivate/Reactivate:** Organizations can be deactivated and reactivated but never deleted. Deactivation shows a confirmation explaining that historical sessions and invoices will remain unchanged. Deactivate sends `{"active": false}`; reactivate sends `{"active": true}`. Both actions refresh the panel and directory status.
+
+**What editing does not change:**
+
+- Historical sessions
+- Approved rates
+- Invoices (bill-to IDs, totals, snapshots)
+- Finalized invoice snapshots
+- Linked accounts and their members
+- Session billing-party IDs
+- No person, account, or membership is created
+
+**Audit:** All edit, deactivate, and reactivate actions are recorded in the audit log. Audit details contain changed field names only — no email, phone, address, or notes values are exposed.
+
+Organization creation remains deferred.
 
 ## Account Detail View
 

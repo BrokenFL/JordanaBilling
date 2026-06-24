@@ -2074,6 +2074,88 @@ function orgInvoiceStatusLabel(status) {
   return ({ draft: "Draft", finalized: "Finalized", void: "Void" }[status] || status || "—");
 }
 
+function showOrgMessage(msg, type) {
+  const el = $("orgMessage");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `billing-setup-message ${type || ""}`;
+}
+
+let orgSaving = false;
+
+function showOrgEditForm(bp) {
+  const container = $("orgEditFormContainer");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="billing-setup-form">
+      <h4>Edit Organization</h4>
+      <div class="field-grid">
+        <label class="field wide">Organization Name <input id="orgFormName" value="${escapeHtml(bp.organization_name || "")}"></label>
+        <label class="field wide">Billing Name <input id="orgFormBillingName" value="${escapeHtml(bp.billing_name || "")}"></label>
+        <label class="field">Billing Email <input id="orgFormEmail" value="${escapeHtml(bp.billing_email || "")}"></label>
+        <label class="field">Billing Phone <input id="orgFormPhone" value="${escapeHtml(bp.billing_phone || "")}"></label>
+        <label class="field">Address Line 1 <input id="orgFormAddr1" value="${escapeHtml(bp.billing_address_line_1 || "")}"></label>
+        <label class="field">Address Line 2 <input id="orgFormAddr2" value="${escapeHtml(bp.billing_address_line_2 || "")}"></label>
+        <label class="field">City <input id="orgFormCity" value="${escapeHtml(bp.billing_city || "")}"></label>
+        <label class="field">State <input id="orgFormState" value="${escapeHtml(bp.billing_state || "")}"></label>
+        <label class="field">Postal Code <input id="orgFormPostal" value="${escapeHtml(bp.billing_postal_code || "")}"></label>
+        <label class="field">Preferred Delivery
+          <select id="orgFormDelivery">
+            <option value="unresolved"${(bp.preferred_delivery_method || "unresolved") === "unresolved" ? " selected" : ""}>Unresolved</option>
+            <option value="email"${bp.preferred_delivery_method === "email" ? " selected" : ""}>Email</option>
+            <option value="mail"${bp.preferred_delivery_method === "mail" ? " selected" : ""}>Mail</option>
+            <option value="both"${bp.preferred_delivery_method === "both" ? " selected" : ""}>Email and mail</option>
+          </select>
+        </label>
+        <label class="field wide">Administrative Notes <input id="orgFormNotes" value="${escapeHtml(bp.administrative_notes || "")}"></label>
+      </div>
+      <div class="record-actions">
+        <button id="orgFormSaveBtn" class="save">Save Changes</button>
+        <button id="orgFormCancelBtn">Cancel</button>
+      </div>
+    </div>
+  `;
+  $("orgFormCancelBtn").onclick = () => { container.innerHTML = ""; showOrgMessage("", ""); };
+  $("orgFormSaveBtn").onclick = async () => {
+    if (orgSaving) return;
+    const orgName = $("orgFormName").value.trim();
+    if (!orgName) { showOrgMessage("Organization name is required.", "error"); return; }
+    const billingName = $("orgFormBillingName").value.trim();
+    if (!billingName) { showOrgMessage("Billing name is required.", "error"); return; }
+    orgSaving = true;
+    $("orgFormSaveBtn").disabled = true;
+    $("orgFormCancelBtn").disabled = true;
+    const payload = {
+      billing_party_type: "organization",
+      organization_name: orgName,
+      billing_name: billingName,
+      billing_email: $("orgFormEmail").value,
+      billing_phone: $("orgFormPhone").value,
+      billing_address_line_1: $("orgFormAddr1").value,
+      billing_address_line_2: $("orgFormAddr2").value,
+      billing_city: $("orgFormCity").value,
+      billing_state: $("orgFormState").value,
+      billing_postal_code: $("orgFormPostal").value,
+      preferred_delivery_method: $("orgFormDelivery").value,
+      administrative_notes: $("orgFormNotes").value
+    };
+    try {
+      await api(`/api/billing-parties/${bp.billing_party_id}`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      await openOrganizationRecord(bp.billing_party_id);
+      await loadClients();
+    } catch (err) {
+      showOrgMessage(err.message || "Failed to save organization.", "error");
+      $("orgFormSaveBtn").disabled = false;
+      $("orgFormCancelBtn").disabled = false;
+    } finally {
+      orgSaving = false;
+    }
+  };
+}
+
 async function openOrganizationRecord(billingPartyId) {
   const panel = $("organizationRecord");
   if (!panel) return;
@@ -2165,6 +2247,14 @@ async function openOrganizationRecord(billingPartyId) {
     <h3>${escapeHtml(displayName)}</h3>
     ${billingNameSecondary ? `<div class="org-header-meta"><span>Billing name: ${escapeHtml(billingNameSecondary)}</span></div>` : ""}
     <div class="org-header-meta"><span class="${statusClass}">${statusText}</span></div>
+    <div class="record-actions" id="orgActions">
+      <button class="save" id="orgEditBtn">Edit</button>
+      ${bp.active
+        ? `<button id="orgDeactivateBtn">Deactivate</button>`
+        : `<button class="save" id="orgReactivateBtn">Reactivate</button>`}
+    </div>
+    <div id="orgEditFormContainer"></div>
+    <div id="orgMessage" class="billing-setup-message"></div>
 
     <div class="org-section">
       <h4>Billing Details</h4>
@@ -2218,6 +2308,34 @@ async function openOrganizationRecord(billingPartyId) {
   `;
 
   if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
+
+  if ($("orgEditBtn")) $("orgEditBtn").onclick = () => showOrgEditForm(data.billing_party);
+  if ($("orgDeactivateBtn")) $("orgDeactivateBtn").onclick = async () => {
+    const confirmed = confirm("Deactivating this organization billing record prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.");
+    if (!confirmed) return;
+    try {
+      await api(`/api/billing-parties/${bp.billing_party_id}`, {
+        method: "POST",
+        body: JSON.stringify({ active: false })
+      });
+      await openOrganizationRecord(bp.billing_party_id);
+      await loadClients();
+    } catch (err) {
+      showOrgMessage(err.message || "Failed to deactivate organization.", "error");
+    }
+  };
+  if ($("orgReactivateBtn")) $("orgReactivateBtn").onclick = async () => {
+    try {
+      await api(`/api/billing-parties/${bp.billing_party_id}`, {
+        method: "POST",
+        body: JSON.stringify({ active: true })
+      });
+      await openOrganizationRecord(bp.billing_party_id);
+      await loadClients();
+    } catch (err) {
+      showOrgMessage(err.message || "Failed to reactivate organization.", "error");
+    }
+  };
 
   panel.querySelectorAll("[data-open-person]").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); location.hash = `people/${btn.dataset.openPerson}`; };
