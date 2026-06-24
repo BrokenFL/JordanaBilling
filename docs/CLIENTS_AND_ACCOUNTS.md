@@ -194,3 +194,57 @@ Four compact summary cards appear near the top of the client workspace:
 The invoices table shows all invoices addressed to billing parties belonging to this person. Columns: Invoice Number, Billing Period, Issue Date, Bill To, Status, Total, Balance, and Open. Void invoices show zero balance. The Open action navigates to the existing invoice view. Invoice history is read-only from the client page — no payment, finalization, or void controls appear here.
 
 No schema migration was required for any of these features, including editable Billing Setup. All data is derived from existing tables and the existing billing-parties schema.
+
+## Round 1: Browser Prompt Removal
+
+Browser `prompt()` calls for creating billing relationships and adding clients have been replaced with in-page modal dialogs. The following changes were made:
+
+### Create Billing Relationship
+
+Both creation paths — the main "Create Billing Relationship" button and the "Create Billing Relationship" button in the return-to-review workflow — now open an in-page modal instead of a browser prompt.
+
+The modal contains:
+- Heading: "Create Billing Relationship"
+- Instruction text: "Select an existing client to begin. A more detailed payer setup will be completed in the next workflow step."
+- A search input labeled "Search existing clients"
+- Explicit selectable result rows (no fuzzy first-result auto-selection)
+- Selected-client confirmation display
+- Create and Cancel buttons
+- Inline validation and error messages
+
+When a client is selected and Create is pressed:
+- The account is created via the existing `/api/accounts` endpoint with a safe default name (`{DisplayName} Billing Relationship`) and type `individual`
+- The selected client is added as the primary account member via `/api/account-members`
+- The account editor opens
+- Return-to-review context is preserved when creation began from Session Review
+
+### Add Client
+
+The former "Add Member" browser prompt has been replaced with an in-page client selector modal. The button label changed from "Add Member" to "Add Client".
+
+The modal:
+- Searches existing clients through the `/api/people` API
+- Shows explicit selectable result rows
+- Shows the selected client before saving
+- Prevents adding a person already in the relationship (shows "This client is already included in this billing relationship.")
+- Never silently chooses the first fuzzy match
+- Refreshes the relationship record after a successful add
+
+### Backend Change
+
+`add_account_member` now checks for existing membership before inserting. If the person is already a member of the account, it raises `ValueError("This client is already included in this billing relationship.")` instead of silently succeeding via `INSERT OR IGNORE`. The API endpoint returns this as a 400 error with a clear message.
+
+`ensure_account_member` (used by `save_interpretation`) remains idempotent and unchanged.
+
+### Accessibility
+
+The modals are keyboard usable with proper `<label>` elements, focus trap, Escape to cancel, and focus return to the initiating button on cancel. User-controlled text is escaped via `escapeHtml()` before insertion into HTML.
+
+### Out of Scope (Round 2)
+
+The following remain planned for Round 2 and were not started:
+- Full guided "Who pays?" wizard
+- Creating new clients from the modal
+- Creating new organizations from the modal
+- Automatic payer classification
+- Full right-panel redesign

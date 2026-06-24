@@ -396,7 +396,7 @@ class ReviewUiStaticTests(unittest.TestCase):
     def test_inline_relationship_roles_and_primary_controls_are_gone(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("function renderRelationshipEditor")
-        end = js.index("function showAccountEditor")
+        end = js.index("function openBillingRelationshipEditor")
         section = js[start:end]
 
         self.assertNotIn("data-role", section)

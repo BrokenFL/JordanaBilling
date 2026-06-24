@@ -2196,11 +2196,21 @@ def add_account_member(
     is_primary: bool = False,
 ) -> str:
     init_db(conn)
+    existing = conn.execute(
+        """
+        SELECT account_member_id FROM account_members
+        WHERE account_id = ? AND person_id = ?
+        LIMIT 1
+        """,
+        (account_id, person_id),
+    ).fetchone()
+    if existing:
+        raise ValueError("This client is already included in this billing relationship.")
     now = now_iso()
     member_id = new_id()
     conn.execute(
         """
-        INSERT OR IGNORE INTO account_members (
+        INSERT INTO account_members (
           account_member_id, account_id, person_id, relationship_role,
           is_primary, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)

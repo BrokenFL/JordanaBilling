@@ -699,15 +699,6 @@ function renderRelationshipEditor(data) {
   if ($("openAccountRecord")) $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
 }
 
-function showAccountEditor() {
-  if (!state.account) return alert("Select or create a billing relationship first.");
-  const name = prompt("Billing relationship name", state.account.account_name);
-  if (!name) return;
-  const type = prompt("Relationship type: individual, household, family, couple, organization, other", state.account.account_type || "individual") || "individual";
-  api(`/api/accounts/${state.account.account_id}`, { method: "POST", body: JSON.stringify({ account_name: name, account_type: type, default_billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null }) })
-    .then(updated => { state.account = updated; $("accountInput").value = updated.account_name; renderRelationshipEditor(state.detail); });
-}
-
 function openBillingRelationshipEditor() {
   const returnContext = persistReturnContext(buildReturnContext());
   if (!returnContext) {
@@ -1087,16 +1078,9 @@ function renderClientsLanding(returnContext = null) {
     await showReviewWorkbench();
     await selectCandidate(current.candidateId);
   };
-  $("createRelationshipForReturn").onclick = async () => {
+  $("createRelationshipForReturn").onclick = () => {
     const current = readReturnContext();
-    const suggested = relationshipNameSuggestion(current);
-    const name = prompt("Billing relationship name", suggested);
-    if (!name) return;
-    const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
-    const nextContext = persistReturnContext({ ...current, accountId: account.account_id });
-    location.hash = returnContextHash(nextContext);
-    await loadClients();
-    await openAccountRecord(account.account_id, { returnContext: nextContext });
+    openCreateRelationshipModal(current, $("createRelationshipForReturn"));
   };
 }
 
@@ -2373,7 +2357,7 @@ async function openAccountRecord(accountId, options = {}) {
     ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
     <h3>${fmt(data.account.account_name)}</h3>
     <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span><span>${data.account.active ? "Active" : "Inactive"}</span></div>
-    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Member</button></div>
+    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Client</button></div>
     <div class="field-grid">
       <label class="field">Relationship Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
       <label class="field">Type<select id="recordAccountType">${optionSet(["individual","household","family","couple","organization","other"], data.account.account_type)}</select></label>
@@ -2499,21 +2483,9 @@ async function openAccountRecord(accountId, options = {}) {
     await openAccountRecord(accountId);
     await loadClients();
   };
-  $("addMemberRecord").onclick = async () => {
-    const name = prompt("Add which existing client to this billing relationship?");
-    if (!name) return;
-    const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
-    const match = rows.find(row => row.display_name.toLowerCase() === name.toLowerCase()) || rows[0];
-    if (!match) {
-      alert("No matching client found.");
-      return;
-    }
-    await api("/api/account-members", {
-      method: "POST",
-      body: JSON.stringify({ account_id: accountId, person_id: match.person_id, relationship_role: "family_member", is_primary: false })
-    });
-    await loadClients();
-    await openAccountRecord(accountId, { returnContext });
+  $("addMemberRecord").onclick = () => {
+    const existingIds = (data.members || []).map(m => m.person_id);
+    openAddClientModal(accountId, returnContext, $("addMemberRecord"), existingIds);
   };
   if (!location.hash.startsWith("#clients")) {
     location.hash = "clients";
@@ -2949,17 +2921,9 @@ function showBillingSetupForm(existing, defaultName) {
 }
 ["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? renderBillingDirRows() : loadPeople(), 180)));
 $("billingDirFilter").addEventListener("change", () => { billingDirState.filter = $("billingDirFilter").value; renderBillingDirRows(); });
-$("newAccountBtn").onclick = async () => {
+$("newAccountBtn").onclick = () => {
   const returnContext = readReturnContext();
-  const name = prompt("Billing relationship name", relationshipNameSuggestion(returnContext));
-  if (!name) return;
-  const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
-  if (validReturnContext(returnContext)) {
-    persistReturnContext({ ...returnContext, accountId: account.account_id });
-    location.hash = returnContextHash({ ...returnContext, accountId: account.account_id });
-  }
-  await loadClients();
-  await openAccountRecord(account.account_id, { returnContext });
+  openCreateRelationshipModal(returnContext, $("newAccountBtn"));
 };
 $("newPersonBtn").onclick = async () => {
   const name = prompt("Client display name");
@@ -3074,4 +3038,279 @@ function titleTimeWarning(session) {
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[ch]));
+}
+
+/* ─── Round 1: In-page modals for billing relationship creation and add-client ─── */
+
+function closeBillingModal() {
+  const overlay = document.getElementById("billingModalOverlay");
+  if (overlay) {
+    overlay.remove();
+    document.body.style.overflow = "";
+  }
+  document.removeEventListener("keydown", billingModalTrapKeydown);
+}
+
+function billingModalTrapKeydown(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    const cancelBtn = document.getElementById("billingModalCancel");
+    if (cancelBtn) cancelBtn.click();
+    return;
+  }
+  if (e.key === "Tab") {
+    const modal = document.getElementById("billingModal");
+    if (!modal) return;
+    const focusable = modal.querySelectorAll('input, button, select, [tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+}
+
+function renderModalSearchResults(containerId, rows, selectedPersonId, onSelect) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (!rows.length) {
+    container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>';
+    return;
+  }
+  container.innerHTML = rows.map(row => `
+    <div class="modal-result-row ${row.person_id === selectedPersonId ? "selected" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
+      <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
+      ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
+    </div>
+  `).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    const personId = el.dataset.personId;
+    const clickHandler = () => onSelect(personId);
+    el.addEventListener("click", clickHandler);
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clickHandler(); } });
+  });
+}
+
+function openCreateRelationshipModal(returnContext, originatingBtn) {
+  closeBillingModal();
+  const overlay = document.createElement("div");
+  overlay.id = "billingModalOverlay";
+  overlay.className = "billing-modal-overlay";
+  overlay.innerHTML = `
+    <div class="billing-modal" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingModalTitle">
+      <h3 id="billingModalTitle">Create Billing Relationship</h3>
+      <p class="modal-instruction">Select an existing client to begin. A more detailed payer setup will be completed in the next workflow step.</p>
+      <div class="modal-search-wrap">
+        <label for="billingModalSearch">Search existing clients</label>
+        <input id="billingModalSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
+      </div>
+      <div class="modal-results" id="billingModalResults"></div>
+      <div class="modal-selected" id="billingModalSelected" hidden></div>
+      <div class="modal-error" id="billingModalError" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="modal-cancel" id="billingModalCancel">Cancel</button>
+        <button type="button" class="modal-submit" id="billingModalSubmit" disabled>Create</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+
+  let selectedPerson = null;
+  let searchRows = [];
+
+  const searchInput = document.getElementById("billingModalSearch");
+  const resultsContainer = document.getElementById("billingModalResults");
+  const selectedDisplay = document.getElementById("billingModalSelected");
+  const errorDisplay = document.getElementById("billingModalError");
+  const submitBtn = document.getElementById("billingModalSubmit");
+  const cancelBtn = document.getElementById("billingModalCancel");
+
+  const handleSelect = (personId) => {
+    const person = searchRows.find(r => r.person_id === personId);
+    if (!person) return;
+    selectedPerson = person;
+    selectedDisplay.hidden = false;
+    selectedDisplay.innerHTML = `Selected client: <strong>${escapeHtml(person.display_name)}</strong>`;
+    submitBtn.disabled = false;
+    errorDisplay.textContent = "";
+    renderModalSearchResults("billingModalResults", searchRows, personId, handleSelect);
+  };
+
+  const doSearch = debounce(async (q) => {
+    errorDisplay.textContent = "";
+    if (!q.trim()) {
+      searchRows = [];
+      resultsContainer.innerHTML = "";
+      return;
+    }
+    try {
+      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      renderModalSearchResults("billingModalResults", searchRows, selectedPerson ? selectedPerson.person_id : null, handleSelect);
+    } catch (err) {
+      errorDisplay.textContent = err.message || "Search failed.";
+    }
+  }, 200);
+
+  searchInput.addEventListener("input", (e) => doSearch(e.target.value));
+  searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+
+  cancelBtn.addEventListener("click", () => {
+    closeBillingModal();
+    if (originatingBtn) originatingBtn.focus();
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    if (!selectedPerson) {
+      errorDisplay.textContent = "Select a client before creating.";
+      return;
+    }
+    submitBtn.disabled = true;
+    errorDisplay.textContent = "";
+    try {
+      const safeName = `${selectedPerson.display_name} Billing Relationship`;
+      const account = await api("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({ account_name: safeName, account_type: "individual" })
+      });
+      await api("/api/account-members", {
+        method: "POST",
+        body: JSON.stringify({
+          account_id: account.account_id,
+          person_id: selectedPerson.person_id,
+          relationship_role: "primary",
+          is_primary: true
+        })
+      });
+      let nextContext = returnContext;
+      if (validReturnContext(returnContext)) {
+        nextContext = persistReturnContext({ ...returnContext, accountId: account.account_id });
+        location.hash = returnContextHash(nextContext);
+      }
+      closeBillingModal();
+      await loadClients();
+      await openAccountRecord(account.account_id, { returnContext: nextContext });
+    } catch (err) {
+      errorDisplay.textContent = err.message || "Failed to create billing relationship.";
+      submitBtn.disabled = false;
+    }
+  });
+
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) cancelBtn.click(); });
+  document.addEventListener("keydown", billingModalTrapKeydown);
+  searchInput.focus();
+}
+
+function openAddClientModal(accountId, returnContext, originatingBtn, existingMemberPersonIds) {
+  closeBillingModal();
+  const overlay = document.createElement("div");
+  overlay.id = "billingModalOverlay";
+  overlay.className = "billing-modal-overlay";
+  overlay.innerHTML = `
+    <div class="billing-modal" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingModalTitle">
+      <h3 id="billingModalTitle">Add Client</h3>
+      <p class="modal-instruction">Search existing clients to add to this billing relationship.</p>
+      <div class="modal-search-wrap">
+        <label for="billingModalSearch">Search existing clients</label>
+        <input id="billingModalSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
+      </div>
+      <div class="modal-results" id="billingModalResults"></div>
+      <div class="modal-selected" id="billingModalSelected" hidden></div>
+      <div class="modal-error" id="billingModalError" role="alert"></div>
+      <div class="modal-actions">
+        <button type="button" class="modal-cancel" id="billingModalCancel">Cancel</button>
+        <button type="button" class="modal-submit" id="billingModalSubmit" disabled>Add</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+
+  const knownIds = new Set(existingMemberPersonIds || []);
+  let selectedPerson = null;
+  let searchRows = [];
+
+  const searchInput = document.getElementById("billingModalSearch");
+  const resultsContainer = document.getElementById("billingModalResults");
+  const selectedDisplay = document.getElementById("billingModalSelected");
+  const errorDisplay = document.getElementById("billingModalError");
+  const submitBtn = document.getElementById("billingModalSubmit");
+  const cancelBtn = document.getElementById("billingModalCancel");
+
+  const handleSelect = (personId) => {
+    const person = searchRows.find(r => r.person_id === personId);
+    if (!person) return;
+    if (knownIds.has(personId)) {
+      errorDisplay.textContent = "This client is already included in this billing relationship.";
+      return;
+    }
+    selectedPerson = person;
+    selectedDisplay.hidden = false;
+    selectedDisplay.innerHTML = `Selected client: <strong>${escapeHtml(person.display_name)}</strong>`;
+    submitBtn.disabled = false;
+    errorDisplay.textContent = "";
+    renderModalSearchResults("billingModalResults", searchRows, personId, handleSelect);
+  };
+
+  const doSearch = debounce(async (q) => {
+    errorDisplay.textContent = "";
+    if (!q.trim()) {
+      searchRows = [];
+      resultsContainer.innerHTML = "";
+      return;
+    }
+    try {
+      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      renderModalSearchResults("billingModalResults", searchRows, selectedPerson ? selectedPerson.person_id : null, handleSelect);
+    } catch (err) {
+      errorDisplay.textContent = err.message || "Search failed.";
+    }
+  }, 200);
+
+  searchInput.addEventListener("input", (e) => doSearch(e.target.value));
+  searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+
+  cancelBtn.addEventListener("click", () => {
+    closeBillingModal();
+    if (originatingBtn) originatingBtn.focus();
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    if (!selectedPerson) {
+      errorDisplay.textContent = "Select a client before adding.";
+      return;
+    }
+    if (knownIds.has(selectedPerson.person_id)) {
+      errorDisplay.textContent = "This client is already included in this billing relationship.";
+      return;
+    }
+    submitBtn.disabled = true;
+    errorDisplay.textContent = "";
+    try {
+      await api("/api/account-members", {
+        method: "POST",
+        body: JSON.stringify({
+          account_id: accountId,
+          person_id: selectedPerson.person_id,
+          relationship_role: "family_member",
+          is_primary: false
+        })
+      });
+      closeBillingModal();
+      await loadClients();
+      await openAccountRecord(accountId, { returnContext });
+    } catch (err) {
+      errorDisplay.textContent = err.message || "Failed to add client.";
+      submitBtn.disabled = false;
+    }
+  });
+
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) cancelBtn.click(); });
+  document.addEventListener("keydown", billingModalTrapKeydown);
+  searchInput.focus();
 }
