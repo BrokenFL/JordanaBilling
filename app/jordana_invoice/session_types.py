@@ -19,6 +19,12 @@ ALLOWED_BILLING_SESSION_TYPES = frozenset({
     "custom",
 })
 
+ALLOWED_RATE_RULE_APPOINTMENT_STATUSES = frozenset({
+    "scheduled",
+    "cancelled",
+    "no_show",
+})
+
 BILLING_SESSION_TYPE_LABELS = {
     "psychotherapy": "Psychotherapy Session",
     "psychotherapy_house_call": "Psychotherapy Session / House Call",
@@ -45,6 +51,12 @@ DURATION_CHOICE_OPTIONS = [
     {"value": "90", "label": "90 minutes"},
     {"value": "120", "label": "120 minutes"},
     {"value": "custom", "label": "Custom"},
+]
+
+RATE_RULE_APPOINTMENT_STATUS_OPTIONS = [
+    {"value": "scheduled", "label": "Scheduled"},
+    {"value": "cancelled", "label": "Cancelled"},
+    {"value": "no_show", "label": "No-Show"},
 ]
 
 LEGACY_SERVICE_MODES = frozenset({
@@ -176,6 +188,64 @@ def get_billing_type_label(billing_type: str | None) -> str:
     if billing_type is None:
         return "Unknown"
     return BILLING_SESSION_TYPE_LABELS.get(billing_type, billing_type)
+
+
+def validate_rate_rule_appointment_status(value: str | None) -> str:
+    """Validate and return a rate-rule appointment status."""
+    normalized = (value or "scheduled").strip()
+    if normalized not in ALLOWED_RATE_RULE_APPOINTMENT_STATUSES:
+        raise ValueError(
+            f"Invalid appointment status: {normalized}. "
+            f"Allowed values: {', '.join(sorted(ALLOWED_RATE_RULE_APPOINTMENT_STATUSES))}"
+        )
+    return normalized
+
+
+def rate_rule_appointment_status_for_session(value: str | None) -> str:
+    """
+    Normalize stored appointment statuses to the rate-rule dimension.
+
+    Normal sessions keep using scheduled rules; only cancelled/no-show sessions
+    require exact status-specific rules.
+    """
+    if value in {"cancelled", "no_show"}:
+        return value
+    return "scheduled"
+
+
+def appointment_status_label(value: str | None) -> str:
+    return {
+        "scheduled": "Scheduled",
+        "completed": "Completed",
+        "cancelled": "Cancelled",
+        "no_show": "No-Show",
+        "unresolved": "Unresolved",
+    }.get(value or "", value or "Unknown")
+
+
+def get_user_facing_session_label(
+    billing_type: str | None,
+    appointment_status: str | None = None,
+    custom_description: str | None = None,
+) -> str:
+    """Build the display label from appointment status plus billing type."""
+    if billing_type == "custom" and custom_description:
+        base = custom_description
+    elif appointment_status in {"cancelled", "no_show"}:
+        base = {
+            "psychotherapy": "Psychotherapy Session",
+            "psychotherapy_house_call": "House Call Psychotherapy Session",
+            "psychotherapy_weekend": "Weekend Psychotherapy Session",
+            "psychotherapy_evening": "Evening Psychotherapy Session",
+            "custom": "Custom",
+        }.get(billing_type or "", get_billing_type_label(billing_type))
+    else:
+        base = get_billing_type_label(billing_type)
+    if appointment_status == "cancelled":
+        return f"Cancelled {base}"
+    if appointment_status == "no_show":
+        return f"No-Show {base}"
+    return base
 
 
 def is_legacy_service_mode(value: str | None) -> bool:

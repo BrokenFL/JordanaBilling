@@ -288,6 +288,7 @@ CREATE TABLE IF NOT EXISTS rate_rules (
   person_id TEXT REFERENCES people(person_id),
   duration_minutes INTEGER,
   billing_session_type TEXT,
+  appointment_status TEXT NOT NULL DEFAULT 'scheduled',
   custom_service_description TEXT,
   custom_service_code TEXT,
   service_mode TEXT,
@@ -306,6 +307,9 @@ CREATE TABLE IF NOT EXISTS rate_rules (
 
 CREATE INDEX IF NOT EXISTS idx_rate_rules_match
   ON rate_rules(active, client_account_id, person_id, duration_minutes, service_mode, rate_group, time_category);
+
+CREATE INDEX IF NOT EXISTS idx_rate_rules_status_match
+  ON rate_rules(active, client_account_id, person_id, duration_minutes, appointment_status, time_category);
 
 CREATE TABLE IF NOT EXISTS rate_rule_participants (
   rate_rule_participant_id TEXT PRIMARY KEY,
@@ -587,14 +591,28 @@ def migrate_existing_db(conn: sqlite3.Connection) -> None:
         WHERE type = 'table' AND name = 'raw_calendar_snapshots'
         """
     ).fetchone()
-    if not table:
-        return
-    columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(raw_calendar_snapshots)").fetchall()
-    }
-    if "snapshot_key" not in columns:
-        conn.execute("ALTER TABLE raw_calendar_snapshots ADD COLUMN snapshot_key TEXT")
+    if table:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(raw_calendar_snapshots)").fetchall()
+        }
+        if "snapshot_key" not in columns:
+            conn.execute("ALTER TABLE raw_calendar_snapshots ADD COLUMN snapshot_key TEXT")
+    rate_rules = conn.execute(
+        """
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'rate_rules'
+        """
+    ).fetchone()
+    if rate_rules:
+        rate_rule_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(rate_rules)").fetchall()
+        }
+        if "appointment_status" not in rate_rule_columns:
+            conn.execute(
+                "ALTER TABLE rate_rules ADD COLUMN appointment_status TEXT NOT NULL DEFAULT 'scheduled'"
+            )
 
 
 def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
@@ -727,6 +745,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
         "rate_rules",
         {
             "billing_session_type": "TEXT",
+            "appointment_status": "TEXT NOT NULL DEFAULT 'scheduled'",
             "custom_service_description": "TEXT",
             "custom_service_code": "TEXT",
         },

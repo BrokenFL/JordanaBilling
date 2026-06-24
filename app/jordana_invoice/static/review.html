@@ -135,6 +135,11 @@
             </select>
             <input name="custom_service_description" id="rateCustomDescription" placeholder="Custom description" hidden />
             <input name="custom_service_code" id="rateCustomCode" placeholder="Optional custom code" hidden />
+            <select name="appointment_status" id="rateAppointmentStatus" required>
+              <option value="scheduled">Scheduled</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="no_show">No-Show</option>
+            </select>
             <select name="time_category" id="rateTimeCategory" required>
               <option value="standard">Standard</option>
               <option value="evening">Evening</option>
@@ -162,7 +167,7 @@
             <h3>Standard Rates</h3>
             <table class="review-table rate-table">
               <thead>
-                <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
+                <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Status</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
               </thead>
               <tbody id="rateRowsStandard"></tbody>
             </table>
@@ -171,7 +176,7 @@
             <h3>Client, joint-client, and billing-relationship Exceptions</h3>
             <table class="review-table rate-table">
               <thead>
-                <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
+                <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Status</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
               </thead>
               <tbody id="rateRowsExceptions"></tbody>
             </table>
@@ -181,7 +186,7 @@
               <summary>Collapsed Ended Rates</summary>
               <table class="review-table rate-table">
                 <thead>
-                  <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
+                  <tr><th>Amount</th><th>Duration</th><th>Session Type</th><th>Status</th><th>Time Category</th><th>Scope</th><th>Effective</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="rateRowsEnded"></tbody>
               </table>
@@ -281,7 +286,7 @@
           </div>
           <table class="review-table sessions-table">
             <thead>
-              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment</th><th>Review Status</th></tr>
+              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment</th><th>Review Status</th><th>Actions</th></tr>
             </thead>
             <tbody id="sessionsRows"></tbody>
           </table>

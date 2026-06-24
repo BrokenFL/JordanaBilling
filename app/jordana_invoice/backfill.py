@@ -87,6 +87,7 @@ def backfill_phase2(conn: sqlite3.Connection) -> int:
             conn,
             session_date=session_date,
             duration_minutes=session["duration_minutes"],
+            appointment_status=session["appointment_status"],
             service_mode=payload.get("service_mode") or "unknown",
             rate_group=payload.get("rate_group"),
             time_category=payload.get("time_category") or "standard",

@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from .rates import cents_to_dollars
+from .session_types import get_user_facing_session_label
 from .util import text
 
 
@@ -218,6 +219,7 @@ def ledger_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "session_length": row["session_length"] or "",
         "session_type": session_type_text(
             row["billing_session_type"],
+            row["appointment_status"],
             row["service_mode"],
             row["custom_service_description"],
         ),
@@ -277,20 +279,17 @@ def first_rate_cents(row: sqlite3.Row) -> int | None:
 
 def session_type_text(
     billing_session_type: object,
+    appointment_status: object,
     service_mode: object,
     custom_service_description: object = None,
 ) -> str:
     billing = text(billing_session_type)
     if billing:
-        if billing == "custom" and text(custom_service_description):
-            return text(custom_service_description)
-        return {
-            "psychotherapy": "Psychotherapy Session",
-            "psychotherapy_house_call": "Psychotherapy Session / House Call",
-            "psychotherapy_weekend": "Psychotherapy Session / Weekend",
-            "psychotherapy_evening": "Psychotherapy Session / Evening",
-            "custom": "Custom",
-        }.get(billing, billing)
+        return get_user_facing_session_label(
+            billing,
+            text(appointment_status) or None,
+            text(custom_service_description) or None,
+        )
     service = text(service_mode)
     if not service:
         return ""

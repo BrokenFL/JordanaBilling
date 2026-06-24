@@ -58,6 +58,23 @@ const billingTypeLabel = (v, customDescription = "") => {
   if (v === "custom" && customDescription) return customDescription;
   return ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || v || "Psychotherapy Session");
 };
+const appointmentStatusRuleLabel = (v) => ({scheduled:"Scheduled", cancelled:"Cancelled", no_show:"No-Show"}[v] || v || "Scheduled");
+const userFacingSessionLabel = (billingType, appointmentStatus = "", customDescription = "") => {
+  const specialBase = {
+    psychotherapy: "Psychotherapy Session",
+    psychotherapy_house_call: "House Call Psychotherapy Session",
+    psychotherapy_weekend: "Weekend Psychotherapy Session",
+    psychotherapy_evening: "Evening Psychotherapy Session",
+    custom: customDescription || "Custom"
+  };
+  const defaultBase = billingTypeLabel(billingType, customDescription);
+  const base = ["cancelled", "no_show"].includes(appointmentStatus)
+    ? (specialBase[billingType] || defaultBase)
+    : defaultBase;
+  if (appointmentStatus === "cancelled") return `Cancelled ${base}`;
+  if (appointmentStatus === "no_show") return `No-Show ${base}`;
+  return defaultBase;
+};
 const billingTypeShort = (v, customDescription = "") => {
   if (v === "custom" && customDescription) return customDescription;
   return ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || v || "Standard");
@@ -128,7 +145,7 @@ function renderRows(items, total) {
       <td>${fmt(item.raw_title)}</td>
       <td><span class="primary">${fmt(item.suggested_client)}</span></td>
       <td>${fmt(item.duration_minutes)}</td>
-      <td>${billingTypeShort(item.billing_session_type || item.service_mode)}</td>
+      <td>${userFacingSessionLabel(item.billing_session_type || item.service_mode, item.appointment_status, item.custom_service_description || "")}</td>
       <td>${timeLabel(item.time_category)}</td>
       <td>${money(item.rate)}</td>
       <td><span class="confidence ${item.authority_score >= 60 ? "good" : "low"}">${item.authority_score || 0}%</span></td>
@@ -238,7 +255,7 @@ function renderInspector(data) {
       ${sessionLocked
         ? `<div class="readonly-note">${!readiness.clients_ready ? "Confirm Client(s) first." : "Confirm Bill To first."}</div>`
         : readiness.session_ready && !sessionEditing
-          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${billingTypeLabel(s.billing_session_type || mapLegacyToType(s), s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)} • ${fmt(s.payment_status)}</div></div>
+          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)} • ${fmt(s.payment_status)}</div></div>
              <div class="inline-actions"><button id="changeSessionBtn">Change</button></div>`
           : `<div class="field-grid">
                <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
@@ -811,6 +828,7 @@ async function updateSessionRatePreview() {
     duration_choice: $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes),
     custom_duration_minutes: $("customDurationInput")?.value || "",
     billing_session_type: $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy",
+    appointment_status: state.detail.session.appointment_status || "scheduled",
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
     time_category: $("timeCategoryInput")?.value || state.detail.session.time_category || "standard",
@@ -1090,7 +1108,12 @@ function renderSessions(rows, total) {
   state.sessions.items = rows;
   state.sessions.total = total;
   $("sessionsResultCount").textContent = `Showing ${rows.length ? state.sessions.offset + 1 : 0} to ${state.sessions.offset + rows.length} of ${total} results`;
-  $("sessionsRows").innerHTML = rows.map(row => `
+  $("sessionsRows").innerHTML = rows.map(row => {
+    const canRestore = row.review_status === "excluded" && row.candidate_id;
+    const actionCell = canRestore
+      ? `<td><button class="restore-session-btn link-btn" data-cid="${row.candidate_id}">Return to Review</button></td>`
+      : `<td></td>`;
+    return `
     <tr>
       <td>${fmt(row.date)}</td>
       <td>${fmt(row.time)}</td>
@@ -1100,8 +1123,21 @@ function renderSessions(rows, total) {
       <td>${money(row.rate)}</td>
       <td>${fmt(row.payment_status)}</td>
       <td>${fmt(row.review_status)}</td>
-    </tr>
-  `).join("") || `<tr><td colspan="8" class="readonly-note">No appointments found.</td></tr>`;
+      ${actionCell}
+    </tr>`;
+  }).join("") || `<tr><td colspan="9" class="readonly-note">No appointments found.</td></tr>`;
+  $("sessionsRows").querySelectorAll(".restore-session-btn").forEach(btn => {
+    btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
+  });
+}
+
+async function restoreSessionRow(candidateId) {
+  try {
+    await api(`/api/review/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify({ reason: "Returned to review queue from Sessions view" }) });
+    await loadSessions();
+  } catch (err) {
+    alert("Could not restore session: " + err.message);
+  }
 }
 
 async function loadSessions() {
@@ -1515,7 +1551,7 @@ document.getElementById("rateAppliesSearch").addEventListener("input", debounce(
   renderRateScopeResults();
 }, 160));
 
-["rateAmountInput","rateDurationChoice","rateCustomDurationMinutes","rateBillingSessionType","rateCustomDescription","rateCustomCode","rateTimeCategory","rateEffectiveFrom"].forEach(id => {
+["rateAmountInput","rateDurationChoice","rateCustomDurationMinutes","rateBillingSessionType","rateCustomDescription","rateCustomCode","rateAppointmentStatus","rateTimeCategory","rateEffectiveFrom"].forEach(id => {
   $(id).addEventListener("input", () => {
     syncRateCardCustomFields();
     renderRateRulePreview();
@@ -1535,12 +1571,13 @@ function renderRateRuleTable(targetId, rows) {
       <td>$${row.amount}</td>
       <td>${fmt(row.duration_label)}</td>
       <td>${fmt(row.session_type_label)}</td>
+      <td>${fmt(row.appointment_status_label)}</td>
       <td>${timeLabel(row.time_category)}</td>
       <td>${fmt(row.scope_label)}</td>
       <td>${fmt(row.effective_from)}${row.effective_through ? ` to ${fmt(row.effective_through)}` : ""}</td>
       <td>${row.ended ? '<span class="readonly-note">Ended</span>' : `<button class="mini" data-replace-rate="${row.rate_rule_id}">Replace</button><button class="mini danger" data-end-rate="${row.rate_rule_id}">End</button>`}</td>
     </tr>
-  `).join("") || `<tr><td colspan="7" class="readonly-note">No rate rules in this section.</td></tr>`;
+  `).join("") || `<tr><td colspan="8" class="readonly-note">No rate rules in this section.</td></tr>`;
   document.querySelectorAll(`#${targetId} [data-replace-rate]`).forEach(button => {
     button.onclick = () => startRateRuleReplacement(rows.find(row => row.rate_rule_id === button.dataset.replaceRate));
   });
@@ -1559,6 +1596,7 @@ function buildRateRulePayload() {
     billing_session_type: $("rateBillingSessionType").value,
     custom_service_description: $("rateCustomDescription").value,
     custom_service_code: $("rateCustomCode").value,
+    appointment_status: $("rateAppointmentStatus").value,
     time_category: $("rateTimeCategory").value,
     applies_to: appliesTo,
     effective_from: $("rateEffectiveFrom").value
@@ -1674,6 +1712,7 @@ function renderRateRulePreview() {
     ? `${$("rateCustomDurationMinutes").value || "?"} minutes`
     : `${$("rateDurationChoice").value || "?"} minutes`;
   const sessionType = billingTypeLabel($("rateBillingSessionType").value, $("rateCustomDescription").value.trim());
+  const appointmentStatus = appointmentStatusRuleLabel($("rateAppointmentStatus").value);
   const timeCategory = timeLabel($("rateTimeCategory").value);
   const amount = $("rateAmountInput").value.trim() || "?";
   const effective = $("rateEffectiveFrom").value || "today";
@@ -1682,7 +1721,7 @@ function renderRateRulePreview() {
   if (scope === "participants") scopeText = state.rateCard.participantSelections.length ? `for clients ${state.rateCard.participantSelections.map(person => person.display_name).join(" + ")}` : "for resolved clients together";
   if (scope === "account") scopeText = state.rateCard.resolvedAccount ? `for billing relationship ${state.rateCard.resolvedAccount.account_name}` : "for one resolved billing relationship";
   const action = state.rateCard.mode === "replace" ? "replace the selected rule with" : "save";
-  $("rateRulePreview").textContent = `This will ${action} a ${timeCategory.toLowerCase()} ${sessionType.toLowerCase()} rate of $${amount} for ${duration} ${scopeText}, effective ${effective}.`;
+  $("rateRulePreview").textContent = `This will ${action} a ${appointmentStatus.toLowerCase()} ${timeCategory.toLowerCase()} ${sessionType.toLowerCase()} rate of $${amount} for ${duration} ${scopeText}, effective ${effective}.`;
 }
 
 function resetRateCardForm() {
@@ -1691,6 +1730,7 @@ function resetRateCardForm() {
   $("rateRuleForm").reset();
   $("rateDurationChoice").value = "60";
   $("rateBillingSessionType").value = "psychotherapy";
+  $("rateAppointmentStatus").value = "scheduled";
   $("rateTimeCategory").value = "standard";
   $("rateAppliesTo").value = "everyone";
   $("rateEffectiveFrom").value = new Date().toISOString().slice(0, 10);
@@ -1715,6 +1755,7 @@ function startRateRuleReplacement(row) {
   $("rateBillingSessionType").value = row.billing_session_type;
   $("rateCustomDescription").value = row.custom_service_description || "";
   $("rateCustomCode").value = row.custom_service_code || "";
+  $("rateAppointmentStatus").value = row.appointment_status || "scheduled";
   $("rateTimeCategory").value = row.time_category;
   $("rateEffectiveFrom").value = new Date().toISOString().slice(0, 10);
   $("rateAppliesTo").value = row.scope_type === "everyone" ? "everyone" : row.scope_type;
@@ -1952,7 +1993,7 @@ function billingAddressSummary(billingParty) {
 
 function personRateOverrideLine(rule) {
   const duration = rule.custom_duration_minutes || rule.duration_minutes;
-  return `${money(centString(rule.amount_cents))} • ${billingTypeLabel(rule.billing_session_type, rule.custom_service_description || "")} • ${fmt(duration)} min • ${timeLabel(rule.time_category)} • ${fmt(rule.effective_from)}`;
+  return `${money(centString(rule.amount_cents))} • ${userFacingSessionLabel(rule.billing_session_type, rule.appointment_status, rule.custom_service_description || "")} • ${appointmentStatusRuleLabel(rule.appointment_status)} • ${fmt(duration)} min • ${timeLabel(rule.time_category)} • ${fmt(rule.effective_from)}`;
 }
 
 async function openPersonRecord(personId, options = {}) {
@@ -1979,7 +2020,7 @@ async function openPersonRecord(personId, options = {}) {
     <h4>Billing Summary</h4>
     <h5>Billing Relationships</h5><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${a.account_id}">Open</button></div>`).join("") || "<span class='readonly-note'>No relationships yet.</span>"}</div>
     <h5>Bill-To Records</h5><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)} • ${fmt(b.billing_email)} • ${fmt(b.billing_phone)} • ${fmt(b.preferred_delivery_method)}${billingAddressSummary(b) ? ` • ${fmt(billingAddressSummary(b))}` : ""}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
-    <h4>Recent Sessions</h4><div class="compact-list">${visibleSessions.map(s => `<div><span>${fmt(s.session_date)} • ${fmt(s.raw_calendar_title)} • ${billingTypeShort(s.billing_session_type, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.duration_minutes)} min${s.other_participant_names ? ` • With ${fmt(s.other_participant_names)}` : ""} • ${fmt(s.payment_status)} • ${fmt(s.review_status)} • ${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
+    <h4>Recent Sessions</h4><div class="compact-list">${visibleSessions.map(s => `<div><span>${fmt(s.session_date)} • ${fmt(s.raw_calendar_title)} • ${userFacingSessionLabel(s.billing_session_type, s.appointment_status, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.duration_minutes)} min${s.other_participant_names ? ` • With ${fmt(s.other_participant_names)}` : ""} • ${fmt(s.payment_status)} • ${fmt(s.review_status)} • ${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
     ${data.sessions.length > 10 ? `<div class="record-actions"><button id="toggleAllSessions">${showAllSessions ? "Show newest 10" : "Show all"}</button></div>` : ""}
     <h4>Client Rate Overrides</h4>
     <div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${personRateOverrideLine(r)}</span></div>`).join("") || "<span class='readonly-note'>Uses standard Rate Card. No client-specific override.</span>"}</div>

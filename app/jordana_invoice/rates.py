@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
+from .session_types import rate_rule_appointment_status_for_session
 from .util import new_id, now_iso, parse_int, text
 
 
@@ -50,6 +51,7 @@ def seed_rate_rule(
     effective_from: str,
     duration_minutes: int | None = None,
     billing_session_type: str | None = None,
+    appointment_status: str = "scheduled",
     custom_service_description: str | None = None,
     custom_service_code: str | None = None,
     service_mode: str | None = None,
@@ -66,10 +68,10 @@ def seed_rate_rule(
         """
         INSERT INTO rate_rules (
           rate_rule_id, client_account_id, person_id, duration_minutes,
-          billing_session_type, custom_service_description, custom_service_code,
+          billing_session_type, appointment_status, custom_service_description, custom_service_code,
           service_mode, rate_group, time_category, amount_cents,
           effective_from, priority, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         """,
         (
             rule_id,
@@ -77,6 +79,7 @@ def seed_rate_rule(
             person_id,
             duration_minutes,
             billing_session_type,
+            appointment_status,
             text(custom_service_description).strip() or None,
             text(custom_service_code).strip() or None,
             service_mode,
@@ -131,6 +134,7 @@ def suggest_rate(
     session_date: str,
     duration_minutes: int | None,
     billing_session_type: str | None = None,
+    appointment_status: str | None = None,
     custom_service_description: str | None = None,
     custom_service_code: str | None = None,
     service_mode: str | None,
@@ -151,6 +155,7 @@ def suggest_rate(
                 "Weekend-evening rate policy is manual review.",
             )
 
+    normalized_appointment_status = rate_rule_appointment_status_for_session(appointment_status)
     participant_ids = sorted(set(pid for pid in (participant_person_ids or []) if pid))
     for billing_session_type_candidate in billing_session_type_candidates(billing_session_type):
         if len(participant_ids) > 1:
@@ -160,6 +165,7 @@ def suggest_rate(
                 session_date,
                 duration_minutes,
                 billing_session_type_candidate,
+                normalized_appointment_status,
                 custom_service_description,
                 custom_service_code,
                 service_mode,
@@ -190,6 +196,7 @@ def suggest_rate(
                 session_date,
                 duration_minutes,
                 billing_session_type_candidate,
+                normalized_appointment_status,
                 custom_service_description,
                 custom_service_code,
                 service_mode,
@@ -220,6 +227,7 @@ def find_matching_participant_rule(
     session_date: str,
     duration_minutes: int | None,
     billing_session_type: str | None,
+    appointment_status: str,
     custom_service_description: str | None,
     custom_service_code: str | None,
     service_mode: str | None,
@@ -237,6 +245,7 @@ def find_matching_participant_rule(
           AND (rr.effective_through IS NULL OR rr.effective_through = '' OR rr.effective_through >= ?)
           AND (rr.duration_minutes IS NULL OR rr.duration_minutes = ?)
           AND (rr.billing_session_type IS NULL OR rr.billing_session_type = ?)
+          AND rr.appointment_status = ?
           AND rr.time_category = ?
           AND rrp.person_id IN ({placeholders})
         GROUP BY rr.rate_rule_id
@@ -259,6 +268,7 @@ def find_matching_participant_rule(
             session_date,
             duration_minutes,
             billing_session_type,
+            appointment_status,
             time_category,
             *participant_ids,
             len(participant_ids),
@@ -283,6 +293,7 @@ def find_matching_rule(
     session_date: str,
     duration_minutes: int | None,
     billing_session_type: str | None,
+    appointment_status: str,
     custom_service_description: str | None,
     custom_service_code: str | None,
     service_mode: str | None,
@@ -298,6 +309,7 @@ def find_matching_rule(
             session_date,
             duration_minutes,
             billing_session_type,
+            appointment_status,
             time_category,
         ]
     )
@@ -312,6 +324,7 @@ def find_matching_rule(
           AND (effective_through IS NULL OR effective_through = '' OR effective_through >= ?)
           AND (duration_minutes IS NULL OR duration_minutes = ?)
           AND (billing_session_type IS NULL OR billing_session_type = ?)
+          AND appointment_status = ?
           AND time_category = ?
         ORDER BY
           CASE WHEN person_id IS NOT NULL THEN 1 ELSE 0 END DESC,

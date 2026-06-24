@@ -10,6 +10,7 @@ from .appointment_ledger import (
     build_appointment_ledger_csv_rows,
 )
 from .rates import cents_to_dollars
+from .session_types import get_user_facing_session_label
 from .util import text
 
 
@@ -35,6 +36,7 @@ SESSION_COLUMNS = [
     "approved_rate",
     "rate_source",
     "payment_status",
+    "appointment_status",
     "review_status",
     "review_reasons",
     "invoice_number",
@@ -107,8 +109,11 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
           s.approved_rate_source,
           s.rate_source,
           s.payment_status,
+          s.appointment_status,
           s.review_status,
           s.raw_calendar_title,
+          s.billing_session_type,
+          s.custom_service_description,
           c.classification,
           c.confidence,
           c.candidate_person_names,
@@ -156,6 +161,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
                 "approved_rate": cents_to_dollars(row["approved_rate_cents"]),
                 "rate_source": row["approved_rate_source"] or row["rate_source"] or "",
                 "payment_status": row["payment_status"] or "unresolved",
+                "appointment_status": row["appointment_status"] or "unresolved",
                 "review_status": row["review_status"] or "needs_review",
                 "review_reasons": jsonish_to_list_text(row["review_reasons"]),
                 "invoice_number": "",
@@ -205,7 +211,11 @@ def build_simple_rows(session_rows: list[dict[str, object]]) -> list[dict[str, o
                 "Time": row["start_time"],
                 "Client / Participants": row["participant_names"] or row["candidate_person_names"],
                 "Session Length": row["duration_minutes"],
-                "Session Type": row["service_mode"],
+                "Session Type": get_user_facing_session_label(
+                    text(row.get("billing_session_type")) or None,
+                    text(row.get("appointment_status")) or None,
+                    text(row.get("custom_service_description")) or None,
+                ),
                 "Time Category": row["time_category"],
                 "Rate": row["approved_rate"] or row["suggested_rate"],
                 "Payment Status": row["payment_status"],

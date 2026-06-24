@@ -125,6 +125,7 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertEqual(rule["amount_cents"], 35000)
         self.assertEqual(rule["duration_minutes"], 60)
         self.assertEqual(rule["billing_session_type"], "psychotherapy")
+        self.assertEqual(rule["appointment_status"], "scheduled")
         self.assertEqual(rule["time_category"], "standard")
         self.assertIsNone(rule["client_account_id"])
         self.assertIsNone(rule["person_id"])
@@ -139,6 +140,31 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertEqual(detail["session"]["suggested_rate_cents"], 35000)
         self.assertEqual(detail["session"]["rate_source"], "default")
         self.assertIsNone(detail["session"]["approved_rate_cents"])
+
+    def test_cancelled_session_requires_exact_cancelled_rule(self):
+        candidate_id = self.import_one("snap-cancelled", "Fred 630 60 cancelled")
+        self._create_default_rule()
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["appointment_status"], "cancelled")
+        self.assertIsNone(detail["session"]["suggested_rate_cents"])
+        cancelled_rule = self._create_rate_rule(
+            amount=175,
+            duration_minutes=60,
+            billing_session_type="psychotherapy",
+            appointment_status="cancelled",
+            time_category="standard",
+        )
+        refreshed = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(refreshed["session"]["suggested_rate_cents"], 17500)
+        self.assertEqual(refreshed["session"]["rate_rule_id"], cancelled_rule["rate_rule_id"])
+
+    def test_completed_session_uses_scheduled_rate_rule_dimension(self):
+        candidate_id = self.import_one("snap-completed", "Fred 630 60")
+        detail = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(detail["session"]["appointment_status"], "completed")
+        self._create_default_rule()
+        refreshed = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(refreshed["session"]["suggested_rate_cents"], 35000)
 
     def test_later_matching_session_gets_same_suggestion(self):
         # Rule exists before the session is imported.

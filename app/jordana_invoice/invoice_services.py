@@ -10,6 +10,7 @@ from typing import Any
 from .db import init_db
 from .invoice_pdf import generate_invoice_pdf
 from .service_catalog import learn_service, list_services
+from .session_types import get_user_facing_session_label
 from .util import json_dumps, new_id, now_iso
 
 
@@ -376,30 +377,15 @@ def _participant_names(conn: sqlite3.Connection, session_id: str) -> str:
     return " & ".join(row["name"] for row in rows if row["name"])
 
 
-BILLING_SESSION_TYPE_LABELS = {
-    "psychotherapy": "Psychotherapy Session",
-    "psychotherapy_house_call": "Psychotherapy Session / House Call",
-    "psychotherapy_weekend": "Psychotherapy Session / Weekend",
-    "psychotherapy_evening": "Psychotherapy Session / Evening",
-    "custom": "Custom",
-}
-
-
 def _service_description(session: sqlite3.Row, service_name: str) -> str:
     billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
     custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
-
-    if session["appointment_status"] == "no_show":
-        base = custom_desc or BILLING_SESSION_TYPE_LABELS.get(billing_type) or service_name
-        return f"No Show - {base}"
-    if session["appointment_status"] == "cancelled":
-        base = custom_desc or BILLING_SESSION_TYPE_LABELS.get(billing_type) or service_name
-        return f"Cancelled Session - {base}"
+    appointment_status = session["appointment_status"] if "appointment_status" in session.keys() else None
 
     if billing_type == "custom" and custom_desc:
-        return custom_desc
-    if billing_type and billing_type in BILLING_SESSION_TYPE_LABELS:
-        return BILLING_SESSION_TYPE_LABELS[billing_type]
+        return get_user_facing_session_label(billing_type, appointment_status, custom_desc)
+    if billing_type:
+        return get_user_facing_session_label(billing_type, appointment_status, custom_desc)
 
     category = session["time_category"]
     suffix = {"evening": "Evening", "weekend": "Weekend", "weekend_evening": "Weekend Evening"}.get(category)

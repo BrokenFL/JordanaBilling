@@ -225,6 +225,7 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('id="rateCustomDurationMinutes"', html)
         self.assertIn('id="rateCustomDescription"', html)
         self.assertIn('id="rateCustomCode"', html)
+        self.assertIn('id="rateAppointmentStatus"', html)
         self.assertIn("Custom session type requires a description.", js)
         self.assertIn("Custom duration requires actual minutes.", js)
 
@@ -235,6 +236,7 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("Standard Rates", html)
         self.assertIn("Client, joint-client, and billing-relationship Exceptions", html)
         self.assertIn("Collapsed Ended Rates", html)
+        self.assertIn("<th>Status</th>", html)
         self.assertIn("Replacing", js)
         self.assertIn("Saving will end the old rule on the day before the new effective date.", js)
         self.assertIn("End this rule on which date?", js)
