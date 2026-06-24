@@ -1060,6 +1060,7 @@ function showReviewWorkbench() {
 function renderClientsLanding(returnContext = null) {
   if (!returnContext) {
     $("accountRecord").innerHTML = `<div class="empty-state">Open a billing relationship record.</div>`;
+    closeOrganizationRecord();
     return;
   }
   const names = (returnContext.participants || []).map(p => fmt(p.display_name)).join(", ");
@@ -1969,10 +1970,13 @@ function billingDirOpenButton(rec) {
   if (rec.record_type === "account") {
     return `<button class="mini" data-open-account="${escapeHtml(rec.account_id)}">Open</button>`;
   }
+  if (rec.record_type === "organization") {
+    return `<button class="mini" data-open-organization="${escapeHtml(rec.billing_party_id)}">Open</button>`;
+  }
   if (rec.payer_person_id) {
     return `<button class="mini" data-open-person="${escapeHtml(rec.payer_person_id)}">Open</button>`;
   }
-  return `<button class="mini" disabled title="Organization billing-party editing not yet available">Details unavailable</button>`;
+  return `<button class="mini" disabled title="No detail view available">Details unavailable</button>`;
 }
 
 function renderBillingDirRows() {
@@ -2029,6 +2033,13 @@ function renderBillingDirRows() {
         location.hash = `people/${openPersonBtn.dataset.openPerson}`;
       };
     }
+    const openOrgBtn = tr.querySelector("[data-open-organization]");
+    if (openOrgBtn) {
+      openOrgBtn.onclick = (e) => {
+        e.stopPropagation();
+        openOrganizationRecord(openOrgBtn.dataset.openOrganization);
+      };
+    }
   });
 }
 
@@ -2037,8 +2048,200 @@ async function loadClients() {
   renderBillingDirRows();
 }
 
+function closeOrganizationRecord() {
+  const panel = $("organizationRecord");
+  if (!panel) return;
+  panel.hidden = true;
+  panel.innerHTML = `<div class="empty-state">Open an organization billing record.</div>`;
+}
+
+function orgDeliveryLabel(method) {
+  return ({ email: "Email", mail: "Mail", both: "Both", unresolved: "Unresolved" }[method] || method || "—");
+}
+
+function orgAddress(bp) {
+  const parts = [
+    bp.billing_address_line_1,
+    bp.billing_address_line_2,
+    bp.billing_city,
+    bp.billing_state,
+    bp.billing_postal_code
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : "—";
+}
+
+function orgInvoiceStatusLabel(status) {
+  return ({ draft: "Draft", finalized: "Finalized", void: "Void" }[status] || status || "—");
+}
+
+async function openOrganizationRecord(billingPartyId) {
+  const panel = $("organizationRecord");
+  if (!panel) return;
+  panel.hidden = false;
+  panel.innerHTML = `<div class="org-loading">Loading organization record…</div>`;
+  $("accountRecord").innerHTML = `<div class="empty-state">Open a billing relationship record.</div>`;
+
+  let data;
+  try {
+    data = await api(`/api/billing-parties/${billingPartyId}`);
+  } catch (err) {
+    panel.innerHTML = `<div class="org-error">${escapeHtml(err.message || "Failed to load organization record.")}</div>
+      <div style="margin-top:8px"><button class="mini" id="orgCloseBtn">Close</button></div>`;
+    if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
+    return;
+  }
+
+  const bp = data.billing_party;
+  const displayName = bp.organization_name || bp.billing_name || "Unknown Organization";
+  const billingNameSecondary = (bp.billing_name && bp.billing_name !== bp.organization_name) ? bp.billing_name : "";
+  const statusText = bp.active ? "Active" : "Inactive";
+  const statusClass = bp.active ? "status-pill active" : "status-pill inactive";
+  const summary = data.billing_summary;
+
+  const coveredClientsHtml = (data.covered_clients || []).length
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Client</th><th>Code</th><th>Sessions</th><th>Latest Session</th><th>Open</th></tr></thead><tbody>
+        ${(data.covered_clients || []).map(c => `<tr>
+          <td>${escapeHtml(c.display_name)}</td>
+          <td>${escapeHtml(c.person_code)}</td>
+          <td>${c.session_count || 0}</td>
+          <td>${fmt(c.latest_session_date)}</td>
+          <td><button class="mini" data-open-person="${escapeHtml(c.person_id)}">Open</button></td>
+        </tr>`).join("")}
+      </tbody></table></div>`
+    : `<span class="readonly-note">No clients have sessions billed to this organization yet.</span>`;
+
+  const sessionsHtml = (data.sessions || []).length
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Time Category</th><th>Stored Rate</th><th>Review Status</th><th>Invoice</th><th>Open in Review</th></tr></thead><tbody>
+        ${(data.sessions || []).map(s => {
+          const invLabel = s.invoice_id ? (s.invoice_number || "Draft invoice") : "—";
+          return `<tr>
+            <td>${fmt(s.session_date)}</td>
+            <td>${escapeHtml(s.participant_names || "—")}</td>
+            <td>${escapeHtml(s.billing_session_type || "—")}</td>
+            <td>${s.approved_duration_minutes || s.duration_minutes || "—"} min</td>
+            <td>${escapeHtml(timeLabel(s.time_category))}</td>
+            <td>${money(centString(s.approved_rate_cents))}</td>
+            <td>${escapeHtml(s.review_status || "—")}</td>
+            <td>${escapeHtml(invLabel)}</td>
+            <td>${s.candidate_id ? `<button class="mini" data-open-review="${escapeHtml(s.candidate_id)}">Open</button>` : "—"}</td>
+          </tr>`;
+        }).join("")}
+      </tbody></table></div>`
+    : `<span class="readonly-note">No sessions billed to this organization yet.</span>`;
+
+  const invoicesHtml = (data.invoices || []).length
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Status</th><th>Total</th><th>Balance</th><th>Open</th></tr></thead><tbody>
+        ${(data.invoices || []).map(inv => `<tr>
+          <td>${escapeHtml(inv.invoice_number || "—")}</td>
+          <td>${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}</td>
+          <td>${fmt(inv.invoice_date)}</td>
+          <td><span class="status-pill ${inv.status}">${escapeHtml(orgInvoiceStatusLabel(inv.status))}</span></td>
+          <td>${money(centString(inv.total_cents))}</td>
+          <td>${money(centString(inv.balance_cents))}</td>
+          <td>${inv.invoice_id ? `<button class="mini" data-open-invoice="${escapeHtml(inv.invoice_id)}">Open</button>` : "—"}</td>
+        </tr>`).join("")}
+      </tbody></table></div>`
+    : `<span class="readonly-note">No invoices addressed to this organization yet.</span>`;
+
+  const linkedAccountsHtml = (data.linked_accounts || []).length
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Code</th><th>Type</th><th>Status</th><th>Members</th><th>Open</th></tr></thead><tbody>
+        ${(data.linked_accounts || []).map(a => `<tr>
+          <td>${escapeHtml(a.account_name)}</td>
+          <td>${escapeHtml(a.account_code)}</td>
+          <td>${escapeHtml(a.account_type)}</td>
+          <td>${a.active ? "Active" : "Inactive"}</td>
+          <td>${escapeHtml((a.members || []).map(m => m.display_name).join(", ") || "None")}</td>
+          <td><button class="mini" data-open-account="${escapeHtml(a.account_id)}">Open</button></td>
+        </tr>`).join("")}
+      </tbody></table></div>`
+    : `<span class="readonly-note">No linked shared billing groups.</span>`;
+
+  const auditHtml = (data.audit || []).length
+    ? `<div class="org-audit">${(data.audit || []).map(a => `<div><span>${fmt(a.created_at)}</span> <strong>${escapeHtml(a.action)}</strong> <span>${escapeHtml(a.details || "")}</span></div>`).join("")}</div>`
+    : `<span class="readonly-note">No administrative history.</span>`;
+
+  panel.innerHTML = `
+    <button class="mini org-close-btn" id="orgCloseBtn">Close</button>
+    <h3>${escapeHtml(displayName)}</h3>
+    ${billingNameSecondary ? `<div class="org-header-meta"><span>Billing name: ${escapeHtml(billingNameSecondary)}</span></div>` : ""}
+    <div class="org-header-meta"><span class="${statusClass}">${statusText}</span></div>
+
+    <div class="org-section">
+      <h4>Billing Details</h4>
+      <div class="org-billing-details">
+        <label>Organization name</label><span>${escapeHtml(bp.organization_name || "—")}</span>
+        <label>Billing name</label><span>${escapeHtml(bp.billing_name || "—")}</span>
+        <label>Email</label><span>${escapeHtml(bp.billing_email || "—")}</span>
+        <label>Phone</label><span>${escapeHtml(bp.billing_phone || "—")}</span>
+        <label>Address</label><span>${escapeHtml(orgAddress(bp))}</span>
+        <label>Delivery method</label><span>${escapeHtml(orgDeliveryLabel(bp.preferred_delivery_method))}</span>
+        <label>Admin notes</label><span>${escapeHtml(bp.administrative_notes || "—")}</span>
+      </div>
+    </div>
+
+    <div class="org-section">
+      <h4>Billing Summary</h4>
+      <div class="org-summary-cards">
+        <div class="summary-card"><div class="summary-card-label">Sessions</div><div class="summary-card-value">${summary.total_sessions || 0}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Approved Uninvoiced</div><div class="summary-card-value">${summary.approved_uninvoiced_sessions || 0}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Invoices</div><div class="summary-card-value">${summary.invoice_count || 0}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value">${money(centString(summary.total_invoiced_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Outstanding Balance*</div><div class="summary-card-value">${money(centString(summary.outstanding_balance_cents))}</div></div>
+      </div>
+      <div class="org-payment-note">*Payment tracking is not yet implemented. This currently reflects non-void invoice totals.</div>
+    </div>
+
+    <div class="org-section">
+      <h4>Covered Clients</h4>
+      ${coveredClientsHtml}
+    </div>
+
+    <div class="org-section">
+      <h4>Sessions</h4>
+      ${sessionsHtml}
+    </div>
+
+    <div class="org-section">
+      <h4>Invoice History</h4>
+      ${invoicesHtml}
+    </div>
+
+    <div class="org-section">
+      <h4 class="secondary-heading">Related Shared Billing Groups</h4>
+      ${linkedAccountsHtml}
+    </div>
+
+    <div class="org-section">
+      <h4 class="secondary-heading">Administrative History</h4>
+      ${auditHtml}
+    </div>
+  `;
+
+  if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
+
+  panel.querySelectorAll("[data-open-person]").forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); location.hash = `people/${btn.dataset.openPerson}`; };
+  });
+  panel.querySelectorAll("[data-open-account]").forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); openAccountRecord(btn.dataset.openAccount, { returnContext: readReturnContext() }); };
+  });
+  panel.querySelectorAll("[data-open-invoice]").forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); openInvoice(btn.dataset.openInvoice); };
+  });
+  panel.querySelectorAll("[data-open-review]").forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const candidateId = btn.dataset.openReview;
+      if (!candidateId) return;
+      await showReviewWorkbench();
+      await selectCandidate(candidateId);
+    };
+  });
+}
+
 async function openAccountRecord(accountId, options = {}) {
   if (!accountId) return alert("Select or create a billing relationship first.");
+  closeOrganizationRecord();
   const returnContext = validReturnContext(options.returnContext) ? persistReturnContext(options.returnContext) : readReturnContext();
   if (returnContext) {
     persistReturnContext({ ...returnContext, accountId });

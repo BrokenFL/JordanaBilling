@@ -982,5 +982,258 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn(".billing-card.inactive", css)
 
 
+class OrganizationPanelUiTests(unittest.TestCase):
+    """Static-file tests for the read-only organization billing-party detail panel."""
+
+    def setUp(self):
+        self.html = Path("app/jordana_invoice/static/review.html").read_text()
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.css = Path("app/jordana_invoice/static/review.css").read_text()
+
+    def _org_js(self):
+        start = self.js.index("function closeOrganizationRecord")
+        end = self.js.index("async function openAccountRecord")
+        return self.js[start:end]
+
+    # ---- Panel exists independently ----
+
+    def test_organization_record_panel_exists_independently(self):
+        self.assertIn('id="organizationRecord"', self.html)
+        self.assertIn('id="accountRecord"', self.html)
+
+    def test_organization_record_panel_initially_hidden(self):
+        start = self.html.index('id="organizationRecord"')
+        snippet = self.html[start-50:start+100]
+        self.assertIn("hidden", snippet)
+
+    # ---- Organization row Open button ----
+
+    def test_organization_rows_render_enabled_open_button(self):
+        self.assertIn('data-open-organization=', self.js)
+
+    def test_organization_open_button_not_disabled(self):
+        idx = self.js.index("data-open-organization=")
+        snippet = self.js[max(0, idx-80):idx+80]
+        self.assertNotIn("disabled", snippet)
+
+    def test_person_rows_still_use_data_open_person(self):
+        self.assertIn('data-open-person=', self.js)
+
+    def test_account_rows_still_use_data_open_account(self):
+        self.assertIn('data-open-account=', self.js)
+
+    # ---- Fetch and render ----
+
+    def test_open_organization_record_fetches_api(self):
+        org_js = self._org_js()
+        self.assertIn("/api/billing-parties/", org_js)
+
+    def test_loading_state_renders(self):
+        org_js = self._org_js()
+        self.assertIn("org-loading", org_js)
+        self.assertIn("Loading organization record", org_js)
+
+    def test_error_state_renders_inline(self):
+        org_js = self._org_js()
+        self.assertIn("org-error", org_js)
+
+    def test_opening_organization_clears_account_panel(self):
+        org_js = self._org_js()
+        self.assertIn('$("accountRecord").innerHTML', org_js)
+
+    def test_opening_account_clears_organization_panel(self):
+        idx = self.js.index("async function openAccountRecord")
+        snippet = self.js[idx:idx+200]
+        self.assertIn("closeOrganizationRecord()", snippet)
+
+    # ---- Close button ----
+
+    def test_close_button_exists(self):
+        org_js = self._org_js()
+        self.assertIn("orgCloseBtn", org_js)
+        self.assertIn("closeOrganizationRecord", org_js)
+
+    def test_close_sets_panel_hidden(self):
+        idx = self.js.index("function closeOrganizationRecord")
+        snippet = self.js[idx:idx+200]
+        self.assertIn("panel.hidden = true", snippet)
+
+    # ---- Panel header ----
+
+    def test_header_renders_organization_name_with_fallback(self):
+        org_js = self._org_js()
+        self.assertIn("organization_name", org_js)
+        self.assertIn("billing_name", org_js)
+
+    def test_header_renders_billing_name_as_secondary(self):
+        org_js = self._org_js()
+        self.assertIn("billingNameSecondary", org_js)
+
+    def test_header_renders_active_inactive_status(self):
+        org_js = self._org_js()
+        self.assertIn("Active", org_js)
+        self.assertIn("Inactive", org_js)
+        self.assertIn("status-pill", org_js)
+
+    def test_header_does_not_display_uuids_prominently(self):
+        org_js = self._org_js()
+        self.assertNotIn("billing_party_id</h3>", org_js)
+        self.assertNotIn("billing_party_id</h2>", org_js)
+
+    # ---- Billing details section ----
+
+    def test_billing_contact_fields_render_read_only(self):
+        org_js = self._org_js()
+        for field in ["organization_name", "billing_email", "billing_phone", "preferred_delivery_method", "administrative_notes"]:
+            self.assertIn(field, org_js)
+
+    def test_no_edit_save_delete_deactivate_controls(self):
+        org_js = self._org_js()
+        self.assertNotIn("editOrganization", org_js)
+        self.assertNotIn("saveOrganization", org_js)
+        self.assertNotIn("deleteOrganization", org_js)
+        self.assertNotIn("deactivateOrganization", org_js)
+        self.assertNotIn("reactivateOrganization", org_js)
+
+    # ---- Billing summary ----
+
+    def test_all_five_summary_values_render(self):
+        org_js = self._org_js()
+        for label in ["Sessions", "Approved Uninvoiced", "Invoices", "Total Invoiced", "Outstanding Balance"]:
+            self.assertIn(label, org_js)
+
+    def test_payment_tracking_limitation_note_renders(self):
+        org_js = self._org_js()
+        self.assertIn("Payment tracking is not yet implemented", org_js)
+        self.assertIn("org-payment-note", org_js)
+
+    def test_active_status_not_in_summary_cards(self):
+        org_js = self._org_js()
+        summary_start = org_js.index("Billing Summary")
+        summary_end = org_js.index("Covered Clients")
+        summary_section = org_js[summary_start:summary_end]
+        self.assertNotIn("summary-card-label\">Active", summary_section)
+        self.assertNotIn("summary-card-label\">Status", summary_section)
+
+    # ---- Covered clients ----
+
+    def test_covered_clients_table_renders(self):
+        org_js = self._org_js()
+        self.assertIn("Covered Clients", org_js)
+        self.assertIn("display_name", org_js)
+        self.assertIn("person_code", org_js)
+        self.assertIn("session_count", org_js)
+
+    def test_covered_clients_empty_state(self):
+        org_js = self._org_js()
+        self.assertIn("No clients have sessions billed to this organization yet.", org_js)
+
+    def test_client_open_navigates_to_people_route(self):
+        org_js = self._org_js()
+        self.assertIn("people/${btn.dataset.openPerson}", org_js)
+
+    # ---- Sessions ----
+
+    def test_sessions_use_stored_rate(self):
+        org_js = self._org_js()
+        self.assertIn("approved_rate_cents", org_js)
+        self.assertIn("centString", org_js)
+
+    def test_sessions_table_renders(self):
+        org_js = self._org_js()
+        for header in ["Date", "Participants", "Session Type", "Duration", "Time Category", "Stored Rate", "Review Status", "Invoice"]:
+            self.assertIn(header, org_js)
+
+    def test_sessions_empty_state(self):
+        org_js = self._org_js()
+        self.assertIn("No sessions billed to this organization yet.", org_js)
+
+    def test_draft_invoice_fallback_renders(self):
+        org_js = self._org_js()
+        self.assertIn("Draft invoice", org_js)
+
+    def test_open_in_review_uses_existing_navigation(self):
+        org_js = self._org_js()
+        self.assertIn("data-open-review", org_js)
+        self.assertIn("showReviewWorkbench", org_js)
+        self.assertIn("selectCandidate", org_js)
+
+    # ---- Invoice history ----
+
+    def test_invoices_table_renders(self):
+        org_js = self._org_js()
+        for header in ["Invoice Number", "Billing Period", "Issue Date", "Status", "Total", "Balance"]:
+            self.assertIn(header, org_js)
+
+    def test_invoices_empty_state(self):
+        org_js = self._org_js()
+        self.assertIn("No invoices addressed to this organization yet.", org_js)
+
+    def test_invoice_open_uses_existing_invoice_view(self):
+        org_js = self._org_js()
+        self.assertIn("data-open-invoice", org_js)
+        self.assertIn("openInvoice", org_js)
+
+    def test_no_finalize_payment_controls(self):
+        org_js = self._org_js()
+        self.assertNotIn("finalizeInvoice", org_js)
+        self.assertNotIn("markPaid", org_js)
+        self.assertNotIn("deleteInvoice", org_js)
+
+    # ---- Linked billing groups ----
+
+    def test_linked_account_rows_use_existing_account_open(self):
+        org_js = self._org_js()
+        self.assertIn("Related Shared Billing Groups", org_js)
+        self.assertIn("data-open-account", org_js)
+        self.assertIn("openAccountRecord", org_js)
+
+    def test_linked_accounts_show_members(self):
+        org_js = self._org_js()
+        self.assertIn("members", org_js)
+
+    # ---- Audit history ----
+
+    def test_audit_section_renders_read_only(self):
+        org_js = self._org_js()
+        self.assertIn("Administrative History", org_js)
+        self.assertIn("org-audit", org_js)
+        self.assertIn("created_at", org_js)
+        self.assertIn("action", org_js)
+
+    def test_audit_has_no_editing_controls(self):
+        org_js = self._org_js()
+        audit_start = org_js.index("Administrative History")
+        audit_section = org_js[audit_start:]
+        self.assertNotIn("editAudit", audit_section)
+        self.assertNotIn("deleteAudit", audit_section)
+
+    # ---- Responsive wrappers ----
+
+    def test_responsive_wrappers_exist(self):
+        self.assertIn("org-table-scroll", self.css)
+        self.assertIn("org-summary-cards", self.css)
+
+    def test_responsive_stacking_at_narrow_widths(self):
+        self.assertIn(".org-summary-cards { grid-template-columns: 1fr; }", self.css)
+
+    # ---- Existing behavior unchanged ----
+
+    def test_billing_relationships_filters_remain_intact(self):
+        self.assertIn('id="billingDirFilter"', self.html)
+        self.assertIn('id="clientSearch"', self.html)
+
+    def test_existing_person_navigation_unchanged(self):
+        self.assertIn("openPersonRecord", self.js)
+
+    def test_existing_account_navigation_unchanged(self):
+        self.assertIn("openAccountRecord", self.js)
+
+    def test_organization_record_uses_record_pane_class(self):
+        start = self.html.index('id="organizationRecord"')
+        snippet = self.html[start-30:start+50]
+        self.assertIn("record-pane", snippet)
+
+
 if __name__ == "__main__":
     unittest.main()

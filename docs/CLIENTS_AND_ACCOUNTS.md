@@ -41,13 +41,42 @@ Both records are shown intentionally to preserve all relationship evidence and d
 
 - **Person-linked payer rows:** Open navigates to `#people/{person_id}`, opening the full-screen client profile.
 - **Account rows:** Open uses the existing account-detail sidebar/panel.
-- **Organization rows without an account:** Read-only. The Open button is disabled and labeled "Details unavailable" until organization billing-party editing is implemented.
+- **Organization rows:** Open displays a dedicated read-only organization detail panel (`#organizationRecord`) within the Billing Relationships page. The panel is independent from the account panel (`#accountRecord`). No hash route is used. See [Organization Detail Panel](#organization-detail-panel) below.
 
 ## Inactive and Empty States
 
 Inactive billing parties and accounts remain visible and are clearly labeled "Inactive." They are not hidden by default.
 
 When the directory is empty, the table shows "No billing relationships yet."
+
+## Organization Detail Panel
+
+The organization detail panel is a read-only side panel that appears within the Billing Relationships page when an organization row's Open button is clicked. It is independent from the account detail panel — opening one clears or hides the other.
+
+The panel displays:
+
+- **Header:** Organization name (falling back to billing name), billing name as secondary when different, Active/Inactive status, and a Close button. Internal UUIDs are not displayed prominently.
+- **Billing Details:** Read-only organization name, billing name, email, phone, address, preferred delivery method, and administrative notes. Missing values show a neutral fallback (em dash). No Edit, Save, Delete, Deactivate, or Reactivate controls appear.
+- **Billing Summary:** Five compact cards — Sessions, Approved Uninvoiced Sessions, Invoices, Total Invoiced, and Outstanding Balance*. The balance uses the backend's current no-payments convention (non-void invoice totals). A muted note explains: "Payment tracking is not yet implemented. This currently reflects non-void invoice totals."
+- **Covered Clients:** Table with client name, person code, session count, latest session date, and Open (navigates to `#people/{person_id}`). Empty state: "No clients have sessions billed to this organization yet." No account membership is inferred from sessions.
+- **Sessions:** Table with date, participants, session type, duration, time category, stored approved rate, review status, invoice, and Open in Review. Sessions are newest first. Rates are displayed as stored — no recalculation. Draft invoices with an `invoice_id` but no `invoice_number` show "Draft invoice." Open in Review navigates to the existing review workbench via `candidate_id`.
+- **Invoice History:** Table with invoice number, billing period, issue date, status, total, balance, and Open. Void invoices show zero balance. Open uses the existing invoice view. No Finalize, Mark Paid, Delete, or payment controls appear.
+- **Related Shared Billing Groups:** Linked genuine accounts (where `default_billing_party_id` matches) are shown with account name, code, type, status, members, and Open (existing account panel behavior). Empty state: "No linked shared billing groups." Organization membership is not inferred from sessions.
+- **Administrative History:** Read-only audit log showing timestamp, action, and sanitized details. No editing controls.
+
+### Organization Panel API
+
+The panel fetches data from `GET /api/billing-parties/{billing_party_id}`. This endpoint returns 200 for valid organizations, 404 for missing billing parties, 400 for person-linked billing parties (which should use the client endpoint), and 500 for unexpected errors. The endpoint performs no writes.
+
+### Organization Panel Constraints
+
+- Organizations remain separate from people and accounts.
+- No person or account is automatically created.
+- Invoices may be opened read-only via the existing invoice view.
+- No payment or finalization controls are available.
+- Outstanding Balance currently uses the no-payments convention.
+- Organization editing remains deferred.
+- No schema migration was required.
 
 ## Account Detail View
 

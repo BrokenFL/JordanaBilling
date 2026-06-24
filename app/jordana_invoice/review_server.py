@@ -18,6 +18,8 @@ from .google_sync import (
 from .review_services import (
     add_account_member,
     approve_candidate,
+    BillingPartyNotFoundError,
+    BillingPartyTypeError,
     create_account,
     create_billing_party,
     create_person,
@@ -25,6 +27,7 @@ from .review_services import (
     dashboard_status,
     end_rate_rule,
     get_account_record,
+    get_organization_billing_record,
     get_person_record,
     get_review_candidate,
     list_account_records,
@@ -154,6 +157,15 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(search_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
+                    return
+                if parsed.path.startswith("/api/billing-parties/"):
+                    billing_party_id = parsed.path.rsplit("/", 1)[-1]
+                    try:
+                        self.send_json(get_organization_billing_record(self.conn(), billing_party_id))
+                    except BillingPartyNotFoundError as error:
+                        self.send_json({"ok": False, "error": str(error)}, status=404)
+                    except BillingPartyTypeError as error:
+                        self.send_json({"ok": False, "error": str(error)}, status=400)
                     return
                 if parsed.path == "/api/rate-rules":
                     self.send_json(list_rate_rules(self.conn()))

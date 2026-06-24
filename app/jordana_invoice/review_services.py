@@ -41,6 +41,14 @@ from .review import review_status_for_parse
 from .util import json_dumps, new_id, now_iso, parse_int, text
 
 
+class BillingPartyNotFoundError(ValueError):
+    """Raised when a billing party ID does not match any row."""
+
+
+class BillingPartyTypeError(ValueError):
+    """Raised when a billing party exists but is the wrong type for the requested endpoint."""
+
+
 REQUIRED_APPROVAL_FIELDS = {
     "participants",
     "billing_party_id",
@@ -2816,6 +2824,202 @@ def get_billing_party(conn: sqlite3.Connection, billing_party_id: str | None) ->
         return None
     row = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone()
     return dict(row) if row else None
+
+
+def get_organization_billing_record(conn: sqlite3.Connection, billing_party_id: str) -> dict[str, Any]:
+    """Return a complete read-only organization billing-party record.
+
+    Raises ValueError if the billing party does not exist or is not an organization.
+    Performs no writes.
+    """
+    init_db(conn)
+    row = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ?",
+        (billing_party_id,),
+    ).fetchone()
+    if not row:
+        raise BillingPartyNotFoundError("Billing party not found.")
+    if row["billing_party_type"] != "organization":
+        raise BillingPartyTypeError(
+            "Person-linked billing parties use the client endpoint at /api/people/{person_id}."
+        )
+
+    bp = dict(row)
+
+    # --- Covered clients ---
+    covered_rows = conn.execute(
+        """
+        SELECT DISTINCT
+          p.person_id,
+          p.display_name,
+          p.person_code,
+          COUNT(DISTINCT s.id) AS session_count,
+          MAX(s.session_date) AS latest_session_date
+        FROM sessions s
+        JOIN session_participants sp ON sp.session_id = s.id AND sp.person_id IS NOT NULL
+        JOIN people p ON p.person_id = sp.person_id
+        WHERE s.billing_party_id = ?
+        GROUP BY p.person_id, p.display_name, p.person_code
+        ORDER BY p.display_name
+        """,
+        (billing_party_id,),
+    ).fetchall()
+    covered_clients = [dict(r) for r in covered_rows]
+
+    # --- Sessions ---
+    session_rows = conn.execute(
+        """
+        SELECT
+          s.id AS session_id,
+          s.candidate_id,
+          s.session_date,
+          s.start_at,
+          s.duration_minutes,
+          s.approved_duration_minutes,
+          s.billing_session_type,
+          s.custom_service_description,
+          s.time_category,
+          s.approved_rate_cents,
+          s.review_status,
+          s.payment_status,
+          s.appointment_status,
+          (
+            SELECT GROUP_CONCAT(COALESCE(p2.display_name, sp2.participant_name), ', ')
+            FROM session_participants sp2
+            LEFT JOIN people p2 ON p2.person_id = sp2.person_id
+            WHERE sp2.session_id = s.id
+          ) AS participant_names,
+          (
+            SELECT i.invoice_number
+            FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
+            LIMIT 1
+          ) AS invoice_number,
+          (
+            SELECT i.invoice_id
+            FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
+            LIMIT 1
+          ) AS invoice_id
+        FROM sessions s
+        WHERE s.billing_party_id = ?
+        ORDER BY s.start_at DESC
+        """,
+        (billing_party_id,),
+    ).fetchall()
+    sessions = [dict(r) for r in session_rows]
+
+    # --- Invoices ---
+    invoice_rows = conn.execute(
+        """
+        SELECT
+          i.invoice_id,
+          i.invoice_number,
+          i.billing_period_start,
+          i.billing_period_end,
+          i.invoice_date,
+          i.status,
+          i.total_cents,
+          i.finalized_at
+        FROM invoices i
+        WHERE i.bill_to_party_id = ?
+        ORDER BY i.invoice_date DESC, i.created_at DESC
+        """,
+        (billing_party_id,),
+    ).fetchall()
+    invoices: list[dict[str, Any]] = []
+    for r in invoice_rows:
+        item = dict(r)
+        item["balance_cents"] = 0 if item["status"] == "void" else item["total_cents"]
+        invoices.append(item)
+
+    # --- Billing summary ---
+    total_sessions = conn.execute(
+        "SELECT COUNT(DISTINCT s.id) FROM sessions s WHERE s.billing_party_id = ?",
+        (billing_party_id,),
+    ).fetchone()[0]
+    approved_uninvoiced_count = conn.execute(
+        """
+        SELECT COUNT(DISTINCT s.id)
+        FROM sessions s
+        WHERE s.billing_party_id = ?
+          AND s.review_status = 'approved'
+          AND s.billable_status NOT IN ('excluded', 'nonbillable')
+          AND (s.appointment_status IS NULL OR s.appointment_status NOT IN ('scheduled'))
+          AND NOT EXISTS (
+            SELECT 1 FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
+          )
+        """,
+        (billing_party_id,),
+    ).fetchone()[0]
+    invoice_count = len(invoices)
+    total_invoiced_cents = sum(r["total_cents"] for r in invoices if r["status"] != "void")
+    outstanding_balance_cents = sum(r["total_cents"] for r in invoices if r["status"] != "void")
+    billing_summary = {
+        "total_sessions": total_sessions,
+        "approved_uninvoiced_sessions": approved_uninvoiced_count,
+        "invoice_count": invoice_count,
+        "total_invoiced_cents": total_invoiced_cents,
+        "outstanding_balance_cents": outstanding_balance_cents,
+        "active": bool(bp["active"]),
+    }
+
+    # --- Linked account information ---
+    account_rows = conn.execute(
+        """
+        SELECT
+          ca.account_id,
+          ca.account_code,
+          ca.account_name,
+          ca.account_type,
+          ca.active AS account_active
+        FROM client_accounts ca
+        WHERE ca.default_billing_party_id = ?
+        ORDER BY ca.account_name
+        """,
+        (billing_party_id,),
+    ).fetchall()
+    linked_accounts: list[dict[str, Any]] = []
+    for ar in account_rows:
+        acct = dict(ar)
+        members = get_account_members(conn, ar["account_id"])
+        acct["members"] = members
+        acct["active"] = bool(ar["account_active"])
+        linked_accounts.append(acct)
+
+    # --- Audit history ---
+    audit = audit_history_for_entity(conn, "billing_party", billing_party_id)
+
+    return {
+        "billing_party": {
+            "billing_party_id": bp["billing_party_id"],
+            "billing_party_type": bp["billing_party_type"],
+            "organization_name": bp["organization_name"],
+            "billing_name": bp["billing_name"],
+            "billing_email": bp["billing_email"],
+            "billing_phone": bp["billing_phone"],
+            "billing_address_line_1": bp["billing_address_line_1"],
+            "billing_address_line_2": bp["billing_address_line_2"],
+            "billing_city": bp["billing_city"],
+            "billing_state": bp["billing_state"],
+            "billing_postal_code": bp["billing_postal_code"],
+            "preferred_delivery_method": bp["preferred_delivery_method"],
+            "administrative_notes": bp["administrative_notes"],
+            "active": bool(bp["active"]),
+            "created_at": bp["created_at"],
+            "updated_at": bp["updated_at"],
+        },
+        "covered_clients": covered_clients,
+        "sessions": sessions,
+        "invoices": invoices,
+        "billing_summary": billing_summary,
+        "linked_accounts": linked_accounts,
+        "audit": audit,
+    }
 
 
 def default_billing_party_for_participants(

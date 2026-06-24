@@ -5,8 +5,8 @@ from pathlib import Path
 
 from .importer import import_rows
 from .invoice_services import create_invoice_draft, finalize_invoice, save_business_profile, void_invoice
-from .review_services import approve_candidate, create_billing_party, create_person
-from .util import stable_hash
+from .review_services import approve_candidate, create_account, add_account_member, create_billing_party, create_person
+from .util import now_iso, stable_hash
 
 
 def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> dict[str, int]:
@@ -71,7 +71,34 @@ def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> di
     voided = void_invoice(conn, finalized["invoice"]["invoice_id"], "Sanitized void-and-reissue demonstration")
     reissue = create_invoice_draft(conn, _draft_payload(avery_party["billing_party_id"], [sessions[0]]))
     finalize_invoice(conn, reissue["invoice"]["invoice_id"], pdf_root=pdf_root)
-    return {"drafts": 2, "finalized": 2, "void": 1, "excluded_sessions": 2}
+
+    org_party = create_billing_party(conn, {
+        "billing_name": "Cedar Family Trust",
+        "billing_party_type": "organization",
+        "organization_name": "Cedar Family Trust",
+        "billing_email": "billing@cedartrust.example",
+        "billing_phone": "555-0200",
+        "billing_address_line_1": "100 Cedar Lane",
+        "billing_city": "Cedarville",
+        "billing_state": "FL",
+        "billing_postal_code": "00001",
+        "preferred_delivery_method": "email",
+        "administrative_notes": "Pay net 30",
+    })
+    org_session1 = _approved_demo_session(conn, 70, "org-1", "Casey North | 60 | Office", [casey], org_party, "office", "standard", 18000, "billable")
+    org_session2 = _approved_demo_session(conn, 71, "org-2", "Casey North | 60 | Phone", [casey], org_party, "phone", "standard", 15000, "billable")
+    org_invoice = create_invoice_draft(conn, _draft_payload(org_party["billing_party_id"], [org_session1]))
+    finalize_invoice(conn, org_invoice["invoice"]["invoice_id"], pdf_root=pdf_root)
+
+    org_account = create_account(conn, "Cedar Family Group", "family")
+    add_account_member(conn, org_account["account_id"], casey["person_id"], "family_member", True)
+    conn.execute(
+        "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
+        (org_party["billing_party_id"], now_iso(), org_account["account_id"]),
+    )
+    conn.commit()
+
+    return {"drafts": 2, "finalized": 3, "void": 1, "excluded_sessions": 2}
 
 
 def _approved_demo_session(conn, index, key, title, people, party, service, time_category, amount_cents, treatment):
