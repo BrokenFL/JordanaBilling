@@ -382,6 +382,15 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .status-pill.finalized { background: #e8f7ed; color: #176b35; }
 .status-pill.void { background: #fff0ed; color: #a12619; }
 
+.reports-toolbar { display: flex; gap: 10px; align-items: end; margin-bottom: 16px; }
+.reports-toolbar .field { max-width: 160px; }
+.report-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.report-card { border: 1px solid var(--line); border-radius: 9px; background: white; padding: 16px; }
+.report-card h3 { margin: 0 0 6px; font-size: 16px; }
+.report-card-desc { color: var(--muted); font-size: 13px; margin: 0 0 12px; line-height: 1.4; }
+.reports-privacy-note { background: #fff8e8; border: 1px solid #f4d391; border-radius: 7px; padding: 10px 12px; font-size: 13px; color: #6a4600; }
+.reports-error { background: #fff0ed; border: 1px solid #f4c5be; border-radius: 7px; padding: 10px 12px; font-size: 13px; color: var(--red); margin-bottom: 14px; }
+
 @media (max-width: 1100px) {
   .sidebar { width: 190px; }
   .review-layout { grid-template-columns: 1fr; }

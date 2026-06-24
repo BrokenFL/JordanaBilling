@@ -328,6 +328,84 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('!row.session_id && row.review_status === "needs_classification"', js)
         self.assertIn("/send-to-review", js)
 
+    def test_reports_nav_has_id_and_href(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        self.assertIn('id="reportsNav"', html)
+        self.assertIn('href="/reports"', html)
+
+    def test_reports_view_exists_and_is_hidden_initially(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        self.assertIn('id="reportsView"', html)
+        self.assertIn('id="reportsView" hidden', html)
+
+    def test_hide_views_includes_reports(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('"reportsView"', js)
+        self.assertIn('"reportsNav"', js)
+
+    def test_reports_nav_handler_exists(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('document.getElementById("reportsNav").onclick', js)
+        self.assertIn("showReports()", js)
+
+    def test_show_reports_fetches_api_reports(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("async function showReports()", js)
+        self.assertIn('api("/api/reports")', js)
+
+    def test_report_cards_generated_from_api_metadata(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("report-card-grid", html)
+        self.assertIn("report-card", js)
+        self.assertIn("data.reports", js)
+        self.assertIn("r.display_name", js)
+        self.assertIn("r.description", js)
+        self.assertIn("Download CSV", js)
+
+    def test_year_selector_uses_default_year(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("reportsYearSelect", js)
+        self.assertIn("data.default_year", js)
+        self.assertIn("defaultYear", js)
+
+    def test_download_url_includes_encoded_type_and_year(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("encodeURIComponent(r.type)", js)
+        self.assertIn("encodeURIComponent(yearSelect.value)", js)
+        self.assertIn("/api/reports/download?type=", js)
+
+    def test_privacy_note_exists(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        self.assertIn("reports-privacy-note", html)
+        self.assertIn("Store downloaded files securely", html)
+
+    def test_reports_view_has_no_table_or_filter_controls(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        start = html.index('id="reportsView"')
+        end = html.index("</section>", start) + len("</section>")
+        reports_html = html[start:end]
+        self.assertNotIn("<table", reports_html)
+        self.assertNotIn("filter", reports_html.lower())
+        self.assertNotIn("preview", reports_html.lower())
+
+    def test_reports_error_handling_does_not_use_alert(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function loadReports()")
+        end = js.index("function renderSyncStatus")
+        reports_js = js[start:end]
+        self.assertIn("reportsError", reports_js)
+        self.assertNotIn("alert(", reports_js)
+
+    def test_reports_direct_navigation_supports_pathname(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('location.pathname === "/reports"', js)
+
+    def test_reports_page_title_and_document_title(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('$("pageTitle").textContent = "Reports"', js)
+        self.assertIn('document.title = "Jordana Billing - Reports"', js)
+
 
 if __name__ == "__main__":
     unittest.main()

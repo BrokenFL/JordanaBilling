@@ -1010,6 +1010,11 @@ document.getElementById("invoicesNav").onclick = (event) => {
   history.pushState({}, "", "/invoices");
   showInvoices();
 };
+document.getElementById("reportsNav").onclick = (event) => {
+  event.preventDefault();
+  history.pushState({}, "", "/reports");
+  showReports();
+};
 document.getElementById("settingsNav").onclick = (event) => {
   event.preventDefault();
   location.hash = "settings";
@@ -1021,8 +1026,8 @@ document.getElementById("reviewNav").onclick = () => {
 };
 
 function hideViews() {
-  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -1197,6 +1202,55 @@ async function showInvoices() {
   $("pageSubtitle").textContent = "Draft, finalize, and preserve invoice history";
   document.title = "Jordana Billing - Invoices";
   await loadInvoices();
+}
+
+async function showReports() {
+  hideViews();
+  $("reportsView").hidden = false;
+  $("reportsNav").classList.add("active");
+  $("pageTitle").textContent = "Reports";
+  $("pageSubtitle").textContent = "Download billing and appointment exports";
+  document.title = "Jordana Billing - Reports";
+  await loadReports();
+}
+
+async function loadReports() {
+  const grid = $("reportCardGrid");
+  const errBox = $("reportsError");
+  const yearSelect = $("reportsYearSelect");
+  errBox.hidden = true;
+  grid.innerHTML = "";
+  let data;
+  try {
+    data = await api("/api/reports");
+  } catch (err) {
+    errBox.textContent = "Unable to load report metadata. Please try again.";
+    errBox.hidden = false;
+    yearSelect.innerHTML = "";
+    grid.innerHTML = "";
+    return;
+  }
+  const years = data.years || [];
+  const defaultYear = data.default_year || new Date().getFullYear();
+  if (years.length) {
+    yearSelect.innerHTML = years.map(y => `<option value="${y}"${y === defaultYear ? " selected" : ""}>${y}</option>`).join("");
+  } else {
+    yearSelect.innerHTML = `<option value="${defaultYear}">${defaultYear}</option>`;
+  }
+  grid.innerHTML = (data.reports || []).map(r => `
+    <div class="report-card">
+      <h3>${escapeHtml(r.display_name)}</h3>
+      <p class="report-card-desc">${escapeHtml(r.description)}</p>
+      <button class="save report-download-btn" data-type="${encodeURIComponent(r.type)}">Download CSV</button>
+    </div>
+  `).join("");
+  document.querySelectorAll(".report-download-btn").forEach(btn => {
+    btn.onclick = () => {
+      const type = btn.dataset.type;
+      const year = encodeURIComponent(yearSelect.value);
+      window.location.href = `/api/reports/download?type=${type}&year=${year}`;
+    };
+  });
 }
 
 function renderSyncStatus(status) {
@@ -2193,6 +2247,7 @@ if (location.hash === "#people" || location.pathname === "/people") showPeople()
 if (location.hash === "#sessions") showSessions();
 if (location.hash === "#settings") showSettings();
 if (location.pathname === "/invoices") showInvoices();
+if (location.pathname === "/reports") showReports();
 window.addEventListener("beforeunload", event => {
   if (state.dirty.size) {
     event.preventDefault();

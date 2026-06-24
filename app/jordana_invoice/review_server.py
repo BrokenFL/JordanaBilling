@@ -93,7 +93,7 @@ def make_handler(database_path: str):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             try:
-                if parsed.path in {"/", "/review", "/invoices"} or parsed.path.startswith("/invoices/"):
+                if parsed.path in {"/", "/review", "/invoices", "/reports"} or parsed.path.startswith("/invoices/"):
                     self.send_static("review.html")
                     return
                 if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
