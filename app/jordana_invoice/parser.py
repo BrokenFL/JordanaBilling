@@ -299,6 +299,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                     "Title appears to reference multiple people or a billing relationship."
                 )
             if for_reference:
+                fields.append("classification")
                 explanation_parts.append(
                     f"Title references \"{for_reference}\" after 'for'; relationship role unresolved."
                 )
@@ -361,7 +362,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
 
         return finalize_result(
             ParseResult(
-                classification="client_session",
+                classification="unresolved" if for_reference else "client_session",
                 confidence=max(0.2, min(confidence, 0.94)),
                 explanation=" ".join(explanation_parts),
                 fields_requiring_review=sorted(set(fields)),
@@ -440,6 +441,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                             "Title appears to reference multiple people or a billing relationship."
                         )
                     if ss_for_reference:
+                        fields.append("classification")
                         explanation_parts.append(
                             f"Title references \"{ss_for_reference}\" after 'for'; relationship role unresolved."
                         )
@@ -480,7 +482,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                     explanation_parts.append(f"Duration {proposed_duration} min is non-standard; confirm or adjust.")
                 return finalize_result(
                     ParseResult(
-                        classification="client_session",
+                        classification="unresolved" if ss_for_reference else "client_session",
                         confidence=max(0.2, min(confidence, 0.94)),
                         explanation=" ".join(explanation_parts),
                         fields_requiring_review=sorted(set(fields)),

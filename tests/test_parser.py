@@ -63,9 +63,10 @@ class ParserTests(unittest.TestCase):
                 "2026-06-18T18:30:00-04:00",
             )
         )
-        self.assertEqual(result.classification, "client_session")
+        self.assertEqual(result.classification, "unresolved")
         self.assertEqual(result.proposed_client_name, "Caitlin Schneider")
         self.assertEqual(result.possible_referenced_person, "Sage at 5:30 PM")
+        self.assertIn("classification", result.fields_requiring_review)
         self.assertIn("participants", result.fields_requiring_review)
         self.assertIn("relationship_role", result.fields_requiring_review)
 
