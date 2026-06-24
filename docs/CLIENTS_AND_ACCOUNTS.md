@@ -75,7 +75,23 @@ Permanent client data (name, contact, code, status, aliases, rate overrides) is 
 
 ### Billing Setup
 
-Billing setup is stored through billing-party records linked to the person. The client workspace shows all billing parties where this person is the payer, including billing name, email, phone, full address, delivery method, and active/inactive status. For self-pay clients, the card displays "Bills sent to this client." When no billing parties exist, the section shows "No billing setup saved." This section is read-only in the current phase.
+Billing setup is stored through billing-party records linked to the person. The client workspace shows all billing parties where this person is the payer, including billing name, email, phone, full address, delivery method, and active/inactive status. For self-pay clients, the card displays "Bills sent to this client." When no billing parties exist, the section shows "No billing setup saved."
+
+Billing Setup is editable from the full-screen client profile. The following behaviors apply:
+
+- **Multiple records:** A client may have multiple Billing Setup records. Each record represents billing contact and invoice-delivery information for that permanent client.
+- **No primary or default flag:** There is no primary, default, or preferred billing setup field. All records are equal.
+- **Inactive records remain visible:** Inactive billing setups are shown with reduced opacity and an "Inactive" status pill. They are not hidden.
+- **Add:** The "Add Billing Setup" button opens an inline form with the client's display name prefilled as the billing name, delivery method defaulting to "Unresolved", and all optional fields blank.
+- **Edit:** Each card has an Edit button that opens the inline form pre-filled with current values.
+- **Field clearing:** Optional fields (email, phone, address lines, city, state, postal code, administrative notes) can be cleared by leaving them blank. Blank values are sent as empty strings and stored as NULL. The billing name is required and cannot be blank.
+- **Deactivation:** Deactivating a billing setup sets `active = 0`. A confirmation dialog explains that historical sessions and invoices will remain unchanged. Deactivation affects future selection only — the record is never deleted.
+- **Reactivation:** Reactivating sets `active = 1` and restores the card to active status.
+- **Client-profile creation always links to the current client:** When creating a billing setup from the client profile, `billing_party_type` is always `"person"` and `person_id` is always the current client's person ID. The form does not expose billing-party type, person, or organization selectors.
+- **No account is automatically created:** Creating or editing a billing setup does not create a `client_accounts` record or an `account_members` record.
+- **Historical preservation:** Existing sessions and finalized invoices retain their billing-party references and snapshots. Editing a billing setup does not rewrite historical session or invoice values.
+- **Audit:** All create, update, deactivate, and reactivate actions are recorded in the audit log. Audit details contain changed field names only — no billing email, phone, address, or other field values are exposed.
+- **Organization editing remains out of scope:** The client profile Billing Setup form does not expose organization fields. Organization billing-party editing is a separate future feature.
 
 ### Payer Relationship Wording
 
@@ -100,4 +116,4 @@ Four compact summary cards appear near the top of the client workspace:
 
 The invoices table shows all invoices addressed to billing parties belonging to this person. Columns: Invoice Number, Billing Period, Issue Date, Bill To, Status, Total, Balance, and Open. Void invoices show zero balance. The Open action navigates to the existing invoice view. Invoice history is read-only from the client page — no payment, finalization, or void controls appear here.
 
-No schema migration was required for any of these features. All data is derived from existing tables via read-only queries.
+No schema migration was required for any of these features, including editable Billing Setup. All data is derived from existing tables and the existing billing-parties schema.

@@ -23,7 +23,10 @@ const state = {
     resolvedAccount: null,
     participantSelections: [],
     scopeResults: []
-  }
+  },
+  currentPersonId: null,
+  personShowAllSessions: false,
+  billingSetupSaving: false
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
@@ -2231,6 +2234,8 @@ function personRateOverrideLine(rule) {
 
 async function openPersonRecord(personId, options = {}) {
   const showAllSessions = !!options.showAllSessions;
+  state.currentPersonId = personId;
+  state.personShowAllSessions = showAllSessions;
   state.returnCandidate = state.selected;
   const data = await api(`/api/people/${personId}`);
   const visibleSessions = showAllSessions ? data.sessions : data.sessions.slice(0, 10);
@@ -2241,13 +2246,20 @@ async function openPersonRecord(personId, options = {}) {
   const invoices = data.invoices || [];
   const personName = fmt(data.person.display_name);
 
+  const deliveryLabels = { email: "Email", mail: "Mail", both: "Email and mail", unresolved: "Unresolved" };
   const billingSetupHtml = billingSetup.length
     ? billingSetup.map(b => {
         const addr = billingAddressSummary(b);
-        const delivery = b.preferred_delivery_method && b.preferred_delivery_method !== "unresolved" ? fmt(b.preferred_delivery_method) : "—";
+        const delivery = b.preferred_delivery_method && b.preferred_delivery_method !== "unresolved" ? deliveryLabels[b.preferred_delivery_method] || fmt(b.preferred_delivery_method) : "—";
         const isSelfPay = b.person_id === personId;
         const label = isSelfPay ? `<div class="billing-card-label">Bills sent to this client</div>` : "";
-        return `<div class="billing-card">
+        const statusBadge = b.active
+          ? `<span class="status-pill active">Active</span>`
+          : `<span class="status-pill inactive">Inactive</span>`;
+        const actionBtn = b.active
+          ? `<button class="mini danger" data-deactivate-billing="${b.billing_party_id}">Deactivate</button>`
+          : `<button class="mini" data-reactivate-billing="${b.billing_party_id}">Reactivate</button>`;
+        return `<div class="billing-card${b.active ? "" : " inactive"}">
           ${label}
           <div class="billing-card-name">${fmt(b.billing_name)}</div>
           <div class="billing-card-details">
@@ -2255,7 +2267,11 @@ async function openPersonRecord(personId, options = {}) {
             <div>${b.billing_phone ? fmt(b.billing_phone) : "—"}</div>
             <div>${addr ? fmt(addr) : "—"}</div>
             <div>Delivery: ${delivery}</div>
-            <div>${b.active ? "Active" : "Inactive"}</div>
+            <div>${statusBadge}</div>
+          </div>
+          <div class="billing-card-actions">
+            <button class="mini" data-edit-billing="${b.billing_party_id}">Edit</button>
+            ${actionBtn}
           </div>
         </div>`;
       }).join("")
@@ -2344,7 +2360,9 @@ async function openPersonRecord(personId, options = {}) {
       </section>
 
       <section class="client-section">
-        <h3>Billing Setup</h3>
+        <h3>Billing Setup <button class="mini" id="addBillingSetupBtn">Add Billing Setup</button></h3>
+        <div id="billingSetupMessage" class="billing-setup-message"></div>
+        <div id="billingSetupFormContainer"></div>
         <div class="billing-cards">${billingSetupHtml}</div>
       </section>
 
@@ -2477,6 +2495,136 @@ async function openPersonRecord(personId, options = {}) {
       await openPersonRecord(personId, { showAllSessions });
     };
   });
+
+  if ($("addBillingSetupBtn")) $("addBillingSetupBtn").onclick = () => {
+    showBillingSetupForm(null, data.person.display_name || "");
+  };
+  document.querySelectorAll("[data-edit-billing]").forEach(button => {
+    button.onclick = () => {
+      const bp = billingSetup.find(b => b.billing_party_id === button.dataset.editBilling);
+      if (bp) showBillingSetupForm(bp, data.person.display_name || "");
+    };
+  });
+  document.querySelectorAll("[data-deactivate-billing]").forEach(button => {
+    button.onclick = async () => {
+      const confirmed = confirm("Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.");
+      if (!confirmed) return;
+      try {
+        await api(`/api/billing-parties/${button.dataset.deactivateBilling}`, {
+          method: "POST",
+          body: JSON.stringify({ active: false })
+        });
+        await openPersonRecord(personId, { showAllSessions });
+      } catch (err) {
+        showBillingSetupMessage(err.message || "Failed to deactivate billing setup.", "error");
+      }
+    };
+  });
+  document.querySelectorAll("[data-reactivate-billing]").forEach(button => {
+    button.onclick = async () => {
+      try {
+        await api(`/api/billing-parties/${button.dataset.reactivateBilling}`, {
+          method: "POST",
+          body: JSON.stringify({ active: true })
+        });
+        await openPersonRecord(personId, { showAllSessions });
+      } catch (err) {
+        showBillingSetupMessage(err.message || "Failed to reactivate billing setup.", "error");
+      }
+    };
+  });
+}
+
+function showBillingSetupMessage(message, type) {
+  const el = $("billingSetupMessage");
+  if (!el) return;
+  el.textContent = message;
+  el.className = `billing-setup-message ${type || ""}`;
+  el.hidden = false;
+}
+
+function showBillingSetupForm(existing, defaultName) {
+  const isEdit = !!existing;
+  const b = existing || {};
+  const container = $("billingSetupFormContainer");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="billing-setup-form">
+      <h4>${isEdit ? "Edit Billing Setup" : "Add Billing Setup"}</h4>
+      <div class="field-grid">
+        <label class="field wide">Billing Name <input id="bsfBillingName" value="${b.billing_name || defaultName || ""}"></label>
+        <label class="field">Billing Email <input id="bsfBillingEmail" value="${b.billing_email || ""}"></label>
+        <label class="field">Billing Phone <input id="bsfBillingPhone" value="${b.billing_phone || ""}"></label>
+        <label class="field">Address Line 1 <input id="bsfAddress1" value="${b.billing_address_line_1 || ""}"></label>
+        <label class="field">Address Line 2 <input id="bsfAddress2" value="${b.billing_address_line_2 || ""}"></label>
+        <label class="field">City <input id="bsfCity" value="${b.billing_city || ""}"></label>
+        <label class="field">State <input id="bsfState" value="${b.billing_state || ""}"></label>
+        <label class="field">Postal Code <input id="bsfPostalCode" value="${b.billing_postal_code || ""}"></label>
+        <label class="field">Preferred Delivery
+          <select id="bsfDeliveryMethod">
+            <option value="unresolved"${(b.preferred_delivery_method || "unresolved") === "unresolved" ? " selected" : ""}>Unresolved</option>
+            <option value="email"${b.preferred_delivery_method === "email" ? " selected" : ""}>Email</option>
+            <option value="mail"${b.preferred_delivery_method === "mail" ? " selected" : ""}>Mail</option>
+            <option value="both"${b.preferred_delivery_method === "both" ? " selected" : ""}>Email and mail</option>
+          </select>
+        </label>
+        <label class="field wide">Administrative Notes <input id="bsfAdminNotes" value="${b.administrative_notes || ""}"></label>
+      </div>
+      <div class="record-actions">
+        <button id="bsfSaveBtn" class="save">${isEdit ? "Save Changes" : "Add Billing Setup"}</button>
+        <button id="bsfCancelBtn">Cancel</button>
+      </div>
+    </div>
+  `;
+  $("bsfCancelBtn").onclick = () => { container.innerHTML = ""; };
+  $("bsfSaveBtn").onclick = async () => {
+    if (state.billingSetupSaving) return;
+    const billingName = $("bsfBillingName").value.trim();
+    if (!billingName) {
+      showBillingSetupMessage("Billing name is required.", "error");
+      return;
+    }
+    state.billingSetupSaving = true;
+    $("bsfSaveBtn").disabled = true;
+    $("bsfCancelBtn").disabled = true;
+    const payload = {
+      billing_name: billingName,
+      billing_email: $("bsfBillingEmail").value,
+      billing_phone: $("bsfBillingPhone").value,
+      billing_address_line_1: $("bsfAddress1").value,
+      billing_address_line_2: $("bsfAddress2").value,
+      billing_city: $("bsfCity").value,
+      billing_state: $("bsfState").value,
+      billing_postal_code: $("bsfPostalCode").value,
+      preferred_delivery_method: $("bsfDeliveryMethod").value,
+      administrative_notes: $("bsfAdminNotes").value
+    };
+    try {
+      if (isEdit) {
+        payload.billing_party_type = "person";
+        payload.person_id = state.currentPersonId;
+        await api(`/api/billing-parties/${b.billing_party_id}`, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        payload.billing_party_type = "person";
+        payload.person_id = state.currentPersonId;
+        await api("/api/billing-parties", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+      await openPersonRecord(state.currentPersonId, { showAllSessions: state.personShowAllSessions });
+      showBillingSetupMessage(isEdit ? "Billing setup updated." : "Billing setup added.", "success");
+    } catch (err) {
+      showBillingSetupMessage(err.message || "Failed to save billing setup.", "error");
+      $("bsfSaveBtn").disabled = false;
+      $("bsfCancelBtn").disabled = false;
+    } finally {
+      state.billingSetupSaving = false;
+    }
+  };
 }
 ["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? renderBillingDirRows() : loadPeople(), 180)));
 $("billingDirFilter").addEventListener("change", () => { billingDirState.filter = $("billingDirFilter").value; renderBillingDirRows(); });

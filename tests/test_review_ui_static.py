@@ -778,6 +778,209 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertNotIn("mergeRecords", js)
         self.assertNotIn("deduplicate", js)
 
+    def _person_record_js(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        return js[start:end]
+
+    def test_add_billing_setup_button_renders(self):
+        js = self._person_record_js()
+        self.assertIn('id="addBillingSetupBtn"', js)
+        self.assertIn("Add Billing Setup", js)
+
+    def test_existing_billing_cards_have_edit(self):
+        js = self._person_record_js()
+        self.assertIn("data-edit-billing", js)
+        self.assertIn(">Edit<", js)
+
+    def test_active_card_has_deactivate(self):
+        js = self._person_record_js()
+        self.assertIn("data-deactivate-billing", js)
+        self.assertIn("Deactivate", js)
+
+    def test_inactive_card_has_reactivate(self):
+        js = self._person_record_js()
+        self.assertIn("data-reactivate-billing", js)
+        self.assertIn("Reactivate", js)
+
+    def test_create_payload_uses_current_client_person_id(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("state.currentPersonId", form_js)
+        self.assertIn("payload.person_id = state.currentPersonId", form_js)
+
+    def test_create_payload_fixes_billing_party_type_to_person(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn('payload.billing_party_type = "person"', form_js)
+
+    def test_no_organization_or_person_selector_in_form(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertNotIn("organization_name", form_js)
+        self.assertNotIn("billing_party_type_selector", form_js)
+        self.assertNotIn("person_selector", form_js)
+        self.assertNotIn("account", form_js.lower())
+
+    def test_edit_form_is_prefilled(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("b.billing_name", form_js)
+        self.assertIn("b.billing_email", form_js)
+        self.assertIn("b.billing_phone", form_js)
+        self.assertIn("b.billing_address_line_1", form_js)
+        self.assertIn("b.preferred_delivery_method", form_js)
+        self.assertIn("b.administrative_notes", form_js)
+
+    def test_optional_blank_values_included_in_payload(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("billing_email: $(\"bsfBillingEmail\").value", form_js)
+        self.assertIn("billing_phone: $(\"bsfBillingPhone\").value", form_js)
+        self.assertIn("billing_address_line_1: $(\"bsfAddress1\").value", form_js)
+        self.assertIn("administrative_notes: $(\"bsfAdminNotes\").value", form_js)
+
+    def test_create_uses_billing_parties_endpoint(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn('api("/api/billing-parties"', form_js)
+
+    def test_edit_uses_billing_parties_id_endpoint(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn('api(`/api/billing-parties/${b.billing_party_id}`', form_js)
+
+    def test_deactivate_sends_active_false(self):
+        js = self._person_record_js()
+        self.assertIn("data-deactivate-billing", js)
+        self.assertIn('JSON.stringify({ active: false })', js)
+
+    def test_reactivate_sends_active_true(self):
+        js = self._person_record_js()
+        self.assertIn("data-reactivate-billing", js)
+        self.assertIn('JSON.stringify({ active: true })', js)
+
+    def test_deactivation_confirmation_explains_history_preserved(self):
+        js = self._person_record_js()
+        self.assertIn("Historical sessions and invoices will remain unchanged", js)
+
+    def test_successful_save_refreshes_client_record(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("await openPersonRecord(state.currentPersonId", form_js)
+
+    def test_success_and_error_messages_render_visibly(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("showBillingSetupMessage", form_js)
+        self.assertIn('"Billing setup updated."', form_js)
+        self.assertIn('"Billing setup added."', form_js)
+        self.assertIn("error", form_js)
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".billing-setup-message", css)
+        self.assertIn(".billing-setup-message.success", css)
+        self.assertIn(".billing-setup-message.error", css)
+
+    def test_duplicate_submission_blocked(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("state.billingSetupSaving", form_js)
+        self.assertIn("if (state.billingSetupSaving) return;", form_js)
+        self.assertIn("$(\"bsfSaveBtn\").disabled = true;", form_js)
+
+    def test_cancel_does_not_save(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn('id="bsfCancelBtn"', form_js)
+        self.assertIn('container.innerHTML = ""', form_js)
+
+    def test_billing_relationships_directory_code_remains_unchanged(self):
+        js = self._clients_js()
+        self.assertIn("billingDirState", js)
+        self.assertIn("renderBillingDirRows", js)
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        clients_start = html.index('id="clientsView"')
+        clients_end = html.index('</section>', clients_start) + len('</section>')
+        clients_html = html[clients_start:clients_end]
+        self.assertIn('id="accountRecord"', clients_html)
+        self.assertIn("record-pane", clients_html)
+
+    def test_no_account_creation_call_introduced(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertNotIn("/api/accounts", form_js)
+        self.assertNotIn("account_member", form_js)
+
+    def test_billing_setup_form_has_all_required_fields(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn("bsfBillingName", form_js)
+        self.assertIn("bsfBillingEmail", form_js)
+        self.assertIn("bsfBillingPhone", form_js)
+        self.assertIn("bsfAddress1", form_js)
+        self.assertIn("bsfAddress2", form_js)
+        self.assertIn("bsfCity", form_js)
+        self.assertIn("bsfState", form_js)
+        self.assertIn("bsfPostalCode", form_js)
+        self.assertIn("bsfDeliveryMethod", form_js)
+        self.assertIn("bsfAdminNotes", form_js)
+
+    def test_billing_setup_form_delivery_options(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        form_start = js.index("function showBillingSetupForm")
+        form_end = js.index('["clientSearch","peopleSearch"]')
+        form_js = js[form_start:form_end]
+        self.assertIn('value="unresolved"', form_js)
+        self.assertIn('value="email"', form_js)
+        self.assertIn('value="mail"', form_js)
+        self.assertIn('value="both"', form_js)
+
+    def test_add_form_defaults_to_client_display_name(self):
+        js = self._person_record_js()
+        self.assertIn("showBillingSetupForm(null, data.person.display_name", js)
+
+    def test_inactive_billing_card_has_inactive_class(self):
+        js = self._person_record_js()
+        self.assertIn('billing-card${b.active ? "" : " inactive"}', js)
+
+    def test_billing_setup_message_container_exists(self):
+        js = self._person_record_js()
+        self.assertIn('id="billingSetupMessage"', js)
+        self.assertIn('id="billingSetupFormContainer"', js)
+
+    def test_billing_setup_responsive_css(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".billing-setup-form", css)
+        self.assertIn(".billing-card-actions", css)
+        self.assertIn(".billing-card.inactive", css)
+
 
 if __name__ == "__main__":
     unittest.main()

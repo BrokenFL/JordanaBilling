@@ -1946,16 +1946,32 @@ def search_billing_parties(conn: sqlite3.Connection, query: str = "") -> list[di
     return search_table(conn, "billing_parties", "billing_party_id", "billing_name", query)
 
 
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return text(value).strip() or None
+
+
 def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
     now = now_iso()
     billing_party_id = new_id()
-    billing_name = data.get("billing_name") or data.get("display_name") or data.get("name")
+    billing_name = text(data.get("billing_name") or data.get("display_name") or data.get("name") or "").strip()
     if not billing_name:
         raise ValueError("Billing name is required.")
     delivery_method = data.get("preferred_delivery_method") or "unresolved"
     if delivery_method not in {"email", "mail", "both", "unresolved"}:
         raise ValueError("Invalid preferred delivery method.")
+    billing_party_type = data.get("billing_party_type") or "person"
+    if billing_party_type not in {"person", "organization"}:
+        raise ValueError("Invalid billing party type.")
+    person_id = data.get("person_id") or None
+    if person_id and billing_party_type == "person":
+        person = conn.execute(
+            "SELECT person_id FROM people WHERE person_id = ? AND active = 1", (person_id,)
+        ).fetchone()
+        if not person:
+            raise ValueError("Referenced person does not exist or is not active.")
     conn.execute(
         """
         INSERT INTO billing_parties (
@@ -1968,24 +1984,24 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
         """,
         (
             billing_party_id,
-            data.get("billing_party_type") or "person",
-            data.get("person_id"),
+            billing_party_type,
+            person_id,
             data.get("organization_name"),
             billing_name,
-            data.get("billing_email"),
-            data.get("billing_address_line_1"),
-            data.get("billing_address_line_2"),
-            data.get("billing_city"),
-            data.get("billing_state"),
-            data.get("billing_postal_code"),
-            data.get("billing_phone"),
+            _normalize_optional_text(data.get("billing_email")),
+            _normalize_optional_text(data.get("billing_address_line_1")),
+            _normalize_optional_text(data.get("billing_address_line_2")),
+            _normalize_optional_text(data.get("billing_city")),
+            _normalize_optional_text(data.get("billing_state")),
+            _normalize_optional_text(data.get("billing_postal_code")),
+            _normalize_optional_text(data.get("billing_phone")),
             delivery_method,
-            data.get("administrative_notes"),
+            _normalize_optional_text(data.get("administrative_notes")),
             now,
             now,
         ),
     )
-    record_audit(conn, "billing_party", billing_party_id, "created_inline", {"billing_name": billing_name})
+    record_audit(conn, "billing_party", billing_party_id, "created_inline", {"billing_name": billing_name, "billing_party_type": billing_party_type})
     conn.commit()
     return dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
 
@@ -2026,9 +2042,68 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     if not existing:
         raise ValueError("Billing party not found.")
     now = now_iso()
-    delivery_method = data.get("preferred_delivery_method") or existing["preferred_delivery_method"]
-    if delivery_method not in {"email", "mail", "both", "unresolved"}:
-        raise ValueError("Invalid preferred delivery method.")
+
+    # --- Required fields: key-presence check, reject blank ---
+    if "billing_name" in data:
+        billing_name = text(data.get("billing_name") or "").strip()
+        if not billing_name:
+            raise ValueError("billing_name must not be blank.")
+    else:
+        billing_name = existing["billing_name"]
+
+    if "preferred_delivery_method" in data:
+        delivery_method = data.get("preferred_delivery_method") or "unresolved"
+        if delivery_method not in {"email", "mail", "both", "unresolved"}:
+            raise ValueError("Invalid preferred delivery method.")
+    else:
+        delivery_method = existing["preferred_delivery_method"]
+
+    if "billing_party_type" in data:
+        billing_party_type = data.get("billing_party_type") or "person"
+        if billing_party_type not in {"person", "organization"}:
+            raise ValueError("Invalid billing party type.")
+    else:
+        billing_party_type = existing["billing_party_type"]
+
+    # --- person_id: reject reassignment ---
+    if "person_id" in data:
+        new_person_id = data.get("person_id") or None
+        if new_person_id and new_person_id != existing["person_id"]:
+            raise ValueError("Cannot reassign billing party to a different person through this operation.")
+        person_id = new_person_id or existing["person_id"]
+    else:
+        person_id = existing["person_id"]
+
+    # --- Optional clearable fields: key-presence → clear to None, omit → preserve ---
+    optional_text_fields = [
+        "billing_email",
+        "billing_phone",
+        "billing_address_line_1",
+        "billing_address_line_2",
+        "billing_city",
+        "billing_state",
+        "billing_postal_code",
+        "administrative_notes",
+    ]
+    updates: dict[str, str | None] = {}
+    for field in optional_text_fields:
+        if field in data:
+            updates[field] = _normalize_optional_text(data.get(field))
+        else:
+            updates[field] = existing[field]
+
+    # --- organization_name: same partial-update semantics ---
+    if "organization_name" in data:
+        organization_name = _normalize_optional_text(data.get("organization_name"))
+    else:
+        organization_name = existing["organization_name"]
+
+    # --- active: key-presence check, omit preserves existing ---
+    if "active" in data:
+        active = 1 if data.get("active") else 0
+    else:
+        active = existing["active"]
+
     conn.execute(
         """
         UPDATE billing_parties
@@ -2050,25 +2125,57 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
         WHERE billing_party_id = ?
         """,
         (
-            data.get("billing_party_type") or existing["billing_party_type"],
-            data.get("person_id") or existing["person_id"],
-            data.get("organization_name") or existing["organization_name"],
-            data.get("billing_name") or existing["billing_name"],
-            data.get("billing_email") or existing["billing_email"],
-            data.get("billing_address_line_1") or existing["billing_address_line_1"],
-            data.get("billing_address_line_2") or existing["billing_address_line_2"],
-            data.get("billing_city") or existing["billing_city"],
-            data.get("billing_state") or existing["billing_state"],
-            data.get("billing_postal_code") or existing["billing_postal_code"],
-            data.get("billing_phone") or existing["billing_phone"],
+            billing_party_type,
+            person_id,
+            organization_name,
+            billing_name,
+            updates["billing_email"],
+            updates["billing_address_line_1"],
+            updates["billing_address_line_2"],
+            updates["billing_city"],
+            updates["billing_state"],
+            updates["billing_postal_code"],
+            updates["billing_phone"],
             delivery_method,
-            data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
-            1 if data.get("active", True) else 0,
+            updates["administrative_notes"],
+            active,
             now,
             billing_party_id,
         ),
     )
-    record_audit(conn, "billing_party", billing_party_id, "updated_inline", data)
+
+    # --- Audit: record which fields changed, without exposing values ---
+    changed_fields: list[str] = []
+    all_fields = (
+        optional_text_fields
+        + ["billing_name", "preferred_delivery_method", "billing_party_type", "person_id", "organization_name", "active"]
+    )
+    new_values: dict[str, Any] = {
+        "billing_name": billing_name,
+        "preferred_delivery_method": delivery_method,
+        "billing_party_type": billing_party_type,
+        "person_id": person_id,
+        "organization_name": organization_name,
+        "active": active,
+        "billing_email": updates["billing_email"],
+        "billing_phone": updates["billing_phone"],
+        "billing_address_line_1": updates["billing_address_line_1"],
+        "billing_address_line_2": updates["billing_address_line_2"],
+        "billing_city": updates["billing_city"],
+        "billing_state": updates["billing_state"],
+        "billing_postal_code": updates["billing_postal_code"],
+        "administrative_notes": updates["administrative_notes"],
+    }
+    for field in all_fields:
+        if field in data:
+            old_val = existing[field]
+            new_val = new_values[field]
+            if old_val != new_val:
+                changed_fields.append(field)
+    audit_detail: dict[str, Any] = {"changed_fields": changed_fields}
+    if "active" in data:
+        audit_detail["active_changed_to"] = active
+    record_audit(conn, "billing_party", billing_party_id, "updated_inline", audit_detail)
     conn.commit()
     return dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
 
