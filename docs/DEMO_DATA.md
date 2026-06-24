@@ -34,3 +34,5 @@ PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 se
 The review UI displays `DEMO DATA - NOT FOR REAL BILLING` only when `app_metadata.demo_mode=true`.
 
 The command also seeds sanitized business/bill-to profiles, standard and custom services, eligible/ineligible cancellation and no-show cases, drafts, finalized history, void/reissue, a nonparticipant parent payer, joint sessions, and a multi-page invoice. Sanitized PDFs are written to ignored `output/pdf/demo/<year>/`.
+
+The demo seed includes a sanitized permanent client **Robin Rivers** with one active billing party. This allows verification of exact-name auto-linking: calendar rows titled "Robin Rivers 5 30", "Robin Rivers 530", and "Robin Rivers 5:30 phone" auto-link to the existing person and billing party on rebuild. The non-exact variant "Robin Rivers 530 scheduled 5 30" remains unresolved for manual review. Robin Rivers is fictional sanitized demo data only.

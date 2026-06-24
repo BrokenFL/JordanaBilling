@@ -173,6 +173,8 @@ def review_readiness(
         authority_score += 10
     if values.get("title_time_matches_calendar") == 0:
         authority_score = min(authority_score, 75)
+    if values.get("review_status") == "approved":
+        authority_score = 100
     return {
         "clients_ready": clients_ready,
         "billing_ready": billing_ready,
@@ -280,7 +282,7 @@ def list_review_candidates(
         filters.append("s.review_status = ?")
         params.append(review_status)
     else:
-        filters.append("s.review_status != 'excluded'")
+        filters.append("s.review_status NOT IN ('excluded', 'approved')")
     if billing_session_type:
         filters.append("s.billing_session_type = ?")
         params.append(billing_session_type)
@@ -414,7 +416,8 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
         return get_candidate_only(conn, candidate_id)
     participants = get_session_participants(conn, row["id"])
     display_participants = participants
-    if not display_participants and not participants_were_explicitly_saved(conn, row["id"]):
+    all_null = participants and all(p.get("person_id") is None for p in participants)
+    if (not display_participants or all_null) and not participants_were_explicitly_saved(conn, row["id"]):
         display_participants = proposed_participants_from_candidate(conn, row)
     readiness = review_readiness(conn, row, display_participants)
     effective_billing_party = get_billing_party(conn, readiness["effective_billing_party_id"])
@@ -434,11 +437,16 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
 
 def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     participants = get_session_participants(conn, row["session_id"])
-    participant_names = [p.get("display_name") or p.get("participant_name") for p in participants]
+    all_null_summary = participants and all(p.get("person_id") is None for p in participants)
+    if all_null_summary and not participants_were_explicitly_saved(conn, row["session_id"]):
+        proposed = proposed_participants_from_candidate(conn, row)
+        participant_names = [p.get("display_name") or p.get("participant_name") for p in proposed]
+    else:
+        participant_names = [p.get("display_name") or p.get("participant_name") for p in participants]
     candidate_people = parse_json(row["candidate_person_names"], [])
     suggested = "; ".join(participant_names or candidate_people)
     account_name = row["account_name"] or suggested
-    readiness = review_readiness(conn, row, participants or proposed_participants_from_candidate(conn, row))
+    readiness = review_readiness(conn, row, participants if participants and not all_null_summary else proposed_participants_from_candidate(conn, row))
     return {
         "session_id": row["session_id"],
         "candidate_id": row["candidate_id"],
@@ -497,7 +505,7 @@ def list_candidate_only_rows(
         filters.append("c.review_status = ?")
         params.append(review_status)
     else:
-        filters.append("c.review_status != 'excluded'")
+        filters.append("c.review_status NOT IN ('excluded', 'approved')")
     if calendar_filter:
         add_calendar_filter(filters, params, calendar_filter, "c")
     rows = conn.execute(
@@ -2387,9 +2395,96 @@ def apply_smart_prefill(conn: sqlite3.Connection) -> int:
                     (account["default_billing_party_id"], now, session["id"]),
                 )
                 updated += 1
+
+    updated += _auto_link_exact_name_participants(conn)
     if updated:
         conn.commit()
     return updated
+
+
+def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> int:
+    null_participants = conn.execute(
+        """
+        SELECT sp.*, s.review_status, s.account_id, s.billing_party_id
+        FROM session_participants sp
+        JOIN sessions s ON s.id = sp.session_id
+        WHERE sp.person_id IS NULL
+          AND s.review_status != 'approved'
+        """
+    ).fetchall()
+    linked = 0
+    for sp in null_participants:
+        name = text(sp["participant_name"])
+        if not name:
+            continue
+        matches = find_active_people_by_exact_identity_match(conn, name)
+        if len(matches) != 1:
+            continue
+        person = matches[0]
+        now = now_iso()
+        conn.execute(
+            "UPDATE session_participants SET person_id = ?, updated_at = ? WHERE session_participant_id = ?",
+            (person["person_id"], now, sp["session_participant_id"]),
+        )
+        record_audit(
+            conn,
+            "session",
+            sp["session_id"],
+            "automatic_exact_name_match",
+            {
+                "participant_name": name,
+                "matched_person_id": person["person_id"],
+                "matched_display_name": person["display_name"],
+            },
+        )
+        linked += 1
+
+        session_billing_party_id = sp["billing_party_id"]
+        if session_billing_party_id:
+            continue
+
+        account_id = sp["account_id"]
+        assigned_bp_id = None
+        bp_source = None
+        if account_id:
+            account = conn.execute(
+                "SELECT default_billing_party_id FROM client_accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+            if account and account["default_billing_party_id"]:
+                assigned_bp_id = account["default_billing_party_id"]
+                bp_source = "account_default"
+
+        if not assigned_bp_id:
+            bp_rows = conn.execute(
+                """
+                SELECT billing_party_id FROM billing_parties
+                WHERE person_id = ? AND active = 1
+                ORDER BY updated_at DESC
+                """,
+                (person["person_id"],),
+            ).fetchall()
+            if len(bp_rows) == 1:
+                assigned_bp_id = bp_rows[0]["billing_party_id"]
+                bp_source = "person_default"
+
+        if assigned_bp_id:
+            conn.execute(
+                "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
+                (assigned_bp_id, now, sp["session_id"]),
+            )
+            record_audit(
+                conn,
+                "session",
+                sp["session_id"],
+                "automatic_billing_party_assigned",
+                {
+                    "billing_party_id": assigned_bp_id,
+                    "source": bp_source,
+                    "person_id": person["person_id"],
+                },
+            )
+    return linked
 
 
 def aliases_for_session(conn: sqlite3.Connection, session: sqlite3.Row) -> list[sqlite3.Row]:

@@ -218,20 +218,20 @@ class RoutineQueueFilterTests(unittest.TestCase):
         result = list_review_candidates(self.conn)
         total = result["total"]
         session_count = self.conn.execute(
-            "SELECT COUNT(*) AS c FROM sessions WHERE review_status != 'excluded'"
+            "SELECT COUNT(*) AS c FROM sessions WHERE review_status NOT IN ('excluded', 'approved')"
         ).fetchone()["c"]
         unresolved_count = self.conn.execute(
             """
             SELECT COUNT(*) AS c FROM calendar_event_candidates
             WHERE id NOT IN (SELECT candidate_id FROM sessions)
               AND classification IN ('unresolved', 'cancelled', 'no_show')
-              AND review_status != 'excluded'
+              AND review_status NOT IN ('excluded', 'approved')
             """
         ).fetchone()["c"]
         self.assertEqual(
             total,
             session_count + unresolved_count,
-            f"Routine total {total} != non-excluded sessions({session_count}) + unresolved candidates({unresolved_count})",
+            f"Routine total {total} != non-excluded/approved sessions({session_count}) + unresolved candidates({unresolved_count})",
         )
 
     def test_11_all_sessions_visible_regardless_of_disposition(self):
@@ -407,6 +407,125 @@ class QueueExclusionAndRestoreTests(unittest.TestCase):
             (alice_cid,),
         ).fetchone()
         self.assertIsNotNone(audit_row, "restore_candidate must write a restored_to_review_queue audit entry")
+
+
+class ApprovedQueueFilterTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self.temp.name) / "approved_filter_test.sqlite3")
+        init_db(self.conn)
+        import_rows(
+            self.conn,
+            [
+                make_row("s-alice", "Alice Smith 6", "Jordana Calendar"),
+                make_row("s-bob", "Bob Jones 7", "Jordana Calendar"),
+                make_row("s-carol", "Carol Green 8", "Jordana Calendar"),
+            ],
+            "approved_filter_test",
+        )
+        from jordana_invoice.review_services import (
+            approve_candidate,
+            create_billing_party,
+            create_person,
+            save_relationship_section,
+        )
+        self._create_person = create_person
+        self._create_billing_party = create_billing_party
+        self._save_relationship_section = save_relationship_section
+        self._approve_candidate = approve_candidate
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _candidate_id_for(self, title_fragment):
+        row = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE title LIKE ?",
+            (f"%{title_fragment}%",),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def _approve_session(self, title_fragment):
+        cid = self._candidate_id_for(title_fragment)
+        person = self._create_person(self.conn, {"first_name": "Test", "last_name": "Person", "display_name": "Test Person"})
+        payer = self._create_billing_party(self.conn, {"billing_name": "Test Person", "billing_party_type": "person", "person_id": person["person_id"]})
+        self._save_relationship_section(self.conn, cid, {"participants": [{"person_id": person["person_id"], "display_name": "Test Person", "is_primary": True}]})
+        self._approve_candidate(self.conn, cid, {
+            "participants": [{"person_id": person["person_id"], "display_name": "Test Person", "is_primary": True}],
+            "billing_party_id": payer["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "billing_session_type": "psychotherapy",
+            "time_category": "standard",
+            "approved_rate": "150.00",
+            "payment_status": "paid",
+        })
+        return cid
+
+    def _exclude_session(self, title_fragment):
+        cid = self._candidate_id_for(title_fragment)
+        mark_candidate(self.conn, cid, classification="personal", reason="test exclusion")
+        return cid
+
+    def test_default_queue_excludes_approved_sessions(self):
+        alice_cid = self._approve_session("Alice")
+        result = list_review_candidates(self.conn)
+        ids = candidate_ids_from_result(result)
+        self.assertNotIn(alice_cid, ids, "Approved session must not appear in default queue")
+
+    def test_default_queue_excludes_excluded_sessions(self):
+        bob_cid = self._exclude_session("Bob")
+        result = list_review_candidates(self.conn)
+        ids = candidate_ids_from_result(result)
+        self.assertNotIn(bob_cid, ids, "Excluded session must not appear in default queue")
+
+    def test_approved_filter_returns_approved_only(self):
+        alice_cid = self._approve_session("Alice")
+        bob_cid = self._candidate_id_for("Bob")
+        carol_cid = self._candidate_id_for("Carol")
+        result = list_review_candidates(self.conn, review_status="approved")
+        ids = candidate_ids_from_result(result)
+        self.assertIn(alice_cid, ids, "Approved session must appear in approved filter")
+        self.assertNotIn(bob_cid, ids, "Non-approved session must not appear in approved filter")
+        self.assertNotIn(carol_cid, ids, "Non-approved session must not appear in approved filter")
+
+    def test_excluded_filter_returns_excluded_only(self):
+        bob_cid = self._exclude_session("Bob")
+        alice_cid = self._candidate_id_for("Alice")
+        carol_cid = self._candidate_id_for("Carol")
+        result = list_review_candidates(self.conn, review_status="excluded")
+        ids = candidate_ids_from_result(result)
+        self.assertIn(bob_cid, ids, "Excluded session must appear in excluded filter")
+        self.assertNotIn(alice_cid, ids, "Non-excluded session must not appear in excluded filter")
+        self.assertNotIn(carol_cid, ids, "Non-excluded session must not appear in excluded filter")
+
+    def test_approved_authority_score_is_100_even_with_time_mismatch(self):
+        from jordana_invoice.review_services import get_review_candidate
+        cid = self._approve_session("Alice")
+        self.conn.execute(
+            "UPDATE sessions SET title_time_matches_calendar = 0 WHERE candidate_id = ?",
+            (cid,),
+        )
+        self.conn.commit()
+        detail = get_review_candidate(self.conn, cid)
+        self.assertEqual(
+            detail["session"]["authority_score"], 100,
+            "Approved session must have authority_score=100 even with title/calendar time mismatch",
+        )
+
+    def test_parser_confidence_unchanged_by_approval(self):
+        from jordana_invoice.review_services import get_review_candidate
+        cid = self._candidate_id_for("Alice")
+        before = self.conn.execute(
+            "SELECT confidence FROM calendar_event_candidates WHERE id = ?", (cid,)
+        ).fetchone()["confidence"]
+        self._approve_session("Alice")
+        after = self.conn.execute(
+            "SELECT confidence FROM calendar_event_candidates WHERE id = ?", (cid,)
+        ).fetchone()["confidence"]
+        self.assertEqual(
+            before, after,
+            "Parser confidence field must remain unchanged after approval",
+        )
 
 
 if __name__ == "__main__":

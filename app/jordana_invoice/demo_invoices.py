@@ -21,6 +21,13 @@ def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> di
     avery = create_person(conn, {"first_name": "Avery", "last_name": "Stone", "display_name": "Avery Stone"})
     taylor = create_person(conn, {"first_name": "Taylor", "last_name": "Reed", "display_name": "Taylor Reed"})
     casey = create_person(conn, {"first_name": "Casey", "last_name": "North", "display_name": "Casey North"})
+    robin = create_person(conn, {"first_name": "Robin", "last_name": "Rivers", "display_name": "Robin Rivers"})
+    robin_party = create_billing_party(conn, {
+        "billing_name": "Robin Rivers", "person_id": robin["person_id"],
+        "billing_email": "robin@example.test", "billing_address_line_1": "30 Sample Lane",
+        "billing_city": "Example", "billing_state": "FL", "billing_postal_code": "00000",
+        "preferred_delivery_method": "email",
+    })
     avery_party = create_billing_party(conn, {
         "billing_name": "Avery Stone", "person_id": avery["person_id"], "billing_email": "avery@example.test",
         "billing_address_line_1": "10 Sample Street", "billing_city": "Example", "billing_state": "FL",

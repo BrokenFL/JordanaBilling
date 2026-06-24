@@ -19,6 +19,43 @@ Calendar data is evidence. Review decisions are stored in SQLite and are intende
 
 Each candidate can have multiple unresolved fields. Those fields are stored as structured JSON in `calendar_event_candidates`, `review_queue`, and `review_items`.
 
+### Review Queue Default and Status Filter
+
+The Review Queue dropdown offers exactly three options:
+
+1. **Needs Review** (default) — every status except `approved` and `excluded`
+2. **Approved** — only `approved` sessions
+3. **Excluded** — only `excluded` sessions
+
+The default filter excludes both approved and excluded sessions from the API query, so approved sessions never appear in the Needs Review list. The backend total and item count are authoritative; no client-side filtering is needed.
+
+### Approved Authority Score
+
+When a session's `review_status` is `approved`, the review-authority score is forced to 100, reflecting full human confirmation. This overrides the title/calendar time-mismatch cap of 75. The original parser confidence field on `calendar_event_candidates` is never modified by approval or auto-linking.
+
+### Exact-Name Auto-Link (apply_smart_prefill)
+
+When `apply_smart_prefill` runs (during list/detail/dashboard calls), it checks `session_participants` rows with `person_id IS NULL` on unapproved sessions. For each:
+
+- The participant name is normalized using the existing case-insensitive, whitespace-collapsing helpers.
+- The system searches active permanent people records for an exact normalized identity match.
+- If exactly one match exists, the participant row's `person_id` is set. No person is created.
+- If zero or multiple matches exist, the participant remains unresolved for manual review.
+- An `automatic_exact_name_match` audit entry is recorded.
+
+Partial, fuzzy, and joint-session names do not auto-link. Ambiguous matches remain for manual confirmation.
+
+### Payer Auto-Assignment Priority
+
+After a participant is auto-linked, the billing party is assigned only when the session has no existing payer:
+
+1. **Existing session payer** — preserved, never overwritten
+2. **Account default payer** — if the session has an `account_id` with a `default_billing_party_id`
+3. **One unique active person billing party** — if the linked person has exactly one active billing party
+4. **Unresolved** — if the person has zero or multiple active billing parties, Bill to remains unresolved
+
+An `automatic_billing_party_assigned` audit entry is recorded for any automatically assigned payer. No billing party is ever created by auto-link.
+
 ## Routine Confirmation Model
 
 Routine review uses Jordana's normal mental model:
