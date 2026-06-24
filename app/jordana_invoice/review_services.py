@@ -1322,6 +1322,143 @@ def list_people_records(conn: sqlite3.Connection, query: str = "") -> list[dict[
     return [dict(row) for row in rows]
 
 
+def _person_billing_setup(conn: sqlite3.Connection, person_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT billing_party_id, billing_party_type, person_id, organization_name,
+               billing_name, billing_email, billing_phone, billing_address_line_1,
+               billing_address_line_2, billing_city, billing_state, billing_postal_code,
+               preferred_delivery_method, active
+        FROM billing_parties
+        WHERE person_id = ?
+        ORDER BY active DESC, billing_name
+        """,
+        (person_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _payers_for_client(conn: sqlite3.Connection, person_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT
+          bp.billing_party_id,
+          bp.billing_name,
+          bp.person_id AS payer_person_id,
+          p.display_name AS payer_display_name,
+          bp.active AS billing_party_active,
+          COUNT(s.id) AS session_count,
+          MAX(s.session_date) AS most_recent_session_date
+        FROM sessions s
+        JOIN session_participants sp ON sp.session_id = s.id AND sp.person_id = ?
+        LEFT JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id
+        LEFT JOIN people p ON p.person_id = bp.person_id
+        WHERE s.billing_party_id IS NOT NULL
+        GROUP BY bp.billing_party_id, bp.billing_name, bp.person_id, p.display_name, bp.active
+        ORDER BY most_recent_session_date DESC
+        """,
+        (person_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _people_billed_for(conn: sqlite3.Connection, person_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT
+          sp.person_id AS participant_person_id,
+          COALESCE(p.display_name, sp.participant_name) AS participant_display_name,
+          COUNT(DISTINCT s.id) AS session_count,
+          MAX(s.session_date) AS latest_session_date
+        FROM sessions s
+        JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id AND bp.person_id = ?
+        JOIN session_participants sp ON sp.session_id = s.id
+        LEFT JOIN people p ON p.person_id = sp.person_id
+        GROUP BY sp.person_id, participant_display_name
+        ORDER BY latest_session_date DESC
+        """,
+        (person_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _invoices_for_person(conn: sqlite3.Connection, person_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+          i.invoice_id,
+          i.invoice_number,
+          i.status,
+          i.invoice_date,
+          i.billing_period_start,
+          i.billing_period_end,
+          i.subtotal_cents,
+          i.adjustment_cents,
+          i.total_cents,
+          i.finalized_at,
+          i.voided_at,
+          i.void_reason,
+          i.bill_to_party_id,
+          bp.billing_name AS bill_to_name,
+          (SELECT COALESCE(SUM(line_amount_cents), 0) FROM invoice_line_items li WHERE li.invoice_id = i.invoice_id) AS line_total_cents
+        FROM invoices i
+        JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id AND bp.person_id = ?
+        ORDER BY i.invoice_date DESC, i.created_at DESC
+        """,
+        (person_id,),
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        if item["status"] == "void":
+            item["balance_cents"] = 0
+        else:
+            item["balance_cents"] = item["total_cents"]
+        result.append(item)
+    return result
+
+
+def _billing_summary(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]:
+    active_bp_count = conn.execute(
+        "SELECT COUNT(*) FROM billing_parties WHERE person_id = ? AND active = 1",
+        (person_id,),
+    ).fetchone()[0]
+    invoice_rows = conn.execute(
+        """
+        SELECT i.status, i.total_cents
+        FROM invoices i
+        JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id AND bp.person_id = ?
+        """,
+        (person_id,),
+    ).fetchall()
+    invoice_count = len(invoice_rows)
+    total_invoiced = sum(r["total_cents"] for r in invoice_rows if r["status"] != "void")
+    outstanding_balance = sum(r["total_cents"] for r in invoice_rows if r["status"] != "void")
+    approved_uninvoiced_count = conn.execute(
+        """
+        SELECT COUNT(DISTINCT s.id)
+        FROM sessions s
+        JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id AND bp.person_id = ?
+        WHERE s.review_status = 'approved'
+          AND s.billable_status NOT IN ('excluded', 'nonbillable')
+          AND (s.appointment_status IS NULL OR s.appointment_status NOT IN ('scheduled'))
+          AND NOT EXISTS (
+            SELECT 1 FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
+          )
+        """,
+        (person_id,),
+    ).fetchone()[0]
+    return {
+        "active_billing_parties": active_bp_count,
+        "invoice_count": invoice_count,
+        "total_invoiced_cents": total_invoiced,
+        "outstanding_balance_cents": outstanding_balance,
+        "approved_uninvoiced_sessions": approved_uninvoiced_count,
+    }
+
+
 def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]:
     init_db(conn)
     person = conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone()
@@ -1415,6 +1552,11 @@ def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any
         "active_rate_exceptions": [dict(row) for row in person_rates],
         "joint_rate_exceptions": [dict(row) for row in joint_rates],
         "audit": audit_history_for_entity(conn, "person", person_id),
+        "billing_setup": _person_billing_setup(conn, person_id),
+        "payers_for_client": _payers_for_client(conn, person_id),
+        "people_billed_for": _people_billed_for(conn, person_id),
+        "invoices": _invoices_for_person(conn, person_id),
+        "billing_summary": _billing_summary(conn, person_id),
     }
 
 

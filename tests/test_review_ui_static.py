@@ -83,15 +83,272 @@ class ReviewUiStaticTests(unittest.TestCase):
         person_record = js[start:end]
 
         self.assertIn("Client Details", person_record)
-        self.assertIn("Billing Summary", person_record)
-        self.assertIn("Bill-To Records", person_record)
-        self.assertIn("Recent Sessions", person_record)
-        self.assertIn("Client Rate Overrides", person_record)
+        self.assertIn("Billing Setup", person_record)
+        self.assertIn("Billing Relationships", person_record)
+        self.assertIn("Sessions", person_record)
+        self.assertIn("Rate Preferences", person_record)
+        self.assertIn("Individual Rate Overrides", person_record)
+        self.assertIn("Joint-Session Overrides", person_record)
         self.assertIn("Uses standard Rate Card. No client-specific override.", person_record)
         self.assertIn("<details>", person_record)
         self.assertIn("<summary>Advanced</summary>", person_record)
         self.assertIn("Known Calendar Names", person_record)
-        self.assertEqual(person_record.count("<h5>Billing Relationships</h5>"), 1)
+
+    def test_client_record_renders_as_full_width_workspace(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn('id="personRecordView"', html)
+        self.assertIn('id="peopleListView"', html)
+        self.assertIn("client-workspace", js)
+        self.assertIn("client-section", js)
+        self.assertIn("client-header", js)
+        self.assertIn(".client-workspace", css)
+        self.assertIn(".client-section", css)
+        self.assertIn(".client-header", css)
+
+    def test_person_record_sidebar_removed(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        people_start = html.index('id="peopleView"')
+        people_end = html.index('</section>', people_start) + len('</section>')
+        people_html = html[people_start:people_end]
+        self.assertNotIn('id="personRecord"', people_html)
+        self.assertNotIn("record-pane", people_html)
+        self.assertNotIn("crm-layout", people_html)
+
+    def test_people_route_supports_person_id_path(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("showPersonRecordPage", js)
+        self.assertIn('location.pathname.startsWith("/people/")', js)
+        self.assertIn('location.pathname.split("/")[2]', js)
+        self.assertIn('location.hash.startsWith("#people/")', js)
+        self.assertIn('location.hash.split("/")[1]', js)
+
+    def test_back_to_clients_link_exists(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Back to Clients", js)
+        self.assertIn('id="backToClients"', js)
+        self.assertIn('href="#people"', js)
+
+    def test_hashchange_listener_supports_person_navigation(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('window.addEventListener("hashchange"', js)
+        self.assertIn('hash.startsWith("people/")', js)
+        self.assertIn('showPersonRecordPage(personId)', js)
+
+    def test_client_sessions_render_as_table_rows(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("client-sessions-table", person_record)
+        self.assertIn("<table", person_record)
+        self.assertIn("<thead>", person_record)
+        self.assertIn("<tbody>", person_record)
+        self.assertIn("<th>Date</th>", person_record)
+        self.assertIn("<th>Participants</th>", person_record)
+        self.assertIn("<th>Session Type</th>", person_record)
+        self.assertIn("<th>Duration</th>", person_record)
+        self.assertIn("<th>Time Category</th>", person_record)
+        self.assertIn("<th>Rate</th>", person_record)
+        self.assertIn("<th>Payment Status</th>", person_record)
+        self.assertIn("<th>Review Status</th>", person_record)
+        self.assertIn("<th>Open in Review</th>", person_record)
+        self.assertIn("<tr>", person_record)
+
+    def test_save_client_button_remains(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn('id="savePersonRecord"', person_record)
+        self.assertIn("Save Client", person_record)
+        self.assertIn('$("savePersonRecord").onclick', person_record)
+
+    def test_billing_setup_section_shows_empty_message(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("Billing Setup", person_record)
+        self.assertIn("No billing setup saved", person_record)
+
+    def test_billing_relationships_section_shows_empty_message(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("Billing Relationships", person_record)
+        self.assertIn("No billing relationships yet.", person_record)
+
+    def test_billing_summary_renders_all_four_values(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("summary-cards", person_record)
+        self.assertIn("Active Billing Records", person_record)
+        self.assertIn("Approved Uninvoiced Sessions", person_record)
+        self.assertIn("Total Invoiced", person_record)
+        self.assertIn("Outstanding Balance", person_record)
+        self.assertIn("summary.active_billing_parties", person_record)
+        self.assertIn("summary.approved_uninvoiced_sessions", person_record)
+        self.assertIn("summary.total_invoiced_cents", person_record)
+        self.assertIn("summary.outstanding_balance_cents", person_record)
+
+    def test_billing_setup_renders_card_fields(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("billing-cards", person_record)
+        self.assertIn("billing-card", person_record)
+        self.assertIn("billing-card-name", person_record)
+        self.assertIn("billing-card-details", person_record)
+        self.assertIn("billing_setup", person_record)
+
+    def test_billing_setup_self_pay_label(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("Bills sent to this client", person_record)
+
+    def test_billing_setup_empty_state(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("No billing setup saved", person_record)
+
+    def test_self_pay_relationship_language(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("pays for herself", person_record)
+
+    def test_third_party_payer_relationship_language(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("is billed to", person_record)
+        # Verify directionality: personName comes before "is billed to", payer_display_name after
+        line_start = person_record.index("is billed to")
+        # The template literal should have personName before "is billed to" and payer_display_name after
+        self.assertIn("${escapeHtml(personName)} is billed to ${escapeHtml(fmt(p.payer_display_name))}", person_record)
+
+    def test_people_billed_for_relationship_language(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("pays for", person_record)
+        self.assertIn("peopleBilledFor", person_record)
+
+    def test_account_information_is_secondary(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("Related billing group information", person_record)
+        self.assertIn("secondary-heading", person_record)
+
+    def test_invoice_table_renders_expected_columns(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("client-invoices-table", person_record)
+        self.assertIn("<th>Invoice Number</th>", person_record)
+        self.assertIn("<th>Billing Period</th>", person_record)
+        self.assertIn("<th>Issue Date</th>", person_record)
+        self.assertIn("<th>Bill To</th>", person_record)
+        self.assertIn("<th>Status</th>", person_record)
+        self.assertIn("<th>Total</th>", person_record)
+        self.assertIn("<th>Balance</th>", person_record)
+        self.assertIn("<th>Open</th>", person_record)
+
+    def test_invoice_open_uses_existing_route(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn('data-open-invoice', person_record)
+        self.assertIn("openInvoice", person_record)
+
+    def test_invoice_empty_state(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("No invoices yet", person_record)
+
+    def test_no_payment_or_finalize_controls_on_client_page(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertNotIn("Finalize", person_record)
+        self.assertNotIn("Record Payment", person_record)
+        self.assertNotIn("Mark Paid", person_record)
+
+    def test_tables_have_responsive_wrappers(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("table-scroll-wrap", person_record)
+        self.assertIn(".table-scroll-wrap", css)
+        self.assertIn("overflow-x: auto", css)
+
+    def test_summary_cards_responsive_css(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn(".summary-cards", css)
+        self.assertIn(".summary-card", css)
+        self.assertIn("grid-template-columns: repeat(4, 1fr)", css)
+        self.assertIn("grid-template-columns: repeat(2, 1fr)", css)
+        self.assertIn("grid-template-columns: 1fr", css)
+
+    def test_billing_relationships_view_layout_unchanged(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        clients_start = html.index('id="clientsView"')
+        clients_end = html.index('</section>', clients_start) + len('</section>')
+        clients_html = html[clients_start:clients_end]
+        self.assertIn("crm-layout", clients_html)
+        self.assertIn('id="accountRecord"', clients_html)
+        self.assertIn("record-pane", clients_html)
+
+    def test_people_list_row_click_uses_hash_navigation(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('location.hash = "people/" + row.dataset.person', js)
 
     def test_billing_relationship_round_trip_uses_stable_return_context(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

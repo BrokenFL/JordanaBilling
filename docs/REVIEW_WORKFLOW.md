@@ -146,6 +146,8 @@ It supports save without approval, approval validation, proposed client editing 
 
 The Clients record view is the durable place to review client details, bill-to links, recent sessions, person-specific rate overrides, and approved calendar aliases. The inline session participant editor remains intentionally simple.
 
+The client record now opens as a full-width workspace at `#people/{person_id}` with billing summary cards, billing setup, billing relationships, invoice history, sessions, and rate preferences. See `docs/CLIENTS_AND_ACCOUNTS.md` for details on the client workspace sections.
+
 ## Section-Level Saves
 
 The routine inspector is now guided in this order:

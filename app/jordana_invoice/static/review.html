@@ -237,17 +237,17 @@
         </section>
 
         <section class="crm-view" id="peopleView" hidden>
-          <div class="crm-header">
-            <div><h2>Clients</h2><p>Confirmed clients, aliases, relationships, and billing contacts.</p></div>
-            <div class="crm-tools"><input id="peopleSearch" type="search" placeholder="Search clients..." /><button id="newPersonBtn" class="save">Create Client</button></div>
-          </div>
-          <div class="crm-layout">
+          <div id="peopleListView">
+            <div class="crm-header">
+              <div><h2>Clients</h2><p>Confirmed clients, aliases, relationships, and billing contacts.</p></div>
+              <div class="crm-tools"><input id="peopleSearch" type="search" placeholder="Search clients..." /><button id="newPersonBtn" class="save">Create Client</button></div>
+            </div>
             <table class="review-table crm-table people-table">
               <thead><tr><th>Client Code</th><th>Last Name</th><th>First Name</th><th>Display Name</th><th>Billing Relationships</th><th>Bill To For</th><th>Last Session</th><th>Status</th></tr></thead>
               <tbody id="peopleRows"></tbody>
             </table>
-            <aside class="record-pane" id="personRecord"><div class="empty-state">Open a client record.</div></aside>
           </div>
+          <div id="personRecordView" hidden></div>
         </section>
 
         <section class="crm-view" id="sessionsView" hidden>

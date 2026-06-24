@@ -1114,11 +1114,25 @@ async function showClients() {
 async function showPeople() {
   hideViews();
   document.getElementById("peopleView").hidden = false;
+  document.getElementById("peopleListView").hidden = false;
+  document.getElementById("personRecordView").hidden = true;
   document.getElementById("peopleNav").classList.add("active");
   $("pageTitle").textContent = "Clients";
   $("pageSubtitle").textContent = "Permanent clients and billing relationships";
   document.title = "Jordana Billing - Clients";
   await loadPeople();
+}
+
+async function showPersonRecordPage(personId) {
+  hideViews();
+  document.getElementById("peopleView").hidden = false;
+  document.getElementById("peopleListView").hidden = true;
+  document.getElementById("personRecordView").hidden = false;
+  document.getElementById("peopleNav").classList.add("active");
+  $("pageTitle").textContent = "Client";
+  $("pageSubtitle").textContent = "Client billing workspace";
+  document.title = "Jordana Billing - Client";
+  await openPersonRecord(personId);
 }
 
 function renderSessions(rows, total) {
@@ -2059,7 +2073,7 @@ async function loadPeople() {
       <td>${fmt(row.active_status)}</td>
     </tr>
   `).join("");
-  document.querySelectorAll("#peopleRows tr").forEach(row => row.onclick = () => openPersonRecord(row.dataset.person));
+  document.querySelectorAll("#peopleRows tr").forEach(row => row.onclick = () => { location.hash = "people/" + row.dataset.person; });
 }
 
 function billingAddressSummary(billingParty) {
@@ -2082,48 +2096,178 @@ async function openPersonRecord(personId, options = {}) {
   state.returnCandidate = state.selected;
   const data = await api(`/api/people/${personId}`);
   const visibleSessions = showAllSessions ? data.sessions : data.sessions.slice(0, 10);
-  $("personRecord").innerHTML = `
+  const summary = data.billing_summary || {};
+  const billingSetup = data.billing_setup || [];
+  const payers = data.payers_for_client || [];
+  const peopleBilledFor = data.people_billed_for || [];
+  const invoices = data.invoices || [];
+  const personName = fmt(data.person.display_name);
+
+  const billingSetupHtml = billingSetup.length
+    ? billingSetup.map(b => {
+        const addr = billingAddressSummary(b);
+        const delivery = b.preferred_delivery_method && b.preferred_delivery_method !== "unresolved" ? fmt(b.preferred_delivery_method) : "—";
+        const isSelfPay = b.person_id === personId;
+        const label = isSelfPay ? `<div class="billing-card-label">Bills sent to this client</div>` : "";
+        return `<div class="billing-card">
+          ${label}
+          <div class="billing-card-name">${fmt(b.billing_name)}</div>
+          <div class="billing-card-details">
+            <div>${b.billing_email ? fmt(b.billing_email) : "—"}</div>
+            <div>${b.billing_phone ? fmt(b.billing_phone) : "—"}</div>
+            <div>${addr ? fmt(addr) : "—"}</div>
+            <div>Delivery: ${delivery}</div>
+            <div>${b.active ? "Active" : "Inactive"}</div>
+          </div>
+        </div>`;
+      }).join("")
+    : `<span class="readonly-note">No billing setup saved</span>`;
+
+  const relationshipLines = [];
+  for (const p of payers) {
+    const isSelfPay = p.payer_person_id === personId;
+    const sessionInfo = `${fmt(p.session_count)} session${p.session_count === 1 ? "" : "s"}${p.most_recent_session_date ? ` • latest ${fmt(p.most_recent_session_date)}` : ""}`;
+    if (isSelfPay) {
+      relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} pays for herself</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span></div>`);
+    } else {
+      relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} is billed to ${escapeHtml(fmt(p.payer_display_name))}</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span></div>`);
+    }
+  }
+  for (const p of peopleBilledFor) {
+    const isSelf = p.participant_person_id === personId;
+    if (isSelf) continue;
+    const sessionInfo = `${fmt(p.session_count)} session${p.session_count === 1 ? "" : "s"}${p.latest_session_date ? ` • latest ${fmt(p.latest_session_date)}` : ""}`;
+    relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} pays for ${escapeHtml(fmt(p.participant_display_name))}</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span></div>`);
+  }
+  const relationshipsHtml = relationshipLines.length
+    ? relationshipLines.join("")
+    : `<span class="readonly-note">No billing relationships yet.</span>`;
+
+  const accountInfoHtml = (data.accounts || []).length
+    ? data.accounts.map(a => `<div class="compact-list-item"><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${a.account_id}">Open</button></div>`).join("")
+    : `<span class="readonly-note">No related billing group information.</span>`;
+
+  const sessionsRowsHtml = visibleSessions.length
+    ? visibleSessions.map(s => `<tr>
+        <td>${fmt(s.session_date)}</td>
+        <td>${fmt(s.other_participant_names ? "With " + s.other_participant_names : "Solo")}</td>
+        <td>${userFacingSessionLabel(s.billing_session_type, s.appointment_status, s.custom_service_description || "")}</td>
+        <td>${fmt(s.custom_duration_minutes || s.duration_minutes)} min</td>
+        <td>${timeLabel(s.time_category)}</td>
+        <td>${money(centString(s.approved_rate_cents))}</td>
+        <td>${fmt(s.payment_status)}</td>
+        <td>${fmt(s.review_status)}</td>
+        <td><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></td>
+      </tr>`).join("")
+    : `<tr><td colspan="9" class="readonly-note">No sessions yet.</td></tr>`;
+
+  const invoiceRowsHtml = invoices.length
+    ? invoices.map(inv => `<tr data-invoice-id="${inv.invoice_id}">
+        <td><span class="primary">${fmt(inv.invoice_number || "Draft")}</span></td>
+        <td>${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}</td>
+        <td>${fmt(inv.invoice_date)}</td>
+        <td>${fmt(inv.bill_to_name)}</td>
+        <td><span class="status-pill ${inv.status}">${fmt(inv.status)}</span></td>
+        <td>${money(centString(inv.total_cents))}</td>
+        <td>${money(centString(inv.balance_cents))}</td>
+        <td><button class="mini" data-open-invoice="${inv.invoice_id}">Open</button></td>
+      </tr>`).join("")
+    : `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
+
+  $("personRecordView").innerHTML = `
     ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
-    <h3>${fmt(data.person.display_name)}</h3>
-    <div class="meta"><span>${fmt(data.person.person_code)}</span><span>${fmt(data.person.active_status)}</span></div>
-    <h4>Client Details</h4>
-    <div class="field-grid">
-      <label class="field">First Name<input id="recordFirstName" value="${data.person.first_name || ""}"></label>
-      <label class="field">Last Name<input id="recordLastName" value="${data.person.last_name || ""}"></label>
-      <label class="field">Preferred Name<input id="recordPreferredName" value="${data.person.preferred_name || ""}"></label>
-      <label class="field">Display Name<input id="recordDisplayName" value="${data.person.display_name || ""}"></label>
-      <label class="field">Email<input id="recordPersonEmail" value="${data.person.billing_email || ""}"></label>
-      <label class="field">Phone<input id="recordPersonPhone" value="${data.person.billing_phone || ""}"></label>
-      <label class="field">Status<input value="${data.person.active_status || ""}" readonly></label>
-      <label class="field wide">Admin Notes<input id="recordPersonNotes" value="${data.person.administrative_notes || ""}"></label>
-    </div>
-    <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
-    <h4>Billing Summary</h4>
-    <h5>Billing Relationships</h5><div class="compact-list">${data.accounts.map(a => `<div><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${a.account_id}">Open</button></div>`).join("") || "<span class='readonly-note'>No relationships yet.</span>"}</div>
-    <h5>Bill-To Records</h5><div class="compact-list">${data.billing_parties.map(b => `<div><span>${fmt(b.billing_name)} • ${fmt(b.billing_email)} • ${fmt(b.billing_phone)} • ${fmt(b.preferred_delivery_method)}${billingAddressSummary(b) ? ` • ${fmt(billingAddressSummary(b))}` : ""}</span></div>`).join("") || "<span class='readonly-note'>No billing links yet.</span>"}</div>
-    <h4>Recent Sessions</h4><div class="compact-list">${visibleSessions.map(s => `<div><span>${fmt(s.session_date)} • ${fmt(s.raw_calendar_title)} • ${userFacingSessionLabel(s.billing_session_type, s.appointment_status, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.duration_minutes)} min${s.other_participant_names ? ` • With ${fmt(s.other_participant_names)}` : ""} • ${fmt(s.payment_status)} • ${fmt(s.review_status)} • ${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
-    ${data.sessions.length > 10 ? `<div class="record-actions"><button id="toggleAllSessions">${showAllSessions ? "Show newest 10" : "Show all"}</button></div>` : ""}
-    <h4>Client Rate Overrides</h4>
-    <div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${personRateOverrideLine(r)}</span></div>`).join("") || "<span class='readonly-note'>Uses standard Rate Card. No client-specific override.</span>"}</div>
-    <details>
-      <summary>Add Custom Rate</summary>
-      <div class="field-grid">
-        <label class="field">Session type<select id="personRateSessionType">${billingTypeOptions("psychotherapy")}</select></label>
-        <label class="field">Duration<select id="personRateDuration"><option value="30">30 minutes</option><option value="60" selected>60 minutes</option><option value="90">90 minutes</option><option value="120">120 minutes</option></select></label>
-        <label class="field">Time category<select id="personRateTimeCategory">${optionSet(["standard","evening","weekend","weekend_evening"], "standard")}</select></label>
-        <label class="field">Amount<input id="personRateAmount" placeholder="350.00"></label>
-        <label class="field">Effective date<input id="personRateEffectiveFrom" type="date"></label>
+    <a href="#people" class="return-link" id="backToClients">← Back to Clients</a>
+    <div class="client-workspace">
+      <div class="client-header">
+        <h2>${fmt(data.person.display_name)}</h2>
+        <div class="meta"><span>${fmt(data.person.person_code)}</span><span>${fmt(data.person.active_status)}</span></div>
       </div>
-      <div class="record-actions"><button id="savePersonRateRule" class="save">Save Client Rate Override</button></div>
-    </details>
-    <details>
-      <summary>Advanced</summary>
-      <h5>Known Calendar Names</h5>
-      <div class="combobox"><input id="personAliasInput" placeholder="Add approved calendar name"><button class="mini" id="savePersonAlias">+</button></div>
-      <div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${a.alias_id}" data-raw-alias="${escapeHtml(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
-      <h5>Audit History</h5>
-      <div class="compact-list">${(data.audit || []).map(entry => `<div><span>${fmt(entry.created_at)} • ${fmt(entry.action)}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
-    </details>
+
+      <div class="summary-cards">
+        <div class="summary-card"><div class="summary-card-label">Active Billing Records</div><div class="summary-card-value">${fmt(summary.active_billing_parties)}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Approved Uninvoiced Sessions</div><div class="summary-card-value">${fmt(summary.approved_uninvoiced_sessions)}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value">${money(centString(summary.total_invoiced_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value">${money(centString(summary.outstanding_balance_cents))}</div></div>
+      </div>
+
+      <section class="client-section">
+        <h3>Client Details</h3>
+        <div class="field-grid">
+          <label class="field">First Name<input id="recordFirstName" value="${data.person.first_name || ""}"></label>
+          <label class="field">Last Name<input id="recordLastName" value="${data.person.last_name || ""}"></label>
+          <label class="field">Preferred Name<input id="recordPreferredName" value="${data.person.preferred_name || ""}"></label>
+          <label class="field">Display Name<input id="recordDisplayName" value="${data.person.display_name || ""}"></label>
+          <label class="field">Email<input id="recordPersonEmail" value="${data.person.billing_email || ""}"></label>
+          <label class="field">Phone<input id="recordPersonPhone" value="${data.person.billing_phone || ""}"></label>
+          <label class="field">Status<input value="${data.person.active_status || ""}" readonly></label>
+          <label class="field wide">Administrative Notes<input id="recordPersonNotes" value="${data.person.administrative_notes || ""}"></label>
+        </div>
+        <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
+      </section>
+
+      <section class="client-section">
+        <h3>Billing Setup</h3>
+        <div class="billing-cards">${billingSetupHtml}</div>
+      </section>
+
+      <section class="client-section">
+        <h3>Billing Relationships</h3>
+        <div class="relationship-list">${relationshipsHtml}</div>
+        <h4 class="secondary-heading">Related billing group information</h4>
+        <div class="compact-list">${accountInfoHtml}</div>
+      </section>
+
+      <section class="client-section">
+        <h3>Invoices</h3>
+        <div class="table-scroll-wrap">
+          <table class="review-table client-invoices-table">
+            <thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Bill To</th><th>Status</th><th>Total</th><th>Balance</th><th>Open</th></tr></thead>
+            <tbody>${invoiceRowsHtml}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="client-section">
+        <h3>Sessions</h3>
+        <div class="table-scroll-wrap">
+          <table class="review-table client-sessions-table">
+            <thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Time Category</th><th>Rate</th><th>Payment Status</th><th>Review Status</th><th>Open in Review</th></tr></thead>
+            <tbody>${sessionsRowsHtml}</tbody>
+          </table>
+        </div>
+        ${data.sessions.length > 10 ? `<div class="record-actions"><button id="toggleAllSessions">${showAllSessions ? "Show newest 10" : "Show all"}</button></div>` : ""}
+      </section>
+
+      <section class="client-section">
+        <h3>Rate Preferences</h3>
+        <h4>Individual Rate Overrides</h4>
+        <div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div class="compact-list-item"><span>${personRateOverrideLine(r)}</span></div>`).join("") || "<span class='readonly-note'>Uses standard Rate Card. No client-specific override.</span>"}</div>
+        <h4>Joint-Session Overrides</h4>
+        <div class="compact-list">${(data.joint_rate_exceptions || []).map(r => `<div class="compact-list-item"><span>${personRateOverrideLine(r)} • With ${fmt(r.participant_names)}</span></div>`).join("") || "<span class='readonly-note'>No joint-session overrides.</span>"}</div>
+        <details>
+          <summary>Add Custom Rate</summary>
+          <div class="field-grid">
+            <label class="field">Session type<select id="personRateSessionType">${billingTypeOptions("psychotherapy")}</select></label>
+            <label class="field">Duration<select id="personRateDuration"><option value="30">30 minutes</option><option value="60" selected>60 minutes</option><option value="90">90 minutes</option><option value="120">120 minutes</option></select></label>
+            <label class="field">Time category<select id="personRateTimeCategory">${optionSet(["standard","evening","weekend","weekend_evening"], "standard")}</select></label>
+            <label class="field">Amount<input id="personRateAmount" placeholder="350.00"></label>
+            <label class="field">Effective date<input id="personRateEffectiveFrom" type="date"></label>
+          </div>
+          <div class="record-actions"><button id="savePersonRateRule" class="save">Save Client Rate Override</button></div>
+        </details>
+      </section>
+
+      <details>
+        <summary>Advanced</summary>
+        <div class="client-section">
+          <h4>Known Calendar Names</h4>
+          <div class="combobox"><input id="personAliasInput" placeholder="Add approved calendar name"><button class="mini" id="savePersonAlias">+</button></div>
+          <div class="compact-list">${data.aliases.map(a => `<div class="compact-list-item"><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${a.alias_id}" data-raw-alias="${escapeHtml(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
+          <h4>Audit History</h4>
+          <div class="compact-list">${(data.audit || []).map(entry => `<div class="compact-list-item"><span>${fmt(entry.created_at)} • ${fmt(entry.action)}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
+        </div>
+      </details>
+    </div>
   `;
   if ($("returnFromPerson")) $("returnFromPerson").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
   document.querySelectorAll("[data-open-account]").forEach(button => {
@@ -2137,6 +2281,13 @@ async function openPersonRecord(personId, options = {}) {
       await loadList();
       await showReviewWorkbench();
       await selectCandidate(button.dataset.openCandidate);
+    };
+  });
+  document.querySelectorAll("[data-open-invoice]").forEach(button => {
+    button.onclick = async () => {
+      history.pushState({}, "", "/invoices");
+      await showInvoices();
+      await openInvoice(button.dataset.openInvoice);
     };
   });
   if ($("toggleAllSessions")) $("toggleAllSessions").onclick = async () => openPersonRecord(personId, { showAllSessions: !showAllSessions });
@@ -2188,10 +2339,6 @@ async function openPersonRecord(personId, options = {}) {
       await openPersonRecord(personId, { showAllSessions });
     };
   });
-  if (location.hash !== "#people") {
-    location.hash = "people";
-    showPeople();
-  }
 }
 ["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? loadClients() : loadPeople(), 180)));
 $("newAccountBtn").onclick = async () => {
@@ -2211,7 +2358,7 @@ $("newPersonBtn").onclick = async () => {
   if (!name) return;
   const person = await api("/api/people", { method: "POST", body: JSON.stringify({ display_name: name }) });
   await loadPeople();
-  await openPersonRecord(person.person_id);
+  location.hash = "people/" + person.person_id;
 };
 document.getElementById("syncNowBtn").onclick = runSyncNow;
 document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
@@ -2243,11 +2390,26 @@ loadList();
 if (location.hash === "#calendar-import") showCalendarImport();
 if (location.hash === "#rate-card") showRateCard();
 if (location.hash === "#clients" || location.pathname === "/clients") showClients();
-if (location.hash === "#people" || location.pathname === "/people") showPeople();
+if (location.pathname.startsWith("/people/") && location.pathname.split("/")[2]) {
+  showPersonRecordPage(location.pathname.split("/")[2]);
+} else if (location.hash.startsWith("#people/") && location.hash.split("/")[1]) {
+  showPersonRecordPage(location.hash.split("/")[1]);
+} else if (location.hash === "#people" || location.pathname === "/people") {
+  showPeople();
+}
 if (location.hash === "#sessions") showSessions();
 if (location.hash === "#settings") showSettings();
 if (location.pathname === "/invoices") showInvoices();
 if (location.pathname === "/reports") showReports();
+window.addEventListener("hashchange", () => {
+  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  if (hash.startsWith("people/")) {
+    const personId = hash.split("/")[1];
+    if (personId) showPersonRecordPage(personId);
+  } else if (hash === "people") {
+    showPeople();
+  }
+});
 window.addEventListener("beforeunload", event => {
   if (state.dirty.size) {
     event.preventDefault();

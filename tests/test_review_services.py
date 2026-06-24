@@ -1,9 +1,17 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
+from jordana_invoice.invoice_services import (
+    add_sessions_to_draft,
+    create_invoice_draft,
+    finalize_invoice,
+    save_business_profile,
+    void_invoice,
+)
 from jordana_invoice.rates import seed_rate_rule
 from jordana_invoice.review_services import (
     approve_candidate,
@@ -672,6 +680,292 @@ class EveningSuggestRateTests(unittest.TestCase):
                          "Evening rate rule must produce $400 suggestion for 60-min evening session")
         self.assertFalse(bool(session["rate_needs_review"]),
                          "rate_needs_review must be False when an evening rule matches")
+
+
+class PersonRecordBillingEnrichmentTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.conn = connect(self.root / "enriched.sqlite3")
+        init_db(self.conn)
+        seed_rate_rule(self.conn, amount_cents=20000, effective_from="2020-01-01", duration_minutes=60)
+        save_business_profile(self.conn, {
+            "business_name": "Test Practice", "provider_display_name": "Test Provider",
+            "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
+            "phone": "555-0100", "email": "test@example.test", "payee_name": "Test Payee",
+            "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
+            "payment_postal_code": "00000",
+        })
+        self.conn.commit()
+        import_rows(self.conn, [raw_row("snap-a")], "test")
+        self.candidate_id = list_review_candidates(self.conn)["items"][0]["candidate_id"]
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _approve_session(self, participant_ids, billing_party_id, candidate_id=None):
+        cid = candidate_id or self.candidate_id
+        approve_candidate(self.conn, cid, {
+            "participants": [
+                {"person_id": pid, "display_name": pid, "is_primary": idx == 0}
+                for idx, pid in enumerate(participant_ids)
+            ],
+            "billing_party_id": billing_party_id,
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "200.00",
+            "payment_status": "unpaid",
+        })
+
+    def test_self_pay_appears_in_payers_for_client(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+
+        record = get_person_record(self.conn, fred["person_id"])
+        payers = record["payers_for_client"]
+        self.assertEqual(len(payers), 1)
+        self.assertEqual(payers[0]["billing_party_id"], payer["billing_party_id"])
+        self.assertEqual(payers[0]["payer_person_id"], fred["person_id"])
+        self.assertEqual(payers[0]["payer_display_name"], "Fred Smith")
+        self.assertEqual(payers[0]["session_count"], 1)
+
+    def test_third_party_payer_appears_for_participant(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+
+        record = get_person_record(self.conn, fred["person_id"])
+        payers = record["payers_for_client"]
+        self.assertEqual(len(payers), 1)
+        self.assertEqual(payers[0]["billing_party_id"], payer["billing_party_id"])
+        self.assertEqual(payers[0]["payer_person_id"], bobsey["person_id"])
+        self.assertEqual(payers[0]["payer_display_name"], "Bobsey Smith")
+
+    def test_payer_record_lists_people_they_pay_for(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+
+        record = get_person_record(self.conn, bobsey["person_id"])
+        people_billed_for = record["people_billed_for"]
+        self.assertEqual(len(people_billed_for), 1)
+        self.assertEqual(people_billed_for[0]["participant_person_id"], fred["person_id"])
+        self.assertEqual(people_billed_for[0]["participant_display_name"], "Fred Smith")
+        self.assertEqual(people_billed_for[0]["session_count"], 1)
+
+    def test_payer_pays_for_self_and_other(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+        self._approve_session([fred["person_id"], bobsey["person_id"]], payer["billing_party_id"])
+
+        record = get_person_record(self.conn, bobsey["person_id"])
+        people = record["people_billed_for"]
+        names = sorted(p["participant_display_name"] for p in people)
+        self.assertEqual(names, ["Bobsey Smith", "Fred Smith"])
+
+    def test_duplicate_sessions_do_not_create_duplicate_payer_rows(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        import_rows(self.conn, [raw_row("snap-b", title="Fred 6", start="2026-06-18T18:00:00-04:00")], "test")
+        cid2 = list_review_candidates(self.conn)["items"][0]["candidate_id"]
+        self._approve_session([fred["person_id"]], payer["billing_party_id"], candidate_id=cid2)
+
+        record = get_person_record(self.conn, fred["person_id"])
+        payers = record["payers_for_client"]
+        self.assertEqual(len(payers), 1)
+        self.assertEqual(payers[0]["session_count"], 2)
+
+    def test_invoice_totals_and_balances_returned_correctly(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session["id"]],
+        })
+        self.assertEqual(draft["invoice"]["total_cents"], 20000)
+
+        record = get_person_record(self.conn, fred["person_id"])
+        invoices = record["invoices"]
+        self.assertEqual(len(invoices), 1)
+        self.assertEqual(invoices[0]["invoice_id"], draft["invoice"]["invoice_id"])
+        self.assertEqual(invoices[0]["total_cents"], 20000)
+        self.assertEqual(invoices[0]["balance_cents"], 20000)
+        self.assertEqual(invoices[0]["status"], "draft")
+        self.assertIsNone(invoices[0]["finalized_at"])
+
+    def test_finalized_invoice_has_finalized_at(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session["id"]],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf", return_value="a" * 64):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+
+        record = get_person_record(self.conn, fred["person_id"])
+        inv = record["invoices"][0]
+        self.assertEqual(inv["status"], "finalized")
+        self.assertIsNotNone(inv["finalized_at"])
+        self.assertIsNotNone(inv["invoice_number"])
+
+    def test_void_invoice_has_zero_balance(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session["id"]],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf", return_value="a" * 64):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        void_invoice(self.conn, draft["invoice"]["invoice_id"], "Test void")
+
+        record = get_person_record(self.conn, fred["person_id"])
+        inv = record["invoices"][0]
+        self.assertEqual(inv["status"], "void")
+        self.assertEqual(inv["balance_cents"], 0)
+
+    def test_invoices_for_unrelated_billing_parties_excluded(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        other = create_person(self.conn, {"first_name": "Other", "last_name": "Person", "display_name": "Other Person"})
+        fred_payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        other_payer = create_billing_party(self.conn, {"billing_name": "Other Person", "billing_party_type": "person", "person_id": other["person_id"]})
+        self._approve_session([fred["person_id"]], fred_payer["billing_party_id"])
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
+        create_invoice_draft(self.conn, {
+            "bill_to_party_id": fred_payer["billing_party_id"],
+            "billing_period_start": "2026-06-01", "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30", "session_ids": [session["id"]],
+        })
+        import_rows(self.conn, [raw_row("snap-c", title="Other 6", start="2026-06-19T18:00:00-04:00")], "test")
+        cid2 = list_review_candidates(self.conn)["items"][0]["candidate_id"]
+        approve_candidate(self.conn, cid2, {
+            "participants": [{"person_id": other["person_id"], "display_name": "Other Person", "is_primary": True}],
+            "billing_party_id": other_payer["billing_party_id"],
+            "approved_duration_minutes": 60, "service_mode": "office",
+            "time_category": "standard", "approved_rate": "200.00", "payment_status": "unpaid",
+        })
+        session2 = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (cid2,)).fetchone()
+        create_invoice_draft(self.conn, {
+            "bill_to_party_id": other_payer["billing_party_id"],
+            "billing_period_start": "2026-06-01", "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30", "session_ids": [session2["id"]],
+        })
+
+        record = get_person_record(self.conn, fred["person_id"])
+        self.assertEqual(len(record["invoices"]), 1)
+        self.assertEqual(record["invoices"][0]["bill_to_party_id"], fred_payer["billing_party_id"])
+
+    def test_inactive_billing_parties_handled_consistently(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        self.conn.execute("UPDATE billing_parties SET active = 0 WHERE billing_party_id = ?", (payer["billing_party_id"],))
+        self.conn.commit()
+
+        record = get_person_record(self.conn, fred["person_id"])
+        setup = record["billing_setup"]
+        self.assertEqual(len(setup), 1)
+        self.assertEqual(setup[0]["active"], 0)
+        summary = record["billing_summary"]
+        self.assertEqual(summary["active_billing_parties"], 0)
+        payers = record["payers_for_client"]
+        self.assertEqual(len(payers), 1)
+        self.assertEqual(payers[0]["billing_party_active"], 0)
+
+    def test_empty_client_record_returns_empty_arrays_and_zero_totals(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+
+        record = get_person_record(self.conn, fred["person_id"])
+        self.assertEqual(record["billing_setup"], [])
+        self.assertEqual(record["payers_for_client"], [])
+        self.assertEqual(record["people_billed_for"], [])
+        self.assertEqual(record["invoices"], [])
+        summary = record["billing_summary"]
+        self.assertEqual(summary["active_billing_parties"], 0)
+        self.assertEqual(summary["invoice_count"], 0)
+        self.assertEqual(summary["total_invoiced_cents"], 0)
+        self.assertEqual(summary["outstanding_balance_cents"], 0)
+        self.assertEqual(summary["approved_uninvoiced_sessions"], 0)
+
+    def test_approved_uninvoiced_sessions_counted_in_summary(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+
+        record = get_person_record(self.conn, fred["person_id"])
+        self.assertEqual(record["billing_summary"]["approved_uninvoiced_sessions"], 1)
+
+    def test_read_operation_creates_no_records(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        self.conn.commit()
+
+        before_people = self.conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        before_bp = self.conn.execute("SELECT COUNT(*) FROM billing_parties").fetchone()[0]
+        before_sessions = self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        before_invoices = self.conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+        before_audit = self.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+
+        get_person_record(self.conn, fred["person_id"])
+
+        after_people = self.conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        after_bp = self.conn.execute("SELECT COUNT(*) FROM billing_parties").fetchone()[0]
+        after_sessions = self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        after_invoices = self.conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+        after_audit = self.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+
+        self.assertEqual(after_people, before_people)
+        self.assertEqual(after_bp, before_bp)
+        self.assertEqual(after_sessions, before_sessions)
+        self.assertEqual(after_invoices, before_invoices)
+        self.assertEqual(after_audit, before_audit)
+
+    def test_billing_setup_includes_address_and_delivery_fields(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {
+            "billing_name": "Fred Smith",
+            "billing_party_type": "person",
+            "person_id": fred["person_id"],
+            "billing_email": "fred@example.com",
+            "billing_phone": "555-1234",
+            "billing_address_line_1": "123 Main St",
+            "billing_city": "Anytown",
+            "billing_state": "CA",
+            "billing_postal_code": "90210",
+            "preferred_delivery_method": "email",
+        })
+
+        record = get_person_record(self.conn, fred["person_id"])
+        setup = record["billing_setup"]
+        self.assertEqual(len(setup), 1)
+        self.assertEqual(setup[0]["billing_email"], "fred@example.com")
+        self.assertEqual(setup[0]["billing_phone"], "555-1234")
+        self.assertEqual(setup[0]["billing_address_line_1"], "123 Main St")
+        self.assertEqual(setup[0]["preferred_delivery_method"], "email")
 
 
 if __name__ == "__main__":

@@ -15,3 +15,7 @@ Explicit confirmation starts a transaction that revalidates every source session
 ## Void And Reissue
 
 Void requires a reason and preserves the number, snapshots, PDF, and checksum. Source sessions become eligible for a new invoice with a new number. Payments and delivery are deferred.
+
+## Client Page Invoice History
+
+The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. Outstanding balance currently equals non-void invoice totals because payment tracking is not implemented.
