@@ -5,7 +5,12 @@ from pathlib import Path
 from jordana_invoice.calendar_preferences import upsert_calendar_preference
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
-from jordana_invoice.review_services import list_review_candidates
+from jordana_invoice.review_services import (
+    list_review_candidates,
+    list_sessions_ledger,
+    mark_candidate,
+    restore_candidate,
+)
 
 
 def make_row(key, title, calendar, start="2026-06-17T18:00:00-04:00"):
@@ -213,19 +218,20 @@ class RoutineQueueFilterTests(unittest.TestCase):
         result = list_review_candidates(self.conn)
         total = result["total"]
         session_count = self.conn.execute(
-            "SELECT COUNT(*) AS c FROM sessions"
+            "SELECT COUNT(*) AS c FROM sessions WHERE review_status != 'excluded'"
         ).fetchone()["c"]
         unresolved_count = self.conn.execute(
             """
             SELECT COUNT(*) AS c FROM calendar_event_candidates
             WHERE id NOT IN (SELECT candidate_id FROM sessions)
               AND classification IN ('unresolved', 'cancelled', 'no_show')
+              AND review_status != 'excluded'
             """
         ).fetchone()["c"]
         self.assertEqual(
             total,
             session_count + unresolved_count,
-            f"Routine total {total} != sessions({session_count}) + unresolved candidates({unresolved_count})",
+            f"Routine total {total} != non-excluded sessions({session_count}) + unresolved candidates({unresolved_count})",
         )
 
     def test_11_all_sessions_visible_regardless_of_disposition(self):
@@ -268,6 +274,139 @@ class ParserSarahCancelledRegressionTest(unittest.TestCase):
         names = [n.lower() for n in (result.candidate_person_names or [])]
         self.assertNotIn("cancelled", names, "'Cancelled' must not appear as a participant name")
         self.assertEqual(result.appointment_status, "cancelled")
+        self.assertEqual(
+            result.classification, "client_session",
+            "'Sarah 5 cancelled' must be classified as client_session, not 'cancelled'",
+        )
+        self.assertIn(
+            "billing_treatment", result.fields_requiring_review,
+            "billing_treatment must be in fields_requiring_review for a cancelled client session",
+        )
+        self.assertIn("Sarah", result.candidate_person_names or [], "'Sarah' must be in candidate_person_names")
+
+    def test_no_show_variant_strips_status_and_classifies_as_client_session(self):
+        from jordana_invoice.parser import parse_event
+        for title, expected_status in [
+            ("Bob 3 no show", "no_show"),
+            ("Bob 3 no-show", "no_show"),
+            ("Bob 3 noshow", "no_show"),
+            ("Bob 3 did not attend", "no_show"),
+            ("Bob 3 canceled", "cancelled"),
+            ("Bob 3 cancel", "cancelled"),
+        ]:
+            with self.subTest(title=title):
+                result = parse_event({
+                    "event_title": title,
+                    "start_at": "2026-06-17T15:00:00-04:00",
+                    "end_at": "2026-06-17T16:00:00-04:00",
+                    "duration_minutes": 60,
+                })
+                self.assertEqual(
+                    result.classification, "client_session",
+                    f"'{title}' must be client_session, got {result.classification}",
+                )
+                self.assertEqual(
+                    result.appointment_status, expected_status,
+                    f"'{title}' must have appointment_status={expected_status}",
+                )
+                names_lower = [n.lower() for n in (result.candidate_person_names or [])]
+                for bad in ("cancelled", "canceled", "cancel", "no show", "no-show", "noshow", "did not attend"):
+                    self.assertNotIn(bad, names_lower, f"Status term '{bad}' must not appear in participant names")
+                self.assertIn(
+                    "billing_treatment", result.fields_requiring_review,
+                    f"billing_treatment must be in fields_requiring_review for '{title}'",
+                )
+
+
+class QueueExclusionAndRestoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self.temp.name) / "exclusion_test.sqlite3")
+        init_db(self.conn)
+        import_rows(
+            self.conn,
+            [
+                make_row("s-alice", "Alice Smith 6", "Jordana Calendar"),
+                make_row("s-bob", "Bob Jones 7", "Jordana Calendar"),
+            ],
+            "exclusion_test",
+        )
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _candidate_id_for(self, title_fragment):
+        row = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE title LIKE ?",
+            (f"%{title_fragment}%",),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def test_mark_duplicate_removes_session_from_normal_queue_immediately(self):
+        alice_cid = self._candidate_id_for("Alice")
+        self.assertIsNotNone(alice_cid)
+        result_before = list_review_candidates(self.conn)
+        ids_before = {i["candidate_id"] for i in result_before["items"]}
+        self.assertIn(alice_cid, ids_before, "Alice must be in queue before marking")
+
+        mark_candidate(self.conn, alice_cid, classification="duplicate", reason="test")
+
+        result_after = list_review_candidates(self.conn)
+        ids_after = {i["candidate_id"] for i in result_after["items"]}
+        self.assertNotIn(alice_cid, ids_after, "After marking duplicate, Alice must be gone from normal queue")
+
+    def test_mark_personal_removes_session_from_normal_queue_immediately(self):
+        bob_cid = self._candidate_id_for("Bob")
+        self.assertIsNotNone(bob_cid)
+        mark_candidate(self.conn, bob_cid, classification="personal", reason="test")
+        result = list_review_candidates(self.conn)
+        ids = {i["candidate_id"] for i in result["items"]}
+        self.assertNotIn(bob_cid, ids, "After marking personal, Bob must be gone from normal queue")
+
+    def test_excluded_session_preserved_in_sessions_ledger(self):
+        alice_cid = self._candidate_id_for("Alice")
+        mark_candidate(self.conn, alice_cid, classification="duplicate", reason="test")
+        ledger = list_sessions_ledger(self.conn, date_range="all")
+        ledger_cids = {s["candidate_id"] for s in ledger["items"]}
+        self.assertIn(alice_cid, ledger_cids, "Excluded session must still appear in sessions ledger")
+
+    def test_restore_candidate_returns_session_to_normal_queue(self):
+        alice_cid = self._candidate_id_for("Alice")
+        mark_candidate(self.conn, alice_cid, classification="duplicate", reason="test")
+        ids_excluded = {i["candidate_id"] for i in list_review_candidates(self.conn)["items"]}
+        self.assertNotIn(alice_cid, ids_excluded)
+
+        restore_candidate(self.conn, alice_cid, reason="re-review needed")
+
+        ids_restored = {i["candidate_id"] for i in list_review_candidates(self.conn)["items"]}
+        self.assertIn(alice_cid, ids_restored, "After restore, session must reappear in normal queue")
+
+    def test_restore_candidate_does_not_create_duplicate_session(self):
+        alice_cid = self._candidate_id_for("Alice")
+        mark_candidate(self.conn, alice_cid, classification="duplicate", reason="test")
+        restore_candidate(self.conn, alice_cid, reason="re-review")
+        count = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM sessions WHERE candidate_id = ?", (alice_cid,)
+        ).fetchone()["c"]
+        self.assertEqual(count, 1, "Restore must not create a duplicate session")
+
+    def test_restore_audits_the_action(self):
+        alice_cid = self._candidate_id_for("Alice")
+        mark_candidate(self.conn, alice_cid, classification="personal", reason="test")
+        restore_candidate(self.conn, alice_cid, reason="changed mind")
+        audit_row = self.conn.execute(
+            """
+            SELECT action FROM audit_log
+            WHERE entity_type = 'calendar_event_candidate'
+              AND entity_id = ?
+              AND action = 'restored_to_review_queue'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (alice_cid,),
+        ).fetchone()
+        self.assertIsNotNone(audit_row, "restore_candidate must write a restored_to_review_queue audit entry")
 
 
 if __name__ == "__main__":

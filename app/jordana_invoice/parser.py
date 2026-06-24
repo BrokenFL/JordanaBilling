@@ -99,7 +99,7 @@ ADMIN_KEYWORDS = {
     "showing",
 }
 CANCELLED_KEYWORDS = {"cancel", "cancelled", "canceled", "reschedule", "rescheduled"}
-NO_SHOW_KEYWORDS = {"no show", "noshow", "no-show"}
+NO_SHOW_KEYWORDS = {"no show", "noshow", "no-show", "did not attend"}
 NONBILLABLE_KEYWORDS = {"nonbillable", "non-billable", "free consult", "courtesy"}
 MULTI_PERSON_MARKERS = (" and ", " + ", " with ", " for ", "&")
 STATUS_ALIASES = {
@@ -388,6 +388,118 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             )
         )
 
+    ss_title, ss_status = strip_title_appointment_status(title)
+    if ss_status and ss_title:
+        ss_lower = ss_title.lower()
+        if not (
+            starts_with_admin(ss_lower)
+            or contains_any(ss_lower, ADMIN_KEYWORDS)
+            or contains_any(ss_lower, PERSONAL_KEYWORDS)
+            or contains_any(ss_lower, NONBILLABLE_KEYWORDS)
+        ):
+            ss_parsed = parse_standard_title(ss_title) or parse_shorthand(ss_title)
+            if ss_parsed:
+                (
+                    client_name,
+                    time_token,
+                    explicit_duration,
+                    service_mode,
+                    standardized,
+                    _,
+                    _,
+                ) = ss_parsed
+                proposed_duration, duration_source = choose_duration(explicit_duration, computed_duration)
+                proposed_end = add_minutes(start_at, proposed_duration)
+                title_time_matches = compare_title_time(start_at, time_token)
+                title_time = parse_title_time(time_token) if time_token else None
+                people = split_candidate_people(client_name)
+                fields = [
+                    "client_full_name",
+                    "client_account",
+                    "billing_party",
+                    "client_rate",
+                    "billing_treatment",
+                ]
+                explanation_parts = [
+                    "Recognized client session title with appointment status suffix.",
+                    "Appointment status needs a separate billing decision.",
+                ]
+                relationship_review = has_multiple_person_markers(client_name)
+                if relationship_review:
+                    fields.extend(["participants", "relationship_role"])
+                    explanation_parts.append(
+                        "Title appears to reference multiple people or a billing relationship."
+                    )
+                if service_mode == "unknown":
+                    fields.append("service_mode")
+                if explicit_duration and computed_duration and explicit_duration != computed_duration:
+                    fields.append("duration_discrepancy")
+                    explanation_parts.append("Title duration differs from the Calendar event duration.")
+                if title_time_matches is False:
+                    fields.append("time_discrepancy")
+                    explanation_parts.append("Title time does not match calendar start time.")
+                confidence = 0.82 if standardized else 0.72
+                if explicit_duration:
+                    confidence += 0.04
+                if relationship_review:
+                    confidence -= 0.18
+                if title_time_matches is False:
+                    confidence -= 0.25
+                location_text = text(row.get("location"))
+                billing_type, billing_source, house_call_suggested = derive_billing_session_type(
+                    service_mode=service_mode,
+                    is_weekend=time_info["is_weekend"],
+                    is_evening=time_info["is_evening"],
+                    house_call_explicit=(service_mode == "house_call"),
+                    location_text=location_text,
+                )
+                appointment_method = derive_appointment_method(service_mode)
+                duration_choice, custom_duration = derive_duration_choice(proposed_duration)
+                late_evening = check_late_evening(start_at)
+                if house_call_suggested:
+                    fields.append("house_call_confirmation")
+                    explanation_parts.append("Location suggests House Call; confirm billing type.")
+                if late_evening:
+                    fields.append("late_evening_time")
+                    explanation_parts.append("Session starts after 10 PM; verify time is correct.")
+                if duration_choice == "custom":
+                    fields.append("custom_duration")
+                    explanation_parts.append(f"Duration {proposed_duration} min is non-standard; confirm or adjust.")
+                return finalize_result(
+                    ParseResult(
+                        classification="client_session",
+                        confidence=max(0.2, min(confidence, 0.94)),
+                        explanation=" ".join(explanation_parts),
+                        fields_requiring_review=sorted(set(fields)),
+                        proposed_client_name=client_name,
+                        candidate_person_names=people,
+                        proposed_start_at=start_at or None,
+                        proposed_duration_minutes=proposed_duration,
+                        proposed_end_at=proposed_end,
+                        time_shorthand=time_token,
+                        duration_source=duration_source,
+                        explicit_duration_minutes=explicit_duration,
+                        calendar_duration_minutes=computed_duration,
+                        title_time_matches_calendar=title_time_matches,
+                        title_time_text=time_token,
+                        title_time_normalized=format_title_time(title_time),
+                        appointment_status=ss_status,
+                        service_mode=service_mode,
+                        rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
+                        standardized_title_format=standardized,
+                        relationship_review_required=relationship_review,
+                        billing_session_type=billing_type,
+                        appointment_method=appointment_method,
+                        duration_choice=duration_choice,
+                        custom_duration_minutes=custom_duration,
+                        house_call_suggested=house_call_suggested,
+                        billing_type_source=billing_source,
+                        location_text=location_text or None,
+                        late_evening_warning=late_evening,
+                        **time_info,
+                    )
+                )
+
     if starts_with_admin(lower) or contains_any(lower, ADMIN_KEYWORDS):
         return finalize_result(
             ParseResult(
@@ -444,6 +556,30 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             **time_info,
         )
     )
+
+
+def strip_title_appointment_status(title: str) -> tuple[str, str | None]:
+    """
+    Strip a trailing appointment status term from a calendar event title.
+    Returns (stripped_title, appointment_status) or (title, None) if no match.
+    """
+    _no_show_re = re.compile(
+        r"(?i)\s+(?:did\s+not\s+attend|no[\s\-]?show|noshow)\s*$"
+    )
+    _cancelled_re = re.compile(
+        r"(?i)\s+cancel(?:l?ed)?\s*$"
+    )
+    m = _no_show_re.search(title)
+    if m:
+        cleaned = title[: m.start()].strip()
+        if cleaned:
+            return cleaned, "no_show"
+    m = _cancelled_re.search(title)
+    if m:
+        cleaned = title[: m.start()].strip()
+        if cleaned:
+            return cleaned, "cancelled"
+    return title, None
 
 
 def status_result(

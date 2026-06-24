@@ -4,6 +4,7 @@ from pathlib import Path
 
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
+from jordana_invoice.rates import seed_rate_rule
 from jordana_invoice.review_services import (
     approve_candidate,
     create_account,
@@ -13,6 +14,8 @@ from jordana_invoice.review_services import (
     get_person_record,
     get_review_candidate,
     list_review_candidates,
+    recalc_unapproved_session_rates,
+    refresh_candidate_suggestions,
     save_person_alias,
     save_billing_section,
     save_relationship_section,
@@ -575,6 +578,100 @@ class ReviewServiceTests(unittest.TestCase):
 
 def count(conn, table):
     return conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()["count"]
+
+
+class EveningSuggestRateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self.temp.name) / "rate_test.sqlite3")
+        from jordana_invoice.db import init_db
+        init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _import_evening_session(self, key="snap-evening"):
+        from jordana_invoice.importer import import_rows
+        row = raw_row(key, title="Alice Smith 6", start="2026-06-17T20:00:00-04:00")
+        import_rows(self.conn, [row], "rate_test")
+        result = list_review_candidates(self.conn)
+        return next(i["candidate_id"] for i in result["items"] if "Alice" in i["raw_title"])
+
+    def test_evening_session_gets_no_suggestion_when_only_standard_rule_exists(self):
+        seed_rate_rule(
+            self.conn,
+            amount_cents=35000,
+            effective_from="2020-01-01",
+            duration_minutes=60,
+            billing_session_type="psychotherapy",
+            time_category="standard",
+        )
+        self.conn.commit()
+        candidate_id = self._import_evening_session()
+        session = self.conn.execute(
+            "SELECT suggested_rate_cents, rate_needs_review, review_status, time_category FROM sessions WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        self.assertEqual(session["time_category"], "evening",
+                         "Session starting at 8 PM must have time_category=evening")
+        self.assertIsNone(session["suggested_rate_cents"],
+                          "No rate rule for evening: suggested_rate_cents must be NULL")
+        self.assertTrue(bool(session["rate_needs_review"]),
+                        "rate_needs_review must be True when no matching evening rule exists")
+
+    def test_recalc_clears_stale_standard_suggestion_on_evening_session(self):
+        seed_rate_rule(
+            self.conn,
+            amount_cents=35000,
+            effective_from="2020-01-01",
+            duration_minutes=60,
+            billing_session_type="psychotherapy",
+            time_category="standard",
+        )
+        self.conn.commit()
+        candidate_id = self._import_evening_session("snap-ev2")
+        self.conn.execute(
+            "UPDATE sessions SET suggested_rate_cents = 35000, rate_source = 'default', rate_needs_review = 0 WHERE candidate_id = ?",
+            (candidate_id,),
+        )
+        self.conn.commit()
+        stale = self.conn.execute(
+            "SELECT suggested_rate_cents FROM sessions WHERE candidate_id = ?", (candidate_id,)
+        ).fetchone()
+        self.assertEqual(stale["suggested_rate_cents"], 35000, "Pre-condition: stale rate must be set")
+
+        updated = recalc_unapproved_session_rates(self.conn)
+
+        self.assertGreater(updated, 0)
+        after = self.conn.execute(
+            "SELECT suggested_rate_cents, rate_needs_review, review_status FROM sessions WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        self.assertIsNone(after["suggested_rate_cents"],
+                          "After recalc, stale Standard rate must be cleared for evening session")
+        self.assertTrue(bool(after["rate_needs_review"]),
+                        "rate_needs_review must be True after recalc clears stale evening rate")
+
+    def test_evening_rule_matches_evening_session(self):
+        seed_rate_rule(
+            self.conn,
+            amount_cents=40000,
+            effective_from="2020-01-01",
+            duration_minutes=60,
+            billing_session_type="psychotherapy_evening",
+            time_category="evening",
+        )
+        self.conn.commit()
+        candidate_id = self._import_evening_session("snap-ev3")
+        session = self.conn.execute(
+            "SELECT suggested_rate_cents, rate_needs_review FROM sessions WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        self.assertEqual(session["suggested_rate_cents"], 40000,
+                         "Evening rate rule must produce $400 suggestion for 60-min evening session")
+        self.assertFalse(bool(session["rate_needs_review"]),
+                         "rate_needs_review must be False when an evening rule matches")
 
 
 if __name__ == "__main__":

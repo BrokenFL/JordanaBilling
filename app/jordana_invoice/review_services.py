@@ -272,6 +272,8 @@ def list_review_candidates(
     if review_status:
         filters.append("s.review_status = ?")
         params.append(review_status)
+    else:
+        filters.append("s.review_status != 'excluded'")
     if billing_session_type:
         filters.append("s.billing_session_type = ?")
         params.append(billing_session_type)
@@ -485,6 +487,8 @@ def list_candidate_only_rows(
     if review_status:
         filters.append("c.review_status = ?")
         params.append(review_status)
+    else:
+        filters.append("c.review_status != 'excluded'")
     if calendar_filter:
         add_calendar_filter(filters, params, calendar_filter, "c")
     rows = conn.execute(
@@ -1029,6 +1033,60 @@ def mark_candidate(
                 approved=True,
             )
     record_audit(conn, "calendar_event_candidate", candidate_id, f"marked_{classification}", {"reason": reason})
+    conn.commit()
+    return get_review_candidate(conn, candidate_id)
+
+
+def restore_candidate(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    init_db(conn)
+    now = now_iso()
+    session = conn.execute(
+        "SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)
+    ).fetchone()
+    if not session:
+        raise ValueError("No session found for this candidate; only session-backed candidates can be restored.")
+    conn.execute(
+        """
+        UPDATE calendar_event_candidates
+        SET classification = 'client_session', review_status = 'needs_classification', updated_at = ?
+        WHERE id = ?
+        """,
+        (now, candidate_id),
+    )
+    conn.execute(
+        """
+        UPDATE sessions
+        SET review_status = 'needs_classification',
+            billable_status = 'proposed',
+            payment_status = 'unresolved',
+            billing_treatment = 'unresolved',
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (now, session["id"]),
+    )
+    record_audit(
+        conn,
+        "calendar_event_candidate",
+        candidate_id,
+        "restored_to_review_queue",
+        {"reason": reason, "prior_review_status": "excluded"},
+    )
+    add_review_item(
+        conn,
+        candidate_id,
+        session["id"],
+        "needs_classification",
+        [],
+        [reason or "Restored to review queue."],
+    )
+    conn.commit()
+    refresh_candidate_suggestions(conn, candidate_id)
     conn.commit()
     return get_review_candidate(conn, candidate_id)
 
@@ -3429,3 +3487,10 @@ def _recalc_unapproved_session_rates(conn: sqlite3.Connection) -> int:
     for row in rows:
         refresh_candidate_suggestions(conn, row["candidate_id"], preserve_approved_rate=True)
     return len(rows)
+
+
+def recalc_unapproved_session_rates(conn: sqlite3.Connection) -> int:
+    init_db(conn)
+    count = _recalc_unapproved_session_rates(conn)
+    conn.commit()
+    return count

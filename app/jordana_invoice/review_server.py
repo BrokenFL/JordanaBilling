@@ -34,6 +34,8 @@ from .review_services import (
     list_rate_rules,
     mark_candidate,
     merge_people,
+    recalc_unapproved_session_rates,
+    restore_candidate,
     preview_rate_suggestion,
     refresh_candidate_suggestions,
     replace_rate_rule_from_payload,
@@ -336,6 +338,19 @@ def make_handler(database_path: str):
                             )
                         )
                         return
+                    if action == "restore":
+                        self.send_json(
+                            restore_candidate(
+                                self.conn(),
+                                candidate_id,
+                                reason=data.get("reason", ""),
+                            )
+                        )
+                        return
+                if parsed.path == "/api/review/recalc-rates":
+                    count = recalc_unapproved_session_rates(self.conn())
+                    self.send_json({"ok": True, "sessions_updated": count})
+                    return
                 self.send_error(404)
             except Exception as error:
                 self.send_json({"ok": False, "error": str(error)}, status=400)
