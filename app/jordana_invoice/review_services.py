@@ -1899,18 +1899,28 @@ def find_equivalent_account(
     person_id: str,
     account_type: str = "individual",
 ) -> dict[str, Any] | None:
-    """Find an active account where the given person is the primary or sole member.
+    """Find an active account that is equivalent to a single-client relationship for this person.
+
+    A match exists when any of the following is true for an active account:
+    - The person is the sole account member.
+    - The person is the primary account member.
+    - The account's default billing party belongs to this person.
+
+    This is conservative: a shared relationship where the person is a non-primary
+    member is NOT treated as equivalent.
 
     Returns the account dict if found, None otherwise.
     """
     init_db(conn)
+
+    # 1. Check accounts where this person is a member
     rows = conn.execute(
         """
         SELECT DISTINCT a.* FROM client_accounts a
         JOIN account_members m ON m.account_id = a.account_id
-        WHERE m.person_id = ? AND a.active = 1 AND a.account_type = ?
+        WHERE m.person_id = ? AND a.active = 1
         """,
-        (person_id, account_type),
+        (person_id,),
     ).fetchall()
     for row in rows:
         account = dict(row)
@@ -1923,6 +1933,31 @@ def find_equivalent_account(
         primary = [m for m in members if m["is_primary"]]
         if primary and primary[0]["person_id"] == person_id:
             return account
+
+    # 2. Check accounts whose default billing party belongs to this person
+    bp_rows = conn.execute(
+        """
+        SELECT DISTINCT a.* FROM client_accounts a
+        JOIN billing_parties bp ON bp.billing_party_id = a.default_billing_party_id
+        WHERE bp.person_id = ? AND a.active = 1
+        """,
+        (person_id,),
+    ).fetchall()
+    for row in bp_rows:
+        account = dict(row)
+        members = conn.execute(
+            "SELECT * FROM account_members WHERE account_id = ?",
+            (account["account_id"],),
+        ).fetchall()
+        if len(members) <= 1:
+            return account
+        primary = [m for m in members if m["is_primary"]]
+        if primary and primary[0]["person_id"] == person_id:
+            return account
+        # If no primary flag but sole billing-party owner, still treat as equivalent
+        if not primary and len(members) == 0:
+            return account
+
     return None
 
 

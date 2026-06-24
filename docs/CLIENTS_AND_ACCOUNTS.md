@@ -214,13 +214,20 @@ The modal contains:
 
 When a client is selected and Create is pressed:
 - The request goes to `/api/accounts/from-client` which checks for an existing equivalent relationship before creating
-- If no equivalent exists: a new account is created with a safe default name (`{DisplayName} Billing Relationship`) and type `individual`, and the selected client is added as the primary account member
+- If no equivalent exists: a new account is created with the account name equal to the client's display name exactly (e.g., "Avery Stone", not "Avery Stone Billing Relationship") and type `individual`, and the selected client is added as the primary account member
 - The account editor opens
 - Return-to-review context is preserved when creation began from Session Review
 
 #### Duplicate Relationship Prevention
 
-If the selected client is already the primary or sole member of an active individual billing relationship, the backend returns a 409 response with the existing account's identifier. The modal shows an inline message: "A billing relationship already exists for this client." with an "Open existing relationship" button. Clicking it opens the existing record and preserves return-to-review context. No duplicate account is created.
+An active account is treated as equivalent when any of the following is true:
+- The selected client is the sole account member
+- The selected client is the primary account member
+- The account's default billing party belongs to the selected client and the account has at most one member or the client is primary
+
+This detection does not rely on account name, exact generated label, a single account type, or one exact combination of `is_primary` and member count. A shared relationship where the client is a non-primary member is NOT treated as equivalent.
+
+When an equivalent active relationship exists, the backend returns a 409 response with the existing account's identifier. The modal shows an inline message: "A billing relationship already exists for this client." with an "Open existing relationship" button. Clicking it opens the existing record and preserves return-to-review context. No duplicate account is created.
 
 The backend enforces this through `find_equivalent_account` and `create_account_or_return_existing` in `review_services.py`. Repeated Create clicks for the same client produce only one account.
 

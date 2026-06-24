@@ -3179,7 +3179,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     const errorBox = document.getElementById("billingModalError");
     const actionsBox = document.querySelector(".modal-actions");
     try {
-      const safeName = `${selectedPerson.display_name} Billing Relationship`;
+      const safeName = selectedPerson.display_name;
       const res = await fetch("/api/accounts/from-client", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

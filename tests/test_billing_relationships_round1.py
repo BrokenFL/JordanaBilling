@@ -46,7 +46,7 @@ class TestCreateRelationshipFromClient(unittest.TestCase):
     def test_create_account_and_add_primary_member(self):
         """Creating a relationship from a client makes them the primary member."""
         person = create_person(self.conn, {"display_name": "Alex Demo"})
-        account = create_account(self.conn, "Alex Demo Billing Relationship", "individual")
+        account = create_account(self.conn, "Alex Demo", "individual")
         member_id = add_account_member(
             self.conn, account["account_id"], person["person_id"], "primary", True
         )
@@ -57,11 +57,11 @@ class TestCreateRelationshipFromClient(unittest.TestCase):
         self.assertTrue(record["members"][0]["is_primary"])
 
     def test_default_relationship_name_from_display_name(self):
-        """The safe default name follows the pattern '<DisplayName> Billing Relationship'."""
+        """The safe default name equals the client display name exactly."""
         person = create_person(self.conn, {"display_name": "Jordan Lee"})
-        safe_name = f"{person['display_name']} Billing Relationship"
+        safe_name = person["display_name"]
         account = create_account(self.conn, safe_name, "individual")
-        self.assertEqual(account["account_name"], "Jordan Lee Billing Relationship")
+        self.assertEqual(account["account_name"], "Jordan Lee")
 
 
 class TestAddClientToRelationship(unittest.TestCase):
@@ -302,7 +302,7 @@ class TestDuplicateRelationshipPrevention(unittest.TestCase):
         """First creation for a client creates a new account with primary member."""
         person = create_person(self.conn, {"display_name": "New Client"})
         result = create_account_or_return_existing(
-            self.conn, person["person_id"], "New Client Billing Relationship", "individual"
+            self.conn, person["person_id"], "New Client", "individual"
         )
         self.assertFalse(result["existing"])
         self.assertTrue(result["account"]["account_id"])
@@ -315,11 +315,11 @@ class TestDuplicateRelationshipPrevention(unittest.TestCase):
         """Second creation for the same client returns the existing account."""
         person = create_person(self.conn, {"display_name": "Dup Client"})
         first = create_account_or_return_existing(
-            self.conn, person["person_id"], "Dup Client Billing Relationship", "individual"
+            self.conn, person["person_id"], "Dup Client", "individual"
         )
         self.assertFalse(first["existing"])
         second = create_account_or_return_existing(
-            self.conn, person["person_id"], "Dup Client Billing Relationship 2", "individual"
+            self.conn, person["person_id"], "Dup Client Alt", "individual"
         )
         self.assertTrue(second["existing"])
         self.assertEqual(second["account"]["account_id"], first["account"]["account_id"])
@@ -328,13 +328,13 @@ class TestDuplicateRelationshipPrevention(unittest.TestCase):
         """Repeated create calls do not add new account rows."""
         person = create_person(self.conn, {"display_name": "Repeat Client"})
         create_account_or_return_existing(
-            self.conn, person["person_id"], "Repeat Client Billing", "individual"
+            self.conn, person["person_id"], "Repeat Client", "individual"
         )
         create_account_or_return_existing(
-            self.conn, person["person_id"], "Repeat Client Billing 2", "individual"
+            self.conn, person["person_id"], "Repeat Client Alt", "individual"
         )
         create_account_or_return_existing(
-            self.conn, person["person_id"], "Repeat Client Billing 3", "individual"
+            self.conn, person["person_id"], "Repeat Client Alt 2", "individual"
         )
         accounts = list_account_records(self.conn)
         individual_accounts = [a for a in accounts if a["account_type"] == "individual"]
@@ -416,7 +416,7 @@ class TestDuplicateRelationshipApi(unittest.TestCase):
         person = create_person(self.conn, {"display_name": "API New"})
         status, body = self._post("/api/accounts/from-client", {
             "person_id": person["person_id"],
-            "account_name": "API New Billing",
+            "account_name": "API New",
             "account_type": "individual",
         })
         self.assertEqual(status, 200)
@@ -428,12 +428,12 @@ class TestDuplicateRelationshipApi(unittest.TestCase):
         person = create_person(self.conn, {"display_name": "API Dup"})
         self._post("/api/accounts/from-client", {
             "person_id": person["person_id"],
-            "account_name": "API Dup Billing",
+            "account_name": "API Dup",
             "account_type": "individual",
         })
         status, body = self._post("/api/accounts/from-client", {
             "person_id": person["person_id"],
-            "account_name": "API Dup Billing 2",
+            "account_name": "API Dup Alt",
             "account_type": "individual",
         })
         self.assertEqual(status, 409)
@@ -448,7 +448,7 @@ class TestDuplicateRelationshipApi(unittest.TestCase):
         for i in range(5):
             self._post("/api/accounts/from-client", {
                 "person_id": person["person_id"],
-                "account_name": f"Repeat API Billing {i}",
+                "account_name": f"Repeat API {i}",
                 "account_type": "individual",
             })
         accounts = list_account_records(self.conn)
@@ -537,6 +537,174 @@ class TestRound1CorrectionCssStatic(unittest.TestCase):
     def test_modal_link_btn_css_exists(self):
         css = Path("app/jordana_invoice/static/review.css").read_text()
         self.assertIn(".modal-link-btn", css)
+
+
+class TestSessionReviewDuplicatePath(unittest.TestCase):
+    """Reproduce the actual Session Review creation path that failed in smoke testing."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "test.db"
+        self.conn = connect(str(self.db_path))
+        init_db(self.conn)
+        handler_cls = make_handler(str(self.db_path))
+        self.server = HTTPServer(("127.0.0.1", 0), handler_cls)
+        self.port = self.server.server_address[1]
+        import threading
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _post(self, path, body):
+        import urllib.request
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_avery_style_self_pay_then_create_no_duplicate(self):
+        """Simulate: Avery has a self-pay billing party. First create makes an account.
+        Second create for same client returns existing, no duplicate."""
+        from jordana_invoice.review_services import create_billing_party
+        person = create_person(self.conn, {"display_name": "Avery Stone"})
+        party = create_billing_party(self.conn, {
+            "billing_name": "Avery Stone",
+            "person_id": person["person_id"],
+            "billing_party_type": "person",
+        })
+        # First create — should succeed
+        status1, body1 = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "Avery Stone",
+            "account_type": "individual",
+        })
+        self.assertEqual(status1, 200)
+        self.assertTrue(body1.get("ok"))
+        account_id = body1["account_id"]
+        # Second create — should return 409 with existing
+        status2, body2 = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "Avery Stone",
+            "account_type": "individual",
+        })
+        self.assertEqual(status2, 409)
+        self.assertTrue(body2.get("existing"))
+        self.assertEqual(body2["account_id"], account_id)
+        # No duplicate account
+        accounts = list_account_records(self.conn)
+        individual = [a for a in accounts if a["account_type"] == "individual"]
+        self.assertEqual(len(individual), 1)
+
+    def test_account_name_is_exactly_display_name(self):
+        """Account name equals the client display name, no suffix."""
+        person = create_person(self.conn, {"display_name": "Test Name"})
+        status, body = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "Test Name",
+            "account_type": "individual",
+        })
+        self.assertEqual(status, 200)
+        from jordana_invoice.review_services import get_account_record
+        record = get_account_record(self.conn, body["account_id"])
+        self.assertEqual(record["account"]["account_name"], "Test Name")
+        self.assertNotIn("Billing Relationship", record["account"]["account_name"])
+
+    def test_no_billing_relationship_suffix_in_name(self):
+        """Static check: JS does not append Billing Relationship to the account name."""
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        # Check the safeName assignment line
+        self.assertIn("const safeName = selectedPerson.display_name", js)
+        # Verify no Billing Relationship suffix in the safeName line
+        start = js.index("const safeName =")
+        end = js.index("\n", start)
+        safe_name_line = js[start:end]
+        self.assertNotIn("Billing Relationship", safe_name_line)
+
+    def test_repeated_create_idempotent(self):
+        """5 repeated creates for same person produce 1 account."""
+        person = create_person(self.conn, {"display_name": "Idempotent Test"})
+        for _ in range(5):
+            self._post("/api/accounts/from-client", {
+                "person_id": person["person_id"],
+                "account_name": "Idempotent Test",
+                "account_type": "individual",
+            })
+        accounts = list_account_records(self.conn)
+        self.assertEqual(len(accounts), 1)
+
+    def test_shared_relationship_not_treated_as_duplicate(self):
+        """A shared family account where the person is a non-primary member
+        should NOT block creating a new individual relationship for that person."""
+        from jordana_invoice.review_services import create_billing_party
+        person_a = create_person(self.conn, {"display_name": "Shared Primary"})
+        person_b = create_person(self.conn, {"display_name": "Shared Secondary"})
+        family_account = create_account(self.conn, "Family Group", "family")
+        add_account_member(self.conn, family_account["account_id"], person_a["person_id"], "primary", True)
+        add_account_member(self.conn, family_account["account_id"], person_b["person_id"], "family_member", False)
+        # person_b is a non-primary member of the family account
+        # Creating an individual relationship for person_b should succeed
+        status, body = self._post("/api/accounts/from-client", {
+            "person_id": person_b["person_id"],
+            "account_name": "Shared Secondary",
+            "account_type": "individual",
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(body.get("ok"))
+        # The family account should not be returned as equivalent
+        self.assertNotEqual(body["account_id"], family_account["account_id"])
+
+    def test_billing_party_linked_account_detected_as_equivalent(self):
+        """If an account's default billing party belongs to this person,
+        it should be detected as equivalent even with no membership record."""
+        from jordana_invoice.review_services import create_billing_party
+        person = create_person(self.conn, {"display_name": "Linked Party"})
+        party = create_billing_party(self.conn, {
+            "billing_name": "Linked Party",
+            "person_id": person["person_id"],
+            "billing_party_type": "person",
+        })
+        account = create_account(self.conn, "Linked Party", "individual")
+        # Link billing party as default but don't add membership
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?",
+            (party["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        # Now create via from-client — should detect existing
+        status, body = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "Linked Party",
+            "account_type": "individual",
+        })
+        self.assertEqual(status, 409)
+        self.assertTrue(body.get("existing"))
+        self.assertEqual(body["account_id"], account["account_id"])
+
+    def test_legacy_account_no_primary_flag_detected(self):
+        """Legacy account with sole member but no is_primary flag should be detected."""
+        person = create_person(self.conn, {"display_name": "Legacy Test"})
+        account = create_account(self.conn, "Legacy Test", "individual")
+        # Add membership without is_primary
+        self.conn.execute(
+            "INSERT INTO account_members (account_member_id, account_id, person_id, relationship_role, is_primary, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)",
+            ("legacy-mid", account["account_id"], person["person_id"], "member", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        )
+        self.conn.commit()
+        status, body = self._post("/api/accounts/from-client", {
+            "person_id": person["person_id"],
+            "account_name": "Legacy Test",
+            "account_type": "individual",
+        })
+        self.assertEqual(status, 409)
+        self.assertTrue(body.get("existing"))
 
 
 if __name__ == "__main__":
