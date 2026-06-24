@@ -28,6 +28,7 @@ from .review_services import (
     get_person_record,
     get_review_candidate,
     list_account_records,
+    list_billing_relationship_records,
     list_sessions_ledger,
     list_people_records,
     list_review_candidates,
@@ -147,6 +148,9 @@ def make_handler(database_path: str):
                 if parsed.path.startswith("/api/accounts/"):
                     account_id = parsed.path.rsplit("/", 1)[-1]
                     self.send_json(get_account_record(self.conn(), account_id))
+                    return
+                if parsed.path == "/api/billing-relationships":
+                    self.send_json(list_billing_relationship_records(self.conn()))
                     return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(search_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))

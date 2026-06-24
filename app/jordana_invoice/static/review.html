@@ -224,14 +224,16 @@
 
         <section class="crm-view" id="clientsView" hidden>
           <div class="crm-header">
-            <div><h2>Billing Relationships</h2><p>Households, individuals, billing setup, rates, and session history.</p></div>
-            <div class="crm-tools"><input id="clientSearch" type="search" placeholder="Search billing relationships..." /><button id="newAccountBtn" class="save">Create Billing Relationship</button></div>
+            <div><h2>Billing Relationships</h2><p>Who receives invoices and who they pay for, including shared billing groups.</p></div>
+            <div class="crm-tools"><input id="clientSearch" type="search" placeholder="Search billing relationships..." /><select id="billingDirFilter"><option value="all">All</option><option value="self_pay">Self-pay</option><option value="third_party">Pays for others</option><option value="organization">Organizations</option><option value="account">Shared billing groups</option></select><button id="newAccountBtn" class="save">Create Billing Relationship</button></div>
           </div>
           <div class="crm-layout">
-            <table class="review-table crm-table">
-              <thead><tr><th>Relationship Code</th><th>Relationship Name</th><th>Type</th><th>Primary Client</th><th>Members</th><th>Billing Party</th><th>Default Rate</th><th>Outstanding</th><th>Last Session</th><th>Status</th></tr></thead>
-              <tbody id="clientRows"></tbody>
-            </table>
+            <div class="table-scroll-wrap">
+              <table class="review-table crm-table billing-dir-table">
+                <thead><tr><th>Type</th><th>Payer / Relationship</th><th>Covers</th><th>Sessions</th><th>Latest Session</th><th>Billing Delivery</th><th>Status</th><th>Open</th></tr></thead>
+                <tbody id="clientRows"></tbody>
+              </table>
+            </div>
             <aside class="record-pane" id="accountRecord"><div class="empty-state">Open a billing relationship record.</div></aside>
           </div>
         </section>

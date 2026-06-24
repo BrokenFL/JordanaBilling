@@ -4086,3 +4086,187 @@ def reparse_unapproved_candidates(
 
     conn.commit()
     return {"reparsed": reparsed, "sessions_created": sessions_created, "skipped": skipped}
+
+
+def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return a unified billing directory of all payer relationships and account groupings.
+
+    Produces one normalized record per logical entry:
+    - self_pay: person-linked billing party where the payer is also the participant
+    - third_party: person-linked billing party covering other people
+    - organization: organization billing party
+    - account: genuine client_accounts grouping (family, couple, household, etc.)
+
+    No accounts, people, billing parties, sessions, or invoices are created or modified.
+    """
+    init_db(conn)
+
+    people_map: dict[str, str] = {
+        row["person_id"]: row["display_name"]
+        for row in conn.execute("SELECT person_id, display_name FROM people").fetchall()
+    }
+
+    account_links: dict[str, dict[str, Any]] = {}
+    for row in conn.execute(
+        """
+        SELECT account_id, account_code, account_name, account_type,
+               default_billing_party_id, active
+        FROM client_accounts
+        WHERE default_billing_party_id IS NOT NULL
+        """
+    ).fetchall():
+        account_links[row["default_billing_party_id"]] = {
+            "account_id": row["account_id"],
+            "account_code": row["account_code"],
+            "account_name": row["account_name"],
+            "account_type": row["account_type"],
+        }
+
+    bp_rows = conn.execute(
+        """
+        SELECT
+          bp.billing_party_id,
+          bp.billing_party_type,
+          bp.person_id AS payer_person_id,
+          bp.organization_name,
+          bp.billing_name,
+          bp.billing_email,
+          bp.billing_phone,
+          bp.preferred_delivery_method,
+          bp.active AS billing_party_active,
+          COUNT(DISTINCT s.id) AS session_count,
+          MAX(s.session_date) AS latest_session_date,
+          GROUP_CONCAT(DISTINCT sp.person_id) AS covered_person_ids_raw
+        FROM billing_parties bp
+        LEFT JOIN sessions s ON s.billing_party_id = bp.billing_party_id
+        LEFT JOIN session_participants sp ON sp.session_id = s.id AND sp.person_id IS NOT NULL
+        WHERE bp.person_id IS NOT NULL
+           OR s.id IS NOT NULL
+           OR bp.billing_party_id IN (
+             SELECT default_billing_party_id FROM client_accounts
+             WHERE default_billing_party_id IS NOT NULL
+           )
+        GROUP BY bp.billing_party_id
+        """
+    ).fetchall()
+
+    records: list[dict[str, Any]] = []
+
+    for row in bp_rows:
+        bp_id = row["billing_party_id"]
+        bp_type = row["billing_party_type"]
+        payer_pid = row["payer_person_id"]
+        active = bool(row["billing_party_active"])
+
+        covered_ids = [
+            pid for pid in (row["covered_person_ids_raw"] or "").split(",") if pid
+        ]
+        covered_people = [
+            {"person_id": pid, "display_name": people_map.get(pid, "")}
+            for pid in covered_ids
+        ]
+
+        if bp_type == "organization":
+            record_type = "organization"
+        elif payer_pid and covered_ids:
+            if all(pid == payer_pid for pid in covered_ids):
+                record_type = "self_pay"
+            else:
+                record_type = "third_party"
+        elif payer_pid:
+            record_type = "self_pay"
+        else:
+            record_type = "organization"
+
+        link = account_links.get(bp_id)
+
+        records.append(
+            {
+                "record_type": record_type,
+                "record_id": bp_id,
+                "billing_party_id": bp_id,
+                "payer_person_id": payer_pid,
+                "payer_display_name": people_map.get(payer_pid, "") if payer_pid else None,
+                "organization_name": row["organization_name"],
+                "billing_name": row["billing_name"],
+                "billing_party_type": bp_type,
+                "billing_email": row["billing_email"],
+                "billing_phone": row["billing_phone"],
+                "preferred_delivery_method": row["preferred_delivery_method"],
+                "active": active,
+                "covered_people": covered_people,
+                "session_count": row["session_count"],
+                "latest_session_date": row["latest_session_date"],
+                "account_id": link["account_id"] if link else None,
+                "account_code": link["account_code"] if link else None,
+                "account_name": link["account_name"] if link else None,
+                "account_type": link["account_type"] if link else None,
+            }
+        )
+
+    acct_rows = conn.execute(
+        """
+        SELECT
+          ca.account_id,
+          ca.account_code,
+          ca.account_name,
+          ca.account_type,
+          ca.active AS account_active,
+          ca.default_billing_party_id,
+          bp.billing_name AS default_billing_party_name,
+          GROUP_CONCAT(DISTINCT am.person_id) AS member_ids_raw,
+          COUNT(DISTINCT s.id) AS session_count,
+          MAX(s.session_date) AS latest_session_date
+        FROM client_accounts ca
+        LEFT JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+        LEFT JOIN account_members am ON am.account_id = ca.account_id
+        LEFT JOIN sessions s ON s.account_id = ca.account_id
+        GROUP BY ca.account_id
+        """
+    ).fetchall()
+
+    for row in acct_rows:
+        member_ids = [
+            mid for mid in (row["member_ids_raw"] or "").split(",") if mid
+        ]
+        members = [
+            {"person_id": mid, "display_name": people_map.get(mid, "")}
+            for mid in member_ids
+        ]
+
+        records.append(
+            {
+                "record_type": "account",
+                "record_id": row["account_id"],
+                "billing_party_id": row["default_billing_party_id"],
+                "payer_person_id": None,
+                "payer_display_name": None,
+                "organization_name": None,
+                "billing_name": row["default_billing_party_name"],
+                "billing_party_type": None,
+                "billing_email": None,
+                "billing_phone": None,
+                "preferred_delivery_method": None,
+                "active": bool(row["account_active"]),
+                "covered_people": members,
+                "session_count": row["session_count"],
+                "latest_session_date": row["latest_session_date"],
+                "account_id": row["account_id"],
+                "account_code": row["account_code"],
+                "account_name": row["account_name"],
+                "account_type": row["account_type"],
+            }
+        )
+
+    def sort_key(r: dict[str, Any]) -> tuple:
+        display = (
+            r.get("payer_display_name")
+            or r.get("organization_name")
+            or r.get("billing_name")
+            or r.get("account_name")
+            or ""
+        )
+        return (0 if r["active"] else 1, display.lower(), r["record_id"])
+
+    records.sort(key=sort_key)
+    return records

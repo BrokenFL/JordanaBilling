@@ -1,12 +1,57 @@
 # Billing Relationships
 
-Billing Relationships is the CRM-style home for backend relationship and shared-billing structures: households, families, individual accounts, billing parties, rates, aliases, administrative notes, and session history.
+Billing Relationships is a combined billing directory. It shows who receives invoices and who they pay for, including shared billing groups.
 
-Routine session review should not force Jordana to choose a backend account or family record. Use Clients in this session and Bill to first. Open Billing Relationships only when a family/couple/default-payer/shared-rate relationship needs maintenance.
+The directory includes four types of entries:
 
-The list shows account code, name, type, primary person, members, billing party, default rate, outstanding balance, last session, and active status.
+- **Self-pay:** A person-linked billing party where the payer is also the session participant. Self-pay clients do not require a client account and no synthetic account is created for them.
+- **Pays for others (third-party):** A person-linked billing party covering one or more other people. One payer record appears regardless of how many sessions exist.
+- **Organization:** An organization billing party that pays for sessions. Organization rows do not require an account.
+- **Shared billing group (account):** A genuine `client_accounts` grouping (household, family, couple, etc.) with members and an optional default billing party. Accounts remain genuine grouping structures, not wrappers around every payer.
 
-Billing relationship records show:
+Billing parties do not require accounts. Accounts are not created for self-pay clients. Accounts remain genuine grouping/default structures.
+
+The directory is read-only in this phase. No accounts, billing parties, people, sessions, or invoices are created or modified while reading the directory.
+
+## Directory Table
+
+The directory table shows the following columns:
+
+- **Type** — Self-pay, Pays for others, Organization, or Shared billing group
+- **Payer / Relationship** — Payer name or account name, with a plain-language subtext (e.g., "Pays for herself", "Pays for Taylor Reed and 2 others")
+- **Covers** — Covered clients or account members
+- **Sessions** — Distinct session count
+- **Latest Session** — Most recent session date
+- **Billing Delivery** — Preferred delivery method (email, mail, both, or unresolved)
+- **Status** — Active or Inactive
+- **Open** — Navigation button
+
+A type filter (All, Self-pay, Pays for others, Organizations, Shared billing groups) and search box filter the directory client-side. No additional API requests are made when filtering or searching.
+
+## Linked Payer and Account Rows
+
+When a billing party is linked as an account's default payer, both records appear in the directory:
+
+- The **payer row** shows muted text: "Linked to shared billing group: {account_name}"
+- The **account row** shows muted text: "Default bill to: {billing_name}"
+
+Both records are shown intentionally to preserve all relationship evidence and direct session billing activity. Records are not merged.
+
+## Navigation
+
+- **Person-linked payer rows:** Open navigates to `#people/{person_id}`, opening the full-screen client profile.
+- **Account rows:** Open uses the existing account-detail sidebar/panel.
+- **Organization rows without an account:** Read-only. The Open button is disabled and labeled "Details unavailable" until organization billing-party editing is implemented.
+
+## Inactive and Empty States
+
+Inactive billing parties and accounts remain visible and are clearly labeled "Inactive." They are not hidden by default.
+
+When the directory is empty, the table shows "No billing relationships yet."
+
+## Account Detail View
+
+The existing account-detail sidebar remains intact for genuine account rows. It shows:
 
 - Header details and active status
 - Members and relationship roles
@@ -16,11 +61,9 @@ Billing relationship records show:
 - Session history
 - Audit history through the backend service
 
-Quick client and payer choices can be made in the Review Queue inspector. Deeper billing setup belongs here.
+## Existing /api/accounts Endpoint
 
-Do not automatically create a permanent shared account merely because two names appear in one calendar title.
-
-Invoice grouping uses the confirmed billing party, not a required visible household account. Bill-to delivery preference is `email`, `mail`, `both`, or `unresolved`; a draft may override it and finalization freezes the selected method and destination.
+The existing `/api/accounts` endpoint remains unchanged. It continues to return account records only. The billing directory uses a separate endpoint: `GET /api/billing-relationships`.
 
 ## Client Workspace
 

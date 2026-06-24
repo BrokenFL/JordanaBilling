@@ -1101,7 +1101,7 @@ async function showClients() {
   document.getElementById("clientsView").hidden = false;
   document.getElementById("clientsNav").classList.add("active");
   $("pageTitle").textContent = "Billing Relationships";
-  $("pageSubtitle").textContent = "Relationship and shared billing records";
+  $("pageSubtitle").textContent = "Who receives invoices and who they pay for";
   document.title = "Jordana Billing - Billing Relationships";
   const returnContext = readReturnContext();
   renderClientsLanding(returnContext);
@@ -1877,23 +1877,161 @@ async function promptToEndRateRule(ruleId) {
   await loadRateRules();
 }
 
+const billingDirState = { records: [], filter: "all" };
+
+const BILLING_DIR_TYPE_LABELS = {
+  self_pay: "Self-pay",
+  third_party: "Pays for others",
+  organization: "Organization",
+  account: "Shared billing group",
+};
+
+const ACCOUNT_TYPE_LABELS = {
+  individual: "Individual",
+  household: "Household",
+  family: "Family",
+  couple: "Couple",
+  organization: "Organization",
+  other: "Other",
+};
+
+function billingDirCoversText(rec) {
+  const people = rec.covered_people || [];
+  if (!people.length) return "—";
+  return people.map(p => escapeHtml(p.display_name || "Unknown")).join(", ");
+}
+
+function billingDirPayerName(rec) {
+  if (rec.record_type === "account") {
+    return escapeHtml(rec.account_name || "Unnamed group");
+  }
+  return escapeHtml(rec.payer_display_name || rec.organization_name || rec.billing_name || "Unknown");
+}
+
+function billingDirPayerSubtext(rec) {
+  if (rec.record_type === "self_pay") {
+    return "Pays for herself";
+  }
+  if (rec.record_type === "third_party") {
+    const people = rec.covered_people || [];
+    if (people.length === 1) {
+      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")}`;
+    }
+    if (people.length > 1) {
+      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")} and ${people.length - 1} other${people.length - 1 === 1 ? "" : "s"}`;
+    }
+    return "Pays for others";
+  }
+  if (rec.record_type === "organization") {
+    const people = rec.covered_people || [];
+    if (people.length === 1) {
+      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")}`;
+    }
+    if (people.length > 1) {
+      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")} and ${people.length - 1} other${people.length - 1 === 1 ? "" : "s"}`;
+    }
+    return "";
+  }
+  if (rec.record_type === "account") {
+    const parts = [];
+    if (rec.account_type && ACCOUNT_TYPE_LABELS[rec.account_type]) {
+      parts.push(ACCOUNT_TYPE_LABELS[rec.account_type]);
+    }
+    if (rec.billing_name) {
+      parts.push(`Default bill to: ${escapeHtml(rec.billing_name)}`);
+    }
+    return parts.join(" • ");
+  }
+  return "";
+}
+
+function billingDirLinkedText(rec) {
+  if (rec.record_type !== "account" && rec.account_id) {
+    return `<div class="dir-muted">Linked to shared billing group: ${escapeHtml(rec.account_name || "")}</div>`;
+  }
+  if (rec.record_type === "account" && rec.billing_name) {
+    return `<div class="dir-muted">Default bill to: ${escapeHtml(rec.billing_name)}</div>`;
+  }
+  return "";
+}
+
+function billingDirDeliveryText(rec) {
+  if (rec.record_type === "account") return "—";
+  const method = rec.preferred_delivery_method;
+  if (!method || method === "unresolved") return "—";
+  return escapeHtml(method);
+}
+
+function billingDirOpenButton(rec) {
+  if (rec.record_type === "account") {
+    return `<button class="mini" data-open-account="${escapeHtml(rec.account_id)}">Open</button>`;
+  }
+  if (rec.payer_person_id) {
+    return `<button class="mini" data-open-person="${escapeHtml(rec.payer_person_id)}">Open</button>`;
+  }
+  return `<button class="mini" disabled title="Organization billing-party editing not yet available">Details unavailable</button>`;
+}
+
+function renderBillingDirRows() {
+  const filter = billingDirState.filter;
+  const search = ($("clientSearch").value || "").toLowerCase();
+  let rows = billingDirState.records;
+  if (filter !== "all") {
+    rows = rows.filter(r => r.record_type === filter);
+  }
+  if (search) {
+    rows = rows.filter(r => {
+      const name = (r.payer_display_name || r.organization_name || r.billing_name || r.account_name || "").toLowerCase();
+      const covers = (r.covered_people || []).map(p => (p.display_name || "").toLowerCase()).join(" ");
+      return name.includes(search) || covers.includes(search);
+    });
+  }
+  if (!rows.length) {
+    $("clientRows").innerHTML = `<tr><td colspan="8" class="readonly-note">No billing relationships yet</td></tr>`;
+    return;
+  }
+  $("clientRows").innerHTML = rows.map(rec => {
+    const typeLabel = BILLING_DIR_TYPE_LABELS[rec.record_type] || rec.record_type;
+    const payerName = billingDirPayerName(rec);
+    const subtext = billingDirPayerSubtext(rec);
+    const linked = billingDirLinkedText(rec);
+    const covers = billingDirCoversText(rec);
+    const delivery = billingDirDeliveryText(rec);
+    const status = rec.active ? "Active" : "Inactive";
+    const statusClass = rec.active ? "status-pill active" : "status-pill inactive";
+    const openBtn = billingDirOpenButton(rec);
+    return `<tr data-record-id="${escapeHtml(rec.record_id)}">
+      <td><span class="dir-type-label">${escapeHtml(typeLabel)}</span></td>
+      <td><span class="primary">${payerName}</span><div class="dir-subtext">${subtext}</div>${linked}</td>
+      <td>${covers}</td>
+      <td>${rec.session_count || 0}</td>
+      <td>${fmt(rec.latest_session_date)}</td>
+      <td>${delivery}</td>
+      <td><span class="${statusClass}">${status}</span></td>
+      <td>${openBtn}</td>
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("#clientRows tr").forEach(tr => {
+    const openAccountBtn = tr.querySelector("[data-open-account]");
+    if (openAccountBtn) {
+      openAccountBtn.onclick = (e) => {
+        e.stopPropagation();
+        openAccountRecord(openAccountBtn.dataset.openAccount, { returnContext: readReturnContext() });
+      };
+    }
+    const openPersonBtn = tr.querySelector("[data-open-person]");
+    if (openPersonBtn) {
+      openPersonBtn.onclick = (e) => {
+        e.stopPropagation();
+        location.hash = `people/${openPersonBtn.dataset.openPerson}`;
+      };
+    }
+  });
+}
+
 async function loadClients() {
-  const rows = await api(`/api/accounts?full=1&q=${encodeURIComponent($("clientSearch").value || "")}`);
-  $("clientRows").innerHTML = rows.map(row => `
-    <tr data-account="${row.account_id}">
-      <td>${fmt(row.account_code)}</td>
-      <td><span class="primary">${fmt(row.account_name)}</span></td>
-      <td>${fmt(row.account_type)}</td>
-      <td>${fmt(row.primary_person)}</td>
-      <td>${fmt(row.members)}</td>
-      <td>${fmt(row.billing_party_name)}</td>
-      <td>${money(row.current_default_rate)}</td>
-      <td>${money(row.outstanding_balance)}</td>
-      <td>${fmt(row.last_session)}</td>
-      <td>${row.active ? "Active" : "Inactive"}</td>
-    </tr>
-  `).join("");
-  document.querySelectorAll("#clientRows tr").forEach(row => row.onclick = () => openAccountRecord(row.dataset.account, { returnContext: readReturnContext() }));
+  billingDirState.records = await api("/api/billing-relationships");
+  renderBillingDirRows();
 }
 
 async function openAccountRecord(accountId, options = {}) {
@@ -2340,7 +2478,8 @@ async function openPersonRecord(personId, options = {}) {
     };
   });
 }
-["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? loadClients() : loadPeople(), 180)));
+["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? renderBillingDirRows() : loadPeople(), 180)));
+$("billingDirFilter").addEventListener("change", () => { billingDirState.filter = $("billingDirFilter").value; renderBillingDirRows(); });
 $("newAccountBtn").onclick = async () => {
   const returnContext = readReturnContext();
   const name = prompt("Billing relationship name", relationshipNameSuggestion(returnContext));

@@ -663,6 +663,121 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('$("pageTitle").textContent = "Reports"', js)
         self.assertIn('document.title = "Jordana Billing - Reports"', js)
 
+    def _clients_html(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        start = html.index('id="clientsView"')
+        end = html.index('</section>', start) + len('</section>')
+        return html[start:end]
+
+    def _clients_js(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("const billingDirState")
+        end = js.index('["clientSearch","peopleSearch"]')
+        return js[start:end]
+
+    def test_billing_directory_loads_api_billing_relationships(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('api("/api/billing-relationships")', js)
+
+    def test_billing_directory_does_not_use_accounts_full_as_source(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        load_start = js.index("async function loadClients()")
+        load_end = js.index("async function openAccountRecord")
+        load_fn = js[load_start:load_end]
+        self.assertNotIn("/api/accounts?full=1", load_fn)
+
+    def test_billing_directory_has_five_filter_choices(self):
+        html = self._clients_html()
+        self.assertIn('id="billingDirFilter"', html)
+        self.assertIn('<option value="all">All</option>', html)
+        self.assertIn('<option value="self_pay">Self-pay</option>', html)
+        self.assertIn('<option value="third_party">Pays for others</option>', html)
+        self.assertIn('<option value="organization">Organizations</option>', html)
+        self.assertIn('<option value="account">Shared billing groups</option>', html)
+
+    def test_billing_directory_self_pay_wording(self):
+        js = self._clients_js()
+        self.assertIn("Pays for herself", js)
+
+    def test_billing_directory_third_party_wording(self):
+        js = self._clients_js()
+        self.assertIn("Pays for", js)
+
+    def test_billing_directory_multiple_covered_people_wording(self):
+        js = self._clients_js()
+        self.assertIn("and", js)
+        self.assertIn("other", js)
+
+    def test_billing_directory_organization_rows_render(self):
+        js = self._clients_js()
+        self.assertIn('"organization"', js)
+        self.assertIn("BILLING_DIR_TYPE_LABELS", js)
+
+    def test_billing_directory_account_rows_render(self):
+        js = self._clients_js()
+        self.assertIn('"account"', js)
+        self.assertIn("ACCOUNT_TYPE_LABELS", js)
+
+    def test_billing_directory_linked_payer_identifies_account(self):
+        js = self._clients_js()
+        self.assertIn("Linked to shared billing group:", js)
+
+    def test_billing_directory_account_row_identifies_default_bill_to(self):
+        js = self._clients_js()
+        self.assertIn("Default bill to:", js)
+
+    def test_billing_directory_person_payer_open_navigates_to_people(self):
+        js = self._clients_js()
+        self.assertIn("data-open-person", js)
+        self.assertIn('location.hash = `people/${openPersonBtn.dataset.openPerson}`', js)
+
+    def test_billing_directory_account_open_uses_existing_behavior(self):
+        js = self._clients_js()
+        self.assertIn("data-open-account", js)
+        self.assertIn("openAccountRecord(", js)
+
+    def test_billing_directory_organization_without_account_is_read_only(self):
+        js = self._clients_js()
+        self.assertIn("Details unavailable", js)
+        self.assertIn("disabled", js)
+
+    def test_billing_directory_inactive_rows_visible_and_labeled(self):
+        js = self._clients_js()
+        self.assertIn("Inactive", js)
+        self.assertIn("status-pill inactive", js)
+
+    def test_billing_directory_empty_state_renders(self):
+        js = self._clients_js()
+        self.assertIn("No billing relationships yet", js)
+
+    def test_billing_directory_existing_account_detail_remains_intact(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("async function openAccountRecord(", js)
+        html = self._clients_html()
+        self.assertIn('id="accountRecord"', html)
+        self.assertIn("record-pane", html)
+
+    def test_billing_directory_responsive_table_wrapper_exists(self):
+        html = self._clients_html()
+        self.assertIn("table-scroll-wrap", html)
+
+    def test_billing_directory_page_subtitle_explains_directory(self):
+        html = self._clients_html()
+        self.assertIn("Who receives invoices and who they pay for", html)
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn('$("pageSubtitle").textContent = "Who receives invoices and who they pay for"', js)
+
+    def test_billing_directory_filter_is_client_side(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("billingDirState.filter", js)
+        self.assertIn("renderBillingDirRows", js)
+        self.assertIn('$("billingDirFilter").addEventListener("change"', js)
+
+    def test_billing_directory_does_not_merge_records(self):
+        js = self._clients_js()
+        self.assertNotIn("mergeRecords", js)
+        self.assertNotIn("deduplicate", js)
+
 
 if __name__ == "__main__":
     unittest.main()

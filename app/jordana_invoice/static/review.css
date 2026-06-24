@@ -328,6 +328,22 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 }
 .crm-layout { display: grid; grid-template-columns: minmax(760px, 1fr) 390px; gap: 16px; align-items: start; }
 .crm-table { min-width: 1060px; }
+.billing-dir-table { min-width: 880px; table-layout: auto; }
+.billing-dir-table th, .billing-dir-table td { width: auto; text-align: left; }
+.billing-dir-table th:nth-child(1) { width: 10%; }
+.billing-dir-table th:nth-child(2) { width: 22%; }
+.billing-dir-table th:nth-child(3) { width: 20%; }
+.billing-dir-table th:nth-child(4) { width: 7%; }
+.billing-dir-table th:nth-child(5) { width: 11%; }
+.billing-dir-table th:nth-child(6) { width: 10%; }
+.billing-dir-table th:nth-child(7) { width: 8%; }
+.billing-dir-table th:nth-child(8) { width: 12%; }
+.dir-type-label { font-size: 11px; font-weight: 700; color: #3b4a63; }
+.dir-subtext { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.dir-muted { font-size: 11px; color: var(--muted); margin-top: 2px; font-style: italic; }
+.status-pill.active { background: #e3f2e3; color: #2e7d32; }
+.status-pill.inactive { background: #f5e3e3; color: #c62828; }
+.crm-tools select { padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-size: 13px; color: var(--text); background: white; }
 .sessions-table { min-width: 960px; table-layout: auto; }
 .sessions-table th, .sessions-table td { width: auto; text-align: left; }
 .people-table { min-width: 900px; }
@@ -492,4 +508,5 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
   }
   .summary-cards { grid-template-columns: 1fr; }
   .billing-cards { grid-template-columns: 1fr; }
+  .crm-tools { flex-wrap: wrap; }
 }
