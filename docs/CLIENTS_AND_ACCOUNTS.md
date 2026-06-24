@@ -256,11 +256,109 @@ The modal:
 
 The modals are keyboard usable with proper `<label>` elements, focus trap, Escape to cancel, and focus return to the initiating button on cancel. User-controlled text is escaped via `escapeHtml()` before insertion into HTML.
 
-### Out of Scope (Round 2)
+### Round 2B: Transactional Setup Backend
 
-The following remain planned for Round 2 and were not started:
-- Full guided "Who pays?" wizard
-- Creating new clients from the modal
-- Creating new organizations from the modal
+A new backend endpoint and service function provide transactional billing relationship setup from existing records.
+
+#### Endpoint
+
+`POST /api/billing-relationships/setup`
+
+#### Supported Payer Kinds
+
+- **client** — an existing active person who is also a session participant
+- **person** — an existing active person who is not necessarily a session participant
+- **organization** — an existing active organization billing party
+
+#### Payload
+
+```json
+{
+  "payer_kind": "client" | "person" | "organization",
+  "payer_person_id": "<UUID>",
+  "organization_billing_party_id": "<UUID>",
+  "covered_client_ids": ["<UUID>", ...],
+  "use_for_future_sessions": true
+}
+```
+
+- `payer_person_id` is required for `client` and `person` payer kinds.
+- `organization_billing_party_id` is required for `organization` payer kind.
+- `covered_client_ids` must contain at least one existing active person ID.
+- Duplicate covered-client IDs are rejected.
+- This round does not accept raw person or organization creation fields.
+
+#### What the Backend Does
+
+For all payer kinds:
+
+1. Creates or reuses a billing party (person billing party for client/person, existing org billing party for organization).
+2. Creates a `client_accounts` billing relationship (account).
+3. Stores covered clients in `account_members`.
+4. Sets the payer billing party as `client_accounts.default_billing_party_id`.
+5. Writes sanitized audit entries (no emails, phone numbers, addresses, or private notes).
+6. Commits the entire operation atomically — any failure rolls back all changes.
+
+Organization payers are NOT represented as only a standalone billing party. They get a full `client_accounts` relationship with `account_members` linking the covered clients, just like person payers.
+
+#### Exact Duplicate Rule
+
+An active relationship is an exact duplicate only when:
+
+1. Its default billing party represents the same payer (same `person_id` for person payers, same `billing_party_id` for organization payers).
+2. Its active account-member person-ID set exactly equals the requested covered-client set (order-independent, no subset or superset matching).
+3. The account is active.
+
+When a duplicate exists, the backend returns the existing relationship with `created: false, duplicate: true`. Repeated identical calls are idempotent.
+
+Still allowed: same payer with different client set, different payer with same client set, a client in unrelated shared relationships, inactive historical relationships.
+
+#### Derived Account Type
+
+- Client paying for self only → `individual`
+- All other person or client payer relationships → `family`
+- Organization payer → `family` (organization is not used as an account_type value to avoid schema migration; the billing party type distinguishes the payer)
+
+#### Account Naming
+
+- Client paying for self only → client display name
+- Person payer → payer display name (with "— pays for ..." suffix when covering other clients)
+- Organization payer → organization name (with "— pays for ..." suffix when covering multiple clients)
+- Never appends "Billing Relationship", "Account", or "Household"
+- Naming is not used as the duplicate key
+
+#### Transaction Safety
+
+Helper functions (`create_account`, `create_billing_party`, `add_account_member`, `billing_party_for_person`) accept a backward-compatible `commit: bool = True` keyword argument. When `commit=False`, they skip `init_db()` (which would otherwise commit) and skip their own `conn.commit()`, allowing the caller to compose them in a single atomic transaction.
+
+#### API Response
+
+```json
+{
+  "account_id": "<UUID>",
+  "billing_party_id": "<UUID>",
+  "account_name": "<name>",
+  "account_type": "<type>",
+  "covered_client_ids": ["<UUID>", ...],
+  "created": true,
+  "duplicate": false
+}
+```
+
+#### Not Implemented in Round 2B
+
+- Frontend wizard (3-step guided UI)
+- Creating new people or organizations from the setup endpoint
+- Session Review attachment (linking the relationship to a review candidate)
+- Calendar alias creation for future-session matching
+
+### Out of Scope (Remaining)
+
+The following remain planned and were not started in Round 2B:
+
+- Frontend guided "Who pays?" wizard
+- Creating new clients from the wizard
+- Creating new organizations from the wizard
+- Session Review attachment via the setup endpoint
 - Automatic payer classification
 - Full right-panel redesign

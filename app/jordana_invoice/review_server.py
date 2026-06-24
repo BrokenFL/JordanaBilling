@@ -55,6 +55,7 @@ from .review_services import (
     search_accounts,
     search_billing_parties,
     search_people,
+    setup_billing_relationship,
     update_account,
     update_billing_party,
     update_person,
@@ -421,6 +422,9 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/review/reparse-candidates":
                     result = reparse_unapproved_candidates(self.conn())
                     self.send_json({"ok": True, **result})
+                    return
+                if parsed.path == "/api/billing-relationships/setup":
+                    self.send_json(setup_billing_relationship(self.conn(), data))
                     return
                 self.send_error(404)
             except Exception as error:
