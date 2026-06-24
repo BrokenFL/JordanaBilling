@@ -311,6 +311,15 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('Read-only appointment ledger', js)
         self.assertNotIn('saveSessions', js)
 
+    def test_send_to_review_button_for_candidate_only_records(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="sendToReviewBtn"', js)
+        self.assertIn("Send to Review", js)
+        self.assertIn("sendToReview", js)
+        self.assertIn("/send-to-review", js)
+        self.assertIn("!isSession", js)
+
 
 if __name__ == "__main__":
     unittest.main()

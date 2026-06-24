@@ -1100,6 +1100,183 @@ def restore_candidate(
     return get_review_candidate(conn, candidate_id)
 
 
+def promote_candidate_to_review(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """
+    Manually promote a candidate-only calendar record (no session) into the review queue.
+    Re-parses the preserved raw snapshot, forces classification to client_session,
+    and creates one reviewable session.  Skips candidates that already have a session
+    or are approved/excluded.  Never modifies raw evidence.
+    """
+    init_db(conn)
+    now = now_iso()
+
+    candidate = conn.execute(
+        "SELECT * FROM calendar_event_candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if not candidate:
+        raise ValueError("Review candidate not found.")
+    if candidate["review_status"] in {"approved", "excluded"}:
+        raise ValueError(
+            f"Candidate is {candidate['review_status']}; cannot promote to review."
+        )
+
+    existing_session = conn.execute(
+        "SELECT id FROM sessions WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if existing_session:
+        raise ValueError("A session already exists for this candidate.")
+
+    snap = conn.execute(
+        "SELECT * FROM raw_calendar_snapshots WHERE id = ?",
+        (candidate["latest_raw_snapshot_id"],),
+    ).fetchone()
+    if not snap:
+        raise ValueError("Raw snapshot not found for candidate.")
+
+    parse_row = {
+        "event_title": snap["event_title"],
+        "start_at": snap["start_at"],
+        "end_at": snap["end_at"],
+        "duration_minutes": snap["duration_minutes"],
+        "location": snap["location"],
+    }
+    result = parse_event(parse_row)
+    disposition = classify_calendar(conn, snap["calendar_name"])
+    result = apply_calendar_signal(result, disposition)
+
+    result.classification = "client_session"
+    if not result.proposed_start_at:
+        result.proposed_start_at = snap["start_at"]
+    if not result.proposed_duration_minutes:
+        result.proposed_duration_minutes = (
+            parse_int(snap["duration_minutes"]) or 60
+        )
+        result.proposed_end_at = snap["end_at"]
+        result.duration_source = result.duration_source or "calendar"
+    if not result.proposed_end_at and result.proposed_start_at and result.proposed_duration_minutes:
+        from datetime import datetime as _dt
+        try:
+            start = _dt.fromisoformat(result.proposed_start_at)
+            result.proposed_end_at = (start + timedelta(minutes=result.proposed_duration_minutes)).isoformat()
+        except (ValueError, TypeError):
+            pass
+    result.confidence = max(result.confidence, 0.5)
+    result.confidence_label = "review"
+    result.explanation = f"{result.explanation} Manually promoted to review."
+    if "classification" in result.fields_requiring_review:
+        result.fields_requiring_review = [
+            f for f in result.fields_requiring_review if f != "classification"
+        ]
+    if "classification" in result.unresolved_fields:
+        result.unresolved_fields = [
+            f for f in result.unresolved_fields if f != "classification"
+        ]
+
+    new_review_status = review_status_for_parse(result)
+
+    conn.execute(
+        """
+        UPDATE calendar_event_candidates
+        SET classification           = ?,
+            confidence               = ?,
+            confidence_label         = ?,
+            explanation              = ?,
+            fields_requiring_review  = ?,
+            unresolved_fields        = ?,
+            review_reasons           = ?,
+            parser_payload           = ?,
+            proposed_client_name     = ?,
+            candidate_person_names   = ?,
+            possible_referenced_person = ?,
+            proposed_start_at        = ?,
+            proposed_duration_minutes = ?,
+            proposed_end_at          = ?,
+            time_shorthand           = ?,
+            duration_source          = ?,
+            service_mode             = ?,
+            rate_group               = ?,
+            time_category            = ?,
+            is_evening               = ?,
+            is_weekend               = ?,
+            appointment_status       = ?,
+            billing_treatment        = ?,
+            title_time_text          = ?,
+            title_time_normalized    = ?,
+            title_time_matches_calendar = ?,
+            billing_session_type     = ?,
+            appointment_method       = ?,
+            duration_choice          = ?,
+            house_call_suggested     = ?,
+            billing_type_source      = ?,
+            location_text            = ?,
+            review_status            = ?,
+            updated_at               = ?
+        WHERE id = ?
+          AND review_status NOT IN ('approved', 'excluded')
+        """,
+        (
+            result.classification,
+            result.confidence,
+            result.confidence_label,
+            result.explanation,
+            json_dumps(result.fields_requiring_review),
+            json_dumps(result.unresolved_fields),
+            json_dumps(result.review_reasons),
+            json_dumps(result.as_dict()),
+            result.proposed_client_name,
+            json_dumps(result.candidate_person_names),
+            result.possible_referenced_person,
+            result.proposed_start_at,
+            result.proposed_duration_minutes,
+            result.proposed_end_at,
+            result.time_shorthand,
+            result.duration_source,
+            result.service_mode,
+            result.rate_group,
+            result.time_category,
+            1 if result.is_evening else 0,
+            1 if result.is_weekend else 0,
+            result.appointment_status,
+            initial_billing_treatment(result),
+            result.title_time_text,
+            result.title_time_normalized,
+            (1 if result.title_time_matches_calendar else (0 if result.title_time_matches_calendar is False else None)),
+            result.billing_session_type,
+            result.appointment_method,
+            result.duration_choice,
+            1 if result.house_call_suggested else 0,
+            result.billing_type_source,
+            result.location_text,
+            new_review_status,
+            now,
+            candidate_id,
+        ),
+    )
+
+    created = maybe_insert_session(conn, candidate_id, snap, result)
+    if not created:
+        raise ValueError(
+            "Could not create session from candidate; missing required fields."
+        )
+
+    record_audit(
+        conn,
+        "calendar_event_candidate",
+        candidate_id,
+        "promoted_to_review",
+        {"reason": reason or "Manually promoted to review queue."},
+    )
+    conn.commit()
+    return get_review_candidate(conn, candidate_id)
+
+
 def search_people(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
     rows = search_table(conn, "people", "person_id", "display_name", query)
     similar = similar_people(conn, query)

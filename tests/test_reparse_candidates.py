@@ -24,6 +24,7 @@ from jordana_invoice.importer import import_rows
 from jordana_invoice.review_services import (
     list_review_candidates,
     mark_candidate,
+    promote_candidate_to_review,
     reparse_unapproved_candidates,
 )
 
@@ -294,6 +295,141 @@ class ReparseUnapprovedCandidatesTests(unittest.TestCase):
             session_after_second["candidate_id"],
             "Session candidate_id must be stable across reparsing",
         )
+
+
+class PromoteCandidateToReviewTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self.temp.name) / "promote_test.sqlite3")
+        init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _cid(self, title_fragment):
+        row = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE title LIKE ?",
+            (f"%{title_fragment}%",),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def _candidate(self, cid):
+        return self.conn.execute(
+            "SELECT * FROM calendar_event_candidates WHERE id = ?", (cid,)
+        ).fetchone()
+
+    def _session(self, cid):
+        return self.conn.execute(
+            "SELECT * FROM sessions WHERE candidate_id = ?", (cid,)
+        ).fetchone()
+
+    def _delete_session_cascade(self, cid):
+        session = self._session(cid)
+        if not session:
+            return
+        sid = session["id"]
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute("DELETE FROM session_participants WHERE session_id = ?", (sid,))
+        self.conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def test_promote_creates_session_for_candidate_only_record(self):
+        import_rows(self.conn, [make_row("promote-1", "Caitlin Schneider 530 for Sage")], "promote_test")
+        cid = self._cid("Caitlin")
+        self._delete_session_cascade(cid)
+        self.assertIsNone(self._session(cid), "Pre-condition: no session")
+
+        result = promote_candidate_to_review(self.conn, cid, reason="manual promotion")
+
+        self.assertTrue(result["session"]["id"], "Promote must return a session with an id")
+        session = self._session(cid)
+        self.assertIsNotNone(session, "A session must be created")
+        self.assertNotEqual(session["review_status"], "approved")
+        self.assertNotEqual(session["review_status"], "excluded")
+        cand = self._candidate(cid)
+        self.assertEqual(cand["classification"], "client_session")
+
+    def test_promote_prevents_duplicate_session(self):
+        import_rows(self.conn, [make_row("promote-2", "Caitlin Schneider 530 for Sage")], "promote_test")
+        cid = self._cid("Caitlin")
+        self._delete_session_cascade(cid)
+
+        promote_candidate_to_review(self.conn, cid)
+        with self.assertRaises(ValueError, msg="Second promote must raise"):
+            promote_candidate_to_review(self.conn, cid)
+
+        count = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM sessions WHERE candidate_id = ?", (cid,)
+        ).fetchone()["c"]
+        self.assertEqual(count, 1, "Only one session must exist")
+
+    def test_promote_skips_approved_candidate(self):
+        import_rows(self.conn, [make_row("promote-3", "Alice Smith 6")], "promote_test")
+        cid = self._cid("Alice")
+        self.conn.execute(
+            "UPDATE calendar_event_candidates SET review_status = 'approved' WHERE id = ?", (cid,)
+        )
+        self.conn.commit()
+        with self.assertRaises(ValueError):
+            promote_candidate_to_review(self.conn, cid)
+
+    def test_promote_skips_excluded_candidate(self):
+        import_rows(self.conn, [make_row("promote-4", "Dana White 9")], "promote_test")
+        cid = self._cid("Dana")
+        mark_candidate(self.conn, cid, classification="personal", reason="test")
+        with self.assertRaises(ValueError):
+            promote_candidate_to_review(self.conn, cid)
+
+    def test_promote_writes_audit_entry(self):
+        import_rows(self.conn, [make_row("promote-5", "Caitlin Schneider 530 for Sage")], "promote_test")
+        cid = self._cid("Caitlin")
+        self._delete_session_cascade(cid)
+
+        promote_candidate_to_review(self.conn, cid, reason="manual promotion")
+
+        audit_row = self.conn.execute(
+            """
+            SELECT id FROM audit_log
+            WHERE entity_type = 'calendar_event_candidate'
+              AND entity_id = ?
+              AND action = 'promoted_to_review'
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (cid,),
+        ).fetchone()
+        self.assertIsNotNone(audit_row, "Promote must write a 'promoted_to_review' audit entry")
+
+    def test_promote_preserves_raw_snapshot(self):
+        import_rows(self.conn, [make_row("promote-6", "Caitlin Schneider 530 for Sage")], "promote_test")
+        cid = self._cid("Caitlin")
+        self._delete_session_cascade(cid)
+
+        before = dict(self.conn.execute(
+            "SELECT * FROM raw_calendar_snapshots WHERE id = "
+            "(SELECT latest_raw_snapshot_id FROM calendar_event_candidates WHERE id = ?)",
+            (cid,),
+        ).fetchone())
+
+        promote_candidate_to_review(self.conn, cid)
+
+        after = dict(self.conn.execute(
+            "SELECT * FROM raw_calendar_snapshots WHERE id = "
+            "(SELECT latest_raw_snapshot_id FROM calendar_event_candidates WHERE id = ?)",
+            (cid,),
+        ).fetchone())
+        self.assertEqual(before, after, "Raw snapshot must be byte-identical after promote")
+
+    def test_promote_appears_in_review_queue(self):
+        import_rows(self.conn, [make_row("promote-7", "Caitlin Schneider 530 for Sage")], "promote_test")
+        cid = self._cid("Caitlin")
+        self._delete_session_cascade(cid)
+
+        promote_candidate_to_review(self.conn, cid)
+
+        ids_in_queue = {i["candidate_id"] for i in list_review_candidates(self.conn)["items"]}
+        self.assertIn(cid, ids_in_queue, "Promoted candidate must appear in Review Queue")
 
 
 if __name__ == "__main__":

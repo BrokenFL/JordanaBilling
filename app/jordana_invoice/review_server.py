@@ -34,6 +34,7 @@ from .review_services import (
     list_rate_rules,
     mark_candidate,
     merge_people,
+    promote_candidate_to_review,
     recalc_unapproved_session_rates,
     reparse_unapproved_candidates,
     restore_candidate,
@@ -342,6 +343,15 @@ def make_handler(database_path: str):
                     if action == "restore":
                         self.send_json(
                             restore_candidate(
+                                self.conn(),
+                                candidate_id,
+                                reason=data.get("reason", ""),
+                            )
+                        )
+                        return
+                    if action == "send-to-review":
+                        self.send_json(
+                            promote_candidate_to_review(
                                 self.conn(),
                                 candidate_id,
                                 reason=data.get("reason", ""),

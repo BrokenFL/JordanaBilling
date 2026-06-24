@@ -296,6 +296,7 @@ function renderInspector(data) {
 
     <div class="actions">
       ${isSession && readiness.all_ready ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
+      ${!isSession ? '<button class="approve" id="sendToReviewBtn">Send to Review</button>' : ""}
       <button id="personalBtn">Mark Personal/Admin</button>
       <button id="duplicateBtn">Mark Duplicate</button>
       <button class="danger" id="excludeBtn">Exclude</button>
@@ -319,6 +320,7 @@ function wireInspector() {
   if ($("personalBtn")) $("personalBtn").onclick = () => mark("personal");
   if ($("duplicateBtn")) $("duplicateBtn").onclick = () => mark("duplicate");
   if ($("excludeBtn")) $("excludeBtn").onclick = () => mark("nonbillable");
+  if ($("sendToReviewBtn")) $("sendToReviewBtn").onclick = sendToReview;
   [
     "billingTypeInput",
     "durationChoiceInput",
@@ -860,6 +862,16 @@ async function resolveTypedSelections() {
 async function mark(classification) {
   await api(`/api/review/candidates/${state.selected}/mark`, { method: "POST", body: JSON.stringify({ classification, reason: classification }) });
   await loadList();
+}
+
+async function sendToReview() {
+  try {
+    await api(`/api/review/candidates/${state.selected}/send-to-review`, { method: "POST", body: JSON.stringify({ reason: "Manually promoted to review queue" }) });
+    await loadList();
+    if (state.selected) await selectCandidate(state.selected);
+  } catch (err) {
+    alert("Could not promote to review: " + err.message);
+  }
 }
 
 function collectPayload() {

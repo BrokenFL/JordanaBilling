@@ -55,6 +55,20 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result.classification, "personal")
         self.assertIn("exclusion_alias", result.fields_requiring_review)
 
+    def test_for_reference_preserves_participant_and_marks_review(self):
+        result = parse_event(
+            event(
+                "Caitlin Schneider 530 for Sage at 5:30 PM",
+                "2026-06-18T17:30:00-04:00",
+                "2026-06-18T18:30:00-04:00",
+            )
+        )
+        self.assertEqual(result.classification, "client_session")
+        self.assertEqual(result.proposed_client_name, "Caitlin Schneider")
+        self.assertEqual(result.possible_referenced_person, "Sage at 5:30 PM")
+        self.assertIn("participants", result.fields_requiring_review)
+        self.assertIn("relationship_role", result.fields_requiring_review)
+
 
 if __name__ == "__main__":
     unittest.main()

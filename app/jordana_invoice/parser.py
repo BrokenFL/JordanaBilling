@@ -260,7 +260,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             )
         )
 
-    parsed_title = parse_standard_title(title) or parse_shorthand(title)
+    parse_title, for_reference = strip_for_reference(title)
+    parsed_title = parse_standard_title(parse_title) or parse_shorthand(parse_title)
     if parsed_title and (
         parsed_title[4]
         or not (
@@ -290,12 +291,17 @@ def parse_event(row: dict[str, object]) -> ParseResult:
         explanation_parts = ["Recognized client session title pattern."]
 
         appointment_status = explicit_status or occurrence_status
-        relationship_review = has_multiple_person_markers(client_name)
+        relationship_review = has_multiple_person_markers(client_name) or bool(for_reference)
         if relationship_review:
             fields.extend(["participants", "relationship_role"])
-            explanation_parts.append(
-                "Title appears to reference multiple people or a billing relationship."
-            )
+            if has_multiple_person_markers(client_name):
+                explanation_parts.append(
+                    "Title appears to reference multiple people or a billing relationship."
+                )
+            if for_reference:
+                explanation_parts.append(
+                    f"Title references \"{for_reference}\" after 'for'; relationship role unresolved."
+                )
 
         if service_mode == "unknown":
             fields.append("service_mode")
@@ -376,6 +382,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
                 standardized_title_format=standardized,
                 relationship_review_required=relationship_review,
+                possible_referenced_person=for_reference,
                 billing_session_type=billing_type,
                 appointment_method=appointment_method,
                 duration_choice=duration_choice,
@@ -397,7 +404,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             or contains_any(ss_lower, PERSONAL_KEYWORDS)
             or contains_any(ss_lower, NONBILLABLE_KEYWORDS)
         ):
-            ss_parsed = parse_standard_title(ss_title) or parse_shorthand(ss_title)
+            ss_parse_title, ss_for_reference = strip_for_reference(ss_title)
+            ss_parsed = parse_standard_title(ss_parse_title) or parse_shorthand(ss_parse_title)
             if ss_parsed:
                 (
                     client_name,
@@ -424,12 +432,17 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                     "Recognized client session title with appointment status suffix.",
                     "Appointment status needs a separate billing decision.",
                 ]
-                relationship_review = has_multiple_person_markers(client_name)
+                relationship_review = has_multiple_person_markers(client_name) or bool(ss_for_reference)
                 if relationship_review:
                     fields.extend(["participants", "relationship_role"])
-                    explanation_parts.append(
-                        "Title appears to reference multiple people or a billing relationship."
-                    )
+                    if has_multiple_person_markers(client_name):
+                        explanation_parts.append(
+                            "Title appears to reference multiple people or a billing relationship."
+                        )
+                    if ss_for_reference:
+                        explanation_parts.append(
+                            f"Title references \"{ss_for_reference}\" after 'for'; relationship role unresolved."
+                        )
                 if service_mode == "unknown":
                     fields.append("service_mode")
                 if explicit_duration and computed_duration and explicit_duration != computed_duration:
@@ -488,6 +501,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                         rate_group=RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
                         standardized_title_format=standardized,
                         relationship_review_required=relationship_review,
+                        possible_referenced_person=ss_for_reference,
                         billing_session_type=billing_type,
                         appointment_method=appointment_method,
                         duration_choice=duration_choice,
@@ -556,6 +570,20 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             **time_info,
         )
     )
+
+
+def strip_for_reference(title: str) -> tuple[str, str | None]:
+    """
+    Strip a trailing 'for <reference>' from a calendar event title.
+    Returns (stripped_title, reference_text) or (title, None) if no match.
+    """
+    match = re.search(r'\s+for\s+(.+)$', title, re.IGNORECASE)
+    if match:
+        reference = match.group(1).strip()
+        stripped = normalize_title(title[:match.start()])
+        if stripped and reference and re.search(r'[A-Za-z]', reference):
+            return stripped, reference
+    return title, None
 
 
 def strip_title_appointment_status(title: str) -> tuple[str, str | None]:
