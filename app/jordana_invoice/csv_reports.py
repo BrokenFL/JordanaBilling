@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import csv
+import io
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .appointment_ledger import (
     APPOINTMENT_LEDGER_COLUMNS,
@@ -292,3 +295,131 @@ def validate_csv(path: Path, columns: list[str]) -> None:
         header = next(reader)
     if header != columns:
         raise ValueError(f"Invalid report header for {path}")
+
+
+# ---------------------------------------------------------------------------
+# On-demand report API support
+# ---------------------------------------------------------------------------
+
+_VALID_REPORT_TYPES = ("sessions", "summary", "simple", "appointments")
+
+_REPORT_TYPE_METADATA: list[dict[str, object]] = [
+    {
+        "type": "sessions",
+        "display_name": "Client Sessions",
+        "description": "Detailed session-level export with classification, rates, and review status.",
+        "year_required": True,
+    },
+    {
+        "type": "summary",
+        "display_name": "Client Summary",
+        "description": "Account-level summary with session counts and billed, paid, and outstanding totals.",
+        "year_required": True,
+    },
+    {
+        "type": "simple",
+        "display_name": "Session Log",
+        "description": "Simplified human-readable session log for quick review.",
+        "year_required": True,
+    },
+    {
+        "type": "appointments",
+        "display_name": "All Appointments",
+        "description": "Full appointment ledger across all calendars and review statuses.",
+        "year_required": True,
+    },
+]
+
+
+def available_report_types() -> list[dict[str, object]]:
+    return [dict(entry) for entry in _REPORT_TYPE_METADATA]
+
+
+def available_years(conn: sqlite3.Connection) -> list[int]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT substr(start_at, 1, 4) AS year
+        FROM (
+            SELECT start_at FROM sessions
+            WHERE start_at IS NOT NULL AND start_at != ''
+            UNION
+            SELECT start_at FROM calendar_event_candidates
+            WHERE start_at IS NOT NULL AND start_at != ''
+        )
+        WHERE year GLOB '[0-9][0-9][0-9][0-9]'
+        ORDER BY year DESC
+        """,
+    ).fetchall()
+    return [int(row["year"]) for row in rows]
+
+
+def default_report_year(conn: sqlite3.Connection) -> int:
+    eastern = ZoneInfo("America/New_York")
+    current_year = datetime.now(eastern).year
+    years = available_years(conn)
+    if current_year in years:
+        return current_year
+    if years:
+        return years[0]
+    return current_year
+
+
+def validate_report_type(report_type: str) -> None:
+    if report_type not in _VALID_REPORT_TYPES:
+        raise ValueError(
+            f"Unknown report type: {report_type!r}. "
+            f"Expected one of: {', '.join(_VALID_REPORT_TYPES)}"
+        )
+
+
+def validate_year(year: int) -> None:
+    if not isinstance(year, int) or isinstance(year, bool):
+        raise ValueError(f"Year must be an integer, got {type(year).__name__}")
+    if year < 2000 or year > 2100:
+        raise ValueError(f"Year out of range: {year}")
+
+
+def generate_report_csv(
+    conn: sqlite3.Connection,
+    report_type: str,
+    year: int,
+) -> str:
+    validate_report_type(report_type)
+    validate_year(year)
+
+    if report_type == "sessions":
+        rows = build_session_rows(conn, year)
+        columns = SESSION_COLUMNS
+    elif report_type == "summary":
+        session_rows = build_session_rows(conn, year)
+        rows = build_summary_rows(session_rows)
+        columns = SUMMARY_COLUMNS
+    elif report_type == "simple":
+        session_rows = build_session_rows(conn, year)
+        rows = build_simple_rows(session_rows)
+        columns = SIMPLE_COLUMNS
+    else:
+        all_rows = build_appointment_ledger_csv_rows(conn)
+        rows = [
+            row for row in all_rows
+            if str(row.get("Date", ""))[:4] == str(year)
+        ]
+        columns = APPOINTMENT_LEDGER_COLUMNS
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({col: row.get(col, "") for col in columns})
+    return buf.getvalue()
+
+
+def report_filename(report_type: str, year: int) -> str:
+    validate_report_type(report_type)
+    if report_type == "sessions":
+        return f"Jordana_Client_Sessions_{year}.csv"
+    if report_type == "summary":
+        return f"Jordana_Client_Summary_{year}.csv"
+    if report_type == "simple":
+        return f"Jordana_Session_Log_{year}.csv"
+    return "Jordana_All_Appointments.csv"

@@ -67,6 +67,13 @@ from .invoice_services import (
     update_invoice_draft,
     void_invoice,
 )
+from .csv_reports import (
+    available_report_types,
+    available_years,
+    default_report_year,
+    generate_report_csv,
+    report_filename,
+)
 from .service_catalog import list_services, set_service_active
 
 
@@ -178,6 +185,26 @@ def make_handler(database_path: str):
                     return
                 if parsed.path.startswith("/api/invoices/"):
                     self.send_json(get_invoice(self.conn(), parsed.path.strip("/").split("/")[2]))
+                    return
+                if parsed.path == "/api/reports":
+                    conn = self.conn()
+                    self.send_json({
+                        "reports": available_report_types(),
+                        "years": available_years(conn),
+                        "default_year": default_report_year(conn),
+                    })
+                    return
+                if parsed.path == "/api/reports/download":
+                    query = parse_qs(parsed.query)
+                    report_type = first(query, "type")
+                    year_str = first(query, "year")
+                    try:
+                        year = int(year_str)
+                    except (ValueError, TypeError):
+                        raise ValueError(f"Invalid year: {year_str!r}")
+                    csv_text = generate_report_csv(self.conn(), report_type, year)
+                    filename = report_filename(report_type, year)
+                    self.send_csv(csv_text, filename)
                     return
                 self.send_error(404)
             except Exception as error:
@@ -409,6 +436,15 @@ def make_handler(database_path: str):
             body = path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def send_csv(self, csv_text: str, filename: str) -> None:
+            body = csv_text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
