@@ -73,13 +73,21 @@
   };
 
   collectPayload = function simplifiedCollectPayload() {
-    const durationChoice = document.getElementById("durationChoiceInput")?.value || "60";
-    const customMinutes = document.getElementById("customDurationInput")?.value || "";
-    const approvedMinutes = durationChoice === "custom" ? customMinutes : durationChoice;
+    const session = state.detail?.session || {};
+    const durationChoice = document.getElementById("durationChoiceInput")?.value
+      || session.duration_choice
+      || durationToChoice(session.approved_duration_minutes || session.duration_minutes)
+      || "60";
+    const customMinutes = document.getElementById("customDurationInput")?.value
+      || session.custom_duration_minutes
+      || "";
+    const approvedMinutes = durationChoice === "custom"
+      ? customMinutes
+      : (document.getElementById("durationChoiceInput")?.value || session.approved_duration_minutes || session.duration_minutes || durationChoice);
     const participantIds = confirmedParticipantIds();
     const saveFuturePerson = document.getElementById("saveFuturePersonRate")?.checked === true;
     const saveFutureJoint = document.getElementById("saveFutureJointRate")?.checked === true;
-    const paymentStatus = document.getElementById("paymentInput")?.value || state.detail?.session?.payment_status || "unresolved";
+    const paymentStatus = document.getElementById("paymentInput")?.value || session.payment_status || "unresolved";
 
     let rateScope = "session_only";
     let rateScopePersonId = null;
@@ -91,23 +99,27 @@
     }
 
     const billableStatus = ["waived", "not_billable"].includes(paymentStatus) ? "nonbillable" : "approved";
+    const approvedRate = document.getElementById("approvedRateInput")?.value
+      || centString(session.approved_rate_cents)
+      || centString(session.suggested_rate_cents)
+      || "";
 
     return {
       ...collectRelationshipPayload(),
       approved_duration_minutes: approvedMinutes,
-      billing_session_type: document.getElementById("billingTypeInput")?.value || state.detail?.session?.billing_session_type || "psychotherapy",
+      billing_session_type: document.getElementById("billingTypeInput")?.value || session.billing_session_type || "psychotherapy",
       duration_choice: durationChoice,
       custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
-      custom_service_description: document.getElementById("customDescInput")?.value || "",
-      custom_service_code: document.getElementById("customCodeInput")?.value || "",
-      time_category: document.getElementById("timeCategoryInput")?.value || state.detail?.session?.time_category || "standard",
-      suggested_rate: centString(state.detail?.session?.suggested_rate_cents),
+      custom_service_description: document.getElementById("customDescInput")?.value || session.custom_service_description || "",
+      custom_service_code: document.getElementById("customCodeInput")?.value || session.custom_service_code || "",
+      time_category: document.getElementById("timeCategoryInput")?.value || session.time_category || "standard",
+      suggested_rate: centString(session.suggested_rate_cents),
       billing_party_id: state.billingParty ? state.billingParty.billing_party_id : state.detail?.effective_billing_party?.billing_party_id || null,
-      approved_rate: document.getElementById("approvedRateInput")?.value || "",
+      approved_rate: approvedRate,
       payment_status: paymentStatus,
-      billing_treatment: document.getElementById("billingTreatmentInput")?.value || state.detail?.session?.billing_treatment || "",
+      billing_treatment: document.getElementById("billingTreatmentInput")?.value || session.billing_treatment || "",
       billable_status: billableStatus,
-      rate_override_reason: document.getElementById("overrideReasonInput")?.value || state.detail?.session?.rate_override_reason || "",
+      rate_override_reason: document.getElementById("overrideReasonInput")?.value || session.rate_override_reason || "",
       rate_scope: rateScope,
       rate_scope_person_id: rateScopePersonId
     };
