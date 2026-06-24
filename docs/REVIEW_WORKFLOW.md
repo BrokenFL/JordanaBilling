@@ -83,6 +83,10 @@ Examples:
 
 The system must not create a new permanent flat client or visible household account from a combined title. Review should decide whether each name is a participant, bill-to party, parent, child, spouse, family member, unrelated note, or unknown.
 
+### Titles ending in `for <reference>`
+
+Titles ending in `for <reference>` (e.g., `Caitlin Schneider 530 for Sage`) preserve the reference as unresolved evidence. The parser does not infer a participant, bill-to, or relationship from the reference name. The reference appears in candidate evidence for manual review only.
+
 ## Decisions
 
 The temporary developer command records a review event:
@@ -123,6 +127,24 @@ Removing all clients and saving clears the session participants. The parser prop
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.
 
 Shared billing and relationships are still available, but ordinary review no longer exposes inline relationship-role editing. That deeper work stays in the Billing Relationships workflow and record view.
+
+Calendar evidence remains read-only under View Calendar Evidence.
+
+## Reparse Unapproved Candidates
+
+Historical unapproved candidates can be reparsed through `POST /api/review/reparse-candidates`. This re-runs the parser on all candidates whose review status is not `approved` or `excluded`, updates parsed fields, and writes audit entries. Raw snapshots are never modified. Approved and excluded candidates are skipped.
+
+## Candidate Promotion to Review
+
+Candidate-only records (calendar candidates with no session yet) can be manually promoted into the review queue through `POST /api/review/candidates/{id}/send-to-review`. Promotion re-parses the preserved raw snapshot, forces classification to `client_session`, and creates one reviewable session.
+
+Promotion is duplicate-protected: if a session already exists for the candidate, the API rejects the request. Approved and excluded candidates are also rejected. The action is audited and preserves raw evidence.
+
+## Sessions Page Actions
+
+The Sessions page shows a **Send to Review** button only for candidate-only rows with `review_status == needs_classification`. After successful promotion, the row refreshes and the candidate appears in the Review Queue.
+
+The existing **Return to Review** button remains for excluded sessions, restoring them to `needs_classification` for re-review.
 
 Calendar evidence remains read-only under View Calendar Evidence.
 ## Calendar, Status, and Billing Treatment

@@ -169,3 +169,12 @@ PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 se
 ```
 
 Never import demo rows into a live database.
+
+## Recent Commits
+
+The following commits completed the review promotion and appointment-status rate round:
+
+- `c728226` — appointment status rate dimension and cancelled/no-show service labels
+- `d57df55` — reparse unapproved candidates and `for <reference>` title evidence
+- `5571ce5` — candidate-only send-to-review promotion route
+- `a5b179d` — Sessions page Send to Review button for unclassified appointments

@@ -83,3 +83,11 @@ Additions:
 - cancellation/no-show billing-treatment control
 
 Backend billing relationship controls remain collapsed under Advanced relationships and shared billing.
+
+## Sessions Page Actions
+
+The Sessions page includes an Actions column:
+
+- **Send to Review** — shown only for candidate-only rows with `review_status == needs_classification`. Reuses the existing `/api/review/candidates/{id}/send-to-review` promotion route. After success, the row refreshes and the candidate appears in the Review Queue.
+- **Return to Review** — shown for excluded sessions. Restores the session to `needs_classification` for re-review.
+- No action is shown for approved, finalized/invoiced, or already-in-review rows.

@@ -39,6 +39,10 @@ The `learn_service` function is constrained:
 - They cannot become billing session types
 - This prevents arbitrary text from becoming a sixth global session type
 
+## Cancelled/No-Show Service Labels
+
+Cancelled and no-show user-facing service labels are derived from appointment status combined with the existing five billing session types. No duplicated session-type codes were added. The label prefix (e.g., "Cancelled —") is presentation-only; the underlying `billing_session_type` value remains one of the same five codes.
+
 ## Catalog Management
 
 Reviewed text is whitespace/case normalized. A new value creates an active catalog record and audit event; capitalization variants deduplicate. Usage metadata updates on approval/invoicing.

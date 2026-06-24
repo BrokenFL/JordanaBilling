@@ -117,6 +117,10 @@ Service mode aliases such as `Phone`, `Call`, `FaceTime`, `FT`, `Office`, `In Pe
 Ambiguous records must stay reversible. A future UI should show the raw event alongside the proposed interpretation.
 
 Multi-person shorthand such as `Fred + Bobsy` is only a participant candidate. It must not automatically create a permanent shared account or bill-to record without review.
+
+### `for <reference>` titles
+
+Titles ending in `for <reference>` (e.g., `Caitlin Schneider 530 for Sage`) preserve the reference as unresolved evidence. The parser does not infer a participant, bill-to, or relationship from the reference name. The reference appears in candidate evidence for manual review only.
 ## Structured Title Compatibility
 
 Structured pipe titles are parsed before legacy shorthand:

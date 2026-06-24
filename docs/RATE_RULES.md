@@ -4,7 +4,7 @@ Rates are stored in SQLite as effective-dated `rate_rules`. Suggested rates are 
 
 ## Matching Inputs
 
-The normalizer considers participant combinations, person, account, duration, billing session type, time category, and effective date.
+The normalizer considers participant combinations, person, account, duration, billing session type, time category, appointment status, and effective date.
 
 ### Billing Session Types (for rate matching)
 
@@ -32,6 +32,12 @@ Legacy service modes (`phone`, `facetime`, `office`) and rate groups (`remote`, 
 Rate matching is exact on both dimensions. A rule with `time_category = 'standard'` matches only standard sessions; a rule with `time_category = 'evening'` matches only evening sessions; and so on. There is no fallback from one time category to another.
 
 `billing_session_type` matching is also exact. A `psychotherapy_evening`, `psychotherapy_weekend`, or `psychotherapy_house_call` session will not fall back to a base `psychotherapy` rule. Each modified session type requires its own rate rule. A rule with `billing_session_type = NULL` remains a wildcard that matches any session type.
+
+### Appointment Status (rate dimension)
+
+`rate_rules.appointment_status` supports `scheduled`, `cancelled`, and `no_show`. Rate matching requires exact appointment status plus the existing exact duration, billing session type, and time category. A rule with `appointment_status = NULL` remains a wildcard that matches any appointment status.
+
+Ordinary completed sessions normalize to the `scheduled` rate dimension for matching purposes; the stored `appointment_status` on the session remains unchanged. This lets a single scheduled rate rule cover normal completed sessions without requiring a separate `completed` dimension.
 
 ## Precedence
 
