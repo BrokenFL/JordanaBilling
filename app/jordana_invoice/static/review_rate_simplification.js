@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const autoConfirming = new Set();
+
   function confirmedParticipantIds() {
     return (state.participants || []).map((participant) => participant.person_id).filter(Boolean);
   }
@@ -70,6 +72,90 @@
   renderInspector = function patchedRenderInspector(data) {
     originalRenderInspector(data);
     simplifyRateControls();
+  };
+
+  const originalLoadList = loadList;
+  loadList = async function simplifiedLoadList() {
+    const params = new URLSearchParams({
+      q: document.getElementById("searchBox").value,
+      review_status: document.getElementById("statusFilter").value,
+      billing_session_type: document.getElementById("serviceFilter").value,
+      time_category: document.getElementById("timeFilter").value,
+      calendar_filter: document.getElementById("calendarFilter").value,
+      limit: state.limit,
+      offset: state.offset
+    });
+    const data = await api(`/api/review/candidates?${params}`);
+    const explicitApprovedView = document.getElementById("statusFilter").value === "approved";
+    const visibleItems = explicitApprovedView
+      ? data.items.map((item) => ({ ...item, authority_score: 100 }))
+      : data.items.filter((item) => item.status !== "approved");
+
+    state.items = visibleItems;
+    renderStatus(data.status);
+    renderRows(visibleItems, Math.max(0, data.total - (data.items.length - visibleItems.length)));
+
+    const selectedStillVisible = visibleItems.some((item) => item.candidate_id === state.selected);
+    if (!selectedStillVisible) state.selected = null;
+    if (!state.selected && visibleItems.length) await selectCandidate(visibleItems[0].candidate_id);
+    if (!visibleItems.length) {
+      document.getElementById("inspector").innerHTML = '<div class="empty-state">No sessions need review.</div>';
+    }
+  };
+
+  async function autoConfirmKnownClientAndPayer(data) {
+    const candidateId = state.selected;
+    const readiness = data?.readiness || {};
+    const participants = data?.participants || [];
+    const knownParticipants = participants.filter((participant) => participant.person_id && !participant.is_proposed);
+    const payer = data?.effective_billing_party || data?.billing_party;
+
+    if (!candidateId || autoConfirming.has(candidateId)) return;
+    if (participants.length !== 1 || knownParticipants.length !== 1 || !payer) return;
+    if (readiness.clients_ready && readiness.billing_ready) return;
+
+    autoConfirming.add(candidateId);
+    try {
+      let updated = data;
+      if (!readiness.clients_ready) {
+        updated = await api(`/api/review/candidates/${candidateId}/save-relationship`, {
+          method: "POST",
+          body: JSON.stringify({
+            participants: participants.map(participantState),
+            account_id: data.account?.account_id || null,
+            primary_person_id: knownParticipants[0].person_id,
+            default_billing_party_id: payer.billing_party_id || null,
+            billing_party_id: payer.billing_party_id || null
+          })
+        });
+      }
+
+      const refreshedReadiness = updated.readiness || {};
+      const payerPersonId = (updated.effective_billing_party || updated.billing_party || payer)?.person_id;
+      if (!refreshedReadiness.billing_ready && payerPersonId) {
+        updated = await api(`/api/review/candidates/${candidateId}/save-billing`, {
+          method: "POST",
+          body: JSON.stringify({ bill_to_person_id: payerPersonId })
+        });
+      }
+
+      state.detail = updated;
+      state.participants = updated.participants.map(participantState);
+      state.account = updated.account;
+      state.billingParty = updated.billing_party || updated.effective_billing_party;
+      renderInspector(updated);
+      await loadList();
+    } catch (error) {
+      console.warn("Automatic known-client confirmation skipped:", error);
+    } finally {
+      autoConfirming.delete(candidateId);
+    }
+  }
+
+  const originalSelectCandidate = selectCandidate;
+  selectCandidate = async function simplifiedSelectCandidate(candidateId) {
+    await originalSelectCandidate(candidateId);
+    await autoConfirmKnownClientAndPayer(state.detail);
   };
 
   collectPayload = function simplifiedCollectPayload() {
@@ -149,11 +235,32 @@
     }
   };
 
+  save = async function simplifiedSave(approve) {
+    await resolveTypedSelections();
+    const payload = collectPayload();
+    const action = approve ? "approve" : "save";
+    try {
+      const updated = await api(`/api/review/candidates/${state.selected}/${action}`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      state.detail = updated;
+      state.editSteps = { clients: false, session: false };
+      if (approve) state.selected = null;
+      await loadList();
+      if (!approve) renderInspector(updated);
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
   const originalWireInspector = wireInspector;
   wireInspector = function patchedWireInspector() {
     originalWireInspector();
     const saveButton = document.getElementById("saveSessionBtn");
     if (saveButton) saveButton.onclick = saveSessionSection;
+    const approveButton = document.getElementById("approveBtn");
+    if (approveButton) approveButton.onclick = () => save(true);
     simplifyRateControls();
   };
 
