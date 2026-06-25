@@ -8,6 +8,14 @@ All IDs are UUIDs and all money is integer cents. Drafts have no permanent numbe
 
 `sessions.service_mode` remains historical text while `service_catalog_id` is additive. Legacy client/rate tables remain untouched.
 
+## Monthly Invoice Identity
+
+`invoices.billing_month` is a nullable `TEXT` column storing a canonical `YYYY-MM` key. When non-null, it identifies the invoice as belonging to a specific calendar month for monthly staging. When `NULL`, the invoice is legacy or nonmonthly and is excluded from automatic monthly staging.
+
+`invoices.supplement_sequence` is a non-negative `INTEGER` (default 0). Value 0 marks the original monthly series entry. Values 1+ are reserved for supplemental drafts created after the original invoice for that month was finalized or voided. Supplemental sequence assignment is not yet automated; it belongs to the staging round.
+
+A partial unique index `idx_invoices_draft_party_month` enforces that at most one open (`draft`) invoice may exist per `bill_to_party_id` + `billing_month`. Finalized and void invoices do not block new drafts for the same month.
+
 ## Invoice Line Descriptions
 
 Invoice line descriptions use the **billing session type labels**:

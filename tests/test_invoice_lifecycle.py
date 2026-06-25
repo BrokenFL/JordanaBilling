@@ -125,7 +125,11 @@ class InvoiceLifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             add_sessions_to_draft(self.conn, draft["invoice"]["invoice_id"], [normal["id"]])
         with self.assertRaises(ValueError):
-            self.draft([normal])
+            create_invoice_draft(self.conn, {
+                "bill_to_party_id": self.party["billing_party_id"], "billing_period_start": "2026-06-01",
+                "billing_period_end": "2026-06-30", "invoice_date": "2026-06-30",
+                "session_ids": [normal["id"]],
+            })
 
     def test_draft_save_reopen_edit_remove_and_total(self):
         one = self.approved_session("draft1", amount="125.00")

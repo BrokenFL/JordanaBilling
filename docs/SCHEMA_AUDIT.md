@@ -144,7 +144,7 @@ Removal prerequisites are unchanged: no destructive cleanup of legacy `clients`,
 - `business_profile`: one active local invoice identity.
 - `service_catalog`: normalized current service labels and usage metadata.
 - `invoice_sequences`: per-year numbering state.
-- `invoices`: draft/finalized/void lifecycle and frozen bill-to/business snapshots.
+- `invoices`: draft/finalized/void lifecycle and frozen bill-to/business snapshots. Includes `billing_month` (nullable `YYYY-MM` for monthly staging) and `supplement_sequence` (non-negative integer; 0 = original, 1+ = supplemental).
 - `invoice_line_items`: source-session links plus frozen line display values.
 - `billing_parties.preferred_delivery_method`: current delivery default.
 - `sessions.service_catalog_id`: additive catalog link; `service_mode` remains the historical text value.
@@ -170,6 +170,8 @@ Database schema migrations and seed data now run only during explicit startup/in
 ### Migration list
 
 Migrations are defined in `MIGRATIONS` in `db.py`. Each entry is a `(migration_id, function)` tuple. The current migration is `001_base`, which runs `migrate_existing_db`, `executescript(SCHEMA)`, `migrate_phase2_columns`, and `seed_service_catalog`.
+
+Migration `002_monthly_invoice_identity` adds `billing_month TEXT` and `supplement_sequence INTEGER NOT NULL DEFAULT 0 CHECK (>= 0)` to `invoices`, backfills `billing_month` only for existing invoices whose billing period is exactly one complete calendar month, detects duplicate draft invoices sharing the same `bill_to_party_id` + derived `billing_month` (aborting with `MigrationError` if found), and creates the partial unique index `idx_invoices_draft_party_month`.
 
 ### Adding a new migration
 

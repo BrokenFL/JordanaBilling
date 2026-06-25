@@ -8,6 +8,14 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 Drafts can add/remove eligible sessions, reorder lines, edit invoice-only descriptions, override delivery, and change dates. Totals use integer cents. Source sessions are not edited.
 
+### Monthly Invoice Identity
+
+Drafts may optionally carry a `billing_month` (`YYYY-MM`) that identifies the invoice as belonging to a specific calendar month. When `billing_month` is provided, the billing period start and end are derived automatically as the first and last day of that month. When only `billing_period_start` and `billing_period_end` are provided, `billing_month` is derived only if the period is exactly one complete calendar month; otherwise `billing_month` is `NULL` (legacy or nonmonthly).
+
+At most one open draft may exist per Bill To party and billing month. Finalized and void invoices do not block new drafts for the same month. `supplement_sequence` 0 marks the original monthly draft; 1+ is reserved for supplemental drafts. Supplemental sequence assignment is not yet automated.
+
+Automatic monthly staging is not yet implemented.
+
 ## Finalized
 
 Finalization is a two-step process:

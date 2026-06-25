@@ -6,6 +6,7 @@ from pathlib import Path
 
 from jordana_invoice.db import (
     CURRENT_SCHEMA_VERSION,
+    MIGRATION_002_MONTHLY_INVOICE_IDENTITY,
     MigrationError,
     connect,
     init_db,
@@ -78,7 +79,7 @@ class MigrationSafetyTests(unittest.TestCase):
 
         self.assertEqual(len(rows_before), len(rows_after))
         for row in rows_after:
-            self.assertEqual(row["migration_id"], CURRENT_SCHEMA_VERSION)
+            self.assertIn(row["migration_id"], (CURRENT_SCHEMA_VERSION, MIGRATION_002_MONTHLY_INVOICE_IDENTITY))
 
     def test_request_path_does_not_seed_service_catalog(self):
         db_path = self.root / "test.sqlite3"

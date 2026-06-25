@@ -166,24 +166,78 @@ def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row
     return reasons
 
 
+def _last_day_of_month(year: int, month: int) -> date:
+    if month == 12:
+        return date(year, 12, 31)
+    from datetime import timedelta
+    return date(year, month + 1, 1) - timedelta(days=1)
+
+
+def _derive_billing_month(start: str, end: str) -> str | None:
+    """Return YYYY-MM if start..end is exactly one complete calendar month, else None."""
+    try:
+        d_start = date.fromisoformat(start[:10])
+        d_end = date.fromisoformat(end[:10])
+    except (ValueError, TypeError):
+        return None
+    if d_start.day != 1:
+        return None
+    if d_start.year != d_end.year or d_start.month != d_end.month:
+        return None
+    if d_end != _last_day_of_month(d_start.year, d_start.month):
+        return None
+    return f"{d_start.year:04d}-{d_start.month:02d}"
+
+
 def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
     billing_party_id = str(data.get("bill_to_party_id") or "")
     party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1", (billing_party_id,)).fetchone()
     if not party: raise ValueError("Select an active bill-to party.")
-    start, end = str(data.get("billing_period_start") or ""), str(data.get("billing_period_end") or "")
-    if not start or not end or start > end: raise ValueError("A valid billing period is required.")
+
+    billing_month = str(data.get("billing_month") or "").strip() or None
+    start = str(data.get("billing_period_start") or "")
+    end = str(data.get("billing_period_end") or "")
+
+    if billing_month:
+        # Validate YYYY-MM format
+        try:
+            bm_year, bm_mon = billing_month.split("-")
+            bm_year_i, bm_mon_i = int(bm_year), int(bm_mon)
+            if bm_mon_i < 1 or bm_mon_i > 12:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("billing_month must be in YYYY-MM format.")
+        derived_start = date(bm_year_i, bm_mon_i, 1).isoformat()
+        derived_end = _last_day_of_month(bm_year_i, bm_mon_i).isoformat()
+        if start and end:
+            if start != derived_start or end != derived_end:
+                raise ValueError(
+                    f"billing_period_start/end ({start} to {end}) do not match "
+                    f"billing_month {billing_month} ({derived_start} to {derived_end})."
+                )
+        start, end = derived_start, derived_end
+    else:
+        if not start or not end or start > end:
+            raise ValueError("A valid billing period is required.")
+        billing_month = _derive_billing_month(start, end)
+
     method = str(data.get("delivery_method") or party["preferred_delivery_method"] or "unresolved")
     if method not in DELIVERY_METHODS: raise ValueError("Invalid delivery method.")
+    supplement_sequence = int(data.get("supplement_sequence") or 0)
+    if supplement_sequence < 0:
+        raise ValueError("supplement_sequence cannot be negative.")
     invoice_id, now = new_id(), now_iso()
     conn.execute(
         """INSERT INTO invoices (
           invoice_id, status, bill_to_party_id, billing_period_start, billing_period_end,
+          billing_month, supplement_sequence,
           invoice_date, delivery_method, notes, created_at, updated_at
-        ) VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (invoice_id, billing_party_id, start, end, data.get("invoice_date") or date.today().isoformat(), method, data.get("notes"), now, now),
+        ) VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (invoice_id, billing_party_id, start, end, billing_month, supplement_sequence,
+         data.get("invoice_date") or date.today().isoformat(), method, data.get("notes"), now, now),
     )
-    _audit(conn, "invoice", invoice_id, "draft_created", {"bill_to_party_id": billing_party_id})
+    _audit(conn, "invoice", invoice_id, "draft_created", {"bill_to_party_id": billing_party_id, "billing_month": billing_month})
     conn.commit()
     session_ids = data.get("session_ids") or []
     if session_ids:
@@ -252,6 +306,11 @@ def update_invoice_draft(conn: sqlite3.Connection, invoice_id: str, data: dict[s
         method = data.get("delivery_method")
         if method is not None and method not in DELIVERY_METHODS: raise ValueError("Invalid delivery method.")
         fields = {key: data[key] for key in ("invoice_date", "billing_period_start", "billing_period_end", "delivery_method", "notes", "adjustment_cents") if key in data}
+        if "billing_period_start" in fields or "billing_period_end" in fields:
+            row = conn.execute("SELECT billing_period_start, billing_period_end FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+            new_start = fields.get("billing_period_start", row["billing_period_start"])
+            new_end = fields.get("billing_period_end", row["billing_period_end"])
+            fields["billing_month"] = _derive_billing_month(str(new_start), str(new_end))
         if fields:
             fields["updated_at"] = now_iso()
             conn.execute(f"UPDATE invoices SET {', '.join(f'{k} = ?' for k in fields)} WHERE invoice_id = ?", (*fields.values(), invoice_id))

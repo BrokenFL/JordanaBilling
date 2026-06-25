@@ -511,6 +511,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   pdf_path TEXT,
   pdf_sha256 TEXT,
   revision INTEGER NOT NULL DEFAULT 0,
+  billing_month TEXT,
+  supplement_sequence INTEGER NOT NULL DEFAULT 0 CHECK (supplement_sequence >= 0),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   finalized_at TEXT,
@@ -522,6 +524,10 @@ CREATE INDEX IF NOT EXISTS idx_invoices_status_date
 
 CREATE INDEX IF NOT EXISTS idx_invoices_bill_to_period
   ON invoices(bill_to_party_id, billing_period_start, billing_period_end);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_draft_party_month
+  ON invoices(bill_to_party_id, billing_month)
+  WHERE status = 'draft' AND billing_month IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS invoice_line_items (
   invoice_line_item_id TEXT PRIMARY KEY,
@@ -684,8 +690,88 @@ def _apply_migration_001(conn: sqlite3.Connection) -> None:
     seed_service_catalog(conn)
 
 
+MIGRATION_002_MONTHLY_INVOICE_IDENTITY = "002_monthly_invoice_identity"
+
+
+def _is_complete_calendar_month(start: str, end: str) -> bool:
+    """Return True if start..end is exactly one complete calendar month."""
+    from datetime import date as _date, timedelta
+    try:
+        d_start = _date.fromisoformat(start[:10])
+        d_end = _date.fromisoformat(end[:10])
+    except (ValueError, TypeError):
+        return False
+    if d_start.day != 1:
+        return False
+    if d_start.year != d_end.year or d_start.month != d_end.month:
+        return False
+    if d_start.month == 12:
+        last = _date(d_start.year + 1, 1, 1) - timedelta(days=1)
+    else:
+        last = _date(d_start.year, d_start.month + 1, 1) - timedelta(days=1)
+    return d_end == last
+
+
+def _backfill_billing_month(conn: sqlite3.Connection) -> None:
+    """Backfill billing_month for invoices whose period is exactly one calendar month."""
+    rows = conn.execute(
+        "SELECT invoice_id, billing_period_start, billing_period_end FROM invoices WHERE billing_month IS NULL"
+    ).fetchall()
+    for row in rows:
+        start = str(row["billing_period_start"] or "")
+        end = str(row["billing_period_end"] or "")
+        if _is_complete_calendar_month(start, end):
+            month = start[:7]
+            conn.execute(
+                "UPDATE invoices SET billing_month = ? WHERE invoice_id = ?",
+                (month, row["invoice_id"]),
+            )
+
+
+def _check_duplicate_draft_months(conn: sqlite3.Connection) -> None:
+    """Abort migration if two draft invoices share the same bill_to_party_id + billing_month."""
+    duplicates = conn.execute(
+        """
+        SELECT bill_to_party_id, billing_month, COUNT(*) AS dup_count
+        FROM invoices
+        WHERE status = 'draft' AND billing_month IS NOT NULL
+        GROUP BY bill_to_party_id, billing_month
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    if duplicates:
+        pairs = ", ".join(
+            f"party={row['bill_to_party_id']} month={row['billing_month']} ({row['dup_count']} drafts)"
+            for row in duplicates
+        )
+        raise MigrationError(
+            f"Cannot create unique index: duplicate draft invoices found for the same "
+            f"Bill To party and billing month. Resolve manually before re-running migration. "
+            f"Duplicates: {pairs}"
+        )
+
+
+def _apply_migration_002(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "invoices",
+        {
+            "billing_month": "TEXT",
+            "supplement_sequence": "INTEGER NOT NULL DEFAULT 0 CHECK (supplement_sequence >= 0)",
+        },
+    )
+    _backfill_billing_month(conn)
+    _check_duplicate_draft_months(conn)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_draft_party_month"
+        " ON invoices(bill_to_party_id, billing_month)"
+        " WHERE status = 'draft' AND billing_month IS NOT NULL"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
+    (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
 ]
 
 
