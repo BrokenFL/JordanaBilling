@@ -183,3 +183,79 @@ This table enables future insurance coding by storing per-person, per-duration c
 ### Schema Change Policy
 
 All changes are additive. The existing `service_mode` column is preserved for backward compatibility. New `billing_session_type` and `appointment_method` columns separate billing concerns from appointment evidence.
+
+## Payment Ledger Foundation (Migration 003)
+
+### Overview
+
+Migration `003_payment_ledger_foundation` adds two additive tables for recording money received and applying it to session charges. This is a schema-only foundation. No payment services, backfill, eligibility changes, invoice totals, UI, API routes, or PDF behavior are implemented yet.
+
+### `payments`
+
+Records money received from a Bill To party.
+
+- `payment_id`: Permanent UUID primary key.
+- `billing_party_id`: Authoritative payment owner. References `billing_parties`. This is the entity that owes the invoice.
+- `amount_cents`: Positive integer cents. CHECK constraint enforces > 0.
+- `received_at`: ISO timestamp when money was received.
+- `method`: Payment method (cash, check, card, transfer, other). Default `'other'`.
+- `reference_number`: Optional check number or transaction ID.
+- `received_from_name`: Records the payer when payment is received from someone other than the Bill To party. Does not change who owes the invoice.
+- `administrative_note`: Free-text administrative note.
+- `status`: `'posted'` (active) or `'void'` (cancelled). CHECK constraint enforces valid values. No `refunded` status in this round — refunds are a separate future model.
+- `voided_at`: Timestamp when voided.
+- `created_at`, `updated_at`: Standard timestamps.
+
+Indexes: `idx_payments_billing_party` (billing_party_id, received_at), `idx_payments_status` (status).
+
+### `payment_allocations`
+
+Applies a payment to a session charge. One allocation row links one payment to one session.
+
+- `allocation_id`: Permanent UUID primary key.
+- `payment_id`: References `payments`. No cascade delete — payment history must not disappear.
+- `session_id`: Durable allocation target. NOT NULL. References `sessions`. This is the anchor that connects a payment to a charge before an invoice line exists.
+- `invoice_line_item_id`: Nullable. References `invoice_line_items`. Populated when the session is later staged into an invoice draft. NULL means the payment is recorded but the session has not yet been staged.
+- `amount_cents`: Positive integer cents. CHECK constraint enforces > 0.
+- `status`: `'active'` or `'reversed'`. CHECK constraint enforces valid values. Reversing an allocation sets status to `reversed` and records `reversed_at`, preserving history rather than deleting.
+- `reversed_at`: Timestamp when reversed.
+- `created_at`, `updated_at`: Standard timestamps.
+
+Indexes: `idx_allocations_payment` (payment_id), `idx_allocations_session` (session_id), `idx_allocations_invoice_line` (invoice_line_item_id WHERE NOT NULL), `idx_allocations_session_active` (session_id, status WHERE active).
+
+No uniqueness constraints prevent multiple payments to one session, one payment across multiple sessions, or multiple partial allocations from the same payment to the same session.
+
+### Finalized Invoice Charges vs Payment Ledger
+
+Finalized invoice charges and finalized document snapshots are immutable. Payment records and allocations are a separate audited ledger and may be created, allocated, reversed, or voided after invoice finalization. Payments may be applied to finalized invoices.
+
+### Unapplied Payment Amount
+
+Unapplied money is the payment amount minus the sum of active allocation amounts for that payment. This is computed by the application, not stored as a column.
+
+### Schema-Enforced vs Application-Enforced Invariants
+
+The database schema directly enforces only:
+
+- Valid foreign keys.
+- Positive payment and allocation amounts (CHECK > 0).
+- Allowed status values (CHECK constraints).
+- Required identifiers and timestamps (NOT NULL).
+
+The following are intentionally deferred to the payment-service round and are not schema-enforced:
+
+- Allocations not exceeding a payment amount.
+- Allocations not exceeding a session charge.
+- Bill To party matching between payment and session.
+- Consistency between session_id and invoice_line_item_id.
+- Reversal and void transaction rules.
+- Unapplied payment calculation.
+
+### Not Yet Implemented
+
+- No payment services (create, void, reverse, allocate).
+- No paid-at-session backfill.
+- No paid-at-session eligibility transition.
+- No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
+- No UI, API routes, or PDF changes.
+- Paid-at-session sessions remain excluded from invoicing.

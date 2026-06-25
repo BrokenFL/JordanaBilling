@@ -173,6 +173,8 @@ Migrations are defined in `MIGRATIONS` in `db.py`. Each entry is a `(migration_i
 
 Migration `002_monthly_invoice_identity` adds `billing_month TEXT` and `supplement_sequence INTEGER NOT NULL DEFAULT 0 CHECK (>= 0)` to `invoices`, backfills `billing_month` only for existing invoices whose billing period is exactly one complete calendar month, detects duplicate draft invoices sharing the same `bill_to_party_id` + derived `billing_month` (aborting with `MigrationError` if found), and creates the partial unique index `idx_invoices_draft_party_month`.
 
+Migration `003_payment_ledger_foundation` adds two new tables — `payments` and `payment_allocations` — by executing the full SCHEMA script (all statements use `IF NOT EXISTS`, making it idempotent). No existing tables or columns are modified. See `docs/DATA_MODEL.md` for table details.
+
 ### Adding a new migration
 
 1. Append a new `(migration_id, function)` tuple to `MIGRATIONS`.

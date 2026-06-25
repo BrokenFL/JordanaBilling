@@ -131,3 +131,25 @@ Void requires a reason and preserves the number, snapshots, PDF, and checksum. S
 ## Client Page Invoice History
 
 The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The **Finalized Invoice Total** reflects non-void finalized invoice totals only. Payment tracking is not yet implemented; session payment status (Unpaid / Paid at time of session) is separate from invoice payment tracking.
+
+## Payment Ledger Foundation (Schema Only)
+
+Migration `003_payment_ledger_foundation` adds two additive tables — `payments` and `payment_allocations` — as a schema-only foundation. No payment services, backfill, eligibility changes, invoice totals, UI, API routes, or PDF behavior are implemented yet.
+
+### Key Design Decisions
+
+- **`billing_party_id` is the authoritative payment owner** on `payments`. This is the entity that owes the invoice.
+- **`received_from_name`** on `payments` records the payer when payment is received from someone other than the Bill To party, without changing who owes the invoice.
+- **`session_id` is the durable allocation target** on `payment_allocations`. It is NOT NULL and allows a payment to be recorded before the session has an invoice line.
+- **`invoice_line_item_id` is nullable** on `payment_allocations`. It may be populated later when the session is staged into an invoice draft. No payment history is deleted or recreated during this transition.
+- **Unapplied money** is the payment amount minus the sum of active allocation amounts. This is computed by the application, not stored as a column.
+- **Finalized invoice charges remain immutable.** Payment records and allocations are a separate audited ledger and may be created, allocated, reversed, or voided after invoice finalization.
+- **Payment settlement may change after invoice finalization.** No constraint or documentation claims that payments cannot be applied to finalized invoices.
+
+### What Is Not Implemented
+
+- No payment services (create, void, reverse, allocate).
+- No paid-at-session backfill.
+- No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
+- No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
+- No UI, API routes, or PDF changes.

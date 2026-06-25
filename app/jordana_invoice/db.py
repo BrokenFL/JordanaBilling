@@ -576,6 +576,61 @@ CREATE TABLE IF NOT EXISTS custom_service_mappings (
 
 CREATE INDEX IF NOT EXISTS idx_custom_service_mappings_person
   ON custom_service_mappings(person_id, duration_choice, active);
+
+CREATE TABLE IF NOT EXISTS payments (
+  payment_id TEXT PRIMARY KEY,
+  billing_party_id TEXT NOT NULL
+    REFERENCES billing_parties(billing_party_id),
+  amount_cents INTEGER NOT NULL
+    CHECK (amount_cents > 0),
+  received_at TEXT NOT NULL,
+  method TEXT NOT NULL DEFAULT 'other',
+  reference_number TEXT,
+  received_from_name TEXT,
+  administrative_note TEXT,
+  status TEXT NOT NULL DEFAULT 'posted'
+    CHECK (status IN ('posted', 'void')),
+  voided_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_billing_party
+  ON payments(billing_party_id, received_at);
+
+CREATE INDEX IF NOT EXISTS idx_payments_status
+  ON payments(status);
+
+CREATE TABLE IF NOT EXISTS payment_allocations (
+  allocation_id TEXT PRIMARY KEY,
+  payment_id TEXT NOT NULL
+    REFERENCES payments(payment_id),
+  session_id TEXT NOT NULL
+    REFERENCES sessions(id),
+  invoice_line_item_id TEXT
+    REFERENCES invoice_line_items(invoice_line_item_id),
+  amount_cents INTEGER NOT NULL
+    CHECK (amount_cents > 0),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'reversed')),
+  reversed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_allocations_payment
+  ON payment_allocations(payment_id);
+
+CREATE INDEX IF NOT EXISTS idx_allocations_session
+  ON payment_allocations(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_allocations_invoice_line
+  ON payment_allocations(invoice_line_item_id)
+  WHERE invoice_line_item_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_allocations_session_active
+  ON payment_allocations(session_id, status)
+  WHERE status = 'active';
 """
 
 
@@ -769,9 +824,17 @@ def _apply_migration_002(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_003_PAYMENT_LEDGER_FOUNDATION = "003_payment_ledger_foundation"
+
+
+def _apply_migration_003(conn: sqlite3.Connection) -> None:
+    conn.executescript(SCHEMA)
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
+    (MIGRATION_003_PAYMENT_LEDGER_FOUNDATION, _apply_migration_003),
 ]
 
 
