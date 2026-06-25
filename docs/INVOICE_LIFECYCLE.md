@@ -132,9 +132,9 @@ Void requires a reason and preserves the number, snapshots, PDF, and checksum. S
 
 The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The **Finalized Invoice Total** reflects non-void finalized invoice totals only. Payment tracking is not yet implemented; session payment status (Unpaid / Paid at time of session) is separate from invoice payment tracking.
 
-## Payment Ledger Foundation (Schema Only)
+## Payment Ledger Foundation
 
-Migration `003_payment_ledger_foundation` adds two additive tables — `payments` and `payment_allocations` — as a schema-only foundation. No payment services, backfill, eligibility changes, invoice totals, UI, API routes, or PDF behavior are implemented yet.
+Migration `003_payment_ledger_foundation` adds two additive tables — `payments` and `payment_allocations` — as the schema foundation. Backend payment services are now implemented in `payment_services.py`.
 
 ### Key Design Decisions
 
@@ -142,14 +142,26 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - **`received_from_name`** on `payments` records the payer when payment is received from someone other than the Bill To party, without changing who owes the invoice.
 - **`session_id` is the durable allocation target** on `payment_allocations`. It is NOT NULL and allows a payment to be recorded before the session has an invoice line.
 - **`invoice_line_item_id` is nullable** on `payment_allocations`. It may be populated later when the session is staged into an invoice draft. No payment history is deleted or recreated during this transition.
-- **Unapplied money** is the payment amount minus the sum of active allocation amounts. This is computed by the application, not stored as a column.
+- **Unapplied money** is the payment amount minus the sum of active allocation amounts. This is computed dynamically by `payment_services.py`, not stored as a column.
 - **Finalized invoice charges remain immutable.** Payment records and allocations are a separate audited ledger and may be created, allocated, reversed, or voided after invoice finalization.
 - **Payment settlement may change after invoice finalization.** No constraint or documentation claims that payments cannot be applied to finalized invoices.
 
+### Backend Services
+
+`payment_services.py` provides:
+
+- `create_payment` — Creates a posted payment. Validates Bill To party exists, positive cents, required received_at.
+- `allocate_payment_to_session` — Allocates to a session charge using `BEGIN IMMEDIATE`. Enforces Bill To matching, payment limit, session charge limit, and invoice line consistency.
+- `link_session_allocations_to_invoice_line` — Links pre-staging allocations to a later invoice line. Idempotent. Does not recreate rows.
+- `reverse_allocation` — Sets status to `reversed`, preserves the row. Rejects double reversal.
+- `void_payment` — Requires all allocations reversed first. Sets status to `void`. Rejects double void.
+- Read helpers: `payment_allocated_amount`, `payment_unapplied_amount`, `session_paid_amount`, `invoice_line_paid_amount`, `get_payment_detail`.
+
+All calculation helpers count only allocations where `payment.status = 'posted'` and `payment_allocation.status = 'active'`.
+
 ### What Is Not Implemented
 
-- No payment services (create, void, reverse, allocate).
 - No paid-at-session backfill.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
-- No UI, API routes, or PDF changes.
+- No API routes, UI, reports, or PDF changes.

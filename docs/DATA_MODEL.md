@@ -251,9 +251,47 @@ The following are intentionally deferred to the payment-service round and are no
 - Reversal and void transaction rules.
 - Unapplied payment calculation.
 
-### Not Yet Implemented
+### Payment Services (Backend Only)
 
-- No payment services (create, void, reverse, allocate).
+The module `payment_services.py` provides backend functions for the payment ledger. No API routes, UI, or invoice-total changes are included.
+
+**Available operations**:
+
+- `create_payment` — Creates a posted payment for a Bill To party. Validates party exists, positive integer cents, and required received_at. Commits atomically.
+- `allocate_payment_to_session` — Allocates part or all of a payment to a session charge. Uses `BEGIN IMMEDIATE`. Enforces all invariants (see below). Returns the stored allocation record.
+- `link_session_allocations_to_invoice_line` — Links existing active session allocations (with NULL `invoice_line_item_id`) to a newly created invoice line. Validates line belongs to session and Bill To consistency. Idempotent. Does not recreate rows or change amounts.
+- `reverse_allocation` — Changes an allocation from `active` to `reversed`. Sets `reversed_at`. Never deletes the row. Rejects double reversal.
+- `void_payment` — Changes a payment from `posted` to `void`. Rejects if active allocations exist. Sets `voided_at`. Rejects double void.
+- `get_payment_detail` — Returns payment with allocations and computed allocated/unapplied amounts.
+- `payment_allocated_amount` — Sum of active allocations for a posted payment.
+- `payment_unapplied_amount` — Payment amount minus active allocations (zero for void payments).
+- `session_paid_amount` — Active allocated amount for a session.
+- `invoice_line_paid_amount` — Active allocated amount for an invoice line.
+
+**Transaction boundaries**: All write operations that validate totals (`allocate_payment_to_session`, `link_session_allocations_to_invoice_line`, `reverse_allocation`, `void_payment`) use `BEGIN IMMEDIATE` so validation and write are atomic. `create_payment` commits atomically. `DatabaseBusyError` is raised when the database is locked.
+
+**Allocation invariants** (enforced in `allocate_payment_to_session`):
+
+1. Payment exists and status is `posted`.
+2. Session exists.
+3. Payment Bill To party equals session `billing_party_id`.
+4. Allocation amount is a positive integer.
+5. Sum of active allocations for the payment plus new allocation does not exceed payment amount.
+6. Sum of active allocations for the session plus new allocation does not exceed session charge (prefers `rate_cents_snapshot`, then `approved_rate_cents`).
+7. If `invoice_line_item_id` is supplied: line exists, line's `source_session_id` equals `session_id`, and line's invoice Bill To party equals payment Bill To party.
+8. Finalized invoice charges may receive payment allocations — allocation creation does not modify invoice lines, rates, totals, snapshots, or finalized PDFs.
+
+**Reversal and void behavior**:
+
+- Reversing an allocation sets `status = 'reversed'` and `reversed_at`. The row is preserved. Reversed allocations are excluded from active totals. Double reversal raises `ValueError`.
+- Voiding a payment requires all allocations to be reversed first. Void sets `status = 'void'` and `voided_at`. Void payments contribute zero to paid totals. Double void raises `ValueError`.
+
+**Audit behavior**: Audit entries are recorded for `payment_created`, `allocation_created`, `allocations_linked`, `allocation_reversed`, and `payment_voided`. Audit details contain only internal IDs and monetary amounts. No client names, payer names, calendar titles, reference numbers, administrative-note content, or private descriptions are included.
+
+**Finalized-invoice payment behavior**: Payments may be applied to finalized invoice lines. The allocation does not alter the invoice line, invoice totals, snapshots, or PDF. Payment settlement may change after invoice finalization.
+
+### Still Not Implemented
+
 - No paid-at-session backfill.
 - No paid-at-session eligibility transition.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
