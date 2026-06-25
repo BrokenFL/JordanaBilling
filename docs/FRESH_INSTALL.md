@@ -31,7 +31,7 @@ No Google credentials JSON or OAuth tokens are required. Sync uses a simple HTTP
 
 **Option A: Let the launcher create it**
 
-Double-click `Jordana Billing.app`. On first run, it creates `.env` from `.env.example` with all paths auto-resolved, then shows a dialog telling you to edit the two credential values. Edit them and double-click again.
+Double-click `Jordana Billing.app`. On first run, it creates `.env` from `.env.example`, resolves all local paths, opens the new file in TextEdit, and shows a dialog naming the two credential values to add. Save the file and double-click the app again.
 
 **Option B: Create it manually**
 
@@ -50,8 +50,8 @@ Double-click **Jordana Billing.app** in Finder.
 1. Checks Python 3.11+ (shows dialog if missing)
 2. Creates a project-local virtual environment (`.venv`)
 3. Installs pinned dependencies
-4. Creates `.env` from template if missing (auto-resolves all paths)
-5. Validates `.env` for required credentials
+4. Creates `.env` from template if missing, resolves local paths, and opens it in TextEdit
+5. Validates `.env` without executing it as shell code
 6. Creates a blank SQLite database if missing
 7. Applies existing migrations safely
 8. Runs a full Google Sheets sync (only if database is empty)
@@ -77,7 +77,7 @@ A fresh installation starts with no database. The first launch creates it, appli
 
 ## No Terminal Required
 
-The entire setup is double-click driven. The only manual step is editing `.env` to paste in two credential values, which can be done in TextEdit.
+The entire setup is double-click driven. The only manual step is pasting two credential values into the `.env` file that the launcher opens automatically in TextEdit.
 
 ## Command Reference (optional)
 
@@ -119,12 +119,12 @@ brew install python@3.12
 
 ### "Configuration Created" dialog
 
-The launcher created `.env` from the template. Open it in TextEdit and fill in:
+The launcher created `.env` from the template and opened it in TextEdit. Fill in:
 
 - `JORDANA_APPS_SCRIPT_URL` — your Google Apps Script web app URL
 - `JORDANA_INGEST_API_KEY` — your Apps Script ingest API key
 
-Then double-click `Jordana Billing.app` again.
+Save the file, then double-click `Jordana Billing.app` again.
 
 ### "Configuration Incomplete" dialog
 
