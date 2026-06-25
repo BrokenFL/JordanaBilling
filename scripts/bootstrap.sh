@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
 # First-run bootstrap for Jordana Billing.
-# Creates venv, installs deps, validates .env, inits DB, migrates,
-# runs full Google Sheets sync, starts the review server, waits for
-# health check, and opens the browser.
+# Creates venv, installs deps, creates .env from template if missing,
+# resolves __PROJECT_DIR__ automatically, validates .env, inits DB,
+# migrates, runs full Google Sheets sync, starts the review server,
+# waits for health check, and opens the browser.
 #
 # Safe to re-run: later launches skip venv creation, dependency
 # install, and full sync if data already exists.
@@ -26,7 +27,6 @@ mkdir -p "$LOG_DIR" data Reports
 # --- Sanitized logging helper (no credentials) ---
 log() {
   local msg="$1"
-  # Strip anything that looks like a key or token
   msg="$(echo "$msg" | sed -E 's/(jb_[0-9a-fA-F]{8,})/[REDACTED]/g; s/(AKIA[0-9A-Z]{16})/[REDACTED]/g; s/(https:\/\/[^ ]+)/[URL]/g')"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $msg" | tee -a "$LOG_FILE"
 }
@@ -51,12 +51,16 @@ fi
 
 # --- Step 1: Check Python version ---
 log "Checking Python version..."
-python3 - <<'PY'
+if ! python3 - <<'PY' 2>/dev/null
 import sys
 if sys.version_info < (3, 11):
-    raise SystemExit("Python 3.11 or newer is required. Found: " + sys.version.split()[0])
-print(f"Python OK: {sys.version.split()[0]}")
+    raise SystemExit(1)
 PY
+then
+  show_error_dialog "Python Required" "Python 3.11 or newer is required. Install it from python.org or run: brew install python@3.12"
+  exit 1
+fi
+log "Python OK."
 
 # --- Step 2: Create virtual environment if missing ---
 if [[ ! -d "$PROJECT_DIR/.venv" ]]; then
@@ -70,12 +74,39 @@ log "Installing dependencies..."
 python -m pip install --upgrade pip >/dev/null 2>&1
 python -m pip install -e "$PROJECT_DIR" >/dev/null 2>&1
 
-# --- Step 4: Validate .env ---
-log "Validating .env..."
+# --- Step 4: Create .env from template if missing ---
 if [[ ! -f "$PROJECT_DIR/.env" ]]; then
-  show_error_dialog "Configuration Missing" "No .env file found. Copy .env.example to .env and fill in your credentials."
-  exit 1
+  if [[ -f "$PROJECT_DIR/.env.example" ]]; then
+    # Copy template and auto-resolve __PROJECT_DIR__
+    sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/.env.example" > "$PROJECT_DIR/.env"
+    show_error_dialog "Configuration Created" "A .env file was created from the template at:
+
+$PROJECT_DIR/.env
+
+Edit it to fill in:
+  • JORDANA_APPS_SCRIPT_URL — your Google Apps Script web app URL
+  • JORDANA_INGEST_API_KEY — your Apps Script ingest API key
+
+Then double-click Jordana Billing.app again."
+    exit 1
+  else
+    show_error_dialog "Configuration Missing" "No .env file found and no .env.example template. Create a file at:
+
+$PROJECT_DIR/.env
+
+with JORDANA_APPS_SCRIPT_URL and JORDANA_INGEST_API_KEY."
+    exit 1
+  fi
 fi
+
+# --- Step 5: Auto-resolve __PROJECT_DIR__ in .env if present ---
+if grep -q '__PROJECT_DIR__' "$PROJECT_DIR/.env" 2>/dev/null; then
+  log "Resolving __PROJECT_DIR__ in .env..."
+  sed -i '' "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/.env"
+fi
+
+# --- Step 6: Validate .env ---
+log "Validating .env..."
 
 # Source .env and validate required vars
 set +e
@@ -83,20 +114,29 @@ set +e
 set -e
 
 if [[ -z "${JORDANA_APPS_SCRIPT_URL:-}" ]]; then
-  show_error_dialog "Configuration Incomplete" "JORDANA_APPS_SCRIPT_URL is missing in .env."
+  show_error_dialog "Configuration Incomplete" "JORDANA_APPS_SCRIPT_URL is empty.
+
+Edit this file:
+  $PROJECT_DIR/.env
+
+Fill in the Google Apps Script /exec web app URL."
   exit 1
 fi
 if [[ -z "${JORDANA_INGEST_API_KEY:-}" ]]; then
-  show_error_dialog "Configuration Incomplete" "JORDANA_INGEST_API_KEY is missing in .env."
+  show_error_dialog "Configuration Incomplete" "JORDANA_INGEST_API_KEY is empty.
+
+Edit this file:
+  $PROJECT_DIR/.env
+
+Fill in the Apps Script ingest API key."
   exit 1
 fi
 if [[ -z "${JORDANA_DATABASE_PATH:-}" ]]; then
-  # Set default if not in .env
   export JORDANA_DATABASE_PATH="$DB_PATH"
 fi
 log ".env validated."
 
-# --- Step 5: Create blank SQLite database if missing ---
+# --- Step 7: Create blank SQLite database if missing ---
 if [[ ! -f "$DB_PATH" ]]; then
   log "Creating new database..."
   PYTHONPATH=app python -m jordana_invoice --db "$DB_PATH" init-db
@@ -104,11 +144,11 @@ else
   log "Database already exists — preserving."
 fi
 
-# --- Step 6: Apply pending migrations safely ---
+# --- Step 8: Apply pending migrations safely ---
 log "Applying migrations..."
 PYTHONPATH=app python -m jordana_invoice --db "$DB_PATH" init-db
 
-# --- Step 7: Run full Google Sheets sync (first run only) ---
+# --- Step 9: Run full Google Sheets sync (first run only) ---
 RAW_COUNT=$(PYTHONPATH=app python -c "
 import sqlite3
 conn = sqlite3.connect('$DB_PATH')
@@ -121,15 +161,15 @@ if [[ "$RAW_COUNT" -eq 0 ]]; then
     log "Full sync completed."
   else
     log "Full sync failed — continuing anyway. You can retry with scripts/full_sync.sh"
+    show_error_dialog "Sync Failed" "Google Sheets sync could not complete. The review UI will still open.
+
+Check logs/bootstrap.log for details. You can retry later by running scripts/full_sync.sh"
   fi
 else
   log "Database has $RAW_COUNT raw snapshots — skipping full sync."
 fi
 
-# --- Step 8: Prevent duplicate imports (sync is idempotent via snapshot_key) ---
-log "Sync is idempotent via snapshot_key uniqueness — no duplicate prevention needed."
-
-# --- Step 9: Start the local app ---
+# --- Step 10: Start the local app ---
 log "Starting review server on port $PORT..."
 
 # Stop any stale server on the port
@@ -140,7 +180,7 @@ SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 log "Server started (PID $SERVER_PID)."
 
-# --- Step 10: Wait for successful health check ---
+# --- Step 11: Wait for successful health check ---
 log "Waiting for health check..."
 HEALTH_OK=0
 for i in $(seq 1 $MAX_HEALTH_WAIT); do
@@ -159,7 +199,7 @@ if [[ "$HEALTH_OK" -ne 1 ]]; then
 fi
 log "Health check passed."
 
-# --- Step 11: Open the review UI in the default browser ---
+# --- Step 12: Open the review UI in the default browser ---
 log "Opening browser..."
 open "http://127.0.0.1:${PORT}/review" 2>/dev/null || true
 log "Bootstrap complete."

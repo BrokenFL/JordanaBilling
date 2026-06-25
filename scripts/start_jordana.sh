@@ -44,15 +44,25 @@ fi
 
 # --- Activate venv ---
 if [[ ! -d "$PROJECT_DIR/.venv" ]]; then
-  show_error_dialog "Not Installed" "Virtual environment not found. Run scripts/bootstrap.sh first."
+  show_error_dialog "Not Installed" "Virtual environment not found. Double-click Jordana Billing.app to run first-time setup, or run scripts/bootstrap.sh from Terminal."
   exit 1
 fi
 . "$PROJECT_DIR/.venv/bin/activate"
 
 # --- Validate .env ---
 if [[ ! -f "$PROJECT_DIR/.env" ]]; then
-  show_error_dialog "Configuration Missing" "No .env file found. Copy .env.example to .env and fill in credentials."
+  show_error_dialog "Configuration Missing" "No .env file found at:
+
+$PROJECT_DIR/.env
+
+Copy .env.example to .env and fill in JORDANA_APPS_SCRIPT_URL and JORDANA_INGEST_API_KEY."
   exit 1
+fi
+
+# --- Auto-resolve __PROJECT_DIR__ in .env if present ---
+if grep -q '__PROJECT_DIR__' "$PROJECT_DIR/.env" 2>/dev/null; then
+  log "Resolving __PROJECT_DIR__ in .env..."
+  sed -i '' "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/.env"
 fi
 
 # --- Apply pending migrations ---

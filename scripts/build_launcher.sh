@@ -4,7 +4,8 @@
 # The app is a thin wrapper that runs bootstrap.sh on first launch
 # and start_jordana.sh on subsequent launches.
 #
-# The .app bundle lives at the project root and is gitignored.
+# The .app bundle lives at the project root and is committed to Git.
+# Use --force to rebuild an existing bundle.
 #
 set -euo pipefail
 
@@ -17,7 +18,12 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-# Remove old bundle if present
+# Preserve existing bundle unless --force
+if [[ -d "$APP_DIR" && "${1:-}" != "--force" ]]; then
+  echo "Jordana Billing.app already exists. Use --force to rebuild."
+  exit 0
+fi
+
 rm -rf "$APP_DIR"
 
 # Create bundle structure
@@ -82,6 +88,7 @@ chmod +x "$MACOS_DIR/launcher"
 
 # --- Create a simple placeholder icon (1x1 transparent PNG) ---
 # A real icon can be added later as Resources/AppIcon.icns
+# The placeholder PNG is safe to commit (no private data).
 python3 -c "
 import struct, zlib
 def create_png(path):
