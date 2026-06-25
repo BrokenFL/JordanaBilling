@@ -63,14 +63,14 @@ class TestCreatePersonStaticJs(unittest.TestCase):
         self.assertIn("Create another person", self.js)
 
     def test_no_create_new_for_organization(self):
-        """3. No create-new action for organization payer."""
-        # The create-new button should only be in the client/person branch, not the org branch
+        """3. No person-creation action for organization payer."""
+        # The person create-new button should not be in the org branch
         org_start = self.js.index('} else if (payerType === "organization") {')
         org_end = self.js.index("input.focus();", org_start)
         org_code = self.js[org_start:org_end]
         self.assertNotIn("wizardCreateNewPerson", org_code)
-        self.assertNotIn("Create new", org_code)
-        self.assertNotIn("wizard-create-new", org_code)
+        self.assertNotIn("Create new client", org_code)
+        self.assertNotIn("Create another person", org_code)
 
     def test_first_name_required(self):
         """4. First name is required."""
@@ -200,12 +200,11 @@ class TestCreatePersonStaticJs(unittest.TestCase):
         self.assertIn("wizard-form-duplicate", self.css)
 
     def test_no_new_organization_creation(self):
-        """No organization creation in this round."""
+        """No parallel organization creation function (Round 2D2 adds UI, not a parallel function)."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
         wizard_end = self.js.index("\nfunction openAddClientModal")
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("create_organization", wizard_code)
-        self.assertNotIn("Create new organization", wizard_code)
 
     def test_no_session_review_attachment(self):
         """No Session Review attachment."""

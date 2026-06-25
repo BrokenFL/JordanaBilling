@@ -509,9 +509,103 @@ The current schema does not formally distinguish clients from other people. All 
 
 #### Not Implemented in Round 2D1
 
-- Creating new organizations from the wizard (planned for Round 2D2)
+- Creating new organizations from the wizard — implemented in Round 2D2
 - Organization contact creation
 - Session Review attachment
+- Automatic return to Session Review after save
+- Saved relationship editor redesign
+- Delete or deactivate controls
+
+### Round 2D2: In-Wizard Organization Creation
+
+The wizard now supports creating new organization billing parties directly inside Step 1. No new schema fields or migrations are required — all organization records use the existing `billing_parties` table via `POST /api/billing-parties`.
+
+#### Step 1: Create New Organization
+
+When "An organization" is selected as the payer type, a "Create new organization" button appears below the search results. Clicking it opens an in-wizard child form.
+
+**Required field:**
+- Organization name
+
+**Optional fields:**
+- Billing contact name (maps to `billing_name`; defaults to organization name if left blank)
+- Billing email
+- Billing phone
+- Address line 1
+- Address line 2
+- City
+- State
+- Postal code
+- Preferred delivery method (select: Unresolved, Email, Mail, Both — uses existing supported values)
+- Administrative notes (billing/administrative content only)
+
+**Not included:**
+- Clinical fields
+- Organization contact person records (organizations are billing parties, not people)
+- New tables or columns
+
+**Buttons:**
+- Back to search — returns to organization search without losing parent wizard state
+- Cancel — follows the wizard's existing safe-cancel behavior
+- Create Organization — submits the form
+
+#### Duplicate-Organization Handling
+
+Before creation, the backend checks for an active organization billing party with the same normalized organization name (`lower(organization_name) = lower(?)`).
+
+When a possible duplicate exists:
+- No new billing party is silently created
+- The child form stays open
+- An inline warning shows: "An organization with this name already exists."
+- The existing organization's name and available billing contact details (email, phone) are shown
+- Two options are offered:
+  - **Use existing organization** — selects the existing record as the invoice recipient
+  - **Go back and edit** — returns to the form fields to change the name
+
+The backend response now includes `created: true/false` and `existing: true/false` flags for unambiguous duplicate detection. This is backward compatible — existing callers that don't check these flags still work.
+
+#### Successful Creation Behavior
+
+After successful creation or explicit selection of an existing duplicate:
+- Returns to wizard Step 1
+- Keeps payer type as "An organization"
+- Selects the newly created/existing organization as the invoice recipient
+- Preserves any previously selected Pays for clients
+- Preserves return context
+- Enables Continue
+
+The organization is NOT automatically added under Pays for. Organizations are billing parties, not session participants.
+
+#### Step 2 Behavior
+
+After a new organization is created:
+- Previously selected covered clients remain selected
+- The organization does not appear as a client
+- The user may add existing or newly created clients through the already implemented Step 2 flow
+
+#### Billing-Party Representation
+
+Organizations are stored as `billing_parties` rows with `billing_party_type = "organization"`. When the final billing relationship is saved via `POST /api/billing-relationships/setup`, the organization's `billing_party_id` is passed as `organization_billing_party_id` in the payload. The setup endpoint creates or reuses an account for the organization, just as it does for person payers.
+
+#### Form Behavior
+
+- No browser `prompt()`, `alert()`, or `confirm()` used
+- Inline validation (organization name required, whitespace-only rejected)
+- User-controlled values escaped via `escapeHtml()`
+- Submission disabled while saving (shows "Creating…")
+- Double submission prevented via `creating` flag
+- Form stays open after API failure with inline error
+- First invalid field receives focus
+- Back returns without losing parent wizard state
+
+#### Backend Changes
+
+`create_billing_party()` now returns `created: true` and `existing: false` for new records, and `created: false` and `existing: true` for duplicates (organization type only, detected by normalized organization name). This is additive and backward compatible.
+
+#### Not Implemented in Round 2D2
+
+- Organization contact person records (organizations are billing parties, not people)
+- Session Review attachment (planned for Round 2E)
 - Automatic return to Session Review after save
 - Saved relationship editor redesign
 - Delete or deactivate controls
@@ -520,7 +614,6 @@ The current schema does not formally distinguish clients from other people. All 
 
 The following remain planned and were not started:
 
-- In-wizard organization creation — Round 2D2
-- Session Review attachment via the setup endpoint
+- Session Review attachment via the setup endpoint — Round 2E
 - Automatic payer classification
 - Full right-panel redesign

@@ -3304,9 +3304,13 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
           <input id="wizardPayerInput" class="modal-search" type="search" placeholder="Type an organization name..." autocomplete="off">
         </div>
         <div class="modal-results" id="wizardPayerResults"></div>
+        <div class="wizard-create-new">
+          <button type="button" id="wizardCreateNewOrg" class="wizard-create-btn">Create new organization</button>
+        </div>
       `;
       const input = document.getElementById("wizardPayerInput");
       const results = document.getElementById("wizardPayerResults");
+      const createOrgBtn = document.getElementById("wizardCreateNewOrg");
       let searchRows = [];
       const doSearch = debounce(async (q) => {
         if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
@@ -3317,6 +3321,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       }, 200);
       input.addEventListener("input", (e) => doSearch(e.target.value));
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+      createOrgBtn.addEventListener("click", () => showCreateOrgForm());
       if (payerOrg) showPayerSelected(selectedDiv, payerOrg.billing_name || payerOrg.organization_name, "organization");
       input.focus();
     }
@@ -3614,6 +3619,166 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
       updateContinueDisabled();
     }
+  }
+
+  function showCreateOrgForm() {
+    const formDiv = document.createElement("div");
+    formDiv.id = "wizardCreateOrgForm";
+    formDiv.className = "wizard-child-form";
+    formDiv.innerHTML = `
+      <h4 class="wizard-step-heading">Create new organization</h4>
+      <p class="modal-instruction">Add the organization that should receive invoices.</p>
+      <div class="wizard-form-grid">
+        <label class="field wide">Organization name <span class="req">*</span><input id="wizardOrgName" type="text" autocomplete="off"></label>
+        <label class="field wide">Billing contact name <input id="wizardOrgBillingName" type="text" autocomplete="off"></label>
+        <label class="field">Billing email <input id="wizardOrgEmail" type="email" autocomplete="off"></label>
+        <label class="field">Billing phone <input id="wizardOrgPhone" type="tel" autocomplete="off"></label>
+        <label class="field">Address line 1 <input id="wizardOrgAddr1" type="text" autocomplete="off"></label>
+        <label class="field">Address line 2 <input id="wizardOrgAddr2" type="text" autocomplete="off"></label>
+        <label class="field">City <input id="wizardOrgCity" type="text" autocomplete="off"></label>
+        <label class="field">State <input id="wizardOrgState" type="text" autocomplete="off"></label>
+        <label class="field">Postal code <input id="wizardOrgPostal" type="text" autocomplete="off"></label>
+        <label class="field">Preferred delivery method
+          <select id="wizardOrgDelivery">
+            <option value="unresolved">Unresolved</option>
+            <option value="email">Email</option>
+            <option value="mail">Mail</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
+        <label class="field wide">Administrative notes <input id="wizardOrgNotes" type="text" autocomplete="off"></label>
+      </div>
+      <div class="wizard-form-error" id="wizardOrgFormError" role="alert"></div>
+      <div class="wizard-form-duplicate" id="wizardOrgFormDuplicate" hidden></div>
+      <div class="wizard-form-actions">
+        <button type="button" id="wizardOrgFormBack" class="modal-back">Back to search</button>
+        <button type="button" id="wizardOrgFormCancel" class="modal-cancel">Cancel</button>
+        <button type="button" id="wizardOrgFormSubmit" class="modal-submit">Create Organization</button>
+      </div>
+    `;
+
+    const searchDiv = document.getElementById("wizardPayerSearch");
+    const createBtn = document.getElementById("wizardCreateNewOrg");
+    if (searchDiv) searchDiv.style.display = "none";
+    if (createBtn) createBtn.style.display = "none";
+
+    bodyBox.appendChild(formDiv);
+
+    const nameInput = document.getElementById("wizardOrgName");
+    const billingNameInput = document.getElementById("wizardOrgBillingName");
+    const emailInput = document.getElementById("wizardOrgEmail");
+    const phoneInput = document.getElementById("wizardOrgPhone");
+    const addr1Input = document.getElementById("wizardOrgAddr1");
+    const addr2Input = document.getElementById("wizardOrgAddr2");
+    const cityInput = document.getElementById("wizardOrgCity");
+    const stateInput = document.getElementById("wizardOrgState");
+    const postalInput = document.getElementById("wizardOrgPostal");
+    const deliveryInput = document.getElementById("wizardOrgDelivery");
+    const notesInput = document.getElementById("wizardOrgNotes");
+    const formError = document.getElementById("wizardOrgFormError");
+    const dupBox = document.getElementById("wizardOrgFormDuplicate");
+    const submitBtn = document.getElementById("wizardOrgFormSubmit");
+    const backBtn = document.getElementById("wizardOrgFormBack");
+    const cancelBtn = document.getElementById("wizardOrgFormCancel");
+
+    let creating = false;
+
+    function closeOrgForm() {
+      formDiv.remove();
+      if (searchDiv) searchDiv.style.display = "";
+      if (createBtn) createBtn.style.display = "";
+      const input = document.getElementById("wizardPayerInput");
+      if (input) input.focus();
+    }
+
+    backBtn.addEventListener("click", closeOrgForm);
+    cancelBtn.addEventListener("click", () => { closeOrgForm(); doCancel(); });
+
+    async function doCreateOrg() {
+      if (creating) return;
+      formError.textContent = "";
+      dupBox.hidden = true;
+      dupBox.innerHTML = "";
+
+      const orgName = nameInput.value.trim();
+      if (!orgName) { formError.textContent = "Organization name is required."; nameInput.focus(); return; }
+
+      creating = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating…";
+
+      const billingName = billingNameInput.value.trim() || orgName;
+      const payload = {
+        billing_party_type: "organization",
+        organization_name: orgName,
+        billing_name: billingName,
+        billing_email: emailInput.value.trim() || null,
+        billing_phone: phoneInput.value.trim() || null,
+        billing_address_line_1: addr1Input.value.trim() || null,
+        billing_address_line_2: addr2Input.value.trim() || null,
+        billing_city: cityInput.value.trim() || null,
+        billing_state: stateInput.value.trim() || null,
+        billing_postal_code: postalInput.value.trim() || null,
+        preferred_delivery_method: deliveryInput.value,
+        administrative_notes: notesInput.value.trim() || null,
+      };
+
+      try {
+        const org = await api("/api/billing-parties", { method: "POST", body: JSON.stringify(payload) });
+
+        if (org.existing && !org.created) {
+          creating = false;
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Create Organization";
+          dupBox.hidden = false;
+          dupBox.innerHTML = `
+            <p>An organization with this name already exists.</p>
+            <div class="wizard-duplicate-info">
+              <strong>${escapeHtml(org.organization_name || org.billing_name)}</strong>
+              ${org.billing_email ? `<span class="help">${escapeHtml(org.billing_email)}</span>` : ""}
+              ${org.billing_phone ? `<span class="help">${escapeHtml(org.billing_phone)}</span>` : ""}
+            </div>
+            <div class="wizard-duplicate-actions">
+              <button type="button" id="wizardOrgUseExisting" class="modal-submit">Use existing organization</button>
+              <button type="button" id="wizardOrgEditAgain" class="modal-back">Go back and edit</button>
+            </div>
+          `;
+          document.getElementById("wizardOrgUseExisting").onclick = () => {
+            handleOrgCreated(org);
+            closeOrgForm();
+          };
+          document.getElementById("wizardOrgEditAgain").onclick = () => {
+            dupBox.hidden = true;
+            dupBox.innerHTML = "";
+            nameInput.focus();
+          };
+          return;
+        }
+
+        handleOrgCreated(org);
+        closeOrgForm();
+      } catch (err) {
+        creating = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create Organization";
+        formError.textContent = (err && err.message) || "Failed to create organization.";
+      }
+    }
+
+    submitBtn.addEventListener("click", doCreateOrg);
+    nameInput.focus();
+  }
+
+  function handleOrgCreated(org) {
+    payerOrg = org;
+    renderStep1();
+    showPayerSearch();
+    showPayerSelected(
+      document.getElementById("wizardPayerSelected"),
+      org.organization_name || org.billing_name,
+      "organization"
+    );
+    updateContinueDisabled();
   }
 
   function renderStep3() {

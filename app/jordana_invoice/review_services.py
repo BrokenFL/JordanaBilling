@@ -2079,7 +2079,6 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
     if commit:
         init_db(conn)
     now = now_iso()
-    billing_party_id = new_id()
     billing_name = text(data.get("billing_name") or data.get("display_name") or data.get("name") or "").strip()
     if not billing_name:
         raise ValueError("Billing name is required.")
@@ -2096,6 +2095,24 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
         ).fetchone()
         if not person:
             raise ValueError("Referenced person does not exist or is not active.")
+    org_name = _normalize_optional_text(data.get("organization_name"))
+    if billing_party_type == "organization" and org_name:
+        existing_org = conn.execute(
+            """
+            SELECT * FROM billing_parties
+            WHERE lower(organization_name) = lower(?)
+              AND billing_party_type = 'organization'
+              AND active = 1
+            LIMIT 1
+            """,
+            (org_name,),
+        ).fetchone()
+        if existing_org:
+            result = dict(existing_org)
+            result["created"] = False
+            result["existing"] = True
+            return result
+    billing_party_id = new_id()
     conn.execute(
         """
         INSERT INTO billing_parties (
@@ -2110,7 +2127,7 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
             billing_party_id,
             billing_party_type,
             person_id,
-            data.get("organization_name"),
+            org_name,
             billing_name,
             _normalize_optional_text(data.get("billing_email")),
             _normalize_optional_text(data.get("billing_address_line_1")),
@@ -2128,7 +2145,10 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
     record_audit(conn, "billing_party", billing_party_id, "created_inline", {"billing_name": billing_name, "billing_party_type": billing_party_type})
     if commit:
         conn.commit()
-    return dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
+    result = dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
+    result["created"] = True
+    result["existing"] = False
+    return result
 
 
 def billing_party_for_person(conn: sqlite3.Connection, person_id: str, *, commit: bool = True) -> str:
