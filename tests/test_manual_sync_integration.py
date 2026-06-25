@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ from unittest.mock import patch
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_DIR = PROJECT_DIR / "app"
+BOOTSTRAP_PATH = PROJECT_DIR / "scripts" / "bootstrap.sh"
 
 
 def _read_env_values(path: Path) -> dict[str, str]:
@@ -65,6 +67,46 @@ def write_isolated_sync_env(
         ),
         encoding="utf-8",
     )
+
+
+class InstallerEnvSafetyTest(unittest.TestCase):
+    """Verify first-run configuration is shell-safe and user-visible."""
+
+    def test_bootstrap_shell_syntax_is_valid(self) -> None:
+        result = subprocess.run(
+            ["bash", "-n", str(BOOTSTRAP_PATH)],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_DIR),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_bootstrap_uses_python_env_parser(self) -> None:
+        content = BOOTSTRAP_PATH.read_text(encoding="utf-8")
+        self.assertIn("load_env_file", content)
+        self.assertNotIn('. "$PROJECT_DIR/.env"', content)
+        self.assertIn('open -a TextEdit "$PROJECT_DIR/.env"', content)
+
+    def test_python_env_parser_preserves_values_with_spaces(self) -> None:
+        from jordana_invoice.google_sync import load_env_file
+
+        with tempfile.TemporaryDirectory(prefix="jordana_env_test_") as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "JORDANA_DATABASE_PATH=/tmp/Jordana Billing/data/test.sqlite3\n"
+                "JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                load_env_file(env_path)
+                self.assertEqual(
+                    os.environ["JORDANA_DATABASE_PATH"],
+                    "/tmp/Jordana Billing/data/test.sqlite3",
+                )
+                self.assertEqual(
+                    os.environ["JORDANA_PREFERRED_WORK_CALENDAR"],
+                    "Jordana Work",
+                )
 
 
 class ManualSyncIsolationTest(unittest.TestCase):
@@ -131,7 +173,6 @@ class ManualSyncIntegrationTest(unittest.TestCase):
         except ValueError as error:
             self.skipTest(str(error))
 
-        import subprocess
         import sys
 
         env = os.environ.copy()
