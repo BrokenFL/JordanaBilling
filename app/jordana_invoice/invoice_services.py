@@ -251,6 +251,33 @@ def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
     return get_invoice(conn, invoice_id)
 
 
+def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite3.Row | dict[str, Any], order: int) -> None:
+    """Insert a single invoice line item from a session, reusing existing snapshot logic."""
+    session_id = session["id"]
+    catalog = learn_service(conn, session["service_mode"] or "Other")
+    participants = _participant_names(conn, session_id)
+    service_name = catalog["display_name"]
+    description = _service_description(session, service_name)
+    amount = session["rate_cents_snapshot"] if session["rate_cents_snapshot"] is not None else session["approved_rate_cents"]
+    now = now_iso()
+    billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
+    custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
+    custom_code = session["custom_service_code"] if "custom_service_code" in session.keys() else None
+    conn.execute(
+        """INSERT INTO invoice_line_items (
+          invoice_line_item_id, invoice_id, source_session_id, sort_order, service_date,
+          participants_snapshot, service_catalog_id, service_name_snapshot, billing_session_type_snapshot,
+          time_category_snapshot, appointment_status_snapshot, duration_minutes, description_snapshot,
+          custom_service_description_snapshot, custom_service_code_snapshot, quantity,
+          unit_amount_cents, line_amount_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+        (new_id(), invoice_id, session_id, order, session["session_date"], participants,
+         catalog["service_catalog_id"], service_name, billing_type, session["time_category"],
+         session["appointment_status"], session["approved_duration_minutes"] or session["duration_minutes"],
+         description, custom_desc, custom_code, amount, amount, now, now),
+    )
+
+
 def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids: list[str]) -> dict[str, Any]:
     invoice = _draft(conn, invoice_id)
     conn.execute("BEGIN IMMEDIATE")
@@ -266,28 +293,7 @@ def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids
             if reasons: raise ValueError("Session is not invoice eligible: " + "; ".join(reasons))
             if session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
                 raise ValueError("Session is outside the invoice billing period.")
-            catalog = learn_service(conn, session["service_mode"] or "Other")
-            participants = _participant_names(conn, session_id)
-            service_name = catalog["display_name"]
-            description = _service_description(session, service_name)
-            amount = session["rate_cents_snapshot"] if session["rate_cents_snapshot"] is not None else session["approved_rate_cents"]
-            now = now_iso()
-            billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
-            custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
-            custom_code = session["custom_service_code"] if "custom_service_code" in session.keys() else None
-            conn.execute(
-                """INSERT INTO invoice_line_items (
-                  invoice_line_item_id, invoice_id, source_session_id, sort_order, service_date,
-                  participants_snapshot, service_catalog_id, service_name_snapshot, billing_session_type_snapshot,
-                  time_category_snapshot, appointment_status_snapshot, duration_minutes, description_snapshot,
-                  custom_service_description_snapshot, custom_service_code_snapshot, quantity,
-                  unit_amount_cents, line_amount_cents, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
-                (new_id(), invoice_id, session_id, order, session["session_date"], participants,
-                 catalog["service_catalog_id"], service_name, billing_type, session["time_category"],
-                 session["appointment_status"], session["approved_duration_minutes"] or session["duration_minutes"],
-                 description, custom_desc, custom_code, amount, amount, now, now),
-            )
+            _insert_line_item(conn, invoice_id, session, order)
             order += 1
         _recalculate(conn, invoice_id)
         conn.execute("UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?", (now_iso(), invoice_id))
@@ -345,6 +351,326 @@ def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: s
         conn.rollback()
         raise
     return get_invoice(conn, invoice_id)
+
+
+def _session_month(session_date: str | None) -> str | None:
+    """Extract YYYY-MM from a session date string, or None if invalid."""
+    if not session_date:
+        return None
+    try:
+        d = date.fromisoformat(str(session_date)[:10])
+        return f"{d.year:04d}-{d.month:02d}"
+    except (ValueError, TypeError):
+        return None
+
+
+def _find_or_create_monthly_draft(
+    conn: sqlite3.Connection,
+    billing_party_id: str,
+    billing_month: str,
+    *,
+    party_row: sqlite3.Row | None = None,
+) -> tuple[sqlite3.Row, bool]:
+    """Find an existing open monthly draft for (party, month) or create one.
+
+    Returns (draft_row, created_bool).
+    """
+    draft = conn.execute(
+        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+        (billing_party_id, billing_month),
+    ).fetchone()
+    if draft:
+        return draft, False
+
+    if party_row is None:
+        party_row = conn.execute(
+            "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1",
+            (billing_party_id,),
+        ).fetchone()
+    if not party_row:
+        raise ValueError(f"No active billing party found for {billing_party_id}")
+
+    bm_year, bm_mon = billing_month.split("-")
+    bm_year_i, bm_mon_i = int(bm_year), int(bm_mon)
+    start = date(bm_year_i, bm_mon_i, 1).isoformat()
+    end = _last_day_of_month(bm_year_i, bm_mon_i).isoformat()
+
+    seq_row = conn.execute(
+        "SELECT COALESCE(MAX(supplement_sequence), -1) + 1 AS next_seq "
+        "FROM invoices WHERE bill_to_party_id = ? AND billing_month = ?",
+        (billing_party_id, billing_month),
+    ).fetchone()
+    supplement_sequence = seq_row["next_seq"]
+
+    method = str(party_row["preferred_delivery_method"] or "unresolved")
+    if method not in DELIVERY_METHODS:
+        method = "unresolved"
+
+    invoice_id, now = new_id(), now_iso()
+    conn.execute(
+        """INSERT INTO invoices (
+          invoice_id, status, bill_to_party_id, billing_period_start, billing_period_end,
+          billing_month, supplement_sequence,
+          invoice_date, delivery_method, notes, created_at, updated_at
+        ) VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
+        (invoice_id, billing_party_id, start, end, billing_month, supplement_sequence,
+         date.today().isoformat(), method, now, now),
+    )
+    _audit(conn, "invoice", invoice_id, "draft_created_staging",
+           {"bill_to_party_id": billing_party_id, "billing_month": billing_month,
+            "supplement_sequence": supplement_sequence})
+    return conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone(), True
+
+
+def stage_approved_sessions_to_monthly_drafts(
+    conn: sqlite3.Connection,
+    session_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Reconcile eligible approved sessions into monthly draft invoices.
+
+    Idempotent: repeated calls produce the same correct result.
+
+    Groups sessions by billing_party_id + calendar billing month, reuses
+    existing open monthly drafts or creates supplemental drafts, moves
+    stale draft lines whose session party or month changed, and removes
+    lines whose session is no longer eligible.
+
+    Returns a structured summary; does not expose private names.
+    """
+    init_db(conn)
+
+    result: dict[str, Any] = {
+        "drafts_created": 0,
+        "drafts_reused": 0,
+        "sessions_staged": 0,
+        "sessions_already_staged": 0,
+        "sessions_moved": 0,
+        "sessions_removed_ineligible": 0,
+        "sessions_skipped": [],
+        "errors": [],
+    }
+
+    # --- Step 1: Determine the set of (party, month) groups to process ---
+
+    # From eligible approved sessions
+    session_filter = ""
+    params: list[Any] = []
+    if session_ids is not None:
+        if not session_ids:
+            return result
+        placeholders = ", ".join("?" for _ in session_ids)
+        session_filter = f" AND s.id IN ({placeholders})"
+        params = list(session_ids)
+
+    all_sessions = conn.execute(
+        f"""SELECT s.* FROM sessions s
+        WHERE s.review_status = 'approved' AND s.billing_party_id IS NOT NULL
+              AND s.session_date IS NOT NULL{session_filter}""",
+        params,
+    ).fetchall()
+
+    groups: dict[tuple[str, str], None] = {}
+    for s in all_sessions:
+        bm = _session_month(s["session_date"])
+        if not bm:
+            result["sessions_skipped"].append({
+                "session_id": s["id"], "reasons": ["Invalid or nonmonthly session date"],
+            })
+            continue
+        groups[(s["billing_party_id"], bm)] = None
+
+    # From existing monthly drafts (to check for stale lines)
+    drafts = conn.execute(
+        "SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL"
+    ).fetchall()
+    for d in drafts:
+        groups[(d["bill_to_party_id"], d["billing_month"])] = None
+
+    # --- Step 2: Process each (party, month) group in its own transaction ---
+
+    for (party_id, billing_month) in sorted(groups.keys()):
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as error:
+            if "locked" in str(error).lower():
+                raise DatabaseBusyError(
+                    "Cannot stage invoices: database is locked by another operation. "
+                    "Please retry in a moment."
+                ) from error
+            raise
+
+        try:
+            # Look for existing draft without creating one yet
+            existing_draft = conn.execute(
+                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+                (party_id, billing_month),
+            ).fetchone()
+
+            # --- Stale line reconciliation (only if a draft exists) ---
+            draft_id: str | None = None
+            draft_created = False
+            draft_changed = False
+
+            if existing_draft:
+                draft_id = existing_draft["invoice_id"]
+                lines = conn.execute(
+                    "SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order",
+                    (draft_id,),
+                ).fetchall()
+
+                for line in lines:
+                    session = conn.execute(
+                        "SELECT * FROM sessions WHERE id = ?", (line["source_session_id"],)
+                    ).fetchone()
+                    if not session:
+                        conn.execute(
+                            "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
+                            (line["invoice_line_item_id"],),
+                        )
+                        result["sessions_removed_ineligible"] += 1
+                        draft_changed = True
+                        continue
+
+                    session_month = _session_month(session["session_date"])
+                    session_party = session["billing_party_id"]
+                    is_wrong_party = session_party != party_id
+                    is_wrong_month = session_month != billing_month
+
+                    if is_wrong_party or is_wrong_month:
+                        conn.execute(
+                            "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
+                            (line["invoice_line_item_id"],),
+                        )
+                        draft_changed = True
+
+                        reasons = invoice_ineligibility_reasons(conn, session)
+                        if reasons:
+                            result["sessions_removed_ineligible"] += 1
+                            result["sessions_skipped"].append({
+                                "session_id": session["id"], "reasons": reasons,
+                            })
+                        else:
+                            target_party = session_party or party_id
+                            target_month = session_month or billing_month
+                            target_draft, target_created = _find_or_create_monthly_draft(
+                                conn, target_party, target_month,
+                            )
+                            if target_created:
+                                result["drafts_created"] += 1
+
+                            already = conn.execute(
+                                "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+                                (target_draft["invoice_id"], session["id"]),
+                            ).fetchone()
+                            if not already:
+                                order = conn.execute(
+                                    "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
+                                    (target_draft["invoice_id"],),
+                                ).fetchone()[0]
+                                _insert_line_item(conn, target_draft["invoice_id"], session, order)
+                                _recalculate(conn, target_draft["invoice_id"])
+                                conn.execute(
+                                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                                    (now_iso(), target_draft["invoice_id"]),
+                                )
+                            result["sessions_moved"] += 1
+                    else:
+                        reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=draft_id)
+                        if reasons:
+                            conn.execute(
+                                "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
+                                (line["invoice_line_item_id"],),
+                            )
+                            result["sessions_removed_ineligible"] += 1
+                            result["sessions_skipped"].append({
+                                "session_id": session["id"], "reasons": reasons,
+                            })
+                            draft_changed = True
+
+            # --- Find eligible sessions for this (party, month) ---
+            add_filter = "billing_party_id = ? AND session_date IS NOT NULL"
+            add_params: list[Any] = [party_id]
+            if session_ids is not None:
+                placeholders = ", ".join("?" for _ in session_ids)
+                add_filter += f" AND id IN ({placeholders})"
+                add_params.extend(session_ids)
+
+            month_sessions = conn.execute(
+                f"""SELECT * FROM sessions WHERE {add_filter}
+                ORDER BY session_date, start_at""",
+                add_params,
+            ).fetchall()
+
+            # Filter to this month and check eligibility
+            eligible_new: list[sqlite3.Row] = []
+            for session in month_sessions:
+                sm = _session_month(session["session_date"])
+                if sm != billing_month:
+                    continue
+                if draft_id:
+                    already_in = conn.execute(
+                        "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+                        (draft_id, session["id"]),
+                    ).fetchone()
+                    if already_in:
+                        reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=draft_id)
+                        if not reasons:
+                            result["sessions_already_staged"] += 1
+                        continue
+                reasons = invoice_ineligibility_reasons(conn, session)
+                if reasons:
+                    result["sessions_skipped"].append({
+                        "session_id": session["id"], "reasons": reasons,
+                    })
+                    continue
+                eligible_new.append(session)
+
+            # Only create a draft if there are eligible sessions to add
+            if not existing_draft and eligible_new:
+                party_row = conn.execute(
+                    "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1",
+                    (party_id,),
+                ).fetchone()
+                draft_row, _ = _find_or_create_monthly_draft(
+                    conn, party_id, billing_month, party_row=party_row,
+                )
+                draft_id = draft_row["invoice_id"]
+                draft_created = True
+                result["drafts_created"] += 1
+            elif existing_draft:
+                result["drafts_reused"] += 1
+
+            # --- Add eligible sessions to the draft ---
+            if draft_id and eligible_new:
+                for session in eligible_new:
+                    order = conn.execute(
+                        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
+                        (draft_id,),
+                    ).fetchone()[0]
+                    _insert_line_item(conn, draft_id, session, order)
+                    result["sessions_staged"] += 1
+                    draft_changed = True
+
+            if draft_id and draft_changed:
+                _recalculate(conn, draft_id)
+                conn.execute(
+                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                    (now_iso(), draft_id),
+                )
+                _audit(conn, "invoice", draft_id, "staging_reconciled",
+                       {"billing_month": billing_month})
+
+            conn.commit()
+        except Exception as error:
+            conn.rollback()
+            result["errors"].append({
+                "billing_party_id": party_id,
+                "billing_month": billing_month,
+                "error": str(error),
+            })
+            continue
+
+    return result
 
 
 def validate_invoice_readiness(

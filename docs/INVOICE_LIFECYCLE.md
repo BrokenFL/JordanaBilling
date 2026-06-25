@@ -12,9 +12,34 @@ Drafts can add/remove eligible sessions, reorder lines, edit invoice-only descri
 
 Drafts may optionally carry a `billing_month` (`YYYY-MM`) that identifies the invoice as belonging to a specific calendar month. When `billing_month` is provided, the billing period start and end are derived automatically as the first and last day of that month. When only `billing_period_start` and `billing_period_end` are provided, `billing_month` is derived only if the period is exactly one complete calendar month; otherwise `billing_month` is `NULL` (legacy or nonmonthly).
 
-At most one open draft may exist per Bill To party and billing month. Finalized and void invoices do not block new drafts for the same month. `supplement_sequence` 0 marks the original monthly draft; 1+ is reserved for supplemental drafts. Supplemental sequence assignment is not yet automated.
+At most one open draft may exist per Bill To party and billing month. Finalized and void invoices do not block new drafts for the same month. `supplement_sequence` 0 marks the original monthly draft; 1+ is reserved for supplemental drafts.
 
-Automatic monthly staging is not yet implemented.
+### Monthly Staging Service
+
+A backend reconciliation service `stage_approved_sessions_to_monthly_drafts()` now exists in `invoice_services.py`. It is idempotent: repeated calls produce the same correct result.
+
+The service groups eligible approved sessions by `billing_party_id` + calendar billing month and reconciles them into monthly draft invoices. For each (party, month) group it uses one `BEGIN IMMEDIATE` transaction:
+
+- Finds the existing open monthly draft for the party and month, or creates one if none exists and there are eligible sessions to stage.
+- If prior finalized or void invoices exist for the party and month, assigns `supplement_sequence = MAX(existing) + 1` for the new draft.
+- Adds only sessions not already attached to a draft or finalized invoice.
+- Reuses existing line snapshot creation logic.
+
+Stale draft lines are reconciled before finalization:
+
+- If a session's Bill To party no longer matches the invoice, the line is moved atomically to the correct target monthly draft.
+- If a session date no longer belongs to the invoice's billing month, the line is moved atomically to the correct target monthly draft.
+- If a session is no longer eligible, the line is removed and the session is left unstaged.
+- Finalized and void invoice lines are never moved or modified.
+
+The service returns a structured summary with counts of drafts created/reused, sessions staged/already staged/moved/removed as ineligible, sessions skipped with reasons, and errors by party/month. It does not expose private names in returned diagnostic identifiers.
+
+The service is **not yet connected to**:
+- session approval (no automatic trigger on approval);
+- API routes (no HTTP endpoint);
+- UI controls (no button or menu item).
+
+Paid-at-session sessions remain excluded from staging temporarily. Payment behavior will be changed in a later dedicated round.
 
 ## Finalized
 

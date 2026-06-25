@@ -12,9 +12,13 @@ All IDs are UUIDs and all money is integer cents. Drafts have no permanent numbe
 
 `invoices.billing_month` is a nullable `TEXT` column storing a canonical `YYYY-MM` key. When non-null, it identifies the invoice as belonging to a specific calendar month for monthly staging. When `NULL`, the invoice is legacy or nonmonthly and is excluded from automatic monthly staging.
 
-`invoices.supplement_sequence` is a non-negative `INTEGER` (default 0). Value 0 marks the original monthly series entry. Values 1+ are reserved for supplemental drafts created after the original invoice for that month was finalized or voided. Supplemental sequence assignment is not yet automated; it belongs to the staging round.
+`invoices.supplement_sequence` is a non-negative `INTEGER` (default 0). Value 0 marks the original monthly series entry. Values 1+ are reserved for supplemental drafts created after the original invoice for that month was finalized or voided. The staging service assigns supplemental sequences automatically when creating new drafts for a month that has prior finalized or void invoices.
 
 A partial unique index `idx_invoices_draft_party_month` enforces that at most one open (`draft`) invoice may exist per `bill_to_party_id` + `billing_month`. Finalized and void invoices do not block new drafts for the same month.
+
+## Monthly Staging
+
+A backend reconciliation service `stage_approved_sessions_to_monthly_drafts()` reconciles eligible approved sessions into monthly draft invoices grouped by `billing_party_id` + calendar billing month. It is idempotent and uses one `BEGIN IMMEDIATE` transaction per (party, month) group. It reuses existing eligibility rules, line snapshot creation, and the monthly identity columns. Stale draft lines whose session party or date month changed are moved atomically. Finalized and void invoices remain immutable. The service is not yet connected to approval, API, or UI. Paid-at-session sessions remain excluded temporarily.
 
 ## Invoice Line Descriptions
 
