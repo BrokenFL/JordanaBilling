@@ -283,34 +283,154 @@ def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: s
     return get_invoice(conn, invoice_id)
 
 
-def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dict[str, Any] | None = None) -> dict[str, Any]:
+def validate_invoice_readiness(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    *,
+    expected_revision: int | None = None,
+) -> dict[str, Any]:
+    """One authoritative readiness check for invoice finalization.
+
+    Returns {"ready": bool, "errors": list[dict], "preview_revision": int}.
+    Each error dict has "field" and "message" keys suitable for UI display.
+    Does not raise on validation failures; callers decide how to handle.
+    """
     _draft(conn, invoice_id)
-    if data:
-        updated = update_invoice_draft(conn, invoice_id, data)
     result = get_invoice(conn, invoice_id)
     invoice = result["invoice"]
     lines = result["lines"]
+    errors: list[dict[str, str]] = []
+
+    # 1. Bill-to party
+    party = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)
+    ).fetchone()
+    if not party:
+        errors.append({"field": "bill_to", "message": "Bill-to party is missing or not found."})
+    elif not party["active"]:
+        errors.append({"field": "bill_to", "message": "Bill-to party is no longer active."})
+
+    # 2. At least one eligible invoice line
     if not lines:
-        raise ValueError("Add at least one eligible session before finalizing.")
+        errors.append({"field": "lines", "message": "Add at least one eligible session before finalizing."})
+
+    # 3. Valid positive line amounts
+    for line in lines:
+        amount = line.get("line_amount_cents")
+        if amount is None or int(amount) <= 0:
+            errors.append({
+                "field": "line_amount",
+                "message": f"Line for {line['service_date']} has an invalid or non-positive amount.",
+            })
+
+    # 4. Valid invoice date
+    inv_date = invoice.get("invoice_date")
+    if not inv_date or not str(inv_date).strip():
+        errors.append({"field": "invoice_date", "message": "Invoice date is missing."})
+    else:
+        try:
+            date.fromisoformat(str(inv_date)[:10])
+        except (ValueError, TypeError):
+            errors.append({"field": "invoice_date", "message": "Invoice date is not a valid date."})
+
+    # 5. Active business profile
+    profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
+    if not profile:
+        errors.append({"field": "business_profile", "message": "Configure an active business profile before finalizing."})
+
+    # 6. Required bill-to contact details for the selected delivery method
+    delivery = invoice.get("delivery_method") or "unresolved"
+    if party:
+        if delivery in ("email", "both"):
+            if not (party["billing_email"] or "").strip():
+                errors.append({
+                    "field": "delivery_email",
+                    "message": f"Billing party email is required for {delivery} delivery.",
+                })
+        if delivery in ("mail", "both"):
+            if not (party["billing_address_line_1"] or "").strip():
+                errors.append({
+                    "field": "delivery_address",
+                    "message": f"Billing party mailing address is required for {delivery} delivery.",
+                })
+
+    # 7. Required business / payee / payment-address details used on the invoice
+    if profile:
+        if not (profile["business_name"] or "").strip():
+            errors.append({"field": "business_name", "message": "Business name is required on the invoice."})
+        if not (profile["payee_name"] or "").strip():
+            errors.append({"field": "payee_name", "message": "Payee name is required on the invoice."})
+        if not (profile["payment_address_line_1"] or "").strip():
+            errors.append({"field": "payment_address", "message": "Payment address is required on the invoice."})
+
+    # 8. Valid, unique invoice number generation
+    if profile and inv_date:
+        try:
+            year = int(str(inv_date)[:4])
+            pattern = profile["invoice_number_format"] or "YYYY-NNNN"
+            if "YYYY" not in pattern or "NNNN" not in pattern:
+                errors.append({"field": "invoice_number", "message": "Invoice number format is invalid."})
+            else:
+                seq_row = conn.execute(
+                    "SELECT last_value FROM invoice_sequences WHERE sequence_year = ?", (year,)
+                ).fetchone()
+                next_val = (seq_row["last_value"] + 1) if seq_row else 1
+                candidate_number = pattern.replace("YYYY", str(year)).replace("NNNN", f"{next_val:04d}")
+                existing = conn.execute(
+                    "SELECT 1 FROM invoices WHERE invoice_number = ? AND invoice_id != ?",
+                    (candidate_number, invoice_id),
+                ).fetchone()
+                if existing:
+                    errors.append({"field": "invoice_number", "message": "Generated invoice number conflicts with an existing invoice."})
+        except (ValueError, TypeError):
+            errors.append({"field": "invoice_number", "message": "Cannot generate a valid invoice number."})
+
+    # 9. Any included session is no longer invoice-eligible
     for line in lines:
         session = conn.execute("SELECT * FROM sessions WHERE id = ?", (line["source_session_id"],)).fetchone()
         if not session:
-            raise ValueError("A source session is missing.")
-        reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
-        if reasons:
-            raise ValueError("A source session is no longer eligible: " + "; ".join(reasons))
-        if session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
-            raise ValueError("A source session is outside the current billing period.")
+            errors.append({"field": "session", "message": f"Source session for {line['service_date']} is missing."})
+        else:
+            reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
+            if reasons:
+                errors.append({
+                    "field": "session",
+                    "message": f"Session on {session['session_date']} is no longer eligible: {'; '.join(reasons)}",
+                })
+            elif session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
+                errors.append({
+                    "field": "session",
+                    "message": f"Session on {session['session_date']} is outside the billing period.",
+                })
+
+    # 10. Preview revision is stale
+    if expected_revision is not None and invoice["revision"] != expected_revision:
+        errors.append({"field": "revision", "message": "Invoice has changed since preview. Please review and try again."})
+
+    return {
+        "ready": not errors,
+        "errors": errors,
+        "preview_revision": invoice["revision"],
+    }
+
+
+def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    _draft(conn, invoice_id)
+    if data:
+        update_invoice_draft(conn, invoice_id, data)
+    result = get_invoice(conn, invoice_id)
+    invoice = result["invoice"]
+    lines = result["lines"]
+    readiness = validate_invoice_readiness(conn, invoice_id)
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
-    if not profile:
-        raise ValueError("Configure an active business profile before finalizing.")
     party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
     return {
         "invoice": dict(invoice),
         "lines": [dict(line) for line in lines],
-        "business_profile": dict(profile),
-        "billing_party": dict(party),
+        "business_profile": dict(profile) if profile else None,
+        "billing_party": dict(party) if party else None,
         "preview_revision": invoice["revision"],
+        "readiness": readiness,
     }
 
 
@@ -319,20 +439,12 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
     conn.execute("BEGIN IMMEDIATE")
     pdf_path: Path | None = None
     try:
+        readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision)
+        if not readiness["ready"]:
+            raise ValueError("; ".join(e["message"] for e in readiness["errors"]))
         invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
-        if expected_revision is not None and invoice["revision"] != expected_revision:
-            raise ValueError("Invoice has changed since preview. Please review and try again.")
         lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order", (invoice_id,)).fetchall()
-        if not lines: raise ValueError("Add at least one eligible session before finalizing.")
-        for line in lines:
-            session = conn.execute("SELECT * FROM sessions WHERE id = ?", (line["source_session_id"],)).fetchone()
-            if not session: raise ValueError("A source session is missing.")
-            reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
-            if reasons: raise ValueError("A source session is no longer eligible: " + "; ".join(reasons))
-            if session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
-                raise ValueError("A source session is outside the current billing period.")
         profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
-        if not profile: raise ValueError("Configure an active business profile before finalizing.")
         party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
         number = _next_invoice_number(conn, int(str(invoice["invoice_date"])[:4]), profile["invoice_number_format"])
         now = now_iso()

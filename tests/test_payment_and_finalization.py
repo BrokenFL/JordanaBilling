@@ -343,14 +343,17 @@ class SafeFinalizationTests(unittest.TestCase):
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_preview_rejects_empty_draft(self, fake_pdf):
-        """Preview should reject a draft with no lines."""
+        """Preview should return readiness errors for a draft with no lines."""
         draft = create_invoice_draft(self.conn, {
             "bill_to_party_id": self.party["billing_party_id"],
             "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
             "invoice_date": "2026-05-31",
         })
-        with self.assertRaises(ValueError):
-            preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertIn("readiness", preview)
+        self.assertFalse(preview["readiness"]["ready"])
+        error_fields = {e["field"] for e in preview["readiness"]["errors"]}
+        self.assertIn("lines", error_fields)
 
 
 if __name__ == "__main__":

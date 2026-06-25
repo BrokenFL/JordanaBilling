@@ -1538,15 +1538,21 @@ function renderFinalizationPreview(preview) {
   const credentials = profile.credentials_display || "";
   const billto = [party.billing_name, [party.billing_address_line_1, party.billing_address_line_2].filter(Boolean).join(" "), [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : "")].filter(Boolean).join("\n");
   const revision = preview.preview_revision;
+  const readiness = preview.readiness || {ready: true, errors: []};
+  const ready = readiness.ready;
+  const readinessHtml = ready
+    ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
+    : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Finalization Preview</h3><span class="status-pill">Draft</span></div>
-    <div class="help">Review the invoice below carefully. Click <strong>Confirm Finalization</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
+    <div class="help">Review the invoice below carefully. Click <strong>Finalize This Exact Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
+    ${readinessHtml}
     <article class="invoice-preview">
       <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${fmt(i.delivery_method)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
       <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${line.service_date}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${profile.invoice_total_label || "TOTAL DUE"}</span><span>${money(centString(i.total_cents))}</span></div>
     </article>
-    <div class="actions"><button id="confirmFinalizeBtn" class="approve">Confirm Finalization</button><button id="cancelFinalizeBtn">Return to Draft</button></div>
+    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize This Exact Invoice</button><button id="cancelFinalizeBtn">Return to Draft</button></div>
   </div>`;
   $("cancelFinalizeBtn").onclick = () => renderInvoiceEditor(preview);
   $("confirmFinalizeBtn").onclick = async () => {

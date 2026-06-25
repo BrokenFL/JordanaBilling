@@ -274,6 +274,18 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
   border-color: #c9ebd0;
   color: #184729;
 }
+.settings-readiness.not-ready {
+  background: #fdecea;
+  border-color: #f5c6c0;
+  color: #7a271a;
+}
+.settings-readiness.not-ready ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.settings-readiness.not-ready li {
+  margin-bottom: 2px;
+}
 .settings-form {
   display: grid;
   gap: 16px;

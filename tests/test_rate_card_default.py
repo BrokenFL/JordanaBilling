@@ -475,6 +475,7 @@ class RateCardDefaultTests(unittest.TestCase):
         payer = create_billing_party(self.conn, {
             "billing_name": "Fred Colin",
             "person_id": fred["person_id"],
+            "billing_email": "fred@example.test",
             "preferred_delivery_method": "email",
         })
         approved = approve_candidate(
@@ -493,6 +494,11 @@ class RateCardDefaultTests(unittest.TestCase):
         save_business_profile(self.conn, {
             "business_name": "Test Practice",
             "provider_display_name": "Test Provider",
+            "payee_name": "Test Payee",
+            "payment_address_line_1": "100 Test Ave",
+            "payment_city": "Test",
+            "payment_state": "FL",
+            "payment_postal_code": "00000",
             "invoice_total_label": "TOTAL DUE",
             "invoice_number_format": "YYYY-NNNN",
         })

@@ -12,10 +12,27 @@ Drafts can add/remove eligible sessions, reorder lines, edit invoice-only descri
 
 Finalization is a two-step process:
 
-1. **Preview**: Save the complete draft, reread from SQLite, validate all sessions and business profile, and return a preview with a `revision` number for optimistic locking.
-2. **Confirm**: Finalize only if the invoice revision matches the preview. This prevents stale or double submissions.
+1. **Preview**: Save the complete draft, reread from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
+2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
-Explicit confirmation starts a transaction that revalidates every source session, checks the revision matches, assigns the number, freezes bill-to/business/line snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
+### Readiness Validation
+
+A single authoritative function `validate_invoice_readiness` is used in both preview and confirm. It checks:
+
+- Bill-to party exists and is active
+- At least one eligible invoice line
+- All line amounts are positive
+- Valid invoice date
+- Active business profile
+- Required bill-to contact details for the selected delivery method (email for email/both, mailing address for mail/both)
+- Required business/payee/payment-address details used on the invoice
+- Valid, unique invoice number generation
+- All included sessions remain invoice-eligible
+- Preview revision is not stale (when `expected_revision` is provided)
+
+Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
+
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
 
 ## Void And Reissue
 
