@@ -673,3 +673,12 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .billing-wizard .wizard-form-actions .modal-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .billing-wizard .wizard-form-actions .modal-back { background: white; color: var(--text); }
 .billing-wizard .wizard-form-actions .modal-back:hover { background: var(--soft); }
+.billing-wizard .wizard-recovery-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.billing-wizard .wizard-recovery-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.billing-wizard .wizard-recovery-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-wizard .wizard-recovery-actions .modal-cancel { background: white; color: var(--text); }
+.billing-wizard .wizard-recovery-actions .modal-cancel:hover { background: var(--soft); }
+.billing-wizard .wizard-recovery-actions .modal-link-btn { background: white; color: var(--blue); border-color: var(--blue); }
+.billing-wizard .wizard-recovery-actions .modal-link-btn:hover { background: #e8f0fe; }

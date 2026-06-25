@@ -605,15 +605,155 @@ Organizations are stored as `billing_parties` rows with `billing_party_type = "o
 #### Not Implemented in Round 2D2
 
 - Organization contact person records (organizations are billing parties, not people)
-- Session Review attachment (planned for Round 2E)
-- Automatic return to Session Review after save
+- Session Review attachment — implemented in Round 2E1
+- Automatic return to Session Review after save — implemented in Round 2E1
 - Saved relationship editor redesign
 - Delete or deactivate controls
+
+### Round 2E1: Session Review Integration
+
+The billing relationship wizard now integrates with Session Review. When launched from a review candidate, the wizard preselects participants, suggests the current payer, creates or reuses the billing relationship, attaches it to the session, and returns to the same candidate — all without approving the session.
+
+#### Launching from Session Review
+
+When Jordana selects "Change payer or shared billing" from a Session Review candidate and opens the wizard, the return context is preserved. The context includes:
+
+- Candidate ID
+- Session ID
+- Return view
+- Current participants (with person IDs)
+- Current account ID
+- Current billing-party ID
+- Current bill-to person ID
+
+The existing `sessionStorage` and URL/hash behavior is preserved. No second return-context system is introduced.
+
+#### Step 1: Payer Suggestion
+
+When launched from Session Review, the wizard suggests the current effective invoice recipient:
+
+**Priority:**
+1. Current session billing party
+2. Current account default billing party
+3. Current bill-to person
+4. No suggestion
+
+**Mapping:**
+- Person-linked billing party whose person is a current session participant → select "A client"
+- Person-linked billing party whose person is not among participants → select "Another person"
+- Organization billing party → select "An organization"
+
+The suggestion is shown as selected, but Jordana can change it. No new payer record is created from a suggestion. If the referenced record is inactive or missing, no suggestion is shown.
+
+#### Step 2: Participant Preselection
+
+When the return context contains confirmed session participants:
+
+- All confirmed participant person IDs are preselected under Pays for
+- Unresolved participant names are not silently converted into people
+- Selected participants are preserved when moving Back and Forward
+- Jordana can add or remove covered clients
+
+If a client payer is selected, the client payer is preselected under Pays for (existing rule), but other session participants are not erased.
+
+#### Saving and Attaching
+
+The save flow is a two-step process:
+
+1. **Setup**: `POST /api/billing-relationships/setup` — creates or reuses the billing relationship, returns `account_id`, `billing_party_id`, `created`, `duplicate`
+2. **Attach**: `POST /api/review/candidates/{id}/save-relationship` — attaches the returned account and billing party to the current review candidate, preserving confirmed participants
+
+The attachment payload includes:
+- `participants` — confirmed session participants with person IDs
+- `account_id` — from setup response
+- `billing_party_id` — from setup response
+- `default_billing_party_id` — from setup response
+- `primary_person_id` — first primary participant
+
+**Not changed by attachment:**
+- Duration, service/session type, time category, rate
+- Payment status
+- Approval status
+- Raw calendar evidence
+
+#### Duplicate Relationship Reuse
+
+If setup returns an existing exact relationship (`duplicate: true`):
+
+- When launched from Session Review: a "Use this billing relationship" button appears alongside "Open existing relationship"
+- "Use this billing relationship" attaches the existing account and billing party to the current candidate
+- "Open existing relationship" opens the account record while preserving return context
+- When launched from the main Billing Relationships page: only "Open existing relationship" is shown (Round 2C behavior preserved)
+
+#### Partial-Failure Recovery
+
+If relationship setup succeeds but attachment fails:
+
+- The wizard stays open with a recovery message: "The billing relationship was saved, but it could not be attached to this session."
+- Three recovery actions are offered:
+  - **Try attaching again** — retries only the attachment step (does not call setup again)
+  - **Open billing relationship** — opens the account record while preserving return context
+  - **Return to review without attaching** — returns to the candidate without attaching
+- The successfully created relationship is not deleted
+- Retry reuses the same account and billing-party IDs
+
+#### Successful Attachment
+
+After both setup and attachment succeed:
+
+- The wizard closes
+- Return context is cleared
+- Jordana returns to the same Session Review candidate
+- The candidate is refreshed (reloaded)
+- A brief inline confirmation shows: "Billing relationship saved for this session."
+- The session remains unapproved — Jordana must still explicitly review and approve
+
+#### Approval Safety
+
+- Setup does not call any approval endpoint
+- Attachment does not set `review_status = approved`
+- No invoice is generated
+- No payment record is created
+- Raw calendar evidence is unchanged
+
+#### New People and Organizations
+
+Round 2D1 and 2D2 child forms continue to work within the Session Review flow. After creating a new client, person, or organization:
+
+- Return context is preserved
+- Selected session participants are preserved
+- Other wizard choices are preserved
+- Setup and attachment use the resulting IDs
+
+Newly created payers or clients are not attached to the session until the final wizard Save succeeds.
+
+#### User-Visible States
+
+- "Saving relationship…" — during setup
+- "Attaching to session…" — during attachment
+- "Billing relationship saved for this session." — on success (inline, not a browser alert)
+- Recovery message with actions — on attachment failure
+
+#### No Visible Account Field in Review
+
+The routine Session Review screen does not gain a visible Client / Family Account field. The account relationship is stored internally but not surfaced as a new visible field in the inspector.
+
+#### Not Implemented in Round 2E1
+
+- Saved Billing Relationship editor redesign
+- Delete or deactivate relationship controls
+- Rate/history/alias layout changes
+- Invoice generation
+- Payment changes
+- Calendar aliases
+- Bulk cleanup
+- Schema migrations
+- Automatic session approval
 
 ### Out of Scope (Remaining)
 
 The following remain planned and were not started:
 
-- Session Review attachment via the setup endpoint — Round 2E
+- Round 2E2: browser polish and smoke-testing
 - Automatic payer classification
 - Full right-panel redesign

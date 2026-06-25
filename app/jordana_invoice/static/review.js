@@ -3130,6 +3130,37 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
   let coveredClients = [];
   let useFuture = true;
   let saving = false;
+  let setupResult = null;
+
+  const fromReview = validReturnContext(returnContext);
+  const ctxParticipants = (returnContext && Array.isArray(returnContext.participants)) ? returnContext.participants : [];
+
+  async function suggestPayerFromContext() {
+    if (!fromReview || !returnContext.billingPartyId) return;
+    try {
+      const bp = await api(`/api/billing-parties/${returnContext.billingPartyId}`);
+      if (!bp || !bp.billing_party_id) return;
+      if (bp.billing_party_type === "organization") {
+        payerType = "organization";
+        payerOrg = bp;
+      } else if (bp.person_id) {
+        const isParticipant = ctxParticipants.some(p => p.person_id === bp.person_id);
+        payerType = isParticipant ? "client" : "person";
+        const person = await api(`/api/people/${bp.person_id}`);
+        if (person && person.person_id) payerPerson = person;
+      }
+    } catch (_) { /* inactive or missing — no suggestion */ }
+  }
+
+  function preselectParticipants() {
+    if (!fromReview) return;
+    const confirmed = ctxParticipants.filter(p => p.person_id);
+    for (const p of confirmed) {
+      if (!coveredClients.some(c => c.person_id === p.person_id)) {
+        coveredClients.push({ person_id: p.person_id, display_name: p.display_name || "" });
+      }
+    }
+  }
 
   const hasChanges = () => payerType || payerPerson || payerOrg || coveredClients.length > 0;
 
@@ -3814,7 +3845,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     if (!saveBtn) return;
     saving = true;
     saveBtn.disabled = true;
-    saveBtn.textContent = "Saving…";
+    saveBtn.textContent = "Saving relationship…";
     errorDisplay.textContent = "";
 
     const payload = {
@@ -3837,22 +3868,45 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       const json = await res.json();
       if (!res.ok || json.ok === false) throw json;
 
+      setupResult = json;
       const accountId = json.account_id;
-      let nextContext = returnContext;
-      if (validReturnContext(returnContext)) {
-        nextContext = persistReturnContext({ ...returnContext, accountId });
-        location.hash = returnContextHash(nextContext);
+      const billingPartyId = json.billing_party_id;
+
+      if (fromReview) {
+        saveBtn.textContent = "Attaching to session…";
+        await attachToSession(accountId, billingPartyId, saveBtn);
+      } else {
+        let nextContext = returnContext;
+        if (validReturnContext(returnContext)) {
+          nextContext = persistReturnContext({ ...returnContext, accountId });
+          location.hash = returnContextHash(nextContext);
+        }
+        closeBillingModal();
+        await loadClients();
+        await openAccountRecord(accountId, { returnContext: nextContext });
       }
-      closeBillingModal();
-      await loadClients();
-      await openAccountRecord(accountId, { returnContext: nextContext });
     } catch (err) {
       saving = false;
       saveBtn.disabled = false;
       saveBtn.textContent = "Save Billing Relationship";
       if (err && (err.duplicate || (err.created === false))) {
         const existingAccountId = err.account_id;
-        errorDisplay.innerHTML = `This billing relationship already exists. <button type="button" id="wizardOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+        const existingBillingPartyId = err.billing_party_id;
+        if (fromReview) {
+          errorDisplay.innerHTML = `This billing relationship already exists. <button type="button" id="wizardUseExisting" class="modal-link-btn">Use this billing relationship</button> <button type="button" id="wizardOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+          const useBtn = document.getElementById("wizardUseExisting");
+          if (useBtn) {
+            useBtn.addEventListener("click", async () => {
+              saving = true;
+              saveBtn.disabled = true;
+              saveBtn.textContent = "Attaching to session…";
+              errorDisplay.textContent = "";
+              await attachToSession(existingAccountId, existingBillingPartyId, saveBtn);
+            });
+          }
+        } else {
+          errorDisplay.innerHTML = `This billing relationship already exists. <button type="button" id="wizardOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+        }
         const openBtn = document.getElementById("wizardOpenExisting");
         if (openBtn) {
           openBtn.addEventListener("click", async () => {
@@ -3872,9 +3926,93 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     }
   }
 
+  async function attachToSession(accountId, billingPartyId, saveBtn) {
+    const attachPayload = {
+      participants: ctxParticipants.map(p => ({
+        person_id: p.person_id,
+        display_name: p.display_name || "",
+        is_primary: !!p.is_primary,
+        relationship_role: p.relationship_role || "",
+      })),
+      account_id: accountId,
+      primary_person_id: ctxParticipants.find(p => p.is_primary)?.person_id || ctxParticipants[0]?.person_id || null,
+      billing_party_id: billingPartyId,
+      default_billing_party_id: billingPartyId,
+    };
+
+    try {
+      await api(`/api/review/candidates/${returnContext.candidateId}/save-relationship`, {
+        method: "POST",
+        body: JSON.stringify(attachPayload),
+      });
+
+      closeBillingModal();
+      clearReturnContext();
+      await showReviewWorkbench();
+      await selectCandidate(returnContext.candidateId);
+
+      const banner = document.createElement("div");
+      banner.className = "relationship-summary success";
+      banner.id = "wizardAttachSuccess";
+      banner.innerHTML = "<strong>Billing relationship saved for this session.</strong>";
+      const inspector = document.getElementById("inspector");
+      if (inspector) inspector.prepend(banner);
+      setTimeout(() => { if (banner) banner.remove(); }, 5000);
+
+      saving = false;
+    } catch (attachErr) {
+      saving = false;
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save Billing Relationship";
+      errorDisplay.innerHTML = `
+        The billing relationship was saved, but it could not be attached to this session.
+        <div class="wizard-recovery-actions">
+          <button type="button" id="wizardRetryAttach" class="modal-submit">Try attaching again</button>
+          <button type="button" id="wizardOpenRelFromRecovery" class="modal-link-btn">Open billing relationship</button>
+          <button type="button" id="wizardReturnNoAttach" class="modal-cancel">Return to review without attaching</button>
+        </div>
+      `;
+      const retryBtn = document.getElementById("wizardRetryAttach");
+      if (retryBtn) {
+        retryBtn.addEventListener("click", async () => {
+          saving = true;
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Attaching to session…";
+          errorDisplay.textContent = "";
+          await attachToSession(accountId, billingPartyId, saveBtn);
+        });
+      }
+      const openRelBtn = document.getElementById("wizardOpenRelFromRecovery");
+      if (openRelBtn) {
+        openRelBtn.addEventListener("click", async () => {
+          let nextContext = returnContext;
+          if (validReturnContext(returnContext)) {
+            nextContext = persistReturnContext({ ...returnContext, accountId });
+            location.hash = returnContextHash(nextContext);
+          }
+          closeBillingModal();
+          await loadClients();
+          await openAccountRecord(accountId, { returnContext: nextContext });
+        });
+      }
+      const returnBtn = document.getElementById("wizardReturnNoAttach");
+      if (returnBtn) {
+        returnBtn.addEventListener("click", async () => {
+          closeBillingModal();
+          await showReviewWorkbench();
+          await selectCandidate(returnContext.candidateId);
+        });
+      }
+    }
+  }
+
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) doCancel(); });
   document.addEventListener("keydown", billingModalTrapKeydown);
-  renderStep();
+  preselectParticipants();
+  (async () => {
+    await suggestPayerFromContext();
+    renderStep();
+  })();
 }
 
 function openAddClientModal(accountId, returnContext, originatingBtn, existingMemberPersonIds) {

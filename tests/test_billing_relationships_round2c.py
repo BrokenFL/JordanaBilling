@@ -141,8 +141,8 @@ class TestWizardStaticJs(unittest.TestCase):
         self.assertIn("use_for_future_sessions", self.js)
 
     def test_save_disables_during_submission(self):
-        """16. Save disables during submission and shows Saving…"""
-        self.assertIn("Saving…", self.js)
+        """16. Save disables during submission and shows a saving indicator."""
+        self.assertIn("Saving relationship", self.js)
         self.assertIn("saving = true", self.js)
         self.assertIn("saveBtn.disabled = true", self.js)
 
@@ -202,13 +202,15 @@ class TestWizardStaticJs(unittest.TestCase):
         self.assertNotIn("create_person", wizard_code)
 
     def test_wizard_does_not_attach_to_session(self):
-        """No Session Review attachment from the wizard."""
+        """No Session Review approval or interpretation from the wizard."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
         wizard_end = self.js.index("\nfunction openAddClientModal")
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("save_interpretation", wizard_code)
         self.assertNotIn("approve_candidate", wizard_code)
-        self.assertNotIn("/api/review/", wizard_code)
+        # Round 2E1 adds save-relationship attachment when launched from Session Review
+        # But no approval or interpretation calls should exist
+        self.assertNotIn("approve", wizard_code.lower().replace("approval", ""))
 
     def test_wizard_css_exists(self):
         """Wizard CSS classes exist."""

@@ -478,9 +478,16 @@ class TestRound1CorrectionJsStatic(unittest.TestCase):
 
     def test_create_modal_preserves_context_on_existing(self):
         """The Open existing handler preserves return context."""
-        start = self.js.index("wizardOpenExisting")
-        end = self.js.index("});", start) + 3
-        block = self.js[start:end]
+        # Find the wizardOpenExisting block that has persistReturnContext
+        # (Round 2E1 adds a fromReview branch without persistReturnContext, so search for the one that does)
+        idx = 0
+        while True:
+            start = self.js.index("wizardOpenExisting", idx)
+            end = self.js.index("});", start) + 3
+            block = self.js[start:end]
+            if "persistReturnContext" in block:
+                break
+            idx = end
         self.assertIn("returnContext", block)
         self.assertIn("persistReturnContext", block)
 
