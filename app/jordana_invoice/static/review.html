@@ -59,12 +59,6 @@
                 <option value="psychotherapy_evening">Evening</option>
                 <option value="custom">Custom</option>
               </select>
-              <select id="timeFilter">
-                <option value="">All Time Categories</option>
-                <option value="standard">Standard</option>
-                <option value="evening">Evening</option>
-                <option value="weekend">Weekend</option>
-              </select>
               <select id="calendarFilter">
                 <option value="">Routine review</option>
                 <option value="all">All calendars</option>
@@ -81,13 +75,11 @@
                   <th>Status</th>
                   <th>Date</th>
                   <th>Time</th>
-                  <th>Raw Title</th>
                   <th>Clients</th>
+                  <th>Calendar</th>
                   <th>Duration</th>
-                  <th>Type</th>
-                  <th>Time Cat.</th>
                   <th>Rate</th>
-                  <th>Review confidence</th>
+                  <th>Review</th>
                 </tr>
               </thead>
               <tbody id="candidateRows"></tbody>
@@ -95,10 +87,17 @@
             <footer class="pager"><span id="resultCount">Showing 0 results</span><button id="prevPage">‹</button><button id="nextPage">›</button></footer>
           </section>
 
-          <aside class="inspector" id="inspector">
-            <div class="empty-state">Select a session to review.</div>
-          </aside>
         </section>
+
+        <div id="reviewOverlay" class="review-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="reviewOverlayTitle">
+          <div class="review-overlay-modal">
+            <div class="review-overlay-header">
+              <h2 id="reviewOverlayTitle">Session Review</h2>
+              <button id="reviewOverlayClose" class="review-overlay-close-btn" type="button">Close</button>
+            </div>
+            <div id="reviewOverlayContent" class="review-overlay-content"></div>
+          </div>
+        </div>
 
         <section class="rate-card-view" id="rateCardView" hidden>
           <div class="rate-card-header">
@@ -430,6 +429,5 @@
       </main>
     </div>
     <script src="/static/review.js"></script>
-    <script src="/static/review_rate_simplification.js"></script>
   </body>
 </html>

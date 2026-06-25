@@ -1,3 +1,5 @@
+let overlayReturnFocus = null;
+
 const state = {
   items: [],
   selected: null,
@@ -111,7 +113,6 @@ async function loadList() {
     q: $("searchBox").value,
     review_status: $("statusFilter").value,
     billing_session_type: $("serviceFilter").value,
-    time_category: $("timeFilter").value,
     calendar_filter: $("calendarFilter").value,
     limit: state.limit,
     offset: state.offset
@@ -120,7 +121,7 @@ async function loadList() {
   state.items = data.items;
   renderStatus(data.status);
   renderRows(data.items, data.total);
-  if (!state.selected && data.items.length) selectCandidate(data.items[0].candidate_id);
+  if (!data.items.some(item => item.candidate_id === state.selected)) state.selected = null;
 }
 
 function renderStatus(s) {
@@ -140,21 +141,31 @@ async function refreshDashboardStatus() {
 
 function renderRows(items, total) {
   $("resultCount").textContent = `Showing ${items.length ? state.offset + 1 : 0} to ${state.offset + items.length} of ${total} results`;
-  $("candidateRows").innerHTML = items.map(item => `
+  $("candidateRows").innerHTML = items.length ? items.map(item => `
     <tr data-id="${escapeAttr(item.candidate_id)}" class="${state.selected === item.candidate_id ? "selected" : ""}">
       <td><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
       <td>${fmt(item.date)}</td>
       <td>${fmt(item.time)}</td>
-      <td>${fmt(item.raw_title)}</td>
       <td><span class="primary">${fmt(item.suggested_client)}</span></td>
+      <td>${fmt(item.raw_title)}</td>
       <td>${fmt(item.duration_minutes)}</td>
-      <td>${userFacingSessionLabel(item.billing_session_type || item.service_mode, item.appointment_status, item.custom_service_description || "")}</td>
-      <td>${timeLabel(item.time_category)}</td>
       <td>${money(item.rate)}</td>
-      <td><span class="confidence ${item.authority_score >= 60 ? "good" : "low"}">${fmt(item.authority_score || 0)}%</span></td>
+      <td><button class="review-btn" data-review-id="${escapeAttr(item.candidate_id)}">Review</button></td>
     </tr>
-  `).join("");
-  document.querySelectorAll("#candidateRows tr").forEach(row => row.addEventListener("click", () => selectCandidate(row.dataset.id)));
+  `).join("") : '<tr class="empty-row"><td colspan="8">No sessions need review.</td></tr>';
+  document.querySelectorAll("#candidateRows tr[data-id]").forEach(row => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button") || e.target.closest("a")) return;
+      overlayReturnFocus = row;
+      selectCandidate(row.dataset.id);
+    });
+    const reviewBtn = row.querySelector(".review-btn");
+    if (reviewBtn) reviewBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      overlayReturnFocus = reviewBtn;
+      selectCandidate(row.dataset.id);
+    });
+  });
 }
 
 function statusColor(status, classification) {
@@ -174,6 +185,7 @@ async function selectCandidate(candidateId) {
   state.account = data.account;
   state.billingParty = data.billing_party || data.effective_billing_party;
   renderInspector(data);
+  openReviewOverlay();
 }
 
 function renderInspector(data) {
@@ -193,7 +205,12 @@ function renderInspector(data) {
   const showSessionSave = !sessionLocked && (!readiness.session_ready || state.dirty.has("session"));
   const showRelationshipSave = !readiness.clients_ready || state.dirty.has("relationship");
   const showBillingSave = !billingLocked && (!readiness.billing_ready || state.dirty.has("billing"));
-  $("inspector").innerHTML = `
+  const confirmedDuration = s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes;
+  const confirmedRate = centString(s.approved_rate_cents || s.suggested_rate_cents);
+  const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
+  const overlayContent = $("reviewOverlayContent");
+  if (!overlayContent) return;
+  overlayContent.innerHTML = `
     <div class="inspector-header">
       <div>
         <h2>${fmt(s.raw_calendar_title || s.title)}</h2>
@@ -258,7 +275,7 @@ function renderInspector(data) {
       ${sessionLocked
         ? `<div class="readonly-note">${!readiness.clients_ready ? "Confirm Client(s) first." : "Confirm Bill To first."}</div>`
         : readiness.session_ready && !sessionEditing
-          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)}</div></div>
+          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(confirmedDuration)} min • ${money(confirmedRate)}</div></div>
              <div class="inline-actions"><button id="changeSessionBtn">Change</button></div>`
           : `<div class="field-grid">
                <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
@@ -266,22 +283,21 @@ function renderInspector(data) {
                <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${escapeAttr(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || "")}"></label>
                <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${escapeAttr(s.custom_service_description || "")}"></label>
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
-               <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend"], s.time_category)}</select></label>
-               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}"><span class="help" id="sessionRateHelp">${rateSourceDescription(s, data.participants)}</span><span class="help" id="sessionRatePreview"></span></label>
-               <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Status<select id="paymentInput">${optionSet(["unpaid","paid_at_session"], s.payment_status)}</select></label></div></details>
+               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
+               <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Status<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Unpaid</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at time of session</option></select></label></div></details>
                ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
-               <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label><label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label></div></details>
+               <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label></div></details>
                ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${escapeAttr(s.rate_override_reason || "")}"></label>` : ""}
              </div>
              ${houseCallSuggestion(s)}
              ${rateChanged ? `<div class="rate-scope" id="rateScope">
-               <strong>Apply this rate to:</strong>
-               <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
-               <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this client</label>
-               <select id="rateScopePerson">${state.participants.map(p => `<option value="${escapeAttr(p.person_id || "")}">${escapeHtml(p.display_name || p.participant_name || "")}</option>`).join("")}</select>
-               <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these clients</label>
+               ${participantIds.length === 1
+                 ? '<label class="checkbox-field wide"><input type="checkbox" id="saveFuturePersonRate"><span>Save as this client\u2019s future default rate</span></label>'
+                 : participantIds.length > 1
+                   ? '<label class="checkbox-field wide"><input type="checkbox" id="saveFutureJointRate"><span>Save as the future rate for these clients together</span></label>'
+                   : '<div class="help">Future defaults can be managed in Rate Card after the clients are confirmed.</div>'}
              </div>` : ""}
-             <div class="inline-actions">${showSessionSave ? '<button id="saveSessionBtn" class="save">Save Session Draft</button>' : ""}</div>`}
+             <div class="inline-actions">${showSessionSave ? '<button id="saveSessionBtn" class="save">Save Session</button>' : ""}</div>`}
     </section>
 
     <section class="section">
@@ -298,8 +314,10 @@ function renderInspector(data) {
     </section>
 
     <div class="actions">
+      <button id="prevSessionBtn">Previous</button>
       ${isSession && readiness.all_ready ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
       ${!isSession ? '<button class="approve" id="sendToReviewBtn">Send to Review</button>' : ""}
+      <button id="saveNextBtn" class="save">Save and next</button>
       <button id="personalBtn">Mark Personal/Admin</button>
       <button id="duplicateBtn">Mark Duplicate</button>
       <button class="danger" id="excludeBtn">Exclude</button>
@@ -324,17 +342,17 @@ function wireInspector() {
   if ($("duplicateBtn")) $("duplicateBtn").onclick = () => mark("duplicate");
   if ($("excludeBtn")) $("excludeBtn").onclick = () => mark("nonbillable");
   if ($("sendToReviewBtn")) $("sendToReviewBtn").onclick = sendToReview;
+  if ($("prevSessionBtn")) $("prevSessionBtn").onclick = goToPreviousSession;
+  if ($("saveNextBtn")) $("saveNextBtn").onclick = saveAndNext;
   [
     "billingTypeInput",
     "durationChoiceInput",
     "customDurationInput",
     "customDescInput",
     "customCodeInput",
-    "timeCategoryInput",
     "approvedRateInput",
     "paymentInput",
     "billingTreatmentInput",
-    "billableInput",
     "overrideReasonInput"
   ].forEach(id => {
     const element = $(id);
@@ -723,26 +741,37 @@ async function saveBillingSection() {
 }
 
 async function saveSessionSection() {
-  const updated = await api(`/api/review/candidates/${state.selected}/save-session`, { method: "POST", body: JSON.stringify(collectPayload()) });
-  state.detail = updated;
-  state.editSteps.session = false;
-  renderInspector(updated);
-  markSaved("session", "Session draft saved");
-  await loadList();
+  const button = $("saveSessionBtn");
+  if (button) button.disabled = true;
+  try {
+    const updated = await api(`/api/review/candidates/${state.selected}/save-session`, { method: "POST", body: JSON.stringify(collectPayload()) });
+    state.detail = updated;
+    state.editSteps.session = false;
+    renderInspector(updated);
+    markSaved("session", "Session saved");
+    await loadList();
+    requestAnimationFrame(() => $("approveBtn")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  } catch (error) {
+    alert(`Could not save session: ${error.message}`);
+  } finally {
+    if (button && document.body.contains(button)) button.disabled = false;
+  }
 }
 
 async function save(approve) {
   await resolveTypedSelections();
-  const payload = collectPayload();
-  const action = approve ? "approve" : "save";
   try {
-    const updated = await api(`/api/review/candidates/${state.selected}/${action}`, { method: "POST", body: JSON.stringify(payload) });
+    const updated = await api(`/api/review/candidates/${state.selected}/${approve ? "approve" : "save"}`, {
+      method: "POST",
+      body: JSON.stringify(collectPayload())
+    });
     state.detail = updated;
     state.editSteps = { clients: false, session: false };
-    renderInspector(updated);
+    if (approve) state.selected = null;
     await loadList();
-  } catch (err) {
-    alert(err.message);
+    if (!approve) renderInspector(updated);
+  } catch (error) {
+    alert(error.message);
   }
 }
 
@@ -757,11 +786,9 @@ function collectSessionDraftValues() {
     custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
-    time_category: $("timeCategoryInput")?.value || "",
     approved_rate: $("approvedRateInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
     billing_treatment: $("billingTreatmentInput")?.value || "",
-    billable_status: $("billableInput")?.value || "",
     rate_override_reason: $("overrideReasonInput")?.value || ""
   };
 }
@@ -773,11 +800,9 @@ function restoreSessionDraftValues(values) {
   if ($("customDurationInput")) $("customDurationInput").value = values.custom_duration_minutes;
   if ($("customDescInput")) $("customDescInput").value = values.custom_service_description;
   if ($("customCodeInput")) $("customCodeInput").value = values.custom_service_code;
-  if ($("timeCategoryInput")) $("timeCategoryInput").value = values.time_category;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
   if ($("paymentInput")) $("paymentInput").value = values.payment_status;
   if ($("billingTreatmentInput")) $("billingTreatmentInput").value = values.billing_treatment;
-  if ($("billableInput")) $("billableInput").value = values.billable_status;
   if ($("overrideReasonInput")) $("overrideReasonInput").value = values.rate_override_reason;
 }
 
@@ -792,7 +817,7 @@ async function updateSessionRatePreview() {
     appointment_status: state.detail.session.appointment_status || "scheduled",
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
-    time_category: $("timeCategoryInput")?.value || state.detail.session.time_category || "standard",
+    time_category: state.detail.session.time_category || "standard",
     participant_person_ids: participantIds,
     person_id: participantIds.length === 1 ? participantIds[0] : "",
     client_account_id: state.account?.account_id || state.detail.session.account_id || "",
@@ -834,27 +859,52 @@ async function sendToReview() {
 }
 
 function collectPayload() {
-  const durationChoice = $("durationChoiceInput")?.value || "60";
-  const customMinutes = $("customDurationInput")?.value || "";
-  const approvedMinutes = durationChoice === "custom" ? customMinutes : durationChoice;
+  const session = state.detail?.session || {};
+  const durationChoice = $("durationChoiceInput")?.value
+    || session.duration_choice
+    || durationToChoice(session.approved_duration_minutes || session.duration_minutes)
+    || "60";
+  const customMinutes = $("customDurationInput")?.value || session.custom_duration_minutes || "";
+  const approvedMinutes = durationChoice === "custom"
+    ? customMinutes
+    : ($("durationChoiceInput")?.value || session.approved_duration_minutes || session.duration_minutes || durationChoice);
+  const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
+  const futurePerson = $("saveFuturePersonRate")?.checked === true;
+  const futureJoint = $("saveFutureJointRate")?.checked === true;
+  const paymentStatus = $("paymentInput")?.value || session.payment_status || "unpaid";
+
+  let rateScope = "session_only";
+  let rateScopePersonId = null;
+  if (futureJoint && participantIds.length > 1) {
+    rateScope = "future_joint";
+  } else if (futurePerson && participantIds.length === 1) {
+    rateScope = "future_person";
+    rateScopePersonId = participantIds[0];
+  }
+
+  const rate = $("approvedRateInput")?.value
+    || centString(session.approved_rate_cents)
+    || centString(session.suggested_rate_cents)
+    || "";
+
   return {
     ...collectRelationshipPayload(),
     approved_duration_minutes: approvedMinutes,
-    billing_session_type: $("billingTypeInput").value,
+    billing_session_type: $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy",
     duration_choice: durationChoice,
     custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
-    custom_service_description: $("customDescInput")?.value || "",
-    custom_service_code: $("customCodeInput")?.value || "",
-    time_category: $("timeCategoryInput").value,
-    suggested_rate: centString(state.detail?.session?.suggested_rate_cents),
-    billing_party_id: state.billingParty ? state.billingParty.billing_party_id : state.detail?.effective_billing_party?.billing_party_id || null,
-    approved_rate: $("approvedRateInput").value,
-    payment_status: $("paymentInput").value,
-    billing_treatment: $("billingTreatmentInput").value,
-    billable_status: $("billableInput").value,
-    rate_override_reason: $("overrideReasonInput").value,
-    rate_scope: document.querySelector("input[name='rateScope']:checked")?.value || "session_only",
-    rate_scope_person_id: $("rateScopePerson")?.value || null
+    custom_service_description: $("customDescInput")?.value || session.custom_service_description || "",
+    custom_service_code: $("customCodeInput")?.value || session.custom_service_code || "",
+    time_category: session.time_category || "standard",
+    suggested_rate: centString(session.suggested_rate_cents),
+    billing_party_id: state.billingParty?.billing_party_id || state.detail?.effective_billing_party?.billing_party_id || null,
+    approved_rate: rate,
+    payment_status: paymentStatus,
+    billing_treatment: $("billingTreatmentInput")?.value || session.billing_treatment || "",
+    billable_status: paymentStatus === "paid_at_session" ? "nonbillable" : "approved",
+    rate_override_reason: $("overrideReasonInput")?.value || session.rate_override_reason || "",
+    rate_scope: rateScope,
+    rate_scope_person_id: rateScopePersonId
   };
 }
 
@@ -936,7 +986,7 @@ function startRange(s) {
 }
 function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
 
-["searchBox","statusFilter","serviceFilter","timeFilter","calendarFilter"].forEach(id => $(id).addEventListener("input", () => { state.offset = 0; loadList(); }));
+["searchBox","statusFilter","serviceFilter","calendarFilter"].forEach(id => { const el = $(id); if (el) el.addEventListener("input", () => { state.offset = 0; loadList(); }); });
 $("prevPage").onclick = () => { state.offset = Math.max(0, state.offset - state.limit); loadList(); };
 $("nextPage").onclick = () => { state.offset += state.limit; loadList(); };
 document.getElementById("calendarImportNav").onclick = (event) => {
@@ -998,6 +1048,85 @@ function showRateCard() {
   document.title = "Jordana Billing - Rate Card";
   resetRateCardForm();
   loadRateRules();
+}
+
+function openReviewOverlay() {
+  const overlay = $("reviewOverlay");
+  if (!overlay) return;
+  overlay.hidden = false;
+  document.addEventListener("keydown", overlayKeydownHandler);
+  const closeBtn = $("reviewOverlayClose");
+  if (closeBtn) closeBtn.onclick = closeReviewOverlay;
+  requestAnimationFrame(() => {
+    const focusable = overlay.querySelector("button, input, select, a[href]");
+    if (focusable) focusable.focus();
+  });
+}
+
+function closeReviewOverlay() {
+  const overlay = $("reviewOverlay");
+  if (!overlay) return;
+  if (state.dirty.size > 0) {
+    if (!confirm("You have unsaved changes. Close anyway?")) return;
+    state.dirty.clear();
+  }
+  overlay.hidden = true;
+  document.removeEventListener("keydown", overlayKeydownHandler);
+  if (overlayReturnFocus && document.body.contains(overlayReturnFocus)) {
+    overlayReturnFocus.focus();
+    overlayReturnFocus = null;
+  }
+}
+
+function overlayKeydownHandler(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeReviewOverlay();
+    return;
+  }
+  if (e.key === "Tab") {
+    const overlay = $("reviewOverlay");
+    if (!overlay || overlay.hidden) return;
+    const focusable = overlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+}
+
+function goToPreviousSession() {
+  const items = state.items;
+  if (!items.length) return;
+  const currentIndex = items.findIndex(item => item.candidate_id === state.selected);
+  if (currentIndex <= 0) return;
+  selectCandidate(items[currentIndex - 1].candidate_id);
+}
+
+function goToNextSession() {
+  const items = state.items;
+  if (!items.length) return;
+  const currentIndex = items.findIndex(item => item.candidate_id === state.selected);
+  if (currentIndex < 0 || currentIndex >= items.length - 1) return;
+  selectCandidate(items[currentIndex + 1].candidate_id);
+}
+
+async function saveAndNext() {
+  await save(false);
+  const items = state.items;
+  if (!items.length) return;
+  const next = items.find(item => item.candidate_id !== state.selected);
+  if (next) {
+    selectCandidate(next.candidate_id);
+  } else if (items.length) {
+    selectCandidate(items[0].candidate_id);
+  }
 }
 
 function showReviewWorkbench() {
@@ -4349,8 +4478,8 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       banner.className = "relationship-summary success";
       banner.id = "wizardAttachSuccess";
       banner.innerHTML = "<strong>Billing relationship saved for this session.</strong>";
-      const inspector = document.getElementById("inspector");
-      if (inspector) inspector.prepend(banner);
+      const overlayContent = document.getElementById("reviewOverlayContent");
+      if (overlayContent) overlayContent.prepend(banner);
       setTimeout(() => { if (banner) banner.remove(); }, 5000);
 
       saving = false;

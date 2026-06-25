@@ -4,7 +4,6 @@ from pathlib import Path
 
 
 REVIEW_JS = Path("app/jordana_invoice/static/review.js").read_text()
-RATE_SIMP_JS = Path("app/jordana_invoice/static/review_rate_simplification.js").read_text()
 
 
 class HtmlEscapingFunctionTests(unittest.TestCase):
@@ -127,22 +126,6 @@ class ReviewJsEscapingTests(unittest.TestCase):
 
     def test_title_time_warning_uses_fmt(self):
         self.assertIn("fmt(session.title_time_text)", REVIEW_JS)
-
-
-class ReviewRateSimplificationEscapingTests(unittest.TestCase):
-    """Static-analysis tests for review_rate_simplification.js."""
-
-    def test_render_rows_uses_escape_attr_for_data_id(self):
-        self.assertIn('data-id="${escapeAttr(item.candidate_id)}"', RATE_SIMP_JS)
-
-    def test_render_rows_does_not_use_unescaped_candidate_id(self):
-        self.assertNotIn('data-id="${item.candidate_id', RATE_SIMP_JS)
-
-    def test_render_rows_uses_fmt_for_user_fields(self):
-        self.assertIn("fmt(item.raw_title)", RATE_SIMP_JS)
-        self.assertIn("fmt(item.suggested_client)", RATE_SIMP_JS)
-        self.assertIn("fmt(item.date)", RATE_SIMP_JS)
-        self.assertIn("fmt(item.time)", RATE_SIMP_JS)
 
 
 class CsvSafeIntegrationTests(unittest.TestCase):

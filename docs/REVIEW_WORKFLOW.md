@@ -153,16 +153,18 @@ The client record now opens as a full-width workspace at `#people/{person_id}` w
 
 ## Section-Level Saves
 
-The routine inspector is now guided in this order:
+The routine inspector is now guided in this order, presented in a focused review overlay that opens when a row is selected or the Review button is clicked:
 
 1. Clients in this session
 2. Bill to
 3. Session Details
-4. Final Approve Session
+4. Approve Session
+
+The review list is full-width with columns: Status, Date, Time, Clients, Calendar, Duration, Rate, and a Review button. The side inspector has been replaced by the overlay, which supports keyboard navigation (Escape to close, Previous/Save and next/Approve), focus trap, and collapsed Source details.
 
 Later steps stay locked until the earlier step is established. When the backend can already confirm a step from saved clients, saved payer setup, or an exact matching rate rule, the UI collapses that step into a compact confirmed summary until Jordana chooses Change.
 
-Confirm Client(s), Save Bill To, and Save Session Draft remain independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, review status, and the separate review-authority score used for guided review.
+Confirm Client(s), Save Bill To, and Save Session remain independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, review status, and the separate review-authority score used for guided review.
 
 Removing all clients and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
 
@@ -192,7 +194,7 @@ Calendar evidence remains read-only under View Calendar Evidence.
 
 ## Frontend HTML Escaping
 
-The review UI (`review.js` and `review_rate_simplification.js`) renders dynamic content via `innerHTML` with template literals. All user-controlled values are escaped before interpolation:
+The review UI (`review.js`) renders dynamic content via `innerHTML` with template literals. All user-controlled values are escaped before interpolation:
 
 - **`escapeHtml(value)`** — converts `&`, `<`, `>`, `"`, `'` to HTML entities. Used for text content and attribute values.
 - **`escapeAttr(value)`** — alias for `escapeHtml`; used in `data-*` attributes and `value` attributes for clarity.
@@ -202,7 +204,7 @@ No raw user-controlled field (client names, calendar titles, account names, bill
 
 ## Calendar, Status, and Billing Treatment
 
-Routine review remains a confirmation form: Clients in this session, Bill to, Duration, Session type, Time category, Suggested/editable rate, Payment status, and Approve.
+Routine review remains a confirmation form: Clients in this session, Bill to, Duration, Session type, Suggested/editable rate, Payment status, and Approve. Time category is derived automatically from the session date and start time; it is no longer a selectable field in the review UI.
 
 The review screen now also shows source calendar, calendar disposition, appointment-status badge, Calendar start time, parsed title time, original title, and title-time mismatch warnings.
 

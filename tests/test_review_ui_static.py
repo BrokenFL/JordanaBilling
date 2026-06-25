@@ -364,13 +364,81 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("returnContextHash", js)
 
     def test_guided_review_uses_review_confidence_and_final_approval_gate(self):
-        html = Path("app/jordana_invoice/static/review.html").read_text()
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
-        self.assertIn("Review confidence", html)
         self.assertIn('Review confidence: ${s.authority_score || 0}%', js)
         self.assertIn("readiness.all_ready", js)
         self.assertIn("Approve Session", js)
+
+    def test_review_overlay_container_exists_in_html(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertIn('id="reviewOverlay"', html)
+        self.assertIn('id="reviewOverlayContent"', html)
+        self.assertIn('id="reviewOverlayClose"', html)
+        self.assertIn('role="dialog"', html)
+        self.assertIn('aria-modal="true"', html)
+
+    def test_review_overlay_functions_exist_in_js(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function openReviewOverlay()", js)
+        self.assertIn("function closeReviewOverlay()", js)
+        self.assertIn("function overlayKeydownHandler", js)
+        self.assertIn("function goToPreviousSession()", js)
+        self.assertIn("function saveAndNext()", js)
+
+    def test_review_overlay_has_focus_trap_and_escape(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Escape", js)
+        self.assertIn("e.shiftKey", js)
+        self.assertIn("focusable", js)
+
+    def test_review_table_has_review_button_column(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("<th>Review</th>", html)
+        self.assertIn('class="review-btn"', js)
+        self.assertIn("data-review-id", js)
+
+    def test_review_table_does_not_have_removed_columns(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        review_table_start = html.index('id="candidateRows"')
+        review_table_section = html[:review_table_start]
+
+        self.assertNotIn("<th>Time Cat.</th>", review_table_section)
+        self.assertNotIn("<th>Review confidence</th>", review_table_section)
+        self.assertNotIn("<th>Raw Title</th>", review_table_section)
+
+    def test_review_html_does_not_include_override_script(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertNotIn("review_rate_simplification", html)
+
+    def test_review_html_does_not_have_side_inspector(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertNotIn('id="inspector"', html)
+
+    def test_review_html_does_not_have_time_filter(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertNotIn('id="timeFilter"', html)
+
+    def test_review_js_renders_into_overlay_content(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('$("reviewOverlayContent")', js)
+
+    def test_review_js_has_save_and_next_button(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="saveNextBtn"', js)
+        self.assertIn('id="prevSessionBtn"', js)
+        self.assertIn("Save and next", js)
+        self.assertIn("Previous", js)
 
     def test_unresolved_client_and_payer_lock_later_steps(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -384,10 +452,10 @@ class ReviewUiStaticTests(unittest.TestCase):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn("const rateChanged = currentRate !== suggestedRate && currentRate !== \"\";", js)
-        self.assertIn('Apply this rate to:', js)
-        self.assertIn('This session only', js)
-        self.assertIn('Future sessions for this client', js)
-        self.assertIn('Future joint sessions for these clients', js)
+        self.assertIn('saveFuturePersonRate', js)
+        self.assertIn('saveFutureJointRate', js)
+        self.assertIn('Save as this client', js)
+        self.assertIn('Save as the future rate for these clients together', js)
 
     def test_cancelled_no_show_billing_field_is_conditional(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
