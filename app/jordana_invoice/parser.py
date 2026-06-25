@@ -889,9 +889,7 @@ def derive_time_category(start_at: str) -> dict[str, object]:
         return {"is_evening": False, "is_weekend": False, "time_category": "standard"}
     is_evening = start.hour >= 20
     is_weekend = start.weekday() in {5, 6}
-    if is_weekend and is_evening:
-        category = "weekend_evening"
-    elif is_weekend:
+    if is_weekend:
         category = "weekend"
     elif is_evening:
         category = "evening"

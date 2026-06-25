@@ -69,7 +69,7 @@ Sessions are automatically classified into one of five billing session types bas
 ### Priority Rules
 
 - House Call overrides Weekend and Evening
-- Weekend overrides Evening (Saturday 8 PM = Weekend, not Evening)
+- Weekend overrides Evening (Saturday or Sunday at any time of day = Weekend, not Evening)
 - Location-based House Call detection suggests confirmation but does not auto-approve
 
 ### Appointment Methods vs Billing Types

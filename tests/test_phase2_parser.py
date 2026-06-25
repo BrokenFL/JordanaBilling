@@ -76,10 +76,10 @@ class Phase2ParserTests(unittest.TestCase):
     def test_evening_and_weekend_categories(self):
         evening = parse_event(event("Bonnie 830", "2026-06-18T20:30:00-04:00", "2026-06-18T21:30:00-04:00"))
         saturday = parse_event(event("Bonnie 11", "2026-06-20T11:00:00-04:00", "2026-06-20T12:00:00-04:00"))
-        weekend_evening = parse_event(event("Bonnie 830", "2026-06-20T20:30:00-04:00", "2026-06-20T21:30:00-04:00"))
+        saturday_evening = parse_event(event("Bonnie 830", "2026-06-20T20:30:00-04:00", "2026-06-20T21:30:00-04:00"))
         self.assertEqual(evening.time_category, "evening")
         self.assertEqual(saturday.time_category, "weekend")
-        self.assertEqual(weekend_evening.time_category, "weekend_evening")
+        self.assertEqual(saturday_evening.time_category, "weekend")
 
 
 if __name__ == "__main__":

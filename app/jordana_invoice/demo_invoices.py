@@ -45,7 +45,7 @@ def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> di
         ("minor", "Casey North | 30 | Phone", [casey], parent_party, "phone", "standard", 9000, "billable"),
         ("correspondence", "Avery Stone | 60 | Correspondence", [avery], avery_party, "correspondence", "weekend", 12500, "billable"),
         ("preparation", "Avery Stone | 60 | Preparation", [avery], avery_party, "preparation", "standard", 17500, "billable"),
-        ("mediation", "Avery Stone | 60 | Mediation", [avery], avery_party, "mediation", "weekend_evening", 45000, "billable"),
+        ("mediation", "Avery Stone | 60 | Mediation", [avery], avery_party, "mediation", "weekend", 45000, "billable"),
         ("cancelled-billable", "Avery Stone | 60 | Office | Cancelled", [avery], avery_party, "office", "standard", 15000, "billable"),
         ("no-show-billable", "Avery Stone | 60 | Phone | No Show", [avery], avery_party, "phone", "standard", 15000, "billable"),
         ("custom", "Avery Stone | 60 | Case Conference", [avery], avery_party, "Case Conference", "standard", 11000, "billable"),
