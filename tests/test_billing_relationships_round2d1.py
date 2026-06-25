@@ -93,7 +93,7 @@ class TestCreatePersonStaticJs(unittest.TestCase):
 
     def test_client_preselected_under_pays_for(self):
         """9. Newly created client is preselected under Pays for."""
-        self.assertIn('coveredClients = [{ person_id: person.person_id', self.js)
+        self.assertIn('coveredClients.unshift({ person_id: person.person_id', self.js)
 
     def test_person_not_auto_added_to_pays_for(self):
         """11. Another-person payer is not automatically added under Pays for."""
@@ -128,7 +128,7 @@ class TestCreatePersonStaticJs(unittest.TestCase):
     def test_use_existing_person_option(self):
         """16. Use existing person selects the existing record."""
         self.assertIn("Use existing person", self.js)
-        self.assertIn("wizardUseExisting", self.js)
+        self.assertIn("wizardUseExistingPerson", self.js)
 
     def test_go_back_and_edit_option(self):
         """Go back and edit option exists."""

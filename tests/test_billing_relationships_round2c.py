@@ -88,13 +88,13 @@ class TestWizardStaticJs(unittest.TestCase):
 
     def test_client_payer_preselected(self):
         """6. Client payer is preselected under Pays for."""
-        self.assertIn('coveredClients = [{ person_id: person.person_id', self.js)
+        self.assertIn('coveredClients.unshift({ person_id: person.person_id', self.js)
 
     def test_person_payer_not_auto_selected(self):
         """7. Person payer does not auto-select under Pays for."""
-        # When payerType is "person", coveredClients should be cleared
-        self.assertIn('type === "person" || type === "organization"', self.js)
-        self.assertIn("coveredClients = []", self.js)
+        # When payerType is "person", coveredClients should not be cleared
+        # (preselected participants are preserved), but person payer is not auto-added
+        self.assertNotIn('type === "person" || type === "organization"', self.js)
 
     def test_multiple_covered_clients_selectable(self):
         """9. Multiple covered clients can be selected."""

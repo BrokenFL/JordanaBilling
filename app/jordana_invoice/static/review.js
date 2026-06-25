@@ -1091,6 +1091,10 @@ async function showClients() {
   $("pageTitle").textContent = "Billing Relationships";
   $("pageSubtitle").textContent = "Who receives invoices and who they pay for";
   document.title = "Jordana Billing - Billing Relationships";
+  const hashContext = hashReturnContext();
+  if (!hashContext) {
+    clearReturnContext();
+  }
   const returnContext = readReturnContext();
   renderClientsLanding(returnContext);
   await loadClients();
@@ -3280,13 +3284,12 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
   function selectPayerType(type) {
     if (payerType !== type) {
       payerType = type;
-      if (type !== "client") payerPerson = null;
-      if (type !== "person") payerPerson = null;
+      if (type === "organization") payerPerson = null;
       if (type !== "organization") payerOrg = null;
       if (type === "client" && payerPerson) {
-        coveredClients = [{ person_id: payerPerson.person_id, display_name: payerPerson.display_name }];
-      } else if (type === "person" || type === "organization") {
-        coveredClients = [];
+        if (!coveredClients.some(c => c.person_id === payerPerson.person_id)) {
+          coveredClients.unshift({ person_id: payerPerson.person_id, display_name: payerPerson.display_name });
+        }
       }
     }
     renderStep1();
@@ -3326,7 +3329,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       input.addEventListener("input", (e) => doSearch(e.target.value));
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
       createBtn.addEventListener("click", () => showCreatePersonForm(payerType));
-      if (payerPerson) showPayerSelected(selectedDiv, payerPerson.display_name, "client");
+      if (payerPerson) showPayerSelected(selectedDiv, payerPerson.display_name, payerType);
       input.focus();
     } else if (payerType === "organization") {
       searchDiv.innerHTML = `
@@ -3383,9 +3386,11 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       if (!person) return;
       payerPerson = person;
       if (payerType === "client") {
-        coveredClients = [{ person_id: person.person_id, display_name: person.display_name }];
+        if (!coveredClients.some(c => c.person_id === person.person_id)) {
+          coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
+        }
       }
-      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
+      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, payerType);
     } else {
       const org = rows.find(r => r.billing_party_id === id);
       if (!org) return;
@@ -3604,11 +3609,11 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
               ${person.person_code ? `<span class="help">${escapeHtml(person.person_code)}</span>` : ""}
             </div>
             <div class="wizard-duplicate-actions">
-              <button type="button" id="wizardUseExisting" class="modal-submit">Use existing person</button>
+              <button type="button" id="wizardUseExistingPerson" class="modal-submit">Use existing person</button>
               <button type="button" id="wizardEditAgain" class="modal-back">Go back and edit</button>
             </div>
           `;
-          document.getElementById("wizardUseExisting").onclick = () => {
+          document.getElementById("wizardUseExistingPerson").onclick = () => {
             handlePersonCreated(person, formPayerType, isStep2);
             closeForm();
           };
@@ -3643,11 +3648,13 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     } else {
       payerPerson = person;
       if (formPayerType === "client") {
-        coveredClients = [{ person_id: person.person_id, display_name: person.display_name }];
+        if (!coveredClients.some(c => c.person_id === person.person_id)) {
+          coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
+        }
       }
       renderStep1();
       showPayerSearch();
-      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
+      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, formPayerType);
       updateContinueDisabled();
     }
   }

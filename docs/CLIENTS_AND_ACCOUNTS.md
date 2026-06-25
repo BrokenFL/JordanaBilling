@@ -750,10 +750,81 @@ The routine Session Review screen does not gain a visible Client / Family Accoun
 - Schema migrations
 - Automatic session approval
 
+### Round 2E2: Final Integration Hardening
+
+Round 2E2 completed the Round 2 workflow with integration fixes and behavior-oriented tests.
+
+#### Integration Defects Found and Fixed
+
+1. **`selectPayerType` always cleared `payerPerson`** — both `type !== "client"` and `type !== "person"` conditions fired regardless of selection. Fixed: only clear `payerPerson` when switching to organization; only clear `payerOrg` when switching away from organization.
+
+2. **`selectPayerType` erased preselected participants** — `coveredClients = []` for person/org erased Session Review preselections. Fixed: no longer clears coveredClients when changing payer type. Client payer adds to coveredClients via `unshift` instead of replacing.
+
+3. **`selectPayer` replaced coveredClients for client payer** — erases preselected participants. Fixed: adds client to coveredClients via `unshift` instead of replacing.
+
+4. **`handlePersonCreated` replaced coveredClients for client payer** — same issue. Fixed: adds via `unshift`.
+
+5. **`wizardUseExisting` DOM ID collision** — person duplicate button and relationship duplicate button shared the same ID. Fixed: person duplicate button renamed to `wizardUseExistingPerson`.
+
+6. **`showPayerSelected` always labeled person payers as "Selected client"** — should say "Selected person". Fixed: passes actual `payerType`/`formPayerType` instead of hardcoded `"client"`.
+
+7. **Stale return context from sessionStorage** — navigating to Billing Relationships via nav picked up stale context from a previous Session Review session. Fixed: `showClients` clears return context when no hash params are present.
+
+#### Behavior-Oriented Tests
+
+Added `tests/test_billing_relationships_round2e2.py` with 34 behavior tests and 7 API integration tests that verify control flow rather than just string presence:
+
+- Wizard creates exactly one overlay
+- Re-rendering uses `innerHTML` (replacement, not append)
+- Main-page Save does not call `save-relationship`
+- Session Review Save calls setup then attachment
+- Double-click Save is prevented by `saving` flag
+- Duplicate Use action calls `attachToSession` only
+- Back and Forward preserve payer and covered clients
+- Changing payer kind clears only the correct payer selection
+- Confirmed participants are preselected; unresolved names excluded
+- Child forms preserve parent state
+- Cancel makes no API calls
+- Attachment retry does not call setup
+- Return-without-attachment does not modify billing fields
+- Success clears return context only after attachment
+- Failure preserves return context
+- Session remains unapproved
+- No invoice or payment is created
+- Stale return context is cleared on nav
+- No duplicate DOM IDs within one rendered wizard state
+- Person duplicate button has distinct ID from relationship duplicate
+- `showPayerSelected` uses correct label for person
+- `selectPayerType` does not erase coveredClients
+- `selectPayer` adds to coveredClients instead of replacing
+- `handlePersonCreated` adds to coveredClients instead of replacing
+- `suggestPayerFromContext` handles inactive payer gracefully
+- API error parsing checks `res.ok` and `json.ok`
+- Escape follows safe-cancel flow
+- All user-controlled values are escaped
+- API tests verify no approval, no invoice, no payment, evidence preserved, duration/rate preserved, duplicate setup creates one account
+
+#### Demo Data Coverage
+
+The sanitized demo CSV (`data/samples/sanitized_demo_calendar_snapshots.csv`) covers:
+
+- **Individual self-pay client**: Bob Smith, Joe Carter, Robin Rivers, etc.
+- **Two-client session**: "Avery Stone + Taylor 6"
+- **Existing another-person payer**: "Casey North mom paying 4"
+- **Existing organization payer**: Cedar Family Trust (seeded by demo script)
+- **Candidate with no current payer**: most candidates start without a payer
+- **Unresolved participant name**: "Robin Rivers 530 scheduled 5 30"
+- **Cancelled and no-show**: "Alex Lane 2 canceled", "Parker Vale 930 no show"
+- **Personal/admin events**: "Lunch with Karen", "Dentist", "Pick up dry cleaning"
+- **Duplicate relationship reuse**: create the same relationship twice
+- **Title time variants**: "Bob Smith 10", "Bob Smith 10 office", "Robin Rivers 5 30", "Robin Rivers 530", "Robin Rivers 5:30 phone"
+
+No changes to the demo CSV or demo script were needed.
+
 ### Out of Scope (Remaining)
 
 The following remain planned and were not started:
 
-- Round 2E2: browser polish and smoke-testing
+- Round 3: saved-record editor redesign
 - Automatic payer classification
 - Full right-panel redesign
