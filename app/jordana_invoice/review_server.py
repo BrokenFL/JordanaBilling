@@ -77,6 +77,7 @@ from .invoice_services import (
     preview_finalization,
     remove_line_from_draft,
     save_business_profile,
+    stage_approved_sessions_to_monthly_drafts,
     update_invoice_draft,
     void_invoice,
 )
@@ -253,7 +254,11 @@ def make_handler(database_path: str):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
-            data = self.read_json()
+            try:
+                data = self.read_json()
+            except (json.JSONDecodeError, ValueError):
+                self.send_json({"ok": False, "error": "Malformed JSON in request body."}, status=400)
+                return
             try:
                 if parsed.path == "/api/people":
                     self.send_json(create_person(self.conn(), data))
@@ -377,6 +382,18 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/invoices":
                     self.send_json(create_invoice_draft(self.conn(), data))
+                    return
+                if parsed.path == "/api/invoices/stage":
+                    session_ids = data.get("session_ids")
+                    if session_ids is not None:
+                        if not isinstance(session_ids, list):
+                            raise ValueError("session_ids must be a list.")
+                        for sid in session_ids:
+                            if not isinstance(sid, str) or not sid.strip():
+                                raise ValueError("Each session_id must be a non-empty string.")
+                    self.send_json(
+                        stage_approved_sessions_to_monthly_drafts(self.conn(), session_ids=session_ids)
+                    )
                     return
                 if parsed.path.startswith("/api/invoices/"):
                     parts = parsed.path.strip("/").split("/")

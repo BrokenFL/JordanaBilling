@@ -34,12 +34,34 @@ Stale draft lines are reconciled before finalization:
 
 The service returns a structured summary with counts of drafts created/reused, sessions staged/already staged/moved/removed as ineligible, sessions skipped with reasons, and errors by party/month. It does not expose private names in returned diagnostic identifiers.
 
-The service is **not yet connected to**:
-- session approval (no automatic trigger on approval);
-- API routes (no HTTP endpoint);
-- UI controls (no button or menu item).
+### Staging API Endpoint
 
-Paid-at-session sessions remain excluded from staging temporarily. Payment behavior will be changed in a later dedicated round.
+An administrative HTTP endpoint is available for manual or scripted staging:
+
+```
+POST /api/invoices/stage
+```
+
+**Request body** (optional JSON):
+
+```json
+{"session_ids": ["session-id-1", "session-id-2"]}
+```
+
+- Omitted `session_ids` reconciles all eligible approved sessions.
+- An empty list returns a successful zero-change result.
+- Each value must be a non-empty string.
+- No Bill To names, client names, month overrides, invoice IDs, or rate overrides are accepted.
+
+**Response**: the staging service's structured summary (drafts_created, drafts_reused, sessions_staged, sessions_already_staged, sessions_moved, sessions_removed_ineligible, sessions_skipped, errors). Internal UUIDs may appear for administrative diagnostics; private names and calendar titles are never exposed.
+
+**Error behavior**:
+- Malformed JSON or invalid request: HTTP 400
+- Database busy/locked: HTTP 503
+- Unexpected server failure: HTTP 500
+- Per-party-month errors remain in the structured `errors` array and are not silently discarded.
+
+The endpoint is **administrative/manual only**. No UI controls exist yet. No automatic trigger from session approval exists yet. Paid-at-session sessions remain excluded temporarily.
 
 ## Finalized
 
