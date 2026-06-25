@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ripgrep (for safety scripts)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install project and test dependencies
+        run: pip install reportlab pypdf
+
+      - name: Privacy check
+        run: bash scripts/privacy_check.sh
+
+      - name: Git safety check
+        run: bash scripts/git_safety_check.sh
+
+      - name: Run unit tests
+        run: PYTHONPATH=app python -m unittest discover -s tests
+
+      - name: Sanitized acceptance workflow
+        env:
+          TMPDIR_ACCEPTANCE: ${{ runner.temp }}/acceptance
+        run: |
+          mkdir -p "$TMPDIR_ACCEPTANCE"
+          TMP_DB="$TMPDIR_ACCEPTANCE/ci_test.sqlite3"
+          TMP_REPORT="$TMPDIR_ACCEPTANCE/acceptance_report.md"
+          PYTHONPATH=app python -m jordana_invoice --db "$TMP_DB" init-db
+          PYTHONPATH=app python -m jordana_invoice --db "$TMP_DB" import-csv \
+            data/samples/sanitized_demo_calendar_snapshots.csv \
+            --report "$TMP_REPORT"
+          python -c "
+          import sqlite3, sys
+          conn = sqlite3.connect('$TMP_DB')
+          integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+          count = conn.execute('SELECT COUNT(*) FROM raw_calendar_snapshots').fetchone()[0]
+          conn.close()
+          assert integrity == 'ok', f'integrity_check failed: {integrity}'
+          assert count > 0, 'no snapshots imported'
+          print(f'integrity={integrity}, snapshots={count}')
+          "
+          test -f "$TMP_REPORT" && echo "Report generated: $(wc -l < "$TMP_REPORT") lines"

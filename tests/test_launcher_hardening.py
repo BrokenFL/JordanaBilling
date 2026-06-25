@@ -106,6 +106,7 @@ class TestInfoPlist(unittest.TestCase):
     def test_documents_folder_usage_description(self) -> None:
         self.assertIn("NSDocumentsFolderUsageDescription", self.plist)
 
+    @unittest.skipUnless(sys.platform == "darwin", "plutil is only available on macOS")
     def test_plutil_lint(self) -> None:
         result = subprocess.run(
             ["plutil", "-lint", str(self.plist_path)],
@@ -356,6 +357,7 @@ class TestBuildLauncherSigns(unittest.TestCase):
         self.assertIn("Terminal", launcher)
         self.assertIn("do script", launcher)
 
+    @unittest.skipUnless(sys.platform == "darwin", "codesign is only available on macOS")
     def test_app_is_adhoc_signed(self) -> None:
         """Committed .app bundle should be ad-hoc signed."""
         result = subprocess.run(
