@@ -72,6 +72,36 @@ class CsvSafeTests(unittest.TestCase):
     def test_newline_then_equals_neutralised(self):
         self.assertEqual(csv_safe("\n=cmd"), "'\n=cmd")
 
+    def test_negative_integer_unchanged(self):
+        self.assertEqual(csv_safe(-5), "-5")
+
+    def test_negative_decimal_unchanged(self):
+        self.assertEqual(csv_safe(-3.14), "-3.14")
+
+    def test_negative_integer_string_unchanged(self):
+        self.assertEqual(csv_safe("-5"), "-5")
+
+    def test_negative_decimal_string_unchanged(self):
+        self.assertEqual(csv_safe("-3.14"), "-3.14")
+
+    def test_negative_zero_unchanged(self):
+        self.assertEqual(csv_safe("-0"), "-0")
+
+    def test_negative_float_value_unchanged(self):
+        self.assertEqual(csv_safe(-0.01), "-0.01")
+
+    def test_whitespace_then_negative_number_unchanged(self):
+        self.assertEqual(csv_safe("  -42"), "  -42")
+
+    def test_whitespace_then_negative_decimal_unchanged(self):
+        self.assertEqual(csv_safe("  -3.14"), "  -3.14")
+
+    def test_dangerous_minus_text_neutralised(self):
+        self.assertEqual(csv_safe("-evil"), "'-evil")
+
+    def test_dangerous_minus_formula_neutralised(self):
+        self.assertEqual(csv_safe("-1+1"), "'-1+1")
+
     def test_apostrophe_prefixed_value_unchanged(self):
         self.assertEqual(csv_safe("'already safe"), "'already safe")
 

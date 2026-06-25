@@ -151,7 +151,7 @@ function renderRows(items, total) {
       <td>${userFacingSessionLabel(item.billing_session_type || item.service_mode, item.appointment_status, item.custom_service_description || "")}</td>
       <td>${timeLabel(item.time_category)}</td>
       <td>${money(item.rate)}</td>
-      <td><span class="confidence ${item.authority_score >= 60 ? "good" : "low"}">${item.authority_score || 0}%</span></td>
+      <td><span class="confidence ${item.authority_score >= 60 ? "good" : "low"}">${fmt(item.authority_score || 0)}%</span></td>
     </tr>
   `).join("");
   document.querySelectorAll("#candidateRows tr").forEach(row => row.addEventListener("click", () => selectCandidate(row.dataset.id)));
@@ -1206,7 +1206,7 @@ async function loadReports() {
   if (years.length) {
     yearSelect.innerHTML = years.map(y => `<option value="${y}"${y === defaultYear ? " selected" : ""}>${y}</option>`).join("");
   } else {
-    yearSelect.innerHTML = `<option value="${defaultYear}">${defaultYear}</option>`;
+    yearSelect.innerHTML = `<option value="${escapeAttr(defaultYear)}">${fmt(defaultYear)}</option>`;
   }
   grid.innerHTML = (data.reports || []).map(r => `
     <div class="report-card">
@@ -1427,7 +1427,7 @@ async function loadInvoices() {
       <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
       <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
       <td>${fmt(row.billing_period_start)} - ${fmt(row.billing_period_end)}</td>
-      <td>${fmt(row.invoice_date)}</td><td>${row.line_count}</td><td>${money(centString(row.total_cents))}</td>
+      <td>${fmt(row.invoice_date)}</td><td>${fmt(row.line_count)}</td><td>${money(centString(row.total_cents))}</td>
       <td><span class="status-pill ${escapeAttr(row.status)}">${fmt(row.status)}</span></td><td>${fmt(row.delivery_method)}</td>
     </tr>`).join("") || `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
   document.querySelectorAll("#invoiceRows tr[data-invoice]").forEach(row => row.onclick = () => openInvoice(row.dataset.invoice));
@@ -1549,7 +1549,7 @@ function renderFinalizationPreview(preview) {
     <article class="invoice-preview">
       <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${fmt(i.delivery_method)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
       <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${fmt(line.duration_minutes)} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${escapeHtml(profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
     </article>
     <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize This Exact Invoice</button><button id="cancelFinalizeBtn">Return to Draft</button></div>
@@ -1574,7 +1574,7 @@ function renderInvoicePreview(data) {
     <article class="invoice-preview">
       <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice number:</strong> ${fmt(i.invoice_number || "Draft")}</div><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
       <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${data.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${data.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${fmt(line.duration_minutes)} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${escapeHtml(i.total_label_snapshot || profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
       <div class="invoice-payment"><b>Please make all checks payable to:</b> ${fmt(i.payee_name_snapshot || profile.payee_name)}\n<b>Please send payment to:</b> ${fmt(i.payment_address_snapshot || [profile.payee_name, profile.payment_address_line_1, [profile.payment_city, profile.payment_state].filter(Boolean).join(", ") + (profile.payment_postal_code ? ` ${profile.payment_postal_code}` : "")].filter(Boolean).join("\n"))}</div>
     </article>
@@ -1989,7 +1989,7 @@ function renderBillingDirRows() {
       <td><span class="dir-type-label">${escapeHtml(typeLabel)}</span></td>
       <td><span class="primary">${payerName}</span><div class="dir-subtext">${subtext}</div>${linked}</td>
       <td>${covers}</td>
-      <td>${rec.session_count || 0}</td>
+      <td>${fmt(rec.session_count || 0)}</td>
       <td>${fmt(rec.latest_session_date)}</td>
       <td>${delivery}</td>
       <td><span class="${statusClass}">${status}</span></td>
@@ -2921,8 +2921,8 @@ async function openPersonRecord(personId, options = {}) {
           ? `<span class="status-pill active">Active</span>`
           : `<span class="status-pill inactive">Inactive</span>`;
         const actionBtn = b.active
-          ? `<button class="mini danger" data-deactivate-billing="${b.billing_party_id}">Deactivate</button>`
-          : `<button class="mini" data-reactivate-billing="${b.billing_party_id}">Reactivate</button>`;
+          ? `<button class="mini danger" data-deactivate-billing="${escapeAttr(b.billing_party_id)}">Deactivate</button>`
+          : `<button class="mini" data-reactivate-billing="${escapeAttr(b.billing_party_id)}">Reactivate</button>`;
         return `<div class="billing-card${b.active ? "" : " inactive"}">
           ${label}
           <div class="billing-card-name">${fmt(b.billing_name)}</div>
@@ -2934,7 +2934,7 @@ async function openPersonRecord(personId, options = {}) {
             <div>${statusBadge}</div>
           </div>
           <div class="billing-card-actions">
-            <button class="mini" data-edit-billing="${b.billing_party_id}">Edit</button>
+            <button class="mini" data-edit-billing="${escapeAttr(b.billing_party_id)}">Edit</button>
             ${actionBtn}
           </div>
         </div>`;

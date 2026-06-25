@@ -61,6 +61,14 @@ def normalize_payment_status(value: Any) -> str:
 _CSV_INJECTION_PREFIXES = ("=", "+", "-", "@")
 
 
+def _is_numeric(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def csv_safe(value: Any) -> str:
     """Neutralise CSV formula injection.
 
@@ -68,7 +76,8 @@ def csv_safe(value: Any) -> str:
     ``+``, ``-``, or ``@``, prefix it with a single apostrophe so that
     spreadsheet applications treat it as text rather than a formula.
 
-    Numeric and date values are returned unchanged.
+    Genuine numeric values (including negative integers and decimals)
+    are returned unchanged.
     """
     if value is None:
         return ""
@@ -77,8 +86,8 @@ def csv_safe(value: Any) -> str:
         stripped = s.lstrip()
         if not stripped:
             return s
-        if stripped[0] in _CSV_INJECTION_PREFIXES:
+        if stripped[0] in _CSV_INJECTION_PREFIXES and not _is_numeric(stripped):
             return "'" + s
-    elif s[0] in _CSV_INJECTION_PREFIXES:
+    elif s[0] in _CSV_INJECTION_PREFIXES and not _is_numeric(s):
         return "'" + s
     return s
