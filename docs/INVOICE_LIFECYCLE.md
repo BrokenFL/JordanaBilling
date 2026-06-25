@@ -61,7 +61,42 @@ POST /api/invoices/stage
 - Unexpected server failure: HTTP 500
 - Per-party-month errors remain in the structured `errors` array and are not silently discarded.
 
-The endpoint is **administrative/manual only**. No UI controls exist yet. No automatic trigger from session approval exists yet. Paid-at-session sessions remain excluded temporarily.
+The endpoint is **administrative/manual only**. No UI controls exist yet. Paid-at-session sessions remain excluded temporarily.
+
+### Approval Integration
+
+Session approval now triggers monthly invoice staging automatically. When a candidate is approved via `POST /api/review/candidates/{id}/approve`:
+
+1. `approve_candidate()` runs exactly as before and commits the approval transaction.
+2. After the approval commit, the server calls `stage_approved_sessions_to_monthly_drafts()` with `session_ids=[approved_session_id]`.
+3. The staging result is attached to the approval response as an additive `invoice_staging` field:
+
+```json
+{
+  "session": { ... },
+  "participants": [ ... ],
+  "invoice_staging": {
+    "status": "success | warning | unavailable | error",
+    "summary": { ... }
+  }
+}
+```
+
+**Transaction separation**: Approval commits before staging begins. Staging uses its own per-party-month `BEGIN IMMEDIATE` transactions. A staging failure never reverses, rolls back, or misreports the successful approval.
+
+**Status values**:
+- `success` — staging completed with no party-month errors; full summary included.
+- `warning` — staging completed but the summary contains errors; full summary included.
+- `unavailable` — staging could not run because the database was busy; `summary` is `null`.
+- `error` — unexpected staging exception; `summary` is `null`. No exception text, SQL, paths, or private data is exposed.
+
+**HTTP behavior**: Approval validation failure returns HTTP 400 (staging is not called). Database busy during approval returns HTTP 503 (staging is not called). Approval success always returns HTTP 200 regardless of staging outcome.
+
+**Idempotency**: Repeated staging for the same approved session creates no duplicate draft and no duplicate invoice line. Repeated approval calls still produce existing approval-side audit, usage, review-item, alias-update, and report side effects; those are not altered in this round.
+
+**Frontend**: The existing review UI ignores the additive `invoice_staging` field. No frontend change is required. No UI notifications exist yet.
+
+Paid-at-session sessions remain excluded from staging temporarily. Payment behavior will change in a later dedicated round.
 
 ## Finalized
 

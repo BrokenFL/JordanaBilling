@@ -455,7 +455,22 @@ def make_handler(database_path: str):
                         self.send_json(get_review_candidate(self.conn(), candidate_id))
                         return
                     if action == "approve":
-                        self.send_json(approve_candidate(self.conn(), candidate_id, data))
+                        result = approve_candidate(self.conn(), candidate_id, data)
+                        approved_session_id = result.get("session", {}).get("id")
+                        if approved_session_id:
+                            try:
+                                staging = stage_approved_sessions_to_monthly_drafts(
+                                    self.conn(), session_ids=[approved_session_id],
+                                )
+                                result["invoice_staging"] = {
+                                    "status": "success" if not staging.get("errors") else "warning",
+                                    "summary": staging,
+                                }
+                            except DatabaseBusyError:
+                                result["invoice_staging"] = {"status": "unavailable", "summary": None}
+                            except Exception:
+                                result["invoice_staging"] = {"status": "error", "summary": None}
+                        self.send_json(result)
                         return
                     if action == "mark":
                         self.send_json(
