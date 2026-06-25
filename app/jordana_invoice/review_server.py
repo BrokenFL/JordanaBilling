@@ -115,6 +115,9 @@ def make_handler(database_path: str):
                 if parsed.path.startswith("/static/"):
                     self.send_static(parsed.path.removeprefix("/static/"))
                     return
+                if parsed.path == "/api/health":
+                    self.send_json({"ok": True, "status": "healthy"})
+                    return
                 if parsed.path == "/api/status":
                     self.send_json(dashboard_status(self.conn()))
                     return
