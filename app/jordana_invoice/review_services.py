@@ -892,6 +892,9 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
             "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
             (payload["billing_party_id"], now, session["id"]),
         )
+    if "participants" in payload:
+        saved_participants = get_session_participants(conn, session["id"])
+        _save_aliases_for_participant_save(conn, session, saved_participants)
     refresh_candidate_suggestions(conn, candidate_id)
     record_audit(conn, "session", session["id"], "relationship_section_saved", {"payload": safe_payload(payload)})
     conn.commit()
@@ -3478,6 +3481,14 @@ def add_review_item(
     )
 
 
+_AMBIGUOUS_TITLE_TOKENS = (" + ", " & ", " and ", ",", "/", "\\", ";", " for ")
+
+
+def _is_ambiguous_multi_person_title(value: str) -> bool:
+    lowered = f" {text(value).lower()} "
+    return any(token in lowered for token in _AMBIGUOUS_TITLE_TOKENS)
+
+
 def save_alias_after_approval(conn: sqlite3.Connection, session: sqlite3.Row, participants: list[dict[str, Any]]) -> None:
     person_id = next((p.get("person_id") for p in participants if p.get("person_id")), None)
     for raw_alias in {
@@ -3495,6 +3506,53 @@ def save_alias_after_approval(conn: sqlite3.Connection, session: sqlite3.Row, pa
                 service_mode=session["service_mode"],
                 approved=True,
             )
+
+
+def _save_aliases_for_participant_save(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row,
+    participants: list[dict[str, Any]],
+) -> None:
+    confirmed = [p for p in participants if p.get("person_id")]
+    if len(confirmed) != 1:
+        return
+    person_id = confirmed[0]["person_id"]
+    for raw_alias in {
+        text(session["raw_calendar_title"]),
+        text(session["proposed_client_name"]),
+        strip_calendar_shorthand(text(session["raw_calendar_title"])),
+    }:
+        if not raw_alias or _is_ambiguous_multi_person_title(raw_alias):
+            continue
+        normalized = normalize_alias(raw_alias)
+        if not normalized:
+            continue
+        existing = conn.execute(
+            """
+            SELECT ca.person_id, ca.approved_by_user, p.active
+            FROM calendar_aliases ca
+            LEFT JOIN people p ON p.person_id = ca.person_id
+            WHERE ca.normalized_alias = ?
+            """,
+            (normalized,),
+        ).fetchone()
+        if (
+            existing
+            and existing["person_id"]
+            and existing["person_id"] != person_id
+            and existing["approved_by_user"]
+            and existing["active"]
+        ):
+            continue
+        upsert_calendar_alias(
+            conn,
+            raw_alias=raw_alias,
+            person_id=person_id,
+            account_id=session["account_id"],
+            classification="client_session",
+            service_mode=session["service_mode"],
+            approved=True,
+        )
 
 
 def upsert_calendar_alias(

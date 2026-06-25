@@ -583,6 +583,99 @@ class ReviewServiceTests(unittest.TestCase):
             (candidate_id,),
         ).fetchone()
 
+    def test_participant_save_creates_approved_alias(self):
+        candidate_id = self.import_without_persisted_participants("snap-lou-1", "Lou 630 30")
+        person = create_person(self.conn, {"first_name": "Lou", "last_name": "Yeager", "display_name": "Lou Yeager"})
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [
+                    {"person_id": person["person_id"], "display_name": "Lou Yeager", "is_primary": True},
+                ],
+            },
+        )
+        alias = self.conn.execute(
+            "SELECT * FROM calendar_aliases WHERE normalized_alias = ?", ("lou",),
+        ).fetchone()
+        self.assertIsNotNone(alias)
+        self.assertEqual(alias["person_id"], person["person_id"])
+        self.assertEqual(alias["approved_by_user"], 1)
+
+    def test_participant_save_alias_enables_future_smart_prefill(self):
+        candidate_id = self.import_without_persisted_participants("snap-lou-prefill", "Lou 630 30")
+        person = create_person(self.conn, {"first_name": "Lou", "last_name": "Yeager", "display_name": "Lou Yeager"})
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [
+                    {"person_id": person["person_id"], "display_name": "Lou Yeager", "is_primary": True},
+                ],
+            },
+        )
+        future_id = self.import_without_persisted_participants("snap-lou-future", "Lou 600 60")
+        detail = get_review_candidate(self.conn, future_id)
+        self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
+        self.assertFalse(detail["participants"][0].get("is_proposed", False))
+
+    def test_participant_save_alias_idempotent_on_duplicate_save(self):
+        candidate_id = self.import_without_persisted_participants("snap-lou-dup", "Lou 630 30")
+        person = create_person(self.conn, {"first_name": "Lou", "last_name": "Yeager", "display_name": "Lou Yeager"})
+        for _ in range(2):
+            save_relationship_section(
+                self.conn,
+                candidate_id,
+                {
+                    "participants": [
+                        {"person_id": person["person_id"], "display_name": "Lou Yeager", "is_primary": True},
+                    ],
+                },
+            )
+        aliases = self.conn.execute(
+            "SELECT * FROM calendar_aliases WHERE normalized_alias = ?", ("lou",),
+        ).fetchall()
+        self.assertEqual(len(aliases), 1)
+        self.assertEqual(aliases[0]["person_id"], person["person_id"])
+
+    def test_participant_save_alias_conflict_skips_existing(self):
+        candidate_id = self.import_without_persisted_participants("snap-lou-conflict", "Lou 630 30")
+        first = create_person(self.conn, {"first_name": "Lou", "last_name": "Yeager", "display_name": "Lou Yeager"})
+        second = create_person(self.conn, {"first_name": "Lou", "last_name": "Smith", "display_name": "Lou Smith"})
+        save_person_alias(self.conn, first["person_id"], raw_alias="Lou", approved_by_user=True)
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [
+                    {"person_id": second["person_id"], "display_name": "Lou Smith", "is_primary": True},
+                ],
+            },
+        )
+        alias = self.conn.execute(
+            "SELECT * FROM calendar_aliases WHERE normalized_alias = ?", ("lou",),
+        ).fetchone()
+        self.assertEqual(alias["person_id"], first["person_id"])
+
+    def test_participant_save_no_alias_for_multi_person_title(self):
+        candidate_id = self.import_without_persisted_participants("snap-multi", "Bobsey and Fred 6")
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {
+                "participants": [
+                    {"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True},
+                    {"person_id": bobsey["person_id"], "display_name": "Bobsey Smith"},
+                ],
+            },
+        )
+        alias = self.conn.execute(
+            "SELECT * FROM calendar_aliases WHERE normalized_alias = ?", ("bobsey and fred",),
+        ).fetchone()
+        self.assertIsNone(alias)
+
 
 def count(conn, table):
     return conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()["count"]
