@@ -57,6 +57,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <true/>
   <key>LSUIElement</key>
   <false/>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Jordana Billing needs access to the Documents folder to run setup scripts, read configuration, and manage the local database.</string>
 </dict>
 </plist>
 PLIST
@@ -71,16 +73,44 @@ set -euo pipefail
 BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="$(cd "$BUNDLE_DIR/../.." && pwd)"
 
-# Determine if this is a first run (no .venv or no database)
+DB_PATH="$PROJECT_DIR/data/jordana_invoice.sqlite3"
+LOG_DIR="$PROJECT_DIR/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/launcher.log"
+
+log() {
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" >> "$LOG_FILE"
+}
+
+# Detect existing database (may be present in a reused checkout even when
+# Git is clean, because *.sqlite3 is gitignored).
+DB_EXISTS=0
+if [[ -f "$DB_PATH" ]]; then
+  DB_EXISTS=1
+  log "Existing database found at $DB_PATH — will be preserved."
+fi
+
+# Determine if bootstrap is needed (first run: no .venv or no database)
 FIRST_RUN=0
-if [[ ! -d "$PROJECT_DIR/.venv" ]] || [[ ! -f "$PROJECT_DIR/data/jordana_invoice.sqlite3" ]]; then
+if [[ ! -d "$PROJECT_DIR/.venv" ]] || [[ ! -f "$DB_PATH" ]]; then
   FIRST_RUN=1
 fi
 
 if [[ "$FIRST_RUN" -eq 1 ]]; then
-  bash "$PROJECT_DIR/scripts/bootstrap.sh"
+  if [[ "$DB_EXISTS" -eq 1 ]]; then
+    log "Existing database detected — setup will preserve it (not a clean install)."
+  else
+    log "No existing database — fresh installation."
+  fi
+  /usr/bin/osascript -e "tell application \"Terminal\" to do script \"bash \\\"$PROJECT_DIR/scripts/bootstrap.sh\\\"\"" 2>> "$LOG_FILE" || {
+    log "bootstrap.sh failed with exit $?"
+    exit 1
+  }
 else
-  bash "$PROJECT_DIR/scripts/start_jordana.sh"
+  /usr/bin/osascript -e "tell application \"Terminal\" to do script \"bash \\\"$PROJECT_DIR/scripts/start_jordana.sh\\\"\"" 2>> "$LOG_FILE" || {
+    log "start_jordana.sh failed with exit $?"
+    exit 1
+  }
 fi
 LAUNCHER
 
@@ -107,6 +137,15 @@ def create_png(path):
         f.write(data)
 create_png('$RESOURCES_DIR/AppIcon.png')
 "
+
+# --- Ad-hoc code sign (required for open/LaunchServices) ---
+# Without at least ad-hoc signing, macOS `open` may silently refuse to
+# launch the bundle.  This does not embed a Developer ID; it only satisfies
+# the local Gatekeeper requirement for unsigned bundles.
+# Strip extended attributes first (FinderInfo, provenance, etc.) which
+# would prevent codesign from sealing the bundle.
+xattr -cr "$APP_DIR" 2>/dev/null || true
+codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
 
 echo "Built: $APP_DIR"
 echo "Double-click to launch."

@@ -45,14 +45,16 @@ Edit `.env` and fill in the two credential values. The `__PROJECT_DIR__` placeho
 
 Double-click **Jordana Billing.app** in Finder.
 
+The app is ad-hoc code-signed and uses `NSDocumentsFolderUsageDescription` for macOS TCC compliance. When launched, it opens a Terminal window to run the setup scripts — this is required because macOS TCC restricts apps launched via LaunchServices from directly reading files in protected locations like `~/Documents`. Terminal already has the necessary TCC permissions.
+
 **First launch** performs:
 
-1. Checks Python 3.11+ (shows dialog if missing)
-2. Creates a project-local virtual environment (`.venv`)
+1. Searches for Python 3.11+ in known locations (`/opt/homebrew/bin/python3`, `/usr/local/bin/python3`, `/usr/bin/python3`, `command -v python3`) — no manual PATH configuration required
+2. Creates a project-local virtual environment (`.venv`) using the discovered Python
 3. Installs pinned dependencies
 4. Creates `.env` from template if missing, resolves local paths, and opens it in TextEdit
 5. Validates `.env` without executing it as shell code
-6. Creates a blank SQLite database if missing
+6. Creates a blank SQLite database if missing — **existing databases are preserved and never deleted**
 7. Applies existing migrations safely
 8. Runs a full Google Sheets sync (only if database is empty)
 9. Starts the local review server on `127.0.0.1:8765`
@@ -74,6 +76,12 @@ The review UI opens automatically at `http://127.0.0.1:8765/review`.
 ## No Database Required for Transfer
 
 A fresh installation starts with no database. The first launch creates it, applies migrations, and imports the configured Google Sheet. Never copy a database between machines — each Mac creates its own from the Google Sheet source.
+
+If an existing database is found (e.g., from a reused checkout), the launcher reports that it will be preserved and does **not** call it a "clean" or "new" installation. Existing databases are never deleted or reset automatically.
+
+## Terminal Window
+
+The launcher opens a Terminal window when run. This is intentional — macOS TCC (Transparency, Consent, and Control) restricts apps launched via LaunchServices from reading files in protected locations like `~/Documents`. Terminal already has the necessary TCC permissions, so the launcher delegates script execution to it. The Terminal window can be closed after the review UI opens in the browser.
 
 ## No Terminal Required
 
@@ -111,7 +119,14 @@ These files must be provided manually and are never committed to Git:
 
 ### "Python 3.11 or newer is required"
 
-Install Python from [python.org](https://www.python.org/downloads/) or via Homebrew:
+The launcher searches these locations in order:
+
+1. `/opt/homebrew/bin/python3` (Homebrew on Apple Silicon)
+2. `/usr/local/bin/python3` (Homebrew on Intel)
+3. `/usr/bin/python3` (system Python)
+4. `command -v python3` (PATH fallback)
+
+If none has Python 3.11+, install from [python.org](https://www.python.org/downloads/) or via Homebrew:
 
 ```bash
 brew install python@3.12

@@ -49,23 +49,50 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   exit 0
 fi
 
-# --- Step 1: Check Python version ---
-log "Checking Python version..."
-if ! python3 - <<'PY' 2>/dev/null
-import sys
-if sys.version_info < (3, 11):
-    raise SystemExit(1)
-PY
-then
-  show_error_dialog "Python Required" "Python 3.11 or newer is required. Install it from python.org or run: brew install python@3.12"
+# --- Step 1: Discover Python 3.11+ ---
+# When launched from Finder, PATH is minimal and may not include Homebrew.
+# Search known locations in priority order, then fall back to PATH.
+find_python() {
+  local candidates=(
+    "/opt/homebrew/bin/python3"
+    "/usr/local/bin/python3"
+    "/usr/bin/python3"
+  )
+  local path_python
+  path_python="$(command -v python3 2>/dev/null || true)"
+  if [[ -n "$path_python" && -x "$path_python" ]]; then
+    candidates+=("$path_python")
+  fi
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+        echo "$candidate"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+log "Searching for Python 3.11+..."
+PYTHON_BIN="$(find_python || true)"
+if [[ -z "$PYTHON_BIN" ]]; then
+  show_error_dialog "Python Required" "Python 3.11 or newer is required but was not found.
+
+Checked locations:
+  /opt/homebrew/bin/python3
+  /usr/local/bin/python3
+  /usr/bin/python3
+
+Install Python from python.org or run: brew install python@3.12"
   exit 1
 fi
-log "Python OK."
+log "Using Python: $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1))"
 
 # --- Step 2: Create virtual environment if missing ---
 if [[ ! -d "$PROJECT_DIR/.venv" ]]; then
   log "Creating virtual environment..."
-  python3 -m venv "$PROJECT_DIR/.venv"
+  "$PYTHON_BIN" -m venv "$PROJECT_DIR/.venv"
 fi
 
 # --- Step 3: Install pinned dependencies ---
@@ -148,10 +175,10 @@ log ".env validated."
 
 # --- Step 7: Create blank SQLite database if missing ---
 if [[ ! -f "$DB_PATH" ]]; then
-  log "Creating new database..."
+  log "No existing database found — creating new database."
   PYTHONPATH=app python -m jordana_invoice --db "$DB_PATH" init-db
 else
-  log "Database already exists — preserving."
+  log "Existing database found at $DB_PATH — preserving (not a clean install)."
 fi
 
 # --- Step 8: Apply pending migrations safely ---

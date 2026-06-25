@@ -24,5 +24,7 @@
   <true/>
   <key>LSUIElement</key>
   <false/>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Jordana Billing needs access to the Documents folder to run setup scripts, read configuration, and manage the local database.</string>
 </dict>
 </plist>
