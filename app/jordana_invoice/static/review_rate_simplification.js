@@ -80,7 +80,7 @@
   renderRows = (items, total) => {
     $id("resultCount").textContent = `Showing ${items.length ? state.offset + 1 : 0} to ${state.offset + items.length} of ${total} results`;
     $id("candidateRows").innerHTML = items.map(item => `
-      <tr data-id="${item.candidate_id}" class="${state.selected === item.candidate_id ? "selected" : ""}">
+      <tr data-id="${escapeAttr(item.candidate_id)}" class="${state.selected === item.candidate_id ? "selected" : ""}">
         <td><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
         <td>${fmt(item.date)}</td>
         <td>${fmt(item.time)}</td>

@@ -189,6 +189,17 @@ The Sessions page shows a **Send to Review** button only for candidate-only rows
 The existing **Return to Review** button remains for excluded sessions, restoring them to `needs_classification` for re-review.
 
 Calendar evidence remains read-only under View Calendar Evidence.
+
+## Frontend HTML Escaping
+
+The review UI (`review.js` and `review_rate_simplification.js`) renders dynamic content via `innerHTML` with template literals. All user-controlled values are escaped before interpolation:
+
+- **`escapeHtml(value)`** — converts `&`, `<`, `>`, `"`, `'` to HTML entities. Used for text content and attribute values.
+- **`escapeAttr(value)`** — alias for `escapeHtml`; used in `data-*` attributes and `value` attributes for clarity.
+- **`fmt(value)`** — the shared formatting helper; calls `escapeHtml` on truthy values, returns `"-"` for falsy.
+
+No raw user-controlled field (client names, calendar titles, account names, billing party names, IDs, etc.) is interpolated into `innerHTML` without passing through `escapeHtml`, `escapeAttr`, or `fmt`. Static-analysis tests in `tests/test_html_escaping.py` guard against regressions.
+
 ## Calendar, Status, and Billing Treatment
 
 Routine review remains a confirmation form: Clients in this session, Bill to, Duration, Session type, Time category, Suggested/editable rate, Payment status, and Approve.

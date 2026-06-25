@@ -54,21 +54,21 @@ const BUSINESS_PROFILE_DEFAULTS = {
 };
 
 const $ = (id) => document.getElementById(id);
-const fmt = (v) => v || "-";
+const fmt = (v) => v ? escapeHtml(v) : "-";
 const money = (v) => v ? `$${v}` : "—";
 const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
 const billingTypeLabel = (v, customDescription = "") => {
-  if (v === "custom" && customDescription) return customDescription;
-  return ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || v || "Psychotherapy Session");
+  if (v === "custom" && customDescription) return escapeHtml(customDescription);
+  return ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || escapeHtml(v) || "Psychotherapy Session");
 };
-const appointmentStatusRuleLabel = (v) => ({scheduled:"Scheduled", cancelled:"Cancelled", no_show:"No-Show"}[v] || v || "Scheduled");
+const appointmentStatusRuleLabel = (v) => ({scheduled:"Scheduled", cancelled:"Cancelled", no_show:"No-Show"}[v] || escapeHtml(v) || "Scheduled");
 const userFacingSessionLabel = (billingType, appointmentStatus = "", customDescription = "") => {
   const specialBase = {
     psychotherapy: "Psychotherapy Session",
     psychotherapy_house_call: "House Call Psychotherapy Session",
     psychotherapy_weekend: "Weekend Psychotherapy Session",
     psychotherapy_evening: "Evening Psychotherapy Session",
-    custom: customDescription || "Custom"
+    custom: escapeHtml(customDescription) || "Custom"
   };
   const defaultBase = billingTypeLabel(billingType, customDescription);
   const base = ["cancelled", "no_show"].includes(appointmentStatus)
@@ -79,12 +79,12 @@ const userFacingSessionLabel = (billingType, appointmentStatus = "", customDescr
   return defaultBase;
 };
 const billingTypeShort = (v, customDescription = "") => {
-  if (v === "custom" && customDescription) return customDescription;
-  return ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || v || "Standard");
+  if (v === "custom" && customDescription) return escapeHtml(customDescription);
+  return ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || escapeHtml(v) || "Standard");
 };
-const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || v || "Unknown");
-const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || v || "Unknown");
-const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || v || "Standard");
+const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || escapeHtml(v) || "Unknown");
+const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || escapeHtml(v) || "Unknown");
+const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || escapeHtml(v) || "Standard");
 const participantState = (p) => ({
   person_id: p.person_id,
   display_name: p.display_name || p.participant_name,
@@ -141,7 +141,7 @@ async function refreshDashboardStatus() {
 function renderRows(items, total) {
   $("resultCount").textContent = `Showing ${items.length ? state.offset + 1 : 0} to ${state.offset + items.length} of ${total} results`;
   $("candidateRows").innerHTML = items.map(item => `
-    <tr data-id="${item.candidate_id}" class="${state.selected === item.candidate_id ? "selected" : ""}">
+    <tr data-id="${escapeAttr(item.candidate_id)}" class="${state.selected === item.candidate_id ? "selected" : ""}">
       <td><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
       <td>${fmt(item.date)}</td>
       <td>${fmt(item.time)}</td>
@@ -199,7 +199,7 @@ function renderInspector(data) {
         <h2>${fmt(s.raw_calendar_title || s.title)}</h2>
         <div class="meta"><span>${fmt(s.session_date)}</span><span>${fmt(startRange(s))}</span><span>${fmt(s.duration_minutes)} min</span><span>${calendarLabel(s)}</span><span>${appointmentBadge(s.appointment_status)}</span></div>
       </div>
-      <div><span class="badge">${fmt(s.review_status).replaceAll("_", " ")}</span><div class="confidence ${s.authority_score >= 60 ? "good" : "low"}">Review confidence: ${s.authority_score || 0}%</div><div class="help">${(s.authority_reasons || []).join(", ")}</div></div>
+      <div><span class="badge">${fmt(s.review_status).replaceAll("_", " ")}</span><div class="confidence ${s.authority_score >= 60 ? "good" : "low"}">Review confidence: ${s.authority_score || 0}%</div><div class="help">${(s.authority_reasons || []).map(escapeHtml).join(", ")}</div></div>
     </div>
     ${titleTimeWarning(s)}
 
@@ -212,7 +212,7 @@ function renderInspector(data) {
         <label>Calendar Disposition</label><span>${calendarDispositionLabel(s.calendar_disposition)}</span>
         <label>Original Start</label><span>${fmt(s.start_at)}</span>
         <label>Original End</label><span>${fmt(s.end_at)}</span>
-        <label>Parsed Title Time</label><span>${fmt(s.title_time_text)} ${s.title_time_normalized ? `(${s.title_time_normalized})` : ""}</span>
+        <label>Parsed Title Time</label><span>${fmt(s.title_time_text)} ${s.title_time_normalized ? `(${escapeHtml(s.title_time_normalized)})` : ""}</span>
         <label>Calendar Duration</label><span>${fmt(s.calendar_duration_minutes || s.duration_minutes)} minutes</span>
         <label>Notes</label><span>${fmt(s.notes)}</span>
         <label>Captured</label><span>${fmt(s.captured_at)}</span>
@@ -263,22 +263,22 @@ function renderInspector(data) {
           : `<div class="field-grid">
                <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
                <label class="field">Duration<select id="durationChoiceInput">${durationOptions(s.duration_choice || durationToChoice(s.approved_duration_minutes || s.duration_minutes))}</select></label>
-               <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || ""}"></label>
-               <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${s.custom_service_description || ""}"></label>
-               <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${s.custom_service_code || ""}"></label>
+               <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${escapeAttr(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || "")}"></label>
+               <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${escapeAttr(s.custom_service_description || "")}"></label>
+               <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
                <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend"], s.time_category)}</select></label>
-               <label class="field">Rate for this session<input id="approvedRateInput" value="${currentRate}"><span class="help" id="sessionRateHelp">${rateSourceDescription(s, data.participants)}</span><span class="help" id="sessionRatePreview"></span></label>
+               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}"><span class="help" id="sessionRateHelp">${rateSourceDescription(s, data.participants)}</span><span class="help" id="sessionRatePreview"></span></label>
                <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Status<select id="paymentInput">${optionSet(["unpaid","paid_at_session"], s.payment_status)}</select></label></div></details>
                ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
                <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label><label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label></div></details>
-               ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>` : ""}
+               ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${escapeAttr(s.rate_override_reason || "")}"></label>` : ""}
              </div>
              ${houseCallSuggestion(s)}
              ${rateChanged ? `<div class="rate-scope" id="rateScope">
                <strong>Apply this rate to:</strong>
                <label><input type="radio" name="rateScope" value="session_only" checked> This session only</label>
                <label><input type="radio" name="rateScope" value="future_person"> Future sessions for this client</label>
-               <select id="rateScopePerson">${state.participants.map(p => `<option value="${p.person_id || ""}">${p.display_name || p.participant_name || ""}</option>`).join("")}</select>
+               <select id="rateScopePerson">${state.participants.map(p => `<option value="${escapeAttr(p.person_id || "")}">${escapeHtml(p.display_name || p.participant_name || "")}</option>`).join("")}</select>
                <label><input type="radio" name="rateScope" value="future_joint" ${state.participants.length < 2 ? "disabled" : ""}> Future joint sessions for these clients</label>
              </div>` : ""}
              <div class="inline-actions">${showSessionSave ? '<button id="saveSessionBtn" class="save">Save Session Draft</button>' : ""}</div>`}
@@ -289,12 +289,12 @@ function renderInspector(data) {
         <summary class="section-summary">Shared billing and relationships</summary>
         <div id="relationshipEditor" class="drawer"></div>
       </details>
-      <div class="hint">Suggestion reasons: ${(s.authority_reasons || []).join(", ") || safeList(s.review_reasons).join(" ") || s.explanation || "Calendar title matched the parser pattern."}</div>
+      <div class="hint">Suggestion reasons: ${(s.authority_reasons || []).map(escapeHtml).join(", ") || safeList(s.review_reasons).map(escapeHtml).join(" ") || escapeHtml(s.explanation) || "Calendar title matched the parser pattern."}</div>
     </section>
 
     <section class="section">
       <h3>Review Checklist</h3>
-      <div class="checklist">${data.checklist.map(c => `<div class="check ${c.resolved ? "done" : ""}"><span></span><label>${c.label}</label></div>`).join("")}</div>
+      <div class="checklist">${data.checklist.map(c => `<div class="check ${c.resolved ? "done" : ""}"><span></span><label>${escapeHtml(c.label)}</label></div>`).join("")}</div>
     </section>
 
     <div class="actions">
@@ -385,7 +385,7 @@ function markSaved(section, message = "Saved") {
 function renderParticipantChips() {
   const chips = $("participantChips");
   if (!chips) return;
-  chips.innerHTML = state.participants.map((p, i) => `<span class="chip ${p.is_proposed ? "proposed" : "linked"}">${p.display_name || p.participant_name}${p.is_proposed ? '<small>proposed</small>' : ''}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
+  chips.innerHTML = state.participants.map((p, i) => `<span class="chip ${p.is_proposed ? "proposed" : "linked"}">${escapeHtml(p.display_name || p.participant_name)}${p.is_proposed ? '<small>proposed</small>' : ''}<button data-edit="${i}">Edit</button><button data-i="${i}">×</button></span>`).join("");
   document.querySelectorAll("#participantChips button[data-i]").forEach(btn => btn.onclick = () => { state.participants.splice(Number(btn.dataset.i), 1); renderParticipantChips(); renderRelationshipEditor(state.detail); markDirty("relationship"); });
   document.querySelectorAll("#participantChips button[data-edit]").forEach(btn => btn.onclick = () => showPersonEditor(Number(btn.dataset.edit)));
 }
@@ -404,7 +404,7 @@ function billToClientOptions(data) {
     ...clients.map(p => {
       const name = p.display_name || p.participant_name || "Unnamed client";
       const selected = p.person_id === selectedPersonId || (!selectedPersonId && clients.length === 1 && p.person_id) ? "selected" : "";
-      return `<option value="${p.person_id}" ${selected}>${fmt(name)}</option>`;
+      return `<option value="${escapeAttr(p.person_id)}" ${selected}>${fmt(name)}</option>`;
     })
   ].join("");
 }
@@ -595,10 +595,10 @@ function showPersonEditor(index) {
   $("personEditor").innerHTML = `
     <h4>Edit Client</h4>
     <div class="field-grid">
-      <label class="field">First name<input id="editPersonFirst" value="${p.first_name || split.first}"></label>
-      <label class="field">Last name<input id="editPersonLast" value="${p.last_name || split.last}"></label>
-      <label class="field">Email<input id="editPersonEmail" value="${p.billing_email || ""}"></label>
-      <label class="field">Phone<input id="editPersonPhone" value="${p.billing_phone || ""}"></label>
+      <label class="field">First name<input id="editPersonFirst" value="${escapeAttr(p.first_name || split.first)}"></label>
+      <label class="field">Last name<input id="editPersonLast" value="${escapeAttr(p.last_name || split.last)}"></label>
+      <label class="field">Email<input id="editPersonEmail" value="${escapeAttr(p.billing_email || "")}"></label>
+      <label class="field">Phone<input id="editPersonPhone" value="${escapeAttr(p.billing_phone || "")}"></label>
     </div>
     <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}</div>
   `;
@@ -655,9 +655,9 @@ function renderRelationshipEditor(data) {
   $("relationshipEditor").innerHTML = `
     <h4>Relationship Summary</h4>
     <div class="kv">
-      <label>Relationship</label><strong>${accountName}</strong>
-      <label>Members</label><span>${(members.length ? members : state.participants).map(m => m.display_name || m.participant_name || "").filter(Boolean).join(", ") || "None"}</span>
-      <label>Default payer</label><span>${billingName}</span>
+      <label>Relationship</label><strong>${escapeHtml(accountName)}</strong>
+      <label>Members</label><span>${(members.length ? members : state.participants).map(m => escapeHtml(m.display_name || m.participant_name || "")).filter(Boolean).join(", ") || "None"}</span>
+      <label>Default payer</label><span>${escapeHtml(billingName)}</span>
     </div>
     <div class="inline-actions"><button id="openAccountRecord">Open Billing Relationship Record</button></div>
   `;
@@ -878,7 +878,7 @@ function collectParticipants() {
 }
 
 function fillDatalist(id, rows, label) {
-  $(id).innerHTML = rows.map(row => `<option value="${row[label]}"></option>`).join("");
+  $(id).innerHTML = rows.map(row => `<option value="${escapeAttr(row[label])}"></option>`).join("");
 }
 
 async function findOrCreate(path, label, value, createPayload) {
@@ -924,7 +924,7 @@ function mapLegacyToType(s) {
 }
 function houseCallSuggestion(s) {
   if (!s.house_call_suggested) return "";
-  return `<div class="suggestion-note"><strong>Location suggests House Call:</strong> ${s.location_text || "Location field present"}. Please confirm the session type.</div>`;
+  return `<div class="suggestion-note"><strong>Location suggests House Call:</strong> ${escapeHtml(s.location_text || "Location field present")}. Please confirm the session type.</div>`;
 }
 function centString(cents) { return cents ? (Number(cents) / 100).toFixed(2) : ""; }
 function safeList(raw) { try { return Array.isArray(raw) ? raw : JSON.parse(raw || "[]"); } catch { return []; } }
@@ -1101,9 +1101,9 @@ function renderSessions(rows, total) {
     const canPromote = !row.session_id && row.review_status === "needs_classification" && row.candidate_id;
     let actionCell = `<td></td>`;
     if (canRestore)
-      actionCell = `<td><button class="restore-session-btn link-btn" data-cid="${row.candidate_id}">Return to Review</button></td>`;
+      actionCell = `<td><button class="restore-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button></td>`;
     else if (canPromote)
-      actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${row.candidate_id}">Send to Review</button></td>`;
+      actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button></td>`;
     return `
     <tr>
       <td>${fmt(row.date)}</td>
@@ -1423,12 +1423,12 @@ async function showSettings() {
 async function loadInvoices() {
   const rows = await api(`/api/invoices?status=${encodeURIComponent($("invoiceStatusFilter").value || "")}`);
   $("invoiceRows").innerHTML = rows.map(row => `
-    <tr data-invoice="${row.invoice_id}">
-      <td><span class="primary">${row.invoice_number || "Draft"}</span></td>
+    <tr data-invoice="${escapeAttr(row.invoice_id)}">
+      <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
       <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
       <td>${fmt(row.billing_period_start)} - ${fmt(row.billing_period_end)}</td>
       <td>${fmt(row.invoice_date)}</td><td>${row.line_count}</td><td>${money(centString(row.total_cents))}</td>
-      <td><span class="status-pill ${row.status}">${row.status}</span></td><td>${fmt(row.delivery_method)}</td>
+      <td><span class="status-pill ${escapeAttr(row.status)}">${fmt(row.status)}</span></td><td>${fmt(row.delivery_method)}</td>
     </tr>`).join("") || `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
   document.querySelectorAll("#invoiceRows tr[data-invoice]").forEach(row => row.onclick = () => openInvoice(row.dataset.invoice));
 }
@@ -1440,7 +1440,7 @@ async function startInvoiceBuilder() {
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <div><h3>Create Invoice Draft</h3><div class="help">Only approved, invoice-eligible sessions can be selected.</div></div>
     <div class="field-grid">
-      <label class="field wide">Bill to<select id="draftBillTo"><option value="">Select bill-to party</option>${parties.map(p => `<option value="${p.billing_party_id}">${fmt(p.billing_name)}</option>`).join("")}</select></label>
+      <label class="field wide">Bill to<select id="draftBillTo"><option value="">Select bill-to party</option>${parties.map(p => `<option value="${escapeAttr(p.billing_party_id)}">${fmt(p.billing_name)}</option>`).join("")}</select></label>
       <label class="field">Period start<input id="draftPeriodStart" type="date" value="${monthStart}"></label>
       <label class="field">Period end<input id="draftPeriodEnd" type="date" value="${today}"></label>
       <label class="field">Invoice date<input id="draftInvoiceDate" type="date" value="${today}"></label>
@@ -1468,7 +1468,7 @@ async function loadEligibleInvoiceSessions() {
   const rows = await api(`/api/invoices/eligible-sessions?bill_to_party_id=${encodeURIComponent(party)}&period_start=${$("draftPeriodStart").value}&period_end=${$("draftPeriodEnd").value}`);
   state.eligibleSessions = rows;
   $("eligibleSessions").innerHTML = rows.map(row => `<label class="eligible-row ${row.eligible ? "" : "ineligible"}">
-    <input type="checkbox" value="${row.id}" ${row.eligible ? "" : "disabled"}><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}<small class="secondary">${row.ineligibility_reasons.join("; ")}</small></span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong>
+    <input type="checkbox" value="${escapeAttr(row.id)}" ${row.eligible ? "" : "disabled"}><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}<small class="secondary">${escapeHtml(row.ineligibility_reasons.join("; "))}</small></span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong>
   </label>`).join("") || `<div class="empty-state">No sessions in this period.</div>`;
 }
 
@@ -1485,10 +1485,10 @@ async function renderInvoiceEditor(data) {
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
     <div class="field-grid">
-      <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${i.invoice_date}"></label>
+      <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${line.invoice_line_item_id}"><td>${line.service_date}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td><input class="line-description" value="${escapeHtml(line.description_snapshot)}"></td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
+    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td><input class="line-description" value="${escapeHtml(line.description_snapshot)}"></td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
@@ -1517,7 +1517,7 @@ async function showAddSessionsToDraft(data) {
   const eligible = rows.filter(row => row.eligible);
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <div><h3>Add Sessions to Draft</h3><div class="help">Sessions already attached to an invoice are excluded by the backend.</div></div>
-    <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${row.id}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
+    <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${escapeAttr(row.id)}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
     <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>
   </div>`;
   $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
@@ -1549,8 +1549,8 @@ function renderFinalizationPreview(preview) {
     <article class="invoice-preview">
       <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${fmt(i.delivery_method)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
       <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${line.service_date}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
-      <div class="invoice-total"><span>${profile.invoice_total_label || "TOTAL DUE"}</span><span>${money(centString(i.total_cents))}</span></div>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-total"><span>${escapeHtml(profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
     </article>
     <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize This Exact Invoice</button><button id="cancelFinalizeBtn">Return to Draft</button></div>
   </div>`;
@@ -1570,12 +1570,12 @@ function renderInvoicePreview(data) {
   const credentials = i.credentials_snapshot || profile.credentials_display || "";
   const currentAddress = [party.billing_address_line_1, party.billing_address_line_2, [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : "")].filter(Boolean).join("\n");
   const billto = [i.bill_to_name_snapshot || party.billing_name, i.bill_to_address_snapshot || currentAddress, i.bill_to_email_snapshot || party.billing_email].filter(Boolean).join("\n");
-  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${i.status}">${i.status}</span></div>
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     <article class="invoice-preview">
-      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${provider} ${credentials}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice number:</strong> ${i.invoice_number || "Draft"}</div><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
+      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice number:</strong> ${fmt(i.invoice_number || "Draft")}</div><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
       <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${data.lines.map(line => `<tr><td>${line.service_date}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
-      <div class="invoice-total"><span>${i.total_label_snapshot || profile.invoice_total_label || "TOTAL DUE"}</span><span>${money(centString(i.total_cents))}</span></div>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${data.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-total"><span>${escapeHtml(i.total_label_snapshot || profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
       <div class="invoice-payment"><b>Please make all checks payable to:</b> ${fmt(i.payee_name_snapshot || profile.payee_name)}\n<b>Please send payment to:</b> ${fmt(i.payment_address_snapshot || [profile.payee_name, profile.payment_address_line_1, [profile.payment_city, profile.payment_state].filter(Boolean).join(", ") + (profile.payment_postal_code ? ` ${profile.payment_postal_code}` : "")].filter(Boolean).join("\n"))}</div>
     </article>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}</div></div>`;
@@ -1652,14 +1652,14 @@ async function loadRateRules() {
 function renderRateRuleTable(targetId, rows) {
   $(targetId).innerHTML = rows.map(row => `
     <tr>
-      <td>$${row.amount}</td>
+      <td>$${escapeHtml(row.amount)}</td>
       <td>${fmt(row.duration_label)}</td>
       <td>${fmt(row.session_type_label)}</td>
       <td>${fmt(row.appointment_status_label)}</td>
       <td>${timeLabel(row.time_category)}</td>
       <td>${fmt(row.scope_label)}</td>
       <td>${fmt(row.effective_from)}${row.effective_through ? ` to ${fmt(row.effective_through)}` : ""}</td>
-      <td>${row.ended ? '<span class="readonly-note">Ended</span>' : `<button class="mini" data-replace-rate="${row.rate_rule_id}">Replace</button><button class="mini danger" data-end-rate="${row.rate_rule_id}">End</button>`}</td>
+      <td>${row.ended ? '<span class="readonly-note">Ended</span>' : `<button class="mini" data-replace-rate="${escapeAttr(row.rate_rule_id)}">Replace</button><button class="mini danger" data-end-rate="${escapeAttr(row.rate_rule_id)}">End</button>`}</td>
     </tr>
   `).join("") || `<tr><td colspan="8" class="readonly-note">No rate rules in this section.</td></tr>`;
   document.querySelectorAll(`#${targetId} [data-replace-rate]`).forEach(button => {
@@ -1750,7 +1750,7 @@ function renderResolvedRateScope() {
   } else {
     $("rateScopeResolved").textContent = "";
   }
-  $("rateParticipantSelections").innerHTML = state.rateCard.participantSelections.map(person => `<span class="chip linked">${person.display_name}<button data-remove-rate-participant="${person.person_id}">×</button></span>`).join("");
+  $("rateParticipantSelections").innerHTML = state.rateCard.participantSelections.map(person => `<span class="chip linked">${escapeHtml(person.display_name)}<button data-remove-rate-participant="${escapeAttr(person.person_id)}">×</button></span>`).join("");
   document.querySelectorAll("[data-remove-rate-participant]").forEach(button => {
     button.onclick = () => {
       state.rateCard.participantSelections = state.rateCard.participantSelections.filter(person => person.person_id !== button.dataset.removeRateParticipant);
@@ -1766,7 +1766,7 @@ function renderRateScopeResults() {
   $("rateScopeResults").innerHTML = rows.map(row => {
     const label = mode === "account" ? row.account_name : row.display_name;
     const code = row.account_code || row.person_code || "";
-    return `<button type="button" class="mini" data-rate-scope-pick="${mode}:${mode === "account" ? row.account_id : row.person_id}">${fmt(label)}${code ? ` (${code})` : ""}</button>`;
+    return `<button type="button" class="mini" data-rate-scope-pick="${escapeAttr(mode)}:${escapeAttr(mode === "account" ? row.account_id : row.person_id)}">${fmt(label)}${code ? ` (${escapeHtml(code)})` : ""}</button>`;
   }).join("");
   document.querySelectorAll("[data-rate-scope-pick]").forEach(button => {
     button.onclick = () => {
@@ -2195,7 +2195,7 @@ async function openOrganizationRecord(billingPartyId) {
           <td>${escapeHtml(inv.invoice_number || "—")}</td>
           <td>${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}</td>
           <td>${fmt(inv.invoice_date)}</td>
-          <td><span class="status-pill ${inv.status}">${escapeHtml(orgInvoiceStatusLabel(inv.status))}</span></td>
+          <td><span class="status-pill ${escapeAttr(inv.status)}">${escapeHtml(orgInvoiceStatusLabel(inv.status))}</span></td>
           <td>${money(centString(inv.total_cents))}</td>
           <td>${money(centString(inv.balance_cents))}</td>
           <td>${inv.invoice_id ? `<button class="mini" data-open-invoice="${escapeHtml(inv.invoice_id)}">Open</button>` : "—"}</td>
@@ -2867,7 +2867,7 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
 async function loadPeople() {
   const rows = await api(`/api/people?full=1&q=${encodeURIComponent($("peopleSearch").value || "")}`);
   $("peopleRows").innerHTML = rows.map(row => `
-    <tr data-person="${row.person_id}">
+    <tr data-person="${escapeAttr(row.person_id)}">
       <td>${fmt(row.person_code)}</td>
       <td>${fmt(row.last_name)}</td>
       <td>${fmt(row.first_name)}</td>
@@ -2962,7 +2962,7 @@ async function openPersonRecord(personId, options = {}) {
     : `<span class="readonly-note">No billing relationships yet.</span>`;
 
   const accountInfoHtml = (data.accounts || []).length
-    ? data.accounts.map(a => `<div class="compact-list-item"><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${a.account_id}">Open</button></div>`).join("")
+    ? data.accounts.map(a => `<div class="compact-list-item"><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${escapeAttr(a.account_id)}">Open</button></div>`).join("")
     : `<span class="readonly-note">No related billing group information.</span>`;
 
   const sessionsRowsHtml = visibleSessions.length
@@ -2975,20 +2975,20 @@ async function openPersonRecord(personId, options = {}) {
         <td>${money(centString(s.approved_rate_cents))}</td>
         <td>${fmt(s.payment_status)}</td>
         <td>${fmt(s.review_status)}</td>
-        <td><button class="mini" data-open-candidate="${s.candidate_id}">Open in Review</button></td>
+        <td><button class="mini" data-open-candidate="${escapeAttr(s.candidate_id)}">Open in Review</button></td>
       </tr>`).join("")
     : `<tr><td colspan="9" class="readonly-note">No sessions yet.</td></tr>`;
 
   const invoiceRowsHtml = invoices.length
-    ? invoices.map(inv => `<tr data-invoice-id="${inv.invoice_id}">
+    ? invoices.map(inv => `<tr data-invoice-id="${escapeAttr(inv.invoice_id)}">
         <td><span class="primary">${fmt(inv.invoice_number || "Draft")}</span></td>
         <td>${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}</td>
         <td>${fmt(inv.invoice_date)}</td>
         <td>${fmt(inv.bill_to_name)}</td>
-        <td><span class="status-pill ${inv.status}">${fmt(inv.status)}</span></td>
+        <td><span class="status-pill ${escapeAttr(inv.status)}">${fmt(inv.status)}</span></td>
         <td>${money(centString(inv.total_cents))}</td>
         <td>${money(centString(inv.balance_cents))}</td>
-        <td><button class="mini" data-open-invoice="${inv.invoice_id}">Open</button></td>
+        <td><button class="mini" data-open-invoice="${escapeAttr(inv.invoice_id)}">Open</button></td>
       </tr>`).join("")
     : `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
 
@@ -3011,14 +3011,14 @@ async function openPersonRecord(personId, options = {}) {
       <section class="client-section">
         <h3>Client Details</h3>
         <div class="field-grid">
-          <label class="field">First Name<input id="recordFirstName" value="${data.person.first_name || ""}"></label>
-          <label class="field">Last Name<input id="recordLastName" value="${data.person.last_name || ""}"></label>
-          <label class="field">Preferred Name<input id="recordPreferredName" value="${data.person.preferred_name || ""}"></label>
-          <label class="field">Display Name<input id="recordDisplayName" value="${data.person.display_name || ""}"></label>
-          <label class="field">Email<input id="recordPersonEmail" value="${data.person.billing_email || ""}"></label>
-          <label class="field">Phone<input id="recordPersonPhone" value="${data.person.billing_phone || ""}"></label>
-          <label class="field">Status<input value="${data.person.active_status || ""}" readonly></label>
-          <label class="field wide">Administrative Notes<input id="recordPersonNotes" value="${data.person.administrative_notes || ""}"></label>
+          <label class="field">First Name<input id="recordFirstName" value="${escapeAttr(data.person.first_name || "")}"></label>
+          <label class="field">Last Name<input id="recordLastName" value="${escapeAttr(data.person.last_name || "")}"></label>
+          <label class="field">Preferred Name<input id="recordPreferredName" value="${escapeAttr(data.person.preferred_name || "")}"></label>
+          <label class="field">Display Name<input id="recordDisplayName" value="${escapeAttr(data.person.display_name || "")}"></label>
+          <label class="field">Email<input id="recordPersonEmail" value="${escapeAttr(data.person.billing_email || "")}"></label>
+          <label class="field">Phone<input id="recordPersonPhone" value="${escapeAttr(data.person.billing_phone || "")}"></label>
+          <label class="field">Status<input value="${escapeAttr(data.person.active_status || "")}" readonly></label>
+          <label class="field wide">Administrative Notes<input id="recordPersonNotes" value="${escapeAttr(data.person.administrative_notes || "")}"></label>
         </div>
         <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
       </section>
@@ -3082,9 +3082,9 @@ async function openPersonRecord(personId, options = {}) {
         <div class="client-section">
           <h4>Known Calendar Names</h4>
           <div class="combobox"><input id="personAliasInput" placeholder="Add approved calendar name"><button class="mini" id="savePersonAlias">+</button></div>
-          <div class="compact-list">${data.aliases.map(a => `<div class="compact-list-item"><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${a.alias_id}" data-raw-alias="${escapeHtml(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
+          <div class="compact-list">${data.aliases.map(a => `<div class="compact-list-item"><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${escapeAttr(a.alias_id)}" data-raw-alias="${escapeAttr(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
           <h4>Audit History</h4>
-          <div class="compact-list">${(data.audit || []).map(entry => `<div class="compact-list-item"><span>${fmt(entry.created_at)} • ${fmt(entry.action)}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
+          <div class="compact-list">${(data.audit || []).map(entry => `<div class="compact-list-item"><span>${fmt(entry.created_at)} • ${escapeHtml(entry.action || "")}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
         </div>
       </details>
     </div>
@@ -3231,14 +3231,14 @@ function showBillingSetupForm(existing, defaultName) {
     <div class="billing-setup-form">
       <h4>${isEdit ? "Edit Billing Setup" : "Add Billing Setup"}</h4>
       <div class="field-grid">
-        <label class="field wide">Billing Name <input id="bsfBillingName" value="${b.billing_name || defaultName || ""}"></label>
-        <label class="field">Billing Email <input id="bsfBillingEmail" value="${b.billing_email || ""}"></label>
-        <label class="field">Billing Phone <input id="bsfBillingPhone" value="${b.billing_phone || ""}"></label>
-        <label class="field">Address Line 1 <input id="bsfAddress1" value="${b.billing_address_line_1 || ""}"></label>
-        <label class="field">Address Line 2 <input id="bsfAddress2" value="${b.billing_address_line_2 || ""}"></label>
-        <label class="field">City <input id="bsfCity" value="${b.billing_city || ""}"></label>
-        <label class="field">State <input id="bsfState" value="${b.billing_state || ""}"></label>
-        <label class="field">Postal Code <input id="bsfPostalCode" value="${b.billing_postal_code || ""}"></label>
+        <label class="field wide">Billing Name <input id="bsfBillingName" value="${escapeAttr(b.billing_name || defaultName || "")}"></label>
+        <label class="field">Billing Email <input id="bsfBillingEmail" value="${escapeAttr(b.billing_email || "")}"></label>
+        <label class="field">Billing Phone <input id="bsfBillingPhone" value="${escapeAttr(b.billing_phone || "")}"></label>
+        <label class="field">Address Line 1 <input id="bsfAddress1" value="${escapeAttr(b.billing_address_line_1 || "")}"></label>
+        <label class="field">Address Line 2 <input id="bsfAddress2" value="${escapeAttr(b.billing_address_line_2 || "")}"></label>
+        <label class="field">City <input id="bsfCity" value="${escapeAttr(b.billing_city || "")}"></label>
+        <label class="field">State <input id="bsfState" value="${escapeAttr(b.billing_state || "")}"></label>
+        <label class="field">Postal Code <input id="bsfPostalCode" value="${escapeAttr(b.billing_postal_code || "")}"></label>
         <label class="field">Preferred Delivery
           <select id="bsfDeliveryMethod">
             <option value="unresolved"${(b.preferred_delivery_method || "unresolved") === "unresolved" ? " selected" : ""}>Unresolved</option>
@@ -3247,7 +3247,7 @@ function showBillingSetupForm(existing, defaultName) {
             <option value="both"${b.preferred_delivery_method === "both" ? " selected" : ""}>Email and mail</option>
           </select>
         </label>
-        <label class="field wide">Administrative Notes <input id="bsfAdminNotes" value="${b.administrative_notes || ""}"></label>
+        <label class="field wide">Administrative Notes <input id="bsfAdminNotes" value="${escapeAttr(b.administrative_notes || "")}"></label>
       </div>
       <div class="record-actions">
         <button id="bsfSaveBtn" class="save">${isEdit ? "Save Changes" : "Add Billing Setup"}</button>
@@ -3377,14 +3377,14 @@ window.addEventListener("beforeunload", event => {
 });
 
 function ruleExplanation(row) {
-  const scope = row.participant_names ? row.participant_names : row.account_name ? `billing relationship ${row.account_name}` : row.display_name ? `client ${row.display_name}` : "everyone";
+  const scope = row.participant_names ? escapeHtml(row.participant_names) : row.account_name ? `billing relationship ${escapeHtml(row.account_name)}` : row.display_name ? `client ${escapeHtml(row.display_name)}` : "everyone";
   return `Applies to ${scope}; ${row.duration_minutes || "any"} minutes; ${billingTypeShort(row.billing_session_type || "any")}; ${timeLabel(row.time_category)}.`;
 }
 
 function rateSourceDescription(session, participants = []) {
   const names = participants.map(p => p.display_name || p.participant_name).filter(Boolean);
-  const first = names[0] || "Participant";
-  const joined = names.join(" + ");
+  const first = escapeHtml(names[0] || "Participant");
+  const joined = names.map(escapeHtml).join(" + ");
   const source = session.approved_rate_source || session.rate_source;
   if (source === "person_exception") return `${first} exception`;
   if (source === "participant_combination_exception") return `${joined} joint-session exception`;
@@ -3424,7 +3424,11 @@ function titleTimeWarning(session) {
 }
 
 function escapeHtml(value) {
-  return String(value || "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[ch]));
+  if (value === null || value === undefined || value === false) return "";
+  return String(value).replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[ch]));
+}
+function escapeAttr(value) {
+  return escapeHtml(value);
 }
 
 /* ─── Round 1: In-page modals for billing relationship creation and add-client ─── */

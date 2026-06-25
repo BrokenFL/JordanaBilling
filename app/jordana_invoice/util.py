@@ -56,3 +56,29 @@ _LEGACY_PAYMENT_MAP = {
 def normalize_payment_status(value: Any) -> str:
     raw = text(value)
     return _LEGACY_PAYMENT_MAP.get(raw, "unpaid")
+
+
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@")
+
+
+def csv_safe(value: Any) -> str:
+    """Neutralise CSV formula injection.
+
+    If *value* (after stripping leading whitespace) begins with ``=``,
+    ``+``, ``-``, or ``@``, prefix it with a single apostrophe so that
+    spreadsheet applications treat it as text rather than a formula.
+
+    Numeric and date values are returned unchanged.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    if not s or s[0].isspace():
+        stripped = s.lstrip()
+        if not stripped:
+            return s
+        if stripped[0] in _CSV_INJECTION_PREFIXES:
+            return "'" + s
+    elif s[0] in _CSV_INJECTION_PREFIXES:
+        return "'" + s
+    return s

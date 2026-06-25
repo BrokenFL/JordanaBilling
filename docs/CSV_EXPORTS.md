@@ -113,6 +113,14 @@ Columns:
 - `Classification`
 - `Calendar`
 
+## CSV Injection Neutralisation
+
+All derived CSV exports apply the `csv_safe()` helper from `util.py` to every cell value before writing. This prevents CSV formula injection in spreadsheet applications.
+
+Values whose first non-whitespace character is `=`, `+`, `-`, or `@` are prefixed with a single apostrophe (`'`) so the spreadsheet treats them as text rather than a formula. Numeric, date, and normal text values pass through unchanged.
+
+This applies to both disk exports (via `write_rows()`) and on-demand API downloads (via `stream_csv()`).
+
 ## Disk exports
 
 Exports are written atomically: temporary file first, validation second, replacement last. Approved historical amounts come from `sessions.approved_rate_cents` or `sessions.rate_cents_snapshot`, not from recomputing current rate rules.

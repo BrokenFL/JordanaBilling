@@ -14,7 +14,7 @@ from .appointment_ledger import (
 )
 from .rates import cents_to_dollars
 from .session_types import get_user_facing_session_label
-from .util import normalize_payment_status, text
+from .util import csv_safe, normalize_payment_status, text
 
 
 SESSION_COLUMNS = [
@@ -284,7 +284,7 @@ def atomic_write_csv(
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for row in rows:
-            writer.writerow({column: row.get(column, "") for column in columns})
+            writer.writerow({column: csv_safe(row.get(column, "")) for column in columns})
 
     validate_csv(tmp_path, columns)
     os.replace(tmp_path, path)
@@ -411,7 +411,7 @@ def generate_report_csv(
     writer = csv.DictWriter(buf, fieldnames=columns)
     writer.writeheader()
     for row in rows:
-        writer.writerow({col: row.get(col, "") for col in columns})
+        writer.writerow({col: csv_safe(row.get(col, "")) for col in columns})
     return buf.getvalue()
 
 
