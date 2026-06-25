@@ -390,7 +390,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   rate_needs_review INTEGER NOT NULL DEFAULT 1,
   rate_override_reason TEXT,
   billable_status TEXT NOT NULL DEFAULT 'proposed',
-  payment_status TEXT NOT NULL DEFAULT 'unresolved',
+  payment_status TEXT NOT NULL DEFAULT 'unpaid',
   appointment_status TEXT NOT NULL DEFAULT 'unresolved',
   billing_treatment TEXT NOT NULL DEFAULT 'billable',
   title_time_text TEXT,
@@ -505,6 +505,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   void_reason TEXT,
   pdf_path TEXT,
   pdf_sha256 TEXT,
+  revision INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   finalized_at TEXT,
@@ -701,7 +702,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "approved_rate_source": "TEXT",
             "rate_needs_review": "INTEGER NOT NULL DEFAULT 1",
             "rate_override_reason": "TEXT",
-            "payment_status": "TEXT NOT NULL DEFAULT 'unresolved'",
+            "payment_status": "TEXT NOT NULL DEFAULT 'unpaid'",
             "appointment_status": "TEXT NOT NULL DEFAULT 'unresolved'",
             "billing_treatment": "TEXT NOT NULL DEFAULT 'billable'",
             "title_time_text": "TEXT",
@@ -729,6 +730,13 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
         {
             "catalog_type": "TEXT NOT NULL DEFAULT 'appointment_method'",
             "legacy_appointment_method": "INTEGER NOT NULL DEFAULT 0",
+        },
+    )
+    add_columns(
+        conn,
+        "invoices",
+        {
+            "revision": "INTEGER NOT NULL DEFAULT 0",
         },
     )
     add_columns(

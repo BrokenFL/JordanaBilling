@@ -258,7 +258,7 @@ function renderInspector(data) {
       ${sessionLocked
         ? `<div class="readonly-note">${!readiness.clients_ready ? "Confirm Client(s) first." : "Confirm Bill To first."}</div>`
         : readiness.session_ready && !sessionEditing
-          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)} • ${fmt(s.payment_status)}</div></div>
+          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes)} min • ${timeLabel(s.time_category)} • ${money(currentRate)}</div></div>
              <div class="inline-actions"><button id="changeSessionBtn">Change</button></div>`
           : `<div class="field-grid">
                <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
@@ -268,7 +268,7 @@ function renderInspector(data) {
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${s.custom_service_code || ""}"></label>
                <label class="field">Time Category<select id="timeCategoryInput">${optionSet(["standard","evening","weekend"], s.time_category)}</select></label>
                <label class="field">Rate for this session<input id="approvedRateInput" value="${currentRate}"><span class="help" id="sessionRateHelp">${rateSourceDescription(s, data.participants)}</span><span class="help" id="sessionRatePreview"></span></label>
-               <label class="field">Payment Status<select id="paymentInput">${optionSet(["unresolved","unpaid","partially_paid","paid","waived","not_billable"], s.payment_status)}</select></label>
+               <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Status<select id="paymentInput">${optionSet(["unpaid","paid_at_session"], s.payment_status)}</select></label></div></details>
                ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
                <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label><label class="field">Billable Status<select id="billableInput">${optionSet(["proposed","approved","excluded","nonbillable"], s.billable_status || "proposed")}</select></label></div></details>
                ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${s.rate_override_reason || ""}"></label>` : ""}
@@ -1490,7 +1490,7 @@ async function renderInvoiceEditor(data) {
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${line.invoice_line_item_id}"><td>${line.service_date}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td><input class="line-description" value="${escapeHtml(line.description_snapshot)}"></td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="previewDraft">Preview</button><button id="finalizeInvoice" class="approve">Finalize Invoice</button></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
   document.querySelectorAll(".remove-line").forEach(button => button.onclick = async () => {
     const lineId = button.closest("tr").dataset.line;
@@ -1503,11 +1503,11 @@ async function renderInvoiceEditor(data) {
     await renderInvoiceEditor(updated); await loadInvoices();
   };
   $("addDraftSessions").onclick = () => showAddSessionsToDraft(data);
-  $("previewDraft").onclick = () => renderInvoicePreview({...data, invoice:{...i, invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value}});
-  $("finalizeInvoice").onclick = async () => {
-    if (!confirm("Finalize this invoice? Its number and snapshots cannot be edited afterward.")) return;
-    const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true})});
-    await loadInvoices(); renderInvoicePreview(final);
+  $("reviewFinalizeBtn").onclick = async () => {
+    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.querySelector(".line-description").value, sort_order:index}));
+    const draftData = {invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines};
+    const preview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
+    renderFinalizationPreview(preview);
   };
 }
 
@@ -1526,6 +1526,32 @@ async function showAddSessionsToDraft(data) {
     if (!sessionIds.length) return;
     const updated = await api(`/api/invoices/${i.invoice_id}/add-sessions`, {method:"POST", body:JSON.stringify({session_ids:sessionIds})});
     await loadInvoices(); renderInvoiceEditor(updated);
+  };
+}
+
+function renderFinalizationPreview(preview) {
+  const i = preview.invoice;
+  const profile = preview.business_profile || {};
+  const party = preview.billing_party || {};
+  const business = profile.business_name || "Business profile not configured";
+  const provider = profile.provider_display_name || "";
+  const credentials = profile.credentials_display || "";
+  const billto = [party.billing_name, [party.billing_address_line_1, party.billing_address_line_2].filter(Boolean).join(" "), [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : "")].filter(Boolean).join("\n");
+  const revision = preview.preview_revision;
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Finalization Preview</h3><span class="status-pill">Draft</span></div>
+    <div class="help">Review the invoice below carefully. Click <strong>Confirm Finalization</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
+    <article class="invoice-preview">
+      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${fmt(i.delivery_method)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
+      <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${line.service_date}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-total"><span>${profile.invoice_total_label || "TOTAL DUE"}</span><span>${money(centString(i.total_cents))}</span></div>
+    </article>
+    <div class="actions"><button id="confirmFinalizeBtn" class="approve">Confirm Finalization</button><button id="cancelFinalizeBtn">Return to Draft</button></div>
+  </div>`;
+  $("cancelFinalizeBtn").onclick = () => renderInvoiceEditor(preview);
+  $("confirmFinalizeBtn").onclick = async () => {
+    const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision})});
+    await loadInvoices(); renderInvoicePreview(final);
   };
 }
 
@@ -2220,9 +2246,9 @@ async function openOrganizationRecord(billingPartyId) {
         <div class="summary-card"><div class="summary-card-label">Approved Uninvoiced</div><div class="summary-card-value">${summary.approved_uninvoiced_sessions || 0}</div></div>
         <div class="summary-card"><div class="summary-card-label">Invoices</div><div class="summary-card-value">${summary.invoice_count || 0}</div></div>
         <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value">${money(centString(summary.total_invoiced_cents))}</div></div>
-        <div class="summary-card"><div class="summary-card-label">Outstanding Balance*</div><div class="summary-card-value">${money(centString(summary.outstanding_balance_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Finalized Invoice Total</div><div class="summary-card-value">${money(centString(summary.finalized_invoice_total_cents))}</div></div>
       </div>
-      <div class="org-payment-note">*Payment tracking is not yet implemented. This currently reflects non-void invoice totals.</div>
+      <div class="org-payment-note">Finalized invoice totals reflect non-void finalized invoices only. Payment tracking is not yet implemented.</div>
     </div>
 
     <div class="org-section">
@@ -2973,7 +2999,7 @@ async function openPersonRecord(personId, options = {}) {
         <div class="summary-card"><div class="summary-card-label">Active Billing Records</div><div class="summary-card-value">${fmt(summary.active_billing_parties)}</div></div>
         <div class="summary-card"><div class="summary-card-label">Approved Uninvoiced Sessions</div><div class="summary-card-value">${fmt(summary.approved_uninvoiced_sessions)}</div></div>
         <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value">${money(centString(summary.total_invoiced_cents))}</div></div>
-        <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value">${money(centString(summary.outstanding_balance_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Finalized Invoice Total</div><div class="summary-card-value">${money(centString(summary.finalized_invoice_total_cents))}</div></div>
       </div>
 
       <section class="client-section">

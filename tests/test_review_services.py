@@ -907,7 +907,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
         self.assertEqual(summary["active_billing_parties"], 0)
         self.assertEqual(summary["invoice_count"], 0)
         self.assertEqual(summary["total_invoiced_cents"], 0)
-        self.assertEqual(summary["outstanding_balance_cents"], 0)
+        self.assertEqual(summary["finalized_invoice_total_cents"], 0)
         self.assertEqual(summary["approved_uninvoiced_sessions"], 0)
 
     def test_approved_uninvoiced_sessions_counted_in_summary(self):

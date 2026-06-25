@@ -32,21 +32,20 @@
         session.custom_service_description || ""
       ),
       `${fmt(duration)} min`,
-      money(rate),
-      fmt(session.payment_status)
+      money(rate)
     ].join(" • ");
   }
 
   function polish() {
     const payment = $id("paymentInput");
-    [
-      ["unresolved", "Needs confirmation"],
-      ["unpaid", "Unpaid"],
-      ["partially_paid", "Partially paid"],
-      ["paid", "Paid"],
-      ["waived", "Waived"],
-      ["not_billable", "Not billable"]
-    ].forEach(item => label(payment, ...item));
+    if (payment) {
+      payment.innerHTML = [
+        '<option value="unpaid">Unpaid</option>',
+        '<option value="paid_at_session">Paid at time of session</option>',
+      ].join("");
+      const current = session?.payment_status || "unpaid";
+      payment.value = ["unpaid", "paid_at_session"].includes(current) ? current : "unpaid";
+    }
 
     const billable = $id("billableInput");
     if (billable) billable.closest("label.field")?.remove();
@@ -133,7 +132,7 @@
     const participantIds = ids();
     const futurePerson = $id("saveFuturePersonRate")?.checked === true;
     const futureJoint = $id("saveFutureJointRate")?.checked === true;
-    const paymentStatus = $id("paymentInput")?.value || session.payment_status || "unresolved";
+    const paymentStatus = $id("paymentInput")?.value || session.payment_status || "unpaid";
 
     let rateScope = "session_only";
     let rateScopePersonId = null;
@@ -163,7 +162,7 @@
       approved_rate: rate,
       payment_status: paymentStatus,
       billing_treatment: $id("billingTreatmentInput")?.value || session.billing_treatment || "",
-      billable_status: ["waived", "not_billable"].includes(paymentStatus) ? "nonbillable" : "approved",
+      billable_status: paymentStatus === "paid_at_session" ? "nonbillable" : "approved",
       rate_override_reason: $id("overrideReasonInput")?.value || session.rate_override_reason || "",
       rate_scope: rateScope,
       rate_scope_person_id: rateScopePersonId

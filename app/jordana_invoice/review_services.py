@@ -38,7 +38,7 @@ from .session_types import (
 from .importer import apply_calendar_signal, initial_billing_treatment, maybe_insert_session
 from .parser import parse_event
 from .review import review_status_for_parse
-from .util import json_dumps, new_id, now_iso, parse_int, text
+from .util import json_dumps, new_id, now_iso, normalize_payment_status, parse_int, text
 
 
 class BillingPartyNotFoundError(ValueError):
@@ -56,7 +56,6 @@ REQUIRED_APPROVAL_FIELDS = {
     "service_mode",
     "time_category",
     "approved_rate_cents",
-    "payment_status",
 }
 
 EASTERN_TZ = ZoneInfo("America/New_York")
@@ -111,7 +110,6 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
                 "needs_duration",
                 "needs_service_mode",
                 "needs_rate",
-                "needs_payment_status",
                 "needs_review",
             )
         ),
@@ -144,7 +142,6 @@ def review_readiness(
     time_category_known = bool(values.get("time_category"))
     cancellation_needed = values.get("appointment_status") in {"cancelled", "no_show"}
     cancellation_ready = not cancellation_needed or values.get("billing_treatment") not in {"", None, "unresolved"}
-    payment_ready = values.get("payment_status") not in {"", None, "unresolved"}
     rate_ready = bool(values.get("approved_rate_cents")) or (
         values.get("suggested_rate_cents") is not None
         and values.get("rate_rule_id")
@@ -155,7 +152,6 @@ def review_readiness(
             duration_known,
             session_type_known,
             time_category_known,
-            payment_ready,
             cancellation_ready,
             rate_ready,
         ]
@@ -177,8 +173,6 @@ def review_readiness(
     if values.get("suggested_rate_cents") is not None and values.get("rate_rule_id") and not values.get("rate_needs_review"):
         authority_score += 15
         authority_reasons.append(f"Exact {time_label_for_reason(values.get('time_category'))} rate")
-    if payment_ready:
-        authority_score += 10
     if values.get("title_time_matches_calendar") == 0:
         authority_score = min(authority_score, 75)
     if values.get("review_status") == "approved":
@@ -470,7 +464,7 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "billing_session_type": row["billing_session_type"] if "billing_session_type" in row.keys() else None,
         "custom_service_description": row["custom_service_description"] if "custom_service_description" in row.keys() else None,
         "time_category": row["time_category"] or "standard",
-        "payment_status": row["payment_status"] or "unresolved",
+        "payment_status": normalize_payment_status(row["payment_status"]),
         "appointment_status": row["appointment_status"] or "unresolved",
         "billing_treatment": row["billing_treatment"] or "unresolved",
         "calendar_name": row["calendar_name"] or "",
@@ -544,7 +538,7 @@ def candidate_only_summary(row: sqlite3.Row) -> dict[str, Any]:
         "duration_minutes": row["proposed_duration_minutes"] or row["calendar_duration_minutes"] or "",
         "service_mode": row["service_mode"] or "unknown",
         "time_category": row["time_category"] or "standard",
-        "payment_status": "not_billable",
+        "payment_status": "unpaid",
         "appointment_status": row["appointment_status"] or "unresolved",
         "billing_treatment": row["billing_treatment"] or "not_billable",
         "calendar_name": row["calendar_name"] or "",
@@ -585,7 +579,7 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
         "calendar_duration_minutes": row["calendar_duration_minutes"],
         "service_mode": row["service_mode"] or "unknown",
         "time_category": row["time_category"] or "standard",
-        "payment_status": "not_billable",
+        "payment_status": "unpaid",
         "appointment_status": row["appointment_status"] or "unresolved",
         "billing_treatment": row["billing_treatment"] or "not_billable",
         "title_time_text": row["title_time_text"] or "",
@@ -640,7 +634,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
     duration_choice, custom_duration_minutes = validate_duration_choice(raw_duration_choice, raw_custom_minutes)
     custom_service_description = payload.get("custom_service_description") or None
     custom_service_code = payload.get("custom_service_code") or None
-    payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
+    payment_status = normalize_payment_status(payload.get("payment_status") or session["payment_status"])
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
     billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
     rate_override_reason = payload.get("rate_override_reason") or None
@@ -955,7 +949,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     custom_service_description = text(payload.get("custom_service_description") or session["custom_service_description"] or "").strip() or None
     custom_service_code = text(payload.get("custom_service_code") or session["custom_service_code"] or "").strip() or None
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
-    payment_status = payload.get("payment_status") or session["payment_status"] or "unresolved"
+    payment_status = normalize_payment_status(payload.get("payment_status") or session["payment_status"])
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
     billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
     rate_scope = payload.get("rate_scope") or "session_only"
@@ -1045,7 +1039,7 @@ def mark_candidate(
             SET review_status = ?, billable_status = ?, payment_status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (review_status, "excluded", "not_billable", now, session["id"]),
+            (review_status, "excluded", "unpaid", now, session["id"]),
         )
     add_review_item(conn, candidate_id, session_id, review_status, [], [reason or f"Marked {classification}."])
     if classification in {"personal", "administrative", "nonbillable"}:
@@ -1088,7 +1082,7 @@ def restore_candidate(
         UPDATE sessions
         SET review_status = 'needs_classification',
             billable_status = 'proposed',
-            payment_status = 'unresolved',
+            payment_status = 'unpaid',
             billing_treatment = 'unresolved',
             updated_at = ?
         WHERE id = ?
@@ -1441,7 +1435,7 @@ def _billing_summary(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]
     ).fetchall()
     invoice_count = len(invoice_rows)
     total_invoiced = sum(r["total_cents"] for r in invoice_rows if r["status"] != "void")
-    outstanding_balance = sum(r["total_cents"] for r in invoice_rows if r["status"] != "void")
+    finalized_invoice_total = sum(r["total_cents"] for r in invoice_rows if r["status"] == "finalized")
     approved_uninvoiced_count = conn.execute(
         """
         SELECT COUNT(DISTINCT s.id)
@@ -1462,7 +1456,7 @@ def _billing_summary(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]
         "active_billing_parties": active_bp_count,
         "invoice_count": invoice_count,
         "total_invoiced_cents": total_invoiced,
-        "outstanding_balance_cents": outstanding_balance,
+        "finalized_invoice_total_cents": finalized_invoice_total,
         "approved_uninvoiced_sessions": approved_uninvoiced_count,
     }
 
@@ -1811,9 +1805,10 @@ def list_account_records(conn: sqlite3.Connection, query: str = "") -> list[dict
             WHERE s2.account_id = ca.account_id
           ) AS last_session,
           (
-            SELECT SUM(CASE WHEN s3.payment_status != 'paid' THEN COALESCE(s3.approved_rate_cents, 0) ELSE 0 END)
-            FROM sessions s3
-            WHERE s3.account_id = ca.account_id
+            SELECT COALESCE(SUM(i.total_cents), 0)
+            FROM invoices i
+            WHERE i.bill_to_party_id = ca.default_billing_party_id
+              AND i.status = 'finalized'
           ) AS outstanding_cents
         FROM client_accounts ca
         LEFT JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
@@ -1852,7 +1847,7 @@ def list_account_records(conn: sqlite3.Connection, query: str = "") -> list[dict
         ).fetchone()
         item["primary_person"] = primary["display_name"] if primary else ""
         item["current_default_rate"] = cents_to_dollars(rate["amount_cents"]) if rate else ""
-        item["outstanding_balance"] = cents_to_dollars(item.pop("outstanding_cents") or 0)
+        item["finalized_invoice_total"] = cents_to_dollars(item.pop("outstanding_cents") or 0)
         output.append(item)
     return output
 
@@ -3331,13 +3326,13 @@ def get_organization_billing_record(conn: sqlite3.Connection, billing_party_id: 
     ).fetchone()[0]
     invoice_count = len(invoices)
     total_invoiced_cents = sum(r["total_cents"] for r in invoices if r["status"] != "void")
-    outstanding_balance_cents = sum(r["total_cents"] for r in invoices if r["status"] != "void")
+    finalized_invoice_total_cents = sum(r["total_cents"] for r in invoices if r["status"] == "finalized")
     billing_summary = {
         "total_sessions": total_sessions,
         "approved_uninvoiced_sessions": approved_uninvoiced_count,
         "invoice_count": invoice_count,
         "total_invoiced_cents": total_invoiced_cents,
-        "outstanding_balance_cents": outstanding_balance_cents,
+        "finalized_invoice_total_cents": finalized_invoice_total_cents,
         "active": bool(bp["active"]),
     }
 
@@ -3444,8 +3439,6 @@ def unresolved_from_values(**values: Any) -> list[str]:
         unresolved.append("approved_rate_cents")
     if values.get("appointment_status") in {"cancelled", "no_show"} and values.get("billing_treatment") in {"", None, "unresolved"}:
         unresolved.append("billing_treatment")
-    if not values["payment_status"] or values["payment_status"] == "unresolved":
-        unresolved.append("payment_status")
     return unresolved
 
 
@@ -3462,8 +3455,6 @@ def status_from_unresolved(unresolved: list[str]) -> str:
         return "needs_rate"
     if "billing_treatment" in unresolved:
         return "needs_billing_treatment"
-    if "payment_status" in unresolved:
-        return "needs_payment_status"
     return "needs_review"
 
 

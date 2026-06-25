@@ -200,11 +200,11 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("Active Billing Records", person_record)
         self.assertIn("Approved Uninvoiced Sessions", person_record)
         self.assertIn("Total Invoiced", person_record)
-        self.assertIn("Outstanding Balance", person_record)
+        self.assertIn("Finalized Invoice Total", person_record)
         self.assertIn("summary.active_billing_parties", person_record)
         self.assertIn("summary.approved_uninvoiced_sessions", person_record)
         self.assertIn("summary.total_invoiced_cents", person_record)
-        self.assertIn("summary.outstanding_balance_cents", person_record)
+        self.assertIn("summary.finalized_invoice_total_cents", person_record)
 
     def test_billing_setup_renders_card_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -311,7 +311,7 @@ class ReviewUiStaticTests(unittest.TestCase):
         end = js.index('["clientSearch","peopleSearch"]')
         person_record = js[start:end]
 
-        self.assertNotIn("Finalize", person_record)
+        self.assertNotIn(">Finalize<", person_record)
         self.assertNotIn("Record Payment", person_record)
         self.assertNotIn("Mark Paid", person_record)
 
@@ -1093,7 +1093,7 @@ class OrganizationPanelUiTests(unittest.TestCase):
 
     def test_all_five_summary_values_render(self):
         org_js = self._org_js()
-        for label in ["Sessions", "Approved Uninvoiced", "Invoices", "Total Invoiced", "Outstanding Balance"]:
+        for label in ["Sessions", "Approved Uninvoiced", "Invoices", "Total Invoiced", "Finalized Invoice Total"]:
             self.assertIn(label, org_js)
 
     def test_payment_tracking_limitation_note_renders(self):

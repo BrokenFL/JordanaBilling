@@ -12,7 +12,6 @@ Calendar data is evidence. Review decisions are stored in SQLite and are intende
 - `needs_duration`
 - `needs_service_mode`
 - `needs_rate`
-- `needs_payment_status`
 - `ready_for_approval`
 - `approved`
 - `excluded`
@@ -65,8 +64,12 @@ Routine review uses Jordana's normal mental model:
 3. Session Type (exactly 5 choices)
 4. Duration (exactly 5 choices)
 5. Suggested/editable rate
-6. Payment status
-7. Approve
+6. Approve
+
+Payment status is no longer part of the main confirmation form. It defaults to **Unpaid** and can be changed in the **Additional Information** section. The only two options are:
+
+- **Unpaid** (default) — session remains eligible for invoicing
+- **Paid at time of session** — session is excluded from invoicing
 
 ### Session Type Choices
 

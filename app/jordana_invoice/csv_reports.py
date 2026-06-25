@@ -14,7 +14,7 @@ from .appointment_ledger import (
 )
 from .rates import cents_to_dollars
 from .session_types import get_user_facing_session_label
-from .util import text
+from .util import normalize_payment_status, text
 
 
 SESSION_COLUMNS = [
@@ -51,8 +51,8 @@ SUMMARY_COLUMNS = [
     "participant_names",
     "session_count",
     "billed_amount",
-    "paid_amount",
-    "outstanding_amount",
+    "paid_at_session_amount",
+    "unpaid_amount",
     "last_session_date",
 ]
 
@@ -163,7 +163,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
                 "suggested_rate": cents_to_dollars(row["suggested_rate_cents"]),
                 "approved_rate": cents_to_dollars(row["approved_rate_cents"]),
                 "rate_source": row["approved_rate_source"] or row["rate_source"] or "",
-                "payment_status": row["payment_status"] or "unresolved",
+                "payment_status": normalize_payment_status(row["payment_status"]),
                 "appointment_status": row["appointment_status"] or "unresolved",
                 "review_status": row["review_status"] or "needs_review",
                 "review_reasons": jsonish_to_list_text(row["review_reasons"]),
@@ -186,8 +186,8 @@ def build_summary_rows(
                 "participant_names": row["participant_names"],
                 "session_count": 0,
                 "billed_amount": "0.00",
-                "paid_amount": "0.00",
-                "outstanding_amount": "0.00",
+                "paid_at_session_amount": "0.00",
+                "unpaid_amount": "0.00",
                 "last_session_date": "",
             }
         grouped[code]["session_count"] = int(grouped[code]["session_count"]) + 1
@@ -198,10 +198,11 @@ def build_summary_rows(
         approved_rate = money_to_float(row["approved_rate"])
         if approved_rate:
             grouped[code]["billed_amount"] = f"{money_to_float(grouped[code]['billed_amount']) + approved_rate:.2f}"
-            if row["payment_status"] == "paid":
-                grouped[code]["paid_amount"] = f"{money_to_float(grouped[code]['paid_amount']) + approved_rate:.2f}"
+            ps = normalize_payment_status(row["payment_status"])
+            if ps == "paid_at_session":
+                grouped[code]["paid_at_session_amount"] = f"{money_to_float(grouped[code]['paid_at_session_amount']) + approved_rate:.2f}"
             else:
-                grouped[code]["outstanding_amount"] = f"{money_to_float(grouped[code]['outstanding_amount']) + approved_rate:.2f}"
+                grouped[code]["unpaid_amount"] = f"{money_to_float(grouped[code]['unpaid_amount']) + approved_rate:.2f}"
     return [grouped[key] for key in sorted(grouped)]
 
 
@@ -221,7 +222,7 @@ def build_simple_rows(session_rows: list[dict[str, object]]) -> list[dict[str, o
                 ),
                 "Time Category": row["time_category"],
                 "Rate": row["approved_rate"] or row["suggested_rate"],
-                "Payment Status": row["payment_status"],
+                "Payment Status": normalize_payment_status(row["payment_status"]),
                 "Review Needed": "No" if row["review_status"] == "approved" else "Yes",
             }
         )
@@ -313,7 +314,7 @@ _REPORT_TYPE_METADATA: list[dict[str, object]] = [
     {
         "type": "summary",
         "display_name": "Client Summary",
-        "description": "Account-level summary with session counts and billed, paid, and outstanding totals.",
+        "description": "Account-level summary with session counts, billed totals, and paid-at-session vs unpaid amounts. Finalized invoice totals are separate from session payment status.",
         "year_required": True,
     },
     {

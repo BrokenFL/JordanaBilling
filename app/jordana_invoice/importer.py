@@ -807,7 +807,7 @@ def maybe_insert_session(
             latest["event_title"],
             review_status,
             "proposed",
-            "unresolved",
+            "unpaid",
             result.appointment_status,
             billing_treatment,
             result.title_time_text,

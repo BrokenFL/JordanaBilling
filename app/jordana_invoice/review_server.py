@@ -74,6 +74,7 @@ from .invoice_services import (
     get_business_profile,
     get_invoice,
     list_invoice_records,
+    preview_finalization,
     remove_line_from_draft,
     save_business_profile,
     update_invoice_draft,
@@ -384,10 +385,13 @@ def make_handler(database_path: str):
                     if action == "remove-line":
                         self.send_json(remove_line_from_draft(self.conn(), invoice_id, data["invoice_line_item_id"]))
                         return
+                    if action == "preview-finalize":
+                        self.send_json(preview_finalization(self.conn(), invoice_id, data=data))
+                        return
                     if action == "finalize":
                         if not data.get("confirmed"):
                             raise ValueError("Explicit finalization confirmation is required.")
-                        self.send_json(finalize_invoice(self.conn(), invoice_id))
+                        self.send_json(finalize_invoice(self.conn(), invoice_id, expected_revision=data.get("expected_revision")))
                         return
                     if action == "void":
                         self.send_json(void_invoice(self.conn(), invoice_id, data.get("reason") or ""))

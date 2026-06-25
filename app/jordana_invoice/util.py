@@ -36,3 +36,23 @@ def parse_int(value: Any) -> int | None:
         return int(float(str(value).strip()))
     except (TypeError, ValueError):
         return None
+
+
+PAYMENT_STATUS_UNPAID = "unpaid"
+PAYMENT_STATUS_PAID_AT_SESSION = "paid_at_session"
+
+_LEGACY_PAYMENT_MAP = {
+    "unpaid": "unpaid",
+    "paid_at_session": "paid_at_session",
+    "paid": "paid_at_session",
+    "unresolved": "unpaid",
+    "partially_paid": "unpaid",
+    "waived": "unpaid",
+    "not_billable": "unpaid",
+    "": "unpaid",
+}
+
+
+def normalize_payment_status(value: Any) -> str:
+    raw = text(value)
+    return _LEGACY_PAYMENT_MAP.get(raw, "unpaid")

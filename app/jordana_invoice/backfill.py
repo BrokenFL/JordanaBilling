@@ -92,7 +92,7 @@ def backfill_phase2(conn: sqlite3.Connection) -> int:
             rate_group=payload.get("rate_group"),
             time_category=payload.get("time_category") or "standard",
         )
-        unresolved_fields = sorted(set(payload.get("unresolved_fields") or []) | {"payment_status"} | ({"rate"} if rate.rate_needs_review else set()))
+        unresolved_fields = sorted(set(payload.get("unresolved_fields") or []) | ({"rate"} if rate.rate_needs_review else set()))
         review_status = "needs_rate" if rate.rate_needs_review else "ready_for_approval"
         now = now_iso()
         conn.execute(
@@ -111,7 +111,7 @@ def backfill_phase2(conn: sqlite3.Connection) -> int:
                 rate_rule_id = ?,
                 rate_source = ?,
                 rate_needs_review = ?,
-                payment_status = COALESCE(payment_status, 'unresolved'),
+                payment_status = COALESCE(NULLIF(payment_status, ''), 'unpaid'),
                 raw_calendar_title = ?,
                 review_status = ?,
                 updated_at = ?

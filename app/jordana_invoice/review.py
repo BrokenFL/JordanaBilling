@@ -26,8 +26,6 @@ def review_status_for_parse(result: ParseResult, rate_needs_review: bool = True)
         return "needs_service_mode"
     if rate_needs_review:
         return "needs_rate"
-    if "payment_status" in fields:
-        return "needs_payment_status"
     return "ready_for_approval"
 
 
@@ -38,7 +36,6 @@ def unresolved_fields_for_session(result: ParseResult, rate_needs_review: bool =
         fields.add("billing_treatment")
     if rate_needs_review and result.classification == "client_session":
         fields.add("rate")
-    fields.add("payment_status")
     return sorted(fields)
 
 

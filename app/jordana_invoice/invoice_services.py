@@ -11,7 +11,7 @@ from .db import init_db
 from .invoice_pdf import generate_invoice_pdf
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
-from .util import json_dumps, new_id, now_iso
+from .util import json_dumps, new_id, normalize_payment_status, now_iso
 
 
 DELIVERY_METHODS = {"email", "mail", "both", "unresolved"}
@@ -145,6 +145,7 @@ def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row
     if amount is not None and int(amount) < 0: reasons.append("Approved amount cannot be negative")
     if s.get("appointment_status") == "scheduled": reasons.append("Future scheduled session is not invoice eligible")
     if s.get("billable_status") in {"excluded", "nonbillable"}: reasons.append("Session is excluded or nonbillable")
+    if normalize_payment_status(s.get("payment_status")) == "paid_at_session": reasons.append("Session was paid at time of session")
     if s.get("appointment_status") in {"cancelled", "no_show"} and s.get("billing_treatment") != "billable":
         reasons.append("Cancelled or no-show session requires explicit billable treatment")
     params: list[Any] = [s["id"]]
@@ -230,6 +231,7 @@ def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids
             )
             order += 1
         _recalculate(conn, invoice_id)
+        conn.execute("UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?", (now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "sessions_added", {"session_ids": session_ids})
         conn.commit()
     except Exception:
@@ -256,6 +258,7 @@ def update_invoice_draft(conn: sqlite3.Connection, invoice_id: str, data: dict[s
                 if key in item: updates[key] = item[key]
             conn.execute(f"UPDATE invoice_line_items SET {', '.join(f'{k} = ?' for k in updates)} WHERE invoice_line_item_id = ? AND invoice_id = ?", (*updates.values(), line_id, invoice_id))
         _recalculate(conn, invoice_id)
+        conn.execute("UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?", (now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "draft_updated", {"changed_fields": sorted(data)})
         conn.commit()
     except Exception:
@@ -271,6 +274,7 @@ def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: s
         cursor = conn.execute("DELETE FROM invoice_line_items WHERE invoice_id = ? AND invoice_line_item_id = ?", (invoice_id, line_id))
         if not cursor.rowcount: raise ValueError("Invoice line was not found.")
         _recalculate(conn, invoice_id)
+        conn.execute("UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?", (now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "line_removed", {"invoice_line_item_id": line_id})
         conn.commit()
     except Exception:
@@ -279,12 +283,45 @@ def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: s
     return get_invoice(conn, invoice_id)
 
 
-def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, pdf_root: str | Path | None = None) -> dict[str, Any]:
+def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    _draft(conn, invoice_id)
+    if data:
+        updated = update_invoice_draft(conn, invoice_id, data)
+    result = get_invoice(conn, invoice_id)
+    invoice = result["invoice"]
+    lines = result["lines"]
+    if not lines:
+        raise ValueError("Add at least one eligible session before finalizing.")
+    for line in lines:
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (line["source_session_id"],)).fetchone()
+        if not session:
+            raise ValueError("A source session is missing.")
+        reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
+        if reasons:
+            raise ValueError("A source session is no longer eligible: " + "; ".join(reasons))
+        if session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
+            raise ValueError("A source session is outside the current billing period.")
+    profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
+    if not profile:
+        raise ValueError("Configure an active business profile before finalizing.")
+    party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
+    return {
+        "invoice": dict(invoice),
+        "lines": [dict(line) for line in lines],
+        "business_profile": dict(profile),
+        "billing_party": dict(party),
+        "preview_revision": invoice["revision"],
+    }
+
+
+def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None) -> dict[str, Any]:
     _draft(conn, invoice_id)
     conn.execute("BEGIN IMMEDIATE")
     pdf_path: Path | None = None
     try:
         invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if expected_revision is not None and invoice["revision"] != expected_revision:
+            raise ValueError("Invoice has changed since preview. Please review and try again.")
         lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order", (invoice_id,)).fetchall()
         if not lines: raise ValueError("Add at least one eligible session before finalizing.")
         for line in lines:
