@@ -11,6 +11,7 @@ from .invoice_pdf import generate_invoice_pdf
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
 from .util import json_dumps, new_id, normalize_payment_status, now_iso
+from .db import DatabaseBusyError
 
 
 def init_db(_conn: sqlite3.Connection) -> None:
@@ -440,7 +441,15 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
 
 def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None) -> dict[str, Any]:
     _draft(conn, invoice_id)
-    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        if "locked" in str(error).lower():
+            raise DatabaseBusyError(
+                "Cannot finalize invoice: database is locked by another operation. "
+                "Please retry in a moment."
+            ) from error
+        raise
     pdf_path: Path | None = None
     try:
         readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision)
@@ -491,7 +500,15 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
 
 def void_invoice(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict[str, Any]:
     if not reason.strip(): raise ValueError("A void reason is required.")
-    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        if "locked" in str(error).lower():
+            raise DatabaseBusyError(
+                "Cannot void invoice: database is locked by another operation. "
+                "Please retry in a moment."
+            ) from error
+        raise
     try:
         row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
         if not row or row["status"] != "finalized": raise ValueError("Only a finalized invoice can be voided.")

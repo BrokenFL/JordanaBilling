@@ -24,6 +24,8 @@ Apps Script returns only rows whose `run_id` exists in `Run_Log` with status `co
 
 The local `sync_state` table stores the cursor for `source_name = google_calendar_snapshots`. The cursor advances only after the fetched rows, normalization, review queue updates, and CSV report writes complete successfully.
 
+A file-based lock (`DatabaseLock` in `db.py`) prevents overlapping syncs and migrations from running concurrently. If another sync or migration holds the lock, the second operation fails cleanly within a bounded timeout (default 30 seconds) with a clear error message. See `docs/SCHEMA_AUDIT.md` for details.
+
 ## 3. Emergency CSV Recovery
 
 The CSV importer remains available for testing or recovery if remote sync fails:

@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .db import MigrationError, connect, migrate_database
+from .db import DatabaseBusyError, MigrationError, connect, migrate_database
 from .google_sync import (
     default_transport,
     load_sync_config_for_database,
@@ -480,6 +480,8 @@ def make_handler(database_path: str):
                     self.send_json(setup_billing_relationship(self.conn(), data))
                     return
                 self.send_error(404)
+            except DatabaseBusyError as error:
+                self.send_json({"ok": False, "error": str(error)}, status=503)
             except Exception as error:
                 self.send_json({"ok": False, "error": str(error)}, status=400)
 

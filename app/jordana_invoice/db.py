@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import fcntl
+import os
 import shutil
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -572,6 +575,9 @@ CREATE INDEX IF NOT EXISTS idx_custom_service_mappings_person
 
 CURRENT_SCHEMA_VERSION = "001_base"
 
+DEFAULT_BUSY_TIMEOUT_MS = 5000
+DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+
 
 class MigrationError(Exception):
     """Raised when a database migration fails."""
@@ -579,6 +585,67 @@ class MigrationError(Exception):
     def __init__(self, message: str, backup_path: str | None = None) -> None:
         super().__init__(message)
         self.backup_path = backup_path
+
+
+class LockError(Exception):
+    """Raised when a database lock cannot be acquired within the timeout."""
+
+
+class DatabaseBusyError(Exception):
+    """Raised when the database is locked by another operation."""
+
+
+class DatabaseLock:
+    """File-based lock for protecting bulk database operations.
+
+    Uses fcntl.flock for cross-process and cross-thread locking.
+    Stale locks are automatically recovered because the OS releases
+    flock when the holding process exits.
+    """
+
+    def __init__(
+        self, db_path: str | Path, timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS
+    ) -> None:
+        self.lock_path = Path(str(db_path) + ".lock")
+        self.timeout_seconds = timeout_seconds
+        self._fd: int | None = None
+
+    def acquire(self) -> None:
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.timeout_seconds
+        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        while True:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                os.ftruncate(self._fd, 0)
+                os.write(self._fd, f"{os.getpid()}\n".encode())
+                return
+            except (BlockingIOError, OSError):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    os.close(self._fd)
+                    self._fd = None
+                    raise LockError(
+                        f"Could not acquire database lock within {self.timeout_seconds}s. "
+                        f"Another sync or migration may be in progress. "
+                        f"Lock file: {self.lock_path}"
+                    )
+                time.sleep(min(0.5, remaining))
+
+    def release(self) -> None:
+        if self._fd is not None:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+
+    def __enter__(self) -> "DatabaseLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.release()
 
 
 def _get_applied_migrations(conn: sqlite3.Connection) -> set[str]:
@@ -629,6 +696,7 @@ def migrate_database(db_path: str | Path) -> dict:
     - For existing databases needing migration, creates a timestamped backup first.
     - Runs migrations transactionally.
     - On failure, rolls back and restores the original database.
+    - Acquires a file-based lock to prevent concurrent sync or migration.
     """
     from .util import now_iso
 
@@ -636,54 +704,71 @@ def migrate_database(db_path: str | Path) -> dict:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     is_new = not db_path.exists()
 
-    backup_path: Path | None = None
-    if not is_new:
-        backup_path = _create_backup(db_path)
-        _verify_backup(backup_path)
-
-    conn = connect(db_path)
-
-    applied = _get_applied_migrations(conn)
-    pending = [(mid, fn) for mid, fn in MIGRATIONS if mid not in applied]
-
-    if not pending:
-        conn.close()
-        if backup_path:
-            backup_path.unlink()
-        return {"migrated": False, "backup_path": None, "is_new": is_new}
+    lock = DatabaseLock(db_path)
+    try:
+        lock.acquire()
+    except LockError as error:
+        raise MigrationError(str(error)) from error
 
     try:
-        conn.execute("BEGIN")
-        for mid, migration_fn in pending:
-            migration_fn(conn)
-            conn.execute(
-                "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
-                (mid, now_iso()),
-            )
-        conn.commit()
-        conn.close()
-        return {
-            "migrated": True,
-            "backup_path": str(backup_path) if backup_path else None,
-            "is_new": is_new,
-        }
-    except Exception as error:
-        conn.rollback()
-        conn.close()
-        if backup_path:
-            shutil.copy2(backup_path, db_path)
-        raise MigrationError(
-            f"Migration failed: {error}",
-            backup_path=str(backup_path) if backup_path else None,
-        ) from error
+        backup_path: Path | None = None
+        if not is_new:
+            backup_path = _create_backup(db_path)
+            _verify_backup(backup_path)
+
+        conn = connect(db_path)
+
+        applied = _get_applied_migrations(conn)
+        pending = [(mid, fn) for mid, fn in MIGRATIONS if mid not in applied]
+
+        if not pending:
+            conn.close()
+            if backup_path:
+                backup_path.unlink()
+            return {"migrated": False, "backup_path": None, "is_new": is_new}
+
+        try:
+            conn.execute("BEGIN")
+            for mid, migration_fn in pending:
+                migration_fn(conn)
+                conn.execute(
+                    "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+                    (mid, now_iso()),
+                )
+            conn.commit()
+            conn.close()
+            return {
+                "migrated": True,
+                "backup_path": str(backup_path) if backup_path else None,
+                "is_new": is_new,
+            }
+        except Exception as error:
+            conn.rollback()
+            conn.close()
+            if backup_path:
+                shutil.copy2(backup_path, db_path)
+            raise MigrationError(
+                f"Migration failed: {error}",
+                backup_path=str(backup_path) if backup_path else None,
+            ) from error
+    finally:
+        lock.release()
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
     db_path = Path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(
+        str(db_path),
+        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
     return conn
 
 

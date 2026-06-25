@@ -176,3 +176,54 @@ Migrations are defined in `MIGRATIONS` in `db.py`. Each entry is a `(migration_i
 1. Append a new `(migration_id, function)` tuple to `MIGRATIONS`.
 2. The function should be additive, idempotent, and backward compatible.
 3. Add tests in `tests/test_migration_safety.py`.
+
+## SQLite Concurrency and Locking
+
+All managed connections use centralized configuration in `db.py::connect()`:
+
+- `PRAGMA foreign_keys = ON` — enforced on every connection.
+- `PRAGMA journal_mode = WAL` — Write-Ahead Logging for concurrent readers during writes. Falls back gracefully if unsupported.
+- `PRAGMA busy_timeout = 5000` — 5-second wait before reporting a lock error.
+- `sqlite3.Row` row factory — consistent dict-like row access.
+- `timeout=5.0` on `sqlite3.connect()` — connection-level busy timeout.
+
+### File-based sync lock
+
+`DatabaseLock` in `db.py` uses `fcntl.flock` to prevent overlapping syncs and migrations across processes and threads:
+
+- Lock file: `<database_path>.lock`
+- Default timeout: 30 seconds (`DEFAULT_LOCK_TIMEOUT_SECONDS`)
+- Stale lock recovery: the OS releases `flock` when the holding process exits; no manual cleanup needed.
+- On timeout, raises `LockError` with a clear message.
+
+### Sync collision protection
+
+- `sync_with_connection()` acquires `DatabaseLock` before the write transaction and releases it after.
+- `migrate_database()` acquires `DatabaseLock` before any schema work.
+- A second sync or migration that cannot acquire the lock within the timeout raises `SyncError` (for sync) or `MigrationError` (for migration) with a clear message — no indefinite blocking.
+
+### Invoice finalization under contention
+
+- `finalize_invoice()` and `void_invoice()` use `BEGIN IMMEDIATE` for atomic transactions.
+- If another connection holds a write lock, `BEGIN IMMEDIATE` fails and raises `DatabaseBusyError` with a clear operational message.
+- The review server returns HTTP 503 for `DatabaseBusyError` and HTTP 400 for other errors.
+
+### Lock contention error handling
+
+- `sqlite3.OperationalError` with "locked" in the message is caught in `sync_with_connection()` and re-raised as `DatabaseBusyError`.
+- `DatabaseBusyError` is never swallowed — it propagates to the caller with a human-readable message.
+- No database deletion or reset occurs on lock errors.
+
+### Tests
+
+Focused tests in `tests/test_concurrency_locking.py` verify:
+
+- All managed connections have approved PRAGMA settings (foreign_keys, WAL, busy_timeout, row_factory).
+- Concurrent reads succeed during a writer in WAL mode.
+- Overlapping sync fails cleanly within bounded timeout.
+- Stale sync lock recovery works after lock release.
+- Lock timeout produces a clear error message.
+- Failed sync rolls back completely (no partial imports, cursor does not advance).
+- Atomic invoice finalization raises `DatabaseBusyError` under SQLite lock contention.
+- Migrations and sync cannot run concurrently (both directions).
+- Repeated normal startup is safe — no locks left behind.

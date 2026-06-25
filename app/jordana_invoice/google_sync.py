@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Callable, Any
 
 from .csv_reports import write_reports
-from .db import connect, migrate_database
+from .db import (
+    DEFAULT_LOCK_TIMEOUT_SECONDS,
+    DatabaseBusyError,
+    DatabaseLock,
+    LockError,
+    connect,
+    migrate_database,
+)
 from .backfill import backfill_phase2
 from .importer import import_rows
 from .util import now_iso, text
@@ -190,20 +197,36 @@ def sync_with_connection(
                 dry_run=True,
             )
 
-        with conn:
-            before = count_raw_rows(conn)
-            import_run_id = import_rows(
-                conn,
-                all_rows,
-                SOURCE_NAME,
-                source_path=config.apps_script_url,
-                commit=False,
-            )
-            rows_imported = count_raw_rows(conn) - before
-            if next_cursor:
-                set_sync_success(conn, next_cursor, rows_imported)
-            backfill_phase2(conn)
-            write_reports(conn, config.reports_dir)
+        lock = DatabaseLock(config.database_path, timeout_seconds=DEFAULT_LOCK_TIMEOUT_SECONDS)
+        try:
+            lock.acquire()
+        except LockError as error:
+            raise SyncError(str(error)) from error
+
+        try:
+            with conn:
+                before = count_raw_rows(conn)
+                import_run_id = import_rows(
+                    conn,
+                    all_rows,
+                    SOURCE_NAME,
+                    source_path=config.apps_script_url,
+                    commit=False,
+                )
+                rows_imported = count_raw_rows(conn) - before
+                if next_cursor:
+                    set_sync_success(conn, next_cursor, rows_imported)
+                backfill_phase2(conn)
+                write_reports(conn, config.reports_dir)
+        except sqlite3.OperationalError as error:
+            if "database is locked" in str(error).lower() or "locked" in str(error).lower():
+                raise DatabaseBusyError(
+                    "Database is locked by another operation. "
+                    "Please retry in a moment."
+                ) from error
+            raise
+        finally:
+            lock.release()
 
         return SyncResult(
             rows_fetched=len(all_rows),
@@ -212,6 +235,9 @@ def sync_with_connection(
             dry_run=False,
             import_run_id=import_run_id,
         )
+    except DatabaseBusyError as error:
+        record_sync_error(conn, attempt_at, error)
+        raise SyncError(str(error)) from error
     except Exception as error:
         record_sync_error(conn, attempt_at, error)
         if isinstance(error, SyncError):
