@@ -6,58 +6,58 @@ This guide covers setting up Jordana Billing on a fresh macOS machine from a cle
 
 - macOS 12 or later (Apple Silicon or Intel)
 - Python 3.11 or newer (check with `python3 --version`)
-- Git
 - Internet access for pip and Google Sheets sync
 
 ## Steps
 
 ### 1. Clone the repository
 
+Clone using GitHub Desktop or the command line:
+
 ```bash
 git clone <repo-url> "Jordana Billing"
-cd "Jordana Billing"
 ```
 
-### 2. Add private credentials
+The repository includes `Jordana Billing.app` — a double-clickable launcher.
 
-Copy the example env file and fill in real values:
+### 2. Add private configuration
+
+The only private file needed is `.env` in the project root. It contains:
+
+- `JORDANA_APPS_SCRIPT_URL` — the Google Apps Script `/exec` web app URL
+- `JORDANA_INGEST_API_KEY` — the ingest API key accepted by Apps Script
+
+No Google credentials JSON or OAuth tokens are required. Sync uses a simple HTTP POST to the Apps Script endpoint with the API key.
+
+**Option A: Let the launcher create it**
+
+Double-click `Jordana Billing.app`. On first run, it creates `.env` from `.env.example` with all paths auto-resolved, then shows a dialog telling you to edit the two credential values. Edit them and double-click again.
+
+**Option B: Create it manually**
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and replace `__PROJECT_DIR__` with the actual absolute path to the project folder. Fill in:
+Edit `.env` and fill in the two credential values. The `__PROJECT_DIR__` placeholders are resolved automatically on first launch — no need to edit paths manually.
 
-- `JORDANA_APPS_SCRIPT_URL` — the Google Apps Script `/exec` web app URL
-- `JORDANA_INGEST_API_KEY` — the ingest API key accepted by Apps Script
-- `JORDANA_DATABASE_PATH` — absolute path to the SQLite database (default: `<project>/data/jordana_invoice.sqlite3`)
-- `JORDANA_REPORTS_DIR` — absolute path for CSV report output (default: `<project>/Reports`)
-
-Never commit `.env` or share it.
-
-### 3. Build the launcher
-
-```bash
-bash scripts/build_launcher.sh
-```
-
-This creates `Jordana Billing.app` at the project root.
-
-### 4. Double-click the launcher
+### 3. Double-click the launcher
 
 Double-click **Jordana Billing.app** in Finder.
 
 **First launch** performs:
 
-1. Creates a project-local virtual environment (`.venv`)
-2. Installs pinned dependencies
-3. Validates `.env` for required variables
-4. Creates a blank SQLite database if missing
-5. Applies existing migrations safely
-6. Runs a full Google Sheets sync (only if database is empty)
-7. Starts the local review server on `127.0.0.1:8765`
-8. Waits for a successful health check
-9. Opens the review UI in the default browser
+1. Checks Python 3.11+ (shows dialog if missing)
+2. Creates a project-local virtual environment (`.venv`)
+3. Installs pinned dependencies
+4. Creates `.env` from template if missing (auto-resolves all paths)
+5. Validates `.env` for required credentials
+6. Creates a blank SQLite database if missing
+7. Applies existing migrations safely
+8. Runs a full Google Sheets sync (only if database is empty)
+9. Starts the local review server on `127.0.0.1:8765`
+10. Waits for a successful health check
+11. Opens the review UI in the default browser
 
 **Later launches** start quickly:
 
@@ -67,17 +67,21 @@ Double-click **Jordana Billing.app** in Finder.
 - Does not repeat a full import unnecessarily
 - Preserves all local data
 
-### 5. Verify
+### 4. Verify
 
-Open a browser to `http://127.0.0.1:8765/review` if it does not open automatically.
+The review UI opens automatically at `http://127.0.0.1:8765/review`.
 
-Run the health check:
+## No Database Required for Transfer
 
-```bash
-scripts/health_check.sh
-```
+A fresh installation starts with no database. The first launch creates it, applies migrations, and imports the configured Google Sheet. Never copy a database between machines — each Mac creates its own from the Google Sheet source.
 
-## Command Reference
+## No Terminal Required
+
+The entire setup is double-click driven. The only manual step is editing `.env` to paste in two credential values, which can be done in TextEdit.
+
+## Command Reference (optional)
+
+These scripts are available for Terminal use but are not required:
 
 | Command | Purpose |
 |---------|---------|
@@ -88,7 +92,7 @@ scripts/health_check.sh
 | `scripts/full_sync.sh` | Full Google Sheets sync |
 | `scripts/backup_db.sh` | Backup the SQLite database |
 | `scripts/reset_test_db.sh` | Test-only database reset (requires confirmation) |
-| `scripts/build_launcher.sh` | Rebuild the .app bundle |
+| `scripts/build_launcher.sh --force` | Rebuild the .app bundle |
 | `scripts/verify_install.sh` | Verify installation integrity |
 | `scripts/git_safety_check.sh` | Check for staged private files |
 | `scripts/privacy_check.sh` | Check for tracked private files |
@@ -97,8 +101,7 @@ scripts/health_check.sh
 
 These files must be provided manually and are never committed to Git:
 
-- `.env` — API keys and local paths
-- `credentials*.json` — Google credential files (if applicable)
+- `.env` — API keys and local paths (auto-created from template on first launch)
 - `data/jordana_invoice.sqlite3` — local database (created on first run)
 - `Reports/` — generated CSV reports
 - `logs/` — sanitized application logs
@@ -114,15 +117,24 @@ Install Python from [python.org](https://www.python.org/downloads/) or via Homeb
 brew install python@3.12
 ```
 
-### "Configuration Missing" dialog
+### "Configuration Created" dialog
 
-The `.env` file was not found or required variables are empty. Re-check step 2.
+The launcher created `.env` from the template. Open it in TextEdit and fill in:
+
+- `JORDANA_APPS_SCRIPT_URL` — your Google Apps Script web app URL
+- `JORDANA_INGEST_API_KEY` — your Apps Script ingest API key
+
+Then double-click `Jordana Billing.app` again.
+
+### "Configuration Incomplete" dialog
+
+A required variable in `.env` is empty. The dialog names the exact variable and the file path.
 
 ### "Startup Failed" dialog
 
 Check `logs/bootstrap.log` or `logs/start.log` for details. Common causes:
 
-- Network failure during Google Sheets sync
+- Network failure during Google Sheets sync (server still starts)
 - Port 8765 already in use (stop with `scripts/stop_jordana.sh`)
 - Database migration error (check `data/backups/` for automatic backups)
 

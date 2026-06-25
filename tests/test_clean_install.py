@@ -204,23 +204,48 @@ class CleanInstallTest(unittest.TestCase):
         content = (PROJECT_DIR / ".env.example").read_text()
         self.assertNotIn("/Users/", content, ".env.example contains hardcoded /Users/ path")
         self.assertNotIn("/home/", content, ".env.example contains hardcoded /home/ path")
+        self.assertIn("__PROJECT_DIR__", content, ".env.example should use __PROJECT_DIR__ placeholder")
 
-    def test_11_launcher_builds(self) -> None:
-        """build_launcher.sh creates a valid .app bundle."""
-        result = subprocess.run(
-            ["bash", str(PROJECT_DIR / "scripts" / "build_launcher.sh")],
-            capture_output=True,
-            text=True,
-            cwd=str(PROJECT_DIR),
-        )
-        self.assertEqual(result.returncode, 0, f"build_launcher.sh failed: {result.stderr}")
+    def test_11_launcher_bundle_committed(self) -> None:
+        """Jordana Billing.app must be committed to Git (not gitignored)."""
         app_dir = PROJECT_DIR / "Jordana Billing.app"
-        self.assertTrue(app_dir.exists(), "Jordana Billing.app not created")
+        self.assertTrue(app_dir.exists(), "Jordana Billing.app not found")
         self.assertTrue((app_dir / "Contents" / "MacOS" / "launcher").exists())
         self.assertTrue((app_dir / "Contents" / "Info.plist").exists())
-        # Clean up
-        import shutil
-        shutil.rmtree(app_dir, ignore_errors=True)
+        result = subprocess.run(
+            ["git", "ls-files", "Jordana Billing.app"],
+            capture_output=True, text=True, cwd=str(PROJECT_DIR),
+        )
+        self.assertEqual(result.returncode, 0)
+        tracked_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+        self.assertGreater(len(tracked_files), 0, "Jordana Billing.app is not tracked by Git")
+
+    def test_12_launcher_bundle_no_private_data(self) -> None:
+        """Jordana Billing.app must not contain credentials or private data."""
+        app_dir = PROJECT_DIR / "Jordana Billing.app"
+        for file_path in app_dir.rglob("*"):
+            if file_path.is_file():
+                content = file_path.read_bytes()
+                text_content = content.decode("utf-8", errors="ignore")
+                self.assertNotIn("jb_", text_content[:10000], f"Possible API key in {file_path}")
+                self.assertNotIn("AKIA", text_content[:10000], f"Possible AWS key in {file_path}")
+                self.assertNotIn("BEGIN PRIVATE KEY", text_content[:10000], f"Private key in {file_path}")
+
+    def test_13_build_launcher_force(self) -> None:
+        """build_launcher.sh --force rebuilds the .app bundle."""
+        result = subprocess.run(
+            ["bash", str(PROJECT_DIR / "scripts" / "build_launcher.sh"), "--force"],
+            capture_output=True, text=True, cwd=str(PROJECT_DIR),
+        )
+        self.assertEqual(result.returncode, 0, f"build_launcher.sh --force failed: {result.stderr}")
+        app_dir = PROJECT_DIR / "Jordana Billing.app"
+        self.assertTrue(app_dir.exists())
+
+    def test_14_env_auto_resolve(self) -> None:
+        """bootstrap.sh auto-resolves __PROJECT_DIR__ in .env."""
+        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
+        self.assertIn("__PROJECT_DIR__", bootstrap, "bootstrap.sh does not handle __PROJECT_DIR__")
+        self.assertIn("sed", bootstrap, "bootstrap.sh does not use sed to resolve paths")
 
 
 if __name__ == "__main__":
