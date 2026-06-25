@@ -79,15 +79,16 @@ if [[ ! -f "$PROJECT_DIR/.env" ]]; then
   if [[ -f "$PROJECT_DIR/.env.example" ]]; then
     # Copy template and auto-resolve __PROJECT_DIR__
     sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/.env.example" > "$PROJECT_DIR/.env"
-    show_error_dialog "Configuration Created" "A .env file was created from the template at:
+    open -a TextEdit "$PROJECT_DIR/.env" 2>/dev/null || open "$PROJECT_DIR/.env" 2>/dev/null || true
+    show_error_dialog "Configuration Created" "A .env file was created and opened in TextEdit:
 
 $PROJECT_DIR/.env
 
-Edit it to fill in:
+Fill in:
   • JORDANA_APPS_SCRIPT_URL — your Google Apps Script web app URL
   • JORDANA_INGEST_API_KEY — your Apps Script ingest API key
 
-Then double-click Jordana Billing.app again."
+Save the file, then double-click Jordana Billing.app again."
     exit 1
   else
     show_error_dialog "Configuration Missing" "No .env file found and no .env.example template. Create a file at:
@@ -105,15 +106,24 @@ if grep -q '__PROJECT_DIR__' "$PROJECT_DIR/.env" 2>/dev/null; then
   sed -i '' "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/.env"
 fi
 
-# --- Step 6: Validate .env ---
+# --- Step 6: Validate .env without executing it as shell code ---
 log "Validating .env..."
+MISSING_VAR="$(PYTHONPATH=app python - "$PROJECT_DIR/.env" <<'PY'
+import os
+import sys
+from pathlib import Path
 
-# Source .env and validate required vars
-set +e
-. "$PROJECT_DIR/.env"
-set -e
+from jordana_invoice.google_sync import load_env_file
 
-if [[ -z "${JORDANA_APPS_SCRIPT_URL:-}" ]]; then
+load_env_file(Path(sys.argv[1]))
+for key in ("JORDANA_APPS_SCRIPT_URL", "JORDANA_INGEST_API_KEY"):
+    if not os.environ.get(key):
+        print(key)
+        break
+PY
+)"
+
+if [[ "$MISSING_VAR" == "JORDANA_APPS_SCRIPT_URL" ]]; then
   show_error_dialog "Configuration Incomplete" "JORDANA_APPS_SCRIPT_URL is empty.
 
 Edit this file:
@@ -122,7 +132,7 @@ Edit this file:
 Fill in the Google Apps Script /exec web app URL."
   exit 1
 fi
-if [[ -z "${JORDANA_INGEST_API_KEY:-}" ]]; then
+if [[ "$MISSING_VAR" == "JORDANA_INGEST_API_KEY" ]]; then
   show_error_dialog "Configuration Incomplete" "JORDANA_INGEST_API_KEY is empty.
 
 Edit this file:
@@ -131,9 +141,9 @@ Edit this file:
 Fill in the Apps Script ingest API key."
   exit 1
 fi
-if [[ -z "${JORDANA_DATABASE_PATH:-}" ]]; then
-  export JORDANA_DATABASE_PATH="$DB_PATH"
-fi
+
+# Keep the installer database path authoritative for this checkout.
+export JORDANA_DATABASE_PATH="$DB_PATH"
 log ".env validated."
 
 # --- Step 7: Create blank SQLite database if missing ---
