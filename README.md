@@ -30,6 +30,11 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 - Section-level saves for people, relationships, billing, and session drafts
 - Human-readable person codes and account codes
 - Billing Relationships and Clients CRM views
+- Guided billing relationship creation wizard ( Rounds 1–3, merged)
+- Relationship editing: invoice recipient, covered clients, billing delivery
+- Deactivate and reactivate billing relationships (no permanent deletion)
+- Session Review integration: attach billing relationship to a review candidate
+- Exact active duplicate prevention for billing relationships
 - Initial client, alias, rate, session, review, and audit tables
 - Local CSV reports after successful sync
 - Acceptance report for June-style data

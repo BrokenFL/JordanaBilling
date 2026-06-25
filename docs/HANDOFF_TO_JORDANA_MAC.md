@@ -110,6 +110,36 @@ The local prototype now supports invoice drafts, finalization, PDF history, and 
 - Do not infer rates from memory or calendar notes.
 - Do not create visible household accounts just because multiple people attended one session.
 
+## Billing Relationships — Complete (Rounds 1–3)
+
+Billing Relationships Rounds 1 through 3 are complete and merged into `main` as of commit `2d13942`.
+
+**What is implemented:**
+
+- Guided billing relationship creation wizard (3-step: invoice recipient → pays for → review and save)
+- Invoice recipient and Pays for are separate concepts in the editor and directory
+- People and organizations can be created in-wizard during relationship setup
+- Relationship editing: change invoice recipient, add/remove covered clients, update billing delivery
+- Deactivate and reactivate billing relationships (no permanent deletion)
+- Session Review integration: launch wizard from a review candidate, preselect participants, attach relationship to session
+- Exact active duplicate prevention during creation and editing
+- In-page confirmation dialogs throughout (no browser `alert()`, `prompt()`, or `confirm()`)
+- Unsaved changes detection in the editor with return-link confirmation
+- XSS-safe rendering of user-provided values in return links
+
+**What is not implemented:**
+
+- Permanent deletion of billing relationships (by design — deactivation only)
+- Formal client-versus-non-client schema distinction (all active people appear in search)
+- Automatic payer classification
+- Full right-panel redesign
+
+**No schema migration was introduced.** All features use existing tables and columns.
+
+**The production database remains local and private.** No real client data is committed to Git.
+
+See `docs/CLIENTS_AND_ACCOUNTS.md` for full documentation of all rounds.
+
 ## Next Development Steps
 
 1. Finish the one-click launcher and synchronization experience.
