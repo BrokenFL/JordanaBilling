@@ -541,3 +541,182 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
   .org-billing-details { grid-template-columns: 1fr; }
   .crm-tools { flex-wrap: wrap; }
 }
+
+/* ─── In-page modal for billing relationship forms ─── */
+.billing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 20, 43, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+.billing-modal {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  width: 480px;
+  max-width: 92vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+.billing-modal h3 { margin: 0 0 4px; font-size: 16px; }
+.billing-modal .modal-instruction { color: var(--muted); font-size: 12px; margin: 0 0 14px; line-height: 1.4; }
+.billing-modal .modal-search-wrap { position: relative; margin-bottom: 8px; }
+.billing-modal .modal-search-wrap label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.billing-modal .modal-search { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.billing-modal .modal-results { max-height: 200px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; }
+.billing-modal .modal-result-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.billing-modal .modal-result-row:last-child { border-bottom: none; }
+.billing-modal .modal-result-row:hover { background: var(--soft); }
+.billing-modal .modal-result-row.selected { background: #e8f0fe; border-color: var(--blue); }
+.billing-modal .modal-selected { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding: 6px 8px; background: var(--soft); border-radius: 5px; }
+.billing-modal .modal-selected strong { color: var(--text); }
+.billing-modal .modal-error { color: var(--red); font-size: 12px; margin: 6px 0; min-height: 16px; }
+.billing-modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.billing-modal .modal-actions button { min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+.billing-modal .modal-actions .modal-cancel { background: white; color: var(--text); }
+.billing-modal .modal-actions .modal-cancel:hover { background: var(--soft); }
+.billing-modal .modal-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-modal .modal-actions .modal-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.billing-modal .modal-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 12px; }
+.billing-modal .modal-result-row.already-included { opacity: 0.55; cursor: default; }
+.billing-modal .modal-result-row.already-included:hover { background: transparent; }
+.billing-modal .already-included-label { color: var(--muted); font-style: italic; }
+.billing-modal .modal-link-btn { background: none; border: none; color: var(--blue); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 4px; }
+
+/* ─── Round 2C: Wizard styles ─── */
+.billing-wizard { max-width: 520px; }
+.billing-wizard .wizard-progress { font-size: 12px; color: var(--muted); margin-bottom: 12px; font-weight: 600; }
+.billing-wizard .wizard-step-heading { margin: 0 0 6px; font-size: 14px; }
+.billing-wizard .wizard-payer-types { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.billing-wizard .wizard-payer-choice {
+  padding: 12px 14px; border: 2px solid var(--line); border-radius: 8px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; transition: border-color 0.15s, background 0.15s;
+}
+.billing-wizard .wizard-payer-choice:hover { border-color: var(--blue); background: var(--soft); }
+.billing-wizard .wizard-payer-choice.selected { border-color: var(--blue); background: #e8f0fe; }
+.billing-wizard .wizard-payer-choice strong { font-size: 14px; }
+.billing-wizard .wizard-payer-choice .help { font-size: 12px; color: var(--muted); }
+.billing-wizard .wizard-covered-selected { margin-bottom: 8px; }
+.billing-wizard .wizard-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.billing-wizard .wizard-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px;
+  background: #e8f0fe; border: 1px solid var(--blue); border-radius: 16px; font-size: 12px;
+}
+.billing-wizard .wizard-chip-remove {
+  background: none; border: none; cursor: pointer; font-size: 16px; line-height: 1;
+  color: var(--muted); padding: 0; margin-left: 2px;
+}
+.billing-wizard .wizard-chip-remove:hover { color: var(--red); }
+.billing-wizard .wizard-review-section { margin-bottom: 12px; }
+.billing-wizard .wizard-review-label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.billing-wizard .wizard-review-value { font-size: 14px; font-weight: 500; }
+.billing-wizard .wizard-checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.billing-wizard .wizard-checkbox-label input { margin: 0; }
+.billing-wizard .wizard-confirm-cancel {
+  margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft);
+}
+.billing-wizard .wizard-confirm-cancel p { margin: 0 0 8px; font-size: 13px; }
+.billing-wizard .wizard-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.billing-wizard .wizard-confirm-actions button { min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+.billing-wizard .wizard-confirm-actions .modal-cancel { background: white; color: var(--text); }
+.billing-wizard .wizard-confirm-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-wizard .modal-actions .modal-back { background: white; color: var(--text); border: 1px solid var(--line); }
+.billing-wizard .modal-actions .modal-back:hover { background: var(--soft); }
+
+/* ─── Round 2D1: Wizard child form styles ─── */
+.billing-wizard .wizard-create-new { margin: 8px 0; }
+.billing-wizard .wizard-create-btn {
+  background: none; border: 1px dashed var(--blue); color: var(--blue);
+  padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;
+}
+.billing-wizard .wizard-create-btn:hover { background: #e8f0fe; }
+.billing-wizard .wizard-child-form {
+  margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft);
+}
+.billing-wizard .wizard-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.billing-wizard .wizard-form-grid .field { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.billing-wizard .wizard-form-grid .field.wide { grid-column: 1 / -1; }
+.billing-wizard .wizard-form-grid .field input {
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; color: var(--text);
+}
+.billing-wizard .wizard-form-grid .field .req { color: var(--red); }
+.billing-wizard .wizard-form-error { color: var(--red); font-size: 12px; margin: 6px 0; min-height: 16px; }
+.billing-wizard .wizard-form-duplicate {
+  margin: 8px 0; padding: 10px; border: 1px solid var(--blue); border-radius: 6px; background: #e8f0fe;
+}
+.billing-wizard .wizard-form-duplicate p { margin: 0 0 6px; font-size: 13px; font-weight: 500; }
+.billing-wizard .wizard-duplicate-info { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.billing-wizard .wizard-duplicate-info strong { font-size: 13px; }
+.billing-wizard .wizard-duplicate-actions { display: flex; gap: 8px; }
+.billing-wizard .wizard-duplicate-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.billing-wizard .wizard-form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.billing-wizard .wizard-form-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.billing-wizard .wizard-form-actions .modal-cancel { background: white; color: var(--text); }
+.billing-wizard .wizard-form-actions .modal-cancel:hover { background: var(--soft); }
+.billing-wizard .wizard-form-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-wizard .wizard-form-actions .modal-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.billing-wizard .wizard-form-actions .modal-back { background: white; color: var(--text); }
+.billing-wizard .wizard-form-actions .modal-back:hover { background: var(--soft); }
+.billing-wizard .wizard-recovery-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.billing-wizard .wizard-recovery-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.billing-wizard .wizard-recovery-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-wizard .wizard-recovery-actions .modal-cancel { background: white; color: var(--text); }
+.billing-wizard .wizard-recovery-actions .modal-cancel:hover { background: var(--soft); }
+.billing-wizard .wizard-recovery-actions .modal-link-btn { background: white; color: var(--blue); border-color: var(--blue); }
+.billing-wizard .wizard-recovery-actions .modal-link-btn:hover { background: #e8f0fe; }
+
+.lifecycle-confirm-box { margin: 12px 0; }
+.lifecycle-confirm-content {
+  border: 1px solid var(--line); border-radius: 8px; padding: 16px; background: #fff8f0;
+}
+.lifecycle-confirm-content h4 { margin: 0 0 8px; font-size: 15px; }
+.lifecycle-explanation { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.lifecycle-confirm-actions { display: flex; gap: 8px; }
+.lifecycle-confirm-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.lifecycle-confirm-actions .danger { background: #c0392b; color: white; border-color: #c0392b; }
+.lifecycle-confirm-actions .danger:hover { background: #a93226; }
+.lifecycle-confirm-actions .save { background: var(--blue); color: white; border-color: var(--blue); }
+.lifecycle-confirm-actions .modal-back { background: white; color: var(--text); }
+.lifecycle-confirm-actions .modal-back:hover { background: var(--soft); }
+.lifecycle-error { color: #c0392b; font-size: 13px; margin-top: 8px; }
+.record-actions .danger { background: #c0392b; color: white; border-color: #c0392b; }
+.record-actions .danger:hover { background: #a93226; }
+.status-pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.status-pill.active { background: #d4edda; color: #155724; }
+.status-pill.inactive { background: #f8d7da; color: #721c24; }
+
+.editor-section { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.editor-section:first-of-type { border-top: none; }
+.editor-section h4 { margin: 0 0 8px; font-size: 15px; }
+.covered-clients-list { margin: 8px 0; }
+.covered-client-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 6px; margin-bottom: 4px; background: #fff;
+}
+.covered-client-name { font-weight: 500; font-size: 14px; }
+.covered-client-remove {
+  margin-left: auto; background: none; border: none; color: #c0392b;
+  font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+}
+.covered-client-remove:hover { color: #a93226; }
+#recipientSearchArea, #coveredSearchArea { margin-top: 8px; }

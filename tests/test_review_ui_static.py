@@ -396,7 +396,7 @@ class ReviewUiStaticTests(unittest.TestCase):
     def test_inline_relationship_roles_and_primary_controls_are_gone(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("function renderRelationshipEditor")
-        end = js.index("function showAccountEditor")
+        end = js.index("function openBillingRelationshipEditor")
         section = js[start:end]
 
         self.assertNotIn("data-role", section)
@@ -416,13 +416,11 @@ class ReviewUiStaticTests(unittest.TestCase):
         end = js.index("async function loadPeople")
         account_record = js[start:end]
 
-        self.assertIn("/save-relationship", account_record)
-        self.assertIn("/save-billing", account_record)
+        self.assertIn("update-billing-relationship", account_record)
         self.assertIn("await loadList();", account_record)
         self.assertIn("await showReviewWorkbench();", account_record)
-        self.assertIn("await selectCandidate(currentContext.candidateId);", account_record)
-        self.assertIn('billing_party_type: "organization"', account_record)
-        self.assertIn("Select the bill-to client before saving this billing relationship.", account_record)
+        self.assertIn("await selectCandidate(returnContext.candidateId);", account_record)
+        self.assertIn("Save changes", account_record)
 
     def test_invalid_or_missing_return_context_falls_back_to_normal_clients_screen(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -716,7 +714,6 @@ class ReviewUiStaticTests(unittest.TestCase):
     def test_billing_directory_account_rows_render(self):
         js = self._clients_js()
         self.assertIn('"account"', js)
-        self.assertIn("ACCOUNT_TYPE_LABELS", js)
 
     def test_billing_directory_linked_payer_identifies_account(self):
         js = self._clients_js()
@@ -724,7 +721,7 @@ class ReviewUiStaticTests(unittest.TestCase):
 
     def test_billing_directory_account_row_identifies_default_bill_to(self):
         js = self._clients_js()
-        self.assertIn("Default bill to:", js)
+        self.assertIn("Invoice recipient:", js)
 
     def test_billing_directory_person_payer_open_navigates_to_people(self):
         js = self._clients_js()

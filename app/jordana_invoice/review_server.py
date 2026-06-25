@@ -21,11 +21,14 @@ from .review_services import (
     BillingPartyNotFoundError,
     BillingPartyTypeError,
     create_account,
+    create_account_or_return_existing,
+    deactivate_account,
     create_billing_party,
     create_person,
     create_rate_rule_from_payload,
     dashboard_status,
     end_rate_rule,
+    find_duplicate_billing_relationship,
     get_account_record,
     get_organization_billing_record,
     get_person_record,
@@ -45,6 +48,8 @@ from .review_services import (
     preview_rate_suggestion,
     refresh_candidate_suggestions,
     replace_rate_rule_from_payload,
+    reactivate_account,
+    remove_account_member,
     save_billing_section,
     save_interpretation,
     save_person_alias,
@@ -53,9 +58,12 @@ from .review_services import (
     save_session_draft,
     search_accounts,
     search_billing_parties,
+    search_organization_billing_parties,
     search_people,
+    setup_billing_relationship,
     update_account,
     update_billing_party,
+    update_billing_relationship,
     update_person,
 )
 from .invoice_services import (
@@ -155,8 +163,21 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/billing-relationships":
                     self.send_json(list_billing_relationship_records(self.conn()))
                     return
+                if parsed.path == "/api/billing-relationships/find-duplicate":
+                    qs = parse_qs(parsed.query)
+                    payer_kind = first(qs, "payer_kind") or ""
+                    payer_person_id = first(qs, "payer_person_id") or None
+                    org_bp_id = first(qs, "organization_billing_party_id") or None
+                    covered_str = first(qs, "covered_client_ids") or ""
+                    covered_ids = [c.strip() for c in covered_str.split(",") if c.strip()] if covered_str else []
+                    dup = find_duplicate_billing_relationship(self.conn(), payer_kind, payer_person_id, org_bp_id, covered_ids)
+                    self.send_json(dup or {})
+                    return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(search_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
+                    return
+                if parsed.path == "/api/organization-billing-parties":
+                    self.send_json(search_organization_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
                     return
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
@@ -263,8 +284,47 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/accounts":
                     self.send_json(create_account(self.conn(), data["account_name"], data.get("account_type", "individual")))
                     return
+                if parsed.path == "/api/accounts/from-client":
+                    result = create_account_or_return_existing(
+                        self.conn(),
+                        data["person_id"],
+                        data["account_name"],
+                        data.get("account_type", "individual"),
+                    )
+                    if result["existing"]:
+                        self.send_json({"ok": False, "existing": True, "error": "A billing relationship already exists for this client.", "account_id": result["account"]["account_id"], "account_name": result["account"]["account_name"]}, status=409)
+                    else:
+                        self.send_json({"ok": True, "existing": False, "account_id": result["account"]["account_id"], "account_name": result["account"]["account_name"]})
+                    return
                 if parsed.path.startswith("/api/accounts/"):
-                    account_id = parsed.path.rsplit("/", 1)[-1]
+                    parts = parsed.path.strip("/").split("/")
+                    account_id = parts[2]
+                    action = parts[3] if len(parts) > 3 else ""
+                    if action == "deactivate":
+                        try:
+                            self.send_json(deactivate_account(self.conn(), account_id))
+                        except ValueError:
+                            self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        return
+                    if action == "reactivate":
+                        try:
+                            self.send_json(reactivate_account(self.conn(), account_id))
+                        except ValueError:
+                            self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        return
+                    if action == "update-billing-relationship":
+                        try:
+                            self.send_json(update_billing_relationship(self.conn(), account_id, data))
+                        except ValueError as e:
+                            self.send_json({"ok": False, "error": str(e)}, status=400)
+                        return
+                    if action == "remove-member":
+                        try:
+                            remove_account_member(self.conn(), account_id, data["person_id"])
+                            self.send_json({"ok": True})
+                        except ValueError as e:
+                            self.send_json({"ok": False, "error": str(e)}, status=400)
+                        return
                     self.send_json(update_account(self.conn(), account_id, data))
                     return
                 if parsed.path == "/api/billing-parties":
@@ -408,6 +468,9 @@ def make_handler(database_path: str):
                 if parsed.path == "/api/review/reparse-candidates":
                     result = reparse_unapproved_candidates(self.conn())
                     self.send_json({"ok": True, **result})
+                    return
+                if parsed.path == "/api/billing-relationships/setup":
+                    self.send_json(setup_billing_relationship(self.conn(), data))
                     return
                 self.send_error(404)
             except Exception as error:

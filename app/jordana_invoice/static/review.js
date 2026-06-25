@@ -523,41 +523,6 @@ function clearReturnContext() {
   if (location.hash.startsWith("#clients?")) location.hash = "#clients";
 }
 
-function payerDisplayOptions(members = [], returnContext = null) {
-  const seen = new Set();
-  const options = [];
-  const add = (personId, displayName) => {
-    if (!personId || seen.has(personId)) return;
-    seen.add(personId);
-    options.push({ person_id: personId, display_name: displayName || "Unnamed client" });
-  };
-  members.forEach(member => add(member.person_id, member.display_name));
-  (returnContext?.participants || []).forEach(participant => add(participant.person_id, participant.display_name));
-  return options;
-}
-
-function relationshipNameSuggestion(returnContext) {
-  const names = (returnContext?.participants || []).map(p => p.display_name).filter(Boolean);
-  if (!names.length) return "New Billing Relationship";
-  if (names.length === 1) return `${names[0]} Billing Relationship`;
-  return `${names[0]} + ${names[1]} Billing Relationship`;
-}
-
-function recordBillingPartyDraft(data, payerOptions, returnContext) {
-  const billing = data.billing_party || {};
-  const isPerson = billing.person_id || billing.billing_party_type === "person" || (!billing.billing_party_type && payerOptions.length);
-  const selectedPersonId = billing.person_id || returnContext?.billToPersonId || payerOptions[0]?.person_id || "";
-  return {
-    billing_party_id: billing.billing_party_id || "",
-    billing_party_type: isPerson ? "person" : "organization",
-    person_id: selectedPersonId,
-    organization_name: billing.organization_name || "",
-    billing_name: billing.billing_name || "",
-    billing_email: billing.billing_email || "",
-    billing_phone: billing.billing_phone || "",
-    administrative_notes: data.account?.administrative_notes || ""
-  };
-}
 
 function splitDisplayName(name) {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -697,15 +662,6 @@ function renderRelationshipEditor(data) {
     <div class="inline-actions"><button id="openAccountRecord">Open Billing Relationship Record</button></div>
   `;
   if ($("openAccountRecord")) $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
-}
-
-function showAccountEditor() {
-  if (!state.account) return alert("Select or create a billing relationship first.");
-  const name = prompt("Billing relationship name", state.account.account_name);
-  if (!name) return;
-  const type = prompt("Relationship type: individual, household, family, couple, organization, other", state.account.account_type || "individual") || "individual";
-  api(`/api/accounts/${state.account.account_id}`, { method: "POST", body: JSON.stringify({ account_name: name, account_type: type, default_billing_party_id: state.billingParty ? state.billingParty.billing_party_id : null }) })
-    .then(updated => { state.account = updated; $("accountInput").value = updated.account_name; renderRelationshipEditor(state.detail); });
 }
 
 function openBillingRelationshipEditor() {
@@ -1087,16 +1043,9 @@ function renderClientsLanding(returnContext = null) {
     await showReviewWorkbench();
     await selectCandidate(current.candidateId);
   };
-  $("createRelationshipForReturn").onclick = async () => {
+  $("createRelationshipForReturn").onclick = () => {
     const current = readReturnContext();
-    const suggested = relationshipNameSuggestion(current);
-    const name = prompt("Billing relationship name", suggested);
-    if (!name) return;
-    const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
-    const nextContext = persistReturnContext({ ...current, accountId: account.account_id });
-    location.hash = returnContextHash(nextContext);
-    await loadClients();
-    await openAccountRecord(account.account_id, { returnContext: nextContext });
+    openCreateRelationshipModal(current, $("createRelationshipForReturn"));
   };
 }
 
@@ -1107,6 +1056,10 @@ async function showClients() {
   $("pageTitle").textContent = "Billing Relationships";
   $("pageSubtitle").textContent = "Who receives invoices and who they pay for";
   document.title = "Jordana Billing - Billing Relationships";
+  const hashContext = hashReturnContext();
+  if (!hashContext) {
+    clearReturnContext();
+  }
   const returnContext = readReturnContext();
   renderClientsLanding(returnContext);
   await loadClients();
@@ -1881,22 +1834,13 @@ async function promptToEndRateRule(ruleId) {
   await loadRateRules();
 }
 
-const billingDirState = { records: [], filter: "all" };
+const billingDirState = { records: [], filter: "all", statusFilter: "active" };
 
 const BILLING_DIR_TYPE_LABELS = {
   self_pay: "Self-pay",
   third_party: "Pays for others",
   organization: "Organization",
   account: "Shared billing group",
-};
-
-const ACCOUNT_TYPE_LABELS = {
-  individual: "Individual",
-  household: "Household",
-  family: "Family",
-  couple: "Couple",
-  organization: "Organization",
-  other: "Other",
 };
 
 function billingDirCoversText(rec) {
@@ -1937,14 +1881,10 @@ function billingDirPayerSubtext(rec) {
     return "";
   }
   if (rec.record_type === "account") {
-    const parts = [];
-    if (rec.account_type && ACCOUNT_TYPE_LABELS[rec.account_type]) {
-      parts.push(ACCOUNT_TYPE_LABELS[rec.account_type]);
-    }
     if (rec.billing_name) {
-      parts.push(`Default bill to: ${escapeHtml(rec.billing_name)}`);
+      return `Invoice recipient: ${escapeHtml(rec.billing_name)}`;
     }
-    return parts.join(" • ");
+    return "";
   }
   return "";
 }
@@ -1954,7 +1894,7 @@ function billingDirLinkedText(rec) {
     return `<div class="dir-muted">Linked to shared billing group: ${escapeHtml(rec.account_name || "")}</div>`;
   }
   if (rec.record_type === "account" && rec.billing_name) {
-    return `<div class="dir-muted">Default bill to: ${escapeHtml(rec.billing_name)}</div>`;
+    return `<div class="dir-muted">Invoice recipient: ${escapeHtml(rec.billing_name)}</div>`;
   }
   return "";
 }
@@ -1981,8 +1921,14 @@ function billingDirOpenButton(rec) {
 
 function renderBillingDirRows() {
   const filter = billingDirState.filter;
+  const statusFilter = billingDirState.statusFilter;
   const search = ($("clientSearch").value || "").toLowerCase();
   let rows = billingDirState.records;
+  if (statusFilter === "active") {
+    rows = rows.filter(r => r.active);
+  } else if (statusFilter === "inactive") {
+    rows = rows.filter(r => !r.active);
+  }
   if (filter !== "all") {
     rows = rows.filter(r => r.record_type === filter);
   }
@@ -2226,11 +2172,9 @@ async function openOrganizationRecord(billingPartyId) {
     : `<span class="readonly-note">No invoices addressed to this organization yet.</span>`;
 
   const linkedAccountsHtml = (data.linked_accounts || []).length
-    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Code</th><th>Type</th><th>Status</th><th>Members</th><th>Open</th></tr></thead><tbody>
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Status</th><th>Members</th><th>Open</th></tr></thead><tbody>
         ${(data.linked_accounts || []).map(a => `<tr>
           <td>${escapeHtml(a.account_name)}</td>
-          <td>${escapeHtml(a.account_code)}</td>
-          <td>${escapeHtml(a.account_type)}</td>
           <td>${a.active ? "Active" : "Inactive"}</td>
           <td>${escapeHtml((a.members || []).map(m => m.display_name).join(", ") || "None")}</td>
           <td><button class="mini" data-open-account="${escapeHtml(a.account_id)}">Open</button></td>
@@ -2310,19 +2254,35 @@ async function openOrganizationRecord(billingPartyId) {
   if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
 
   if ($("orgEditBtn")) $("orgEditBtn").onclick = () => showOrgEditForm(data.billing_party);
-  if ($("orgDeactivateBtn")) $("orgDeactivateBtn").onclick = async () => {
-    const confirmed = confirm("Deactivating this organization billing record prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.");
-    if (!confirmed) return;
-    try {
-      await api(`/api/billing-parties/${bp.billing_party_id}`, {
-        method: "POST",
-        body: JSON.stringify({ active: false })
-      });
-      await openOrganizationRecord(bp.billing_party_id);
-      await loadClients();
-    } catch (err) {
-      showOrgMessage(err.message || "Failed to deactivate organization.", "error");
-    }
+  if ($("orgDeactivateBtn")) $("orgDeactivateBtn").onclick = () => {
+    showOrgMessage("", "");
+    const existing = document.getElementById("orgDeactivateConfirm");
+    if (existing) existing.remove();
+    const box = document.createElement("div");
+    box.id = "orgDeactivateConfirm";
+    box.className = "lifecycle-confirm-box";
+    box.style.display = "block";
+    box.innerHTML = `
+      <p>Deactivating this organization prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.</p>
+      <div class="wizard-confirm-actions">
+        <button type="button" id="orgDeactNo" class="modal-cancel">Cancel</button>
+        <button type="button" id="orgDeactYes" class="modal-submit">Deactivate</button>
+      </div>`;
+    panel.prepend(box);
+    document.getElementById("orgDeactNo").onclick = () => { box.remove(); $("orgDeactivateBtn").focus(); };
+    document.getElementById("orgDeactYes").onclick = async () => {
+      box.remove();
+      try {
+        await api(`/api/billing-parties/${bp.billing_party_id}`, {
+          method: "POST",
+          body: JSON.stringify({ active: false })
+        });
+        await openOrganizationRecord(bp.billing_party_id);
+        await loadClients();
+      } catch (err) {
+        showOrgMessage(err.message || "Failed to deactivate organization.", "error");
+      }
+    };
   };
   if ($("orgReactivateBtn")) $("orgReactivateBtn").onclick = async () => {
     try {
@@ -2357,6 +2317,70 @@ async function openOrganizationRecord(billingPartyId) {
   });
 }
 
+function showLifecycleConfirm(accountId, action, accountName) {
+  const box = $("lifecycleConfirmBox");
+  if (!box) return;
+  const isDeactivate = action === "deactivate";
+  const heading = isDeactivate ? "Deactivate this billing relationship?" : "Reactivate this billing relationship?";
+  const explanation = isDeactivate
+    ? "It will no longer appear in active searches or be suggested for future sessions. Existing sessions, invoices, rates, payments, and history will remain unchanged."
+    : "It will appear in active searches and be suggested for future sessions again.";
+  const confirmLabel = isDeactivate ? "Deactivate" : "Reactivate";
+  const confirmBtnId = isDeactivate ? "confirmDeactivateBtn" : "confirmReactivateBtn";
+  const spinnerText = isDeactivate ? "Deactivating…" : "Reactivating…";
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="lifecycle-confirm-content">
+      <h4>${escapeHtml(heading)}</h4>
+      <p class="lifecycle-explanation">${escapeHtml(explanation)}</p>
+      <div class="lifecycle-confirm-actions">
+        <button type="button" id="lifecycleCancelBtn" class="modal-back">Cancel</button>
+        <button type="button" id="${confirmBtnId}" class="${isDeactivate ? "danger" : "save"}">${escapeHtml(confirmLabel)}</button>
+      </div>
+      <div class="lifecycle-error" id="lifecycleError"></div>
+    </div>
+  `;
+  const cancelBtn = $("lifecycleCancelBtn");
+  const confirmBtn = $(confirmBtnId);
+  const errorDisplay = $("lifecycleError");
+  const triggerBtn = isDeactivate ? $("deactivateAccountBtn") : $("reactivateAccountBtn");
+  let inFlight = false;
+
+  function closeConfirm() {
+    box.hidden = true;
+    box.innerHTML = "";
+    if (triggerBtn) triggerBtn.focus();
+  }
+
+  cancelBtn.onclick = closeConfirm;
+  document.addEventListener("keydown", function escHandler(e) {
+    if (e.key === "Escape" && !box.hidden) {
+      closeConfirm();
+      document.removeEventListener("keydown", escHandler);
+    }
+  });
+
+  confirmBtn.onclick = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    confirmBtn.textContent = spinnerText;
+    errorDisplay.textContent = "";
+    try {
+      await api(`/api/accounts/${accountId}/${action}`, { method: "POST", body: "{}" });
+      await openAccountRecord(accountId);
+      await loadClients();
+    } catch (err) {
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+      confirmBtn.textContent = confirmLabel;
+      inFlight = false;
+      errorDisplay.textContent = escapeHtml(err.message || "Request failed.");
+    }
+  };
+}
+
 async function openAccountRecord(accountId, options = {}) {
   if (!accountId) return alert("Select or create a billing relationship first.");
   closeOrganizationRecord();
@@ -2367,61 +2391,133 @@ async function openAccountRecord(accountId, options = {}) {
   }
   state.returnCandidate = state.selected;
   const data = await api(`/api/accounts/${accountId}`);
-  const payerOptions = payerDisplayOptions(data.members || [], returnContext);
-  const billingDraft = recordBillingPartyDraft(data, payerOptions, returnContext);
+  const bp = data.billing_party || {};
+  const isActive = data.account.active;
+  const statusPill = isActive ? '<span class="status-pill active">Active</span>' : '<span class="status-pill inactive">Inactive</span>';
+  const lifecycleBtn = isActive
+    ? '<button id="deactivateAccountBtn" class="danger">Deactivate Billing Relationship</button>'
+    : '<button id="reactivateAccountBtn" class="save">Reactivate Billing Relationship</button>';
+
+  const payerType = bp.billing_party_type === "organization" ? "organization" : (bp.person_id ? "person" : "person");
+  const payerName = bp.billing_name || bp.organization_name || "Not set";
+  const payerTypeLabel = payerType === "organization" ? "Organization" : (bp.person_id && (data.members || []).some(m => m.person_id === bp.person_id) ? "Client" : "Another person");
+  const addressSummary = billingAddressSummary(bp);
+  const deliveryLabel = { email: "Email", mail: "Mail", both: "Both", unresolved: "Unresolved" }[bp.preferred_delivery_method] || "Unresolved";
+
+  const coveredHtml = (data.members || []).length
+    ? `<div class="covered-clients-list">${data.members.map(m => `
+      <div class="covered-client-row" data-person-id="${escapeHtml(m.person_id)}">
+        <span class="covered-client-name">${escapeHtml(m.display_name)}</span>
+        ${m.person_code ? `<span class="help">${escapeHtml(m.person_code)}</span>` : ""}
+        <button type="button" class="covered-client-remove" data-person-id="${escapeHtml(m.person_id)}" aria-label="Remove ${escapeHtml(m.display_name)} from Pays for">&times;</button>
+      </div>`).join("")}</div>`
+    : '<div class="readonly-note">No covered clients.</div>';
+
   $("accountRecord").innerHTML = `
-    ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
-    <h3>${fmt(data.account.account_name)}</h3>
-    <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span><span>${data.account.active ? "Active" : "Inactive"}</span></div>
-    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Member</button></div>
-    <div class="field-grid">
-      <label class="field">Relationship Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
-      <label class="field">Type<select id="recordAccountType">${optionSet(["individual","household","family","couple","organization","other"], data.account.account_type)}</select></label>
-      <label class="field wide">Admin Notes<input id="recordAccountNotes" value="${data.account.administrative_notes || ""}"></label>
+    ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
+    <h3>${escapeHtml(data.account.account_name)}</h3>
+    <div class="meta">${statusPill}</div>
+    <div id="lifecycleConfirmBox" class="lifecycle-confirm-box" hidden></div>
+    <div class="record-actions">${lifecycleBtn}</div>
+
+    <div class="editor-section" id="editorRecipientSection">
+      <h4>Invoice recipient</h4>
+      <div class="kv">
+        <label>Name</label><span>${escapeHtml(payerName)}</span>
+        <label>Type</label><span>${escapeHtml(payerTypeLabel)}</span>
+        <label>Email</label><span>${escapeHtml(bp.billing_email || "—")}</span>
+        <label>Phone</label><span>${escapeHtml(bp.billing_phone || "—")}</span>
+        <label>Delivery method</label><span>${escapeHtml(deliveryLabel)}</span>
+        ${addressSummary ? `<label>Address</label><span>${escapeHtml(addressSummary)}</span>` : ""}
+      </div>
+      <button type="button" id="changeRecipientBtn" class="save">Change invoice recipient</button>
+      <div id="recipientSearchArea" hidden></div>
     </div>
-    <h4>Members</h4><div class="compact-list">${data.members.map(m => `<div><span>${fmt(m.display_name)} ${m.is_primary ? "(Primary)" : ""}</span><span>${fmt(m.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No members yet.</span>"}</div>
-    <h4>Billing</h4>
-    <div class="field-grid">
-      <label class="field">Payer Type<select id="recordBillingPartyType">
-        <option value="person" ${billingDraft.billing_party_type === "person" ? "selected" : ""}>Client payer</option>
-        <option value="organization" ${billingDraft.billing_party_type === "organization" ? "selected" : ""}>Organization payer</option>
-      </select></label>
-      <label class="field" id="recordPayerPersonField">Bill-to client<select id="recordPayerPersonId">
-        <option value="">Select client payer</option>
-        ${payerOptions.map(option => `<option value="${option.person_id}" ${option.person_id === billingDraft.person_id ? "selected" : ""}>${fmt(option.display_name)}</option>`).join("")}
-      </select></label>
-      <label class="field" id="recordOrgNameField">Organization name<input id="recordOrganizationName" value="${billingDraft.organization_name || ""}"></label>
-      <label class="field">Payer name<input id="recordBillingName" value="${billingDraft.billing_name || ""}"></label>
-      <label class="field">Email<input id="recordBillingEmail" value="${billingDraft.billing_email || ""}"></label>
-      <label class="field">Phone<input id="recordBillingPhone" value="${billingDraft.billing_phone || ""}"></label>
+
+    <div class="editor-section" id="editorCoveredSection">
+      <h4>Pays for</h4>
+      ${coveredHtml}
+      <button type="button" id="addCoveredBtn" class="save">Add Client</button>
+      <div id="coveredSearchArea" hidden></div>
     </div>
-    <div class="kv"><label>Current default payer</label><span>${fmt(data.billing_party?.billing_name)}</span><label>Current email</label><span>${fmt(data.billing_party?.billing_email)}</span><label>Current phone</label><span>${fmt(data.billing_party?.billing_phone)}</span></div>
-    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No relationship-specific rates.</span>"}</div>
+
+    <div class="editor-section" id="editorDeliverySection">
+      <h4>Billing delivery</h4>
+      <div class="field-grid">
+        <label class="field">Billing name<input id="editBillingName" value="${escapeHtml(bp.billing_name || "")}"></label>
+        <label class="field">Billing email<input id="editBillingEmail" type="email" value="${escapeHtml(bp.billing_email || "")}"></label>
+        <label class="field">Billing phone<input id="editBillingPhone" type="tel" value="${escapeHtml(bp.billing_phone || "")}"></label>
+        ${payerType === "organization" ? `<label class="field">Organization name<input id="editBillingContactName" value="${escapeHtml(bp.organization_name || "")}"></label>` : ""}
+        <label class="field">Address line 1<input id="editAddr1" value="${escapeHtml(bp.billing_address_line_1 || "")}"></label>
+        <label class="field">Address line 2<input id="editAddr2" value="${escapeHtml(bp.billing_address_line_2 || "")}"></label>
+        <label class="field">City<input id="editCity" value="${escapeHtml(bp.billing_city || "")}"></label>
+        <label class="field">State<input id="editState" value="${escapeHtml(bp.billing_state || "")}"></label>
+        <label class="field">Postal code<input id="editPostal" value="${escapeHtml(bp.billing_postal_code || "")}"></label>
+        <label class="field">Preferred delivery method
+          <select id="editDeliveryMethod">
+            <option value="unresolved" ${bp.preferred_delivery_method === "unresolved" || !bp.preferred_delivery_method ? "selected" : ""}>Unresolved</option>
+            <option value="email" ${bp.preferred_delivery_method === "email" ? "selected" : ""}>Email</option>
+            <option value="mail" ${bp.preferred_delivery_method === "mail" ? "selected" : ""}>Mail</option>
+            <option value="both" ${bp.preferred_delivery_method === "both" ? "selected" : ""}>Both</option>
+          </select>
+        </label>
+        <label class="field wide">Administrative notes<input id="editAdminNotes" value="${escapeHtml(data.account.administrative_notes || "")}"></label>
+      </div>
+    </div>
+
+    <div class="record-actions">
+      <button type="button" id="saveBillingRelationshipBtn" class="save">Save changes</button>
+    </div>
+    <div id="editorErrorBox" class="lifecycle-confirm-box" hidden></div>
+    <div id="editorDuplicateBox" class="lifecycle-confirm-box" hidden></div>
+
     <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.duration_minutes)} min ${serviceLabel(s.service_mode)} ${timeLabel(s.time_category)}</span><span>${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
-    <h4>Active Rate Exceptions</h4><div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${fmt(r.effective_from)} ${fmt(r.duration_minutes || "Any")} min ${serviceLabel(r.service_mode || r.rate_group || "Any")}</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No person-specific rate exceptions.</span>"}</div>
-    <h4>Shared Rate Exceptions</h4><div class="compact-list">${(data.joint_rate_exceptions || []).map(r => `<div><span>${fmt(r.participant_names)} ${fmt(r.duration_minutes || "Any")} min</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No joint-session exceptions.</span>"}</div>
+    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No relationship-specific rates.</span>"}</div>
     <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
   `;
-  const syncBillingPartyFields = () => {
-    const mode = $("recordBillingPartyType").value;
-    $("recordPayerPersonField").hidden = mode !== "person";
-    $("recordOrgNameField").hidden = mode !== "organization";
-    if (mode === "person") {
-      const payer = payerOptions.find(option => option.person_id === $("recordPayerPersonId").value) || payerOptions[0];
-      if (payer && !$("recordBillingName").value) $("recordBillingName").value = payer.display_name;
-    }
+
+  let editState = {
+    payer_kind: payerType === "organization" ? "organization" : (bp.person_id && (data.members || []).some(m => m.person_id === bp.person_id) ? "client" : "person"),
+    payer_person_id: bp.person_id || null,
+    organization_billing_party_id: payerType === "organization" ? bp.billing_party_id : null,
+    covered_client_ids: (data.members || []).map(m => m.person_id),
   };
-  $("recordBillingPartyType").onchange = syncBillingPartyFields;
-  if ($("recordPayerPersonId")) {
-    $("recordPayerPersonId").onchange = () => {
-      const payer = payerOptions.find(option => option.person_id === $("recordPayerPersonId").value);
-      if (payer) $("recordBillingName").value = payer.display_name;
-      syncBillingPartyFields();
-    };
-  }
-  syncBillingPartyFields();
+
+  let editorDirty = false;
+  const markEditorDirty = () => { editorDirty = true; };
+
   if ($("returnFromAccount")) $("returnFromAccount").onclick = async (event) => {
     event.preventDefault();
+    if (editorDirty) {
+      const confirmBox = $("editorDirtyConfirm");
+      if (!confirmBox) {
+        const box = document.createElement("div");
+        box.id = "editorDirtyConfirm";
+        box.className = "lifecycle-confirm-box";
+        box.style.display = "block";
+        box.innerHTML = `
+          <p>You have unsaved changes. Return to review without saving?</p>
+          <div class="wizard-confirm-actions">
+            <button type="button" id="editorDirtyNo" class="modal-cancel">Keep editing</button>
+            <button type="button" id="editorDirtyYes" class="modal-submit">Return without saving</button>
+          </div>`;
+        $("accountRecord").prepend(box);
+        document.getElementById("editorDirtyNo").onclick = () => { box.remove(); };
+        document.getElementById("editorDirtyYes").onclick = async () => {
+          box.remove();
+          if (!validReturnContext(returnContext)) {
+            clearReturnContext();
+            location.hash = "";
+            showReviewWorkbench();
+            return;
+          }
+          location.hash = "";
+          await showReviewWorkbench();
+          await selectCandidate(returnContext.candidateId);
+        };
+        return;
+      }
+    }
     if (!validReturnContext(returnContext)) {
       clearReturnContext();
       location.hash = "";
@@ -2432,92 +2528,307 @@ async function openAccountRecord(accountId, options = {}) {
     await showReviewWorkbench();
     await selectCandidate(returnContext.candidateId);
   };
-  $("editAccountRecord").onclick = async () => {
-    const accountPayload = {
-      account_name: $("recordAccountName").value,
-      account_type: $("recordAccountType").value,
-      administrative_notes: $("recordAccountNotes").value
+
+  if ($("deactivateAccountBtn")) {
+    $("deactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "deactivate", data.account.account_name);
+  }
+  if ($("reactivateAccountBtn")) {
+    $("reactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "reactivate", data.account.account_name);
+  }
+
+  $("changeRecipientBtn").onclick = () => { markEditorDirty(); openRecipientSearch(accountId, data, editState, returnContext); };
+  $("addCoveredBtn").onclick = () => { markEditorDirty(); openCoveredSearch(accountId, data, editState, returnContext); };
+  $("saveBillingRelationshipBtn").onclick = () => saveBillingRelationship(accountId, editState, returnContext);
+
+  document.querySelectorAll(".covered-client-remove").forEach(btn => {
+    btn.onclick = () => {
+      const pid = btn.dataset.personId;
+      editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
+      btn.closest(".covered-client-row").remove();
+      markEditorDirty();
     };
-    const payerMode = $("recordBillingPartyType").value;
-    const selectedPayerPersonId = $("recordPayerPersonId")?.value || "";
-    const orgBillingName = $("recordBillingName").value.trim();
-    if (validReturnContext(returnContext) && payerMode === "person" && !selectedPayerPersonId) {
-      alert("Select the bill-to client before saving this billing relationship.");
-      return;
-    }
-    if (validReturnContext(returnContext) && payerMode === "organization" && !orgBillingName) {
-      alert("Enter the payer name before saving this billing relationship.");
-      return;
-    }
-    await api(`/api/accounts/${accountId}`, { method: "POST", body: JSON.stringify(accountPayload) });
-    if (validReturnContext(returnContext)) {
-      const currentContext = persistReturnContext({ ...returnContext, accountId });
-      const relationshipPayload = {
-        participants: (currentContext.participants || []).map((participant, index) => ({
-          person_id: participant.person_id,
-          display_name: participant.display_name,
-          is_primary: participant.is_primary || index === 0,
-          relationship_role: participant.relationship_role || (index === 0 ? "primary" : "family_member")
-        })),
-        account_id: accountId,
-        primary_person_id: (currentContext.participants || []).find(participant => participant.is_primary)?.person_id || currentContext.participants?.[0]?.person_id || null
-      };
-      await api(`/api/review/candidates/${currentContext.candidateId}/save-relationship`, { method: "POST", body: JSON.stringify(relationshipPayload) });
-      if (payerMode === "person") {
-        await api(`/api/review/candidates/${currentContext.candidateId}/save-billing`, {
-          method: "POST",
-          body: JSON.stringify({ bill_to_person_id: selectedPayerPersonId })
-        });
-      } else {
-        const billingPayload = {
-          billing_party_id: billingDraft.billing_party_id || "",
-          billing_party_type: "organization",
-          organization_name: $("recordOrganizationName").value.trim() || null,
-          billing_name: orgBillingName,
-          billing_email: $("recordBillingEmail").value.trim() || null,
-          billing_phone: $("recordBillingPhone").value.trim() || null
-        };
-        const billingResult = billingPayload.billing_party_id
-          ? await api(`/api/billing-parties/${billingPayload.billing_party_id}`, { method: "POST", body: JSON.stringify(billingPayload) })
-          : await api("/api/billing-parties", { method: "POST", body: JSON.stringify(billingPayload) });
-        await api(`/api/accounts/${accountId}`, {
-          method: "POST",
-          body: JSON.stringify({ ...accountPayload, default_billing_party_id: billingResult.billing_party_id })
-        });
-        await api(`/api/review/candidates/${currentContext.candidateId}/save-billing`, {
-          method: "POST",
-          body: JSON.stringify({ billing_party_id: billingResult.billing_party_id })
-        });
+  });
+
+  const deliveryInputs = ["editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
+  deliveryInputs.forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener("change", markEditorDirty);
+  });
+
+  if (!location.hash.startsWith("#clients")) {
+    location.hash = "clients";
+    showClients();
+  }
+}
+
+function openRecipientSearch(accountId, data, editState, returnContext) {
+  const area = $("recipientSearchArea");
+  area.hidden = false;
+  area.innerHTML = `
+    <div class="wizard-payer-types" id="editorPayerTypes">
+      <div class="wizard-payer-choice ${editState.payer_kind === "client" ? "selected" : ""}" data-type="client" tabindex="0" role="radio">
+        <strong>A client</strong><span class="help">Someone who attends sessions and pays for themselves</span>
+      </div>
+      <div class="wizard-payer-choice ${editState.payer_kind === "person" ? "selected" : ""}" data-type="person" tabindex="0" role="radio">
+        <strong>Another person</strong><span class="help">Someone who receives invoices but does not attend</span>
+      </div>
+      <div class="wizard-payer-choice ${editState.payer_kind === "organization" ? "selected" : ""}" data-type="organization" tabindex="0" role="radio">
+        <strong>An organization</strong><span class="help">A company or agency that receives invoices</span>
+      </div>
+    </div>
+    <div class="modal-search-wrap">
+      <label for="editorRecipientInput">Search</label>
+      <input id="editorRecipientInput" class="modal-search" type="search" placeholder="Type a name..." autocomplete="off">
+    </div>
+    <div class="modal-results" id="editorRecipientResults"></div>
+    <div class="modal-selected" id="editorRecipientSelected" hidden></div>
+  `;
+  const choices = area.querySelectorAll(".wizard-payer-choice");
+  choices.forEach(el => {
+    el.addEventListener("click", () => {
+      choices.forEach(c => c.classList.remove("selected"));
+      el.classList.add("selected");
+      editState.payer_kind = el.dataset.type;
+      if (el.dataset.type !== "organization") {
+        editState.organization_billing_party_id = null;
       }
+      if (el.dataset.type === "organization") {
+        editState.payer_person_id = null;
+      }
+      $("editorRecipientSelected").hidden = true;
+      $("editorRecipientResults").innerHTML = "";
+      $("editorRecipientInput").value = "";
+      $("editorRecipientInput").focus();
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
+
+  const input = $("editorRecipientInput");
+  const results = $("editorRecipientResults");
+  const selectedDiv = $("editorRecipientSelected");
+  let searchRows = [];
+
+  const doSearch = debounce(async (q) => {
+    if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+    try {
+      if (editState.payer_kind === "organization") {
+        searchRows = await api(`/api/organization-billing-parties?q=${encodeURIComponent(q)}`);
+      } else {
+        searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      }
+      renderRecipientResults(results, searchRows, editState.payer_kind, editState);
+    } catch (err) { results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`; }
+  }, 200);
+  input.addEventListener("input", (e) => doSearch(e.target.value));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  input.focus();
+}
+
+function renderRecipientResults(container, rows, kind, editState) {
+  if (!rows.length) { container.innerHTML = '<div class="modal-empty">No results found.</div>'; return; }
+  const selectedId = kind === "organization" ? editState.organization_billing_party_id : editState.payer_person_id;
+  container.innerHTML = rows.map(row => {
+    const id = kind === "organization" ? row.billing_party_id : row.person_id;
+    const name = kind === "organization" ? (row.organization_name || row.billing_name || "Unnamed") : (row.display_name || "Unnamed");
+    return `<div class="modal-result-row ${id === selectedId ? "selected" : ""}" data-id="${escapeHtml(id)}" tabindex="0" role="button">
+      <span>${escapeHtml(name)}</span>
+    </div>`;
+  }).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.id;
+      if (kind === "organization") {
+        editState.organization_billing_party_id = id;
+        editState.payer_person_id = null;
+        const org = rows.find(r => r.billing_party_id === id);
+        showEditorRecipientSelected(org.organization_name || org.billing_name, "organization");
+      } else {
+        editState.payer_person_id = id;
+        editState.organization_billing_party_id = null;
+        const person = rows.find(r => r.person_id === id);
+        showEditorRecipientSelected(person.display_name, kind);
+      }
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
+}
+
+function showEditorRecipientSelected(name, kind) {
+  const div = $("editorRecipientSelected");
+  div.hidden = false;
+  const label = kind === "organization" ? "Selected organization" : kind === "client" ? "Selected client" : "Selected person";
+  div.innerHTML = `${escapeHtml(label)}: <strong>${escapeHtml(name)}</strong>`;
+}
+
+function openCoveredSearch(accountId, data, editState, returnContext) {
+  const area = $("coveredSearchArea");
+  area.hidden = false;
+  area.innerHTML = `
+    <div class="modal-search-wrap">
+      <label for="editorCoveredInput">Search clients to add</label>
+      <input id="editorCoveredInput" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
+    </div>
+    <div class="modal-results" id="editorCoveredResults"></div>
+  `;
+  const input = $("editorCoveredInput");
+  const results = $("editorCoveredResults");
+  let searchRows = [];
+
+  const doSearch = debounce(async (q) => {
+    if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+    try {
+      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      const selectedIds = new Set(editState.covered_client_ids);
+      renderEditorCoveredResults(results, searchRows, selectedIds, editState);
+    } catch (err) { results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`; }
+  }, 200);
+  input.addEventListener("input", (e) => doSearch(e.target.value));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  input.focus();
+}
+
+function renderEditorCoveredResults(container, rows, selectedIds, editState) {
+  if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found.</div>'; return; }
+  container.innerHTML = rows.map(row => {
+    const isSelected = selectedIds.has(row.person_id);
+    return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
+      <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
+      ${isSelected ? '<span class="help already-included-label">Click to remove</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+    </div>`;
+  }).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    const pid = el.dataset.personId;
+    if (selectedIds.has(pid)) {
+      el.addEventListener("click", () => {
+        editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
+        const row = el.closest(".covered-client-row") || document.querySelector(`.covered-client-row[data-person-id="${pid}"]`);
+        if (row) row.remove();
+        const newSelected = new Set(editState.covered_client_ids);
+        renderEditorCoveredResults(container, rows, newSelected, editState);
+      });
+    } else {
+      el.addEventListener("click", () => {
+        if (!editState.covered_client_ids.includes(pid)) {
+          editState.covered_client_ids.push(pid);
+          const person = rows.find(r => r.person_id === pid);
+          const list = document.querySelector(".covered-clients-list");
+          if (list && person) {
+            const div = document.createElement("div");
+            div.className = "covered-client-row";
+            div.dataset.personId = pid;
+            div.innerHTML = `<span class="covered-client-name">${escapeHtml(person.display_name)}</span>${person.person_code ? `<span class="help">${escapeHtml(person.person_code)}</span>` : ""}<button type="button" class="covered-client-remove" data-person-id="${escapeHtml(pid)}" aria-label="Remove ${escapeHtml(person.display_name)}">&times;</button>`;
+            list.appendChild(div);
+            div.querySelector(".covered-client-remove").onclick = () => {
+              editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
+              div.remove();
+            };
+          }
+        }
+        const newSelected = new Set(editState.covered_client_ids);
+        renderEditorCoveredResults(container, rows, newSelected, editState);
+      });
+    }
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
+}
+
+async function saveBillingRelationship(accountId, editState, returnContext) {
+  const saveBtn = $("saveBillingRelationshipBtn");
+  const errorBox = $("editorErrorBox");
+  const dupBox = $("editorDuplicateBox");
+  if (saveBtn.disabled) return;
+
+  if (!editState.payer_person_id && !editState.organization_billing_party_id) {
+    errorBox.hidden = false;
+    errorBox.textContent = "Select an invoice recipient before saving.";
+    return;
+  }
+  if (!editState.covered_client_ids || editState.covered_client_ids.length === 0) {
+    errorBox.hidden = false;
+    errorBox.textContent = "At least one covered client is required for an active relationship.";
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving changes…";
+  errorBox.hidden = true;
+  dupBox.hidden = true;
+
+  const billingDelivery = {};
+  const fields = [
+    ["editBillingName", "billing_name"],
+    ["editBillingEmail", "billing_email"],
+    ["editBillingPhone", "billing_phone"],
+    ["editBillingContactName", "organization_name"],
+    ["editAddr1", "billing_address_line_1"],
+    ["editAddr2", "billing_address_line_2"],
+    ["editCity", "billing_city"],
+    ["editState", "billing_state"],
+    ["editPostal", "billing_postal_code"],
+    ["editDeliveryMethod", "preferred_delivery_method"],
+  ];
+  for (const [elId, field] of fields) {
+    const el = $(elId);
+    if (el) billingDelivery[field] = el.value.trim() || null;
+  }
+  const adminNotesEl = $("editAdminNotes");
+  const adminNotes = adminNotesEl ? adminNotesEl.value.trim() : null;
+
+  const payload = {
+    payer_kind: editState.payer_kind,
+    covered_client_ids: editState.covered_client_ids,
+    billing_delivery: billingDelivery,
+    administrative_notes: adminNotes,
+  };
+  if (editState.payer_kind === "organization") {
+    payload.organization_billing_party_id = editState.organization_billing_party_id;
+  } else {
+    payload.payer_person_id = editState.payer_person_id;
+  }
+
+  try {
+    await api(`/api/accounts/${accountId}/update-billing-relationship`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (validReturnContext(returnContext)) {
       clearReturnContext();
       location.hash = "";
       await loadList();
       await showReviewWorkbench();
-      await selectCandidate(currentContext.candidateId);
+      await selectCandidate(returnContext.candidateId);
       return;
     }
     await openAccountRecord(accountId);
     await loadClients();
-  };
-  $("addMemberRecord").onclick = async () => {
-    const name = prompt("Add which existing client to this billing relationship?");
-    if (!name) return;
-    const rows = await api(`/api/people?q=${encodeURIComponent(name)}`);
-    const match = rows.find(row => row.display_name.toLowerCase() === name.toLowerCase()) || rows[0];
-    if (!match) {
-      alert("No matching client found.");
-      return;
+  } catch (err) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Save changes";
+    const msg = err && (err.error || err.message) ? (err.error || err.message) : "Failed to save billing relationship.";
+    if (msg.includes("already exists")) {
+      dupBox.hidden = false;
+      dupBox.innerHTML = `<p>This billing relationship already exists.</p>
+        <div class="wizard-duplicate-actions">
+          <button type="button" id="editorOpenExisting" class="modal-submit">Open existing relationship</button>
+          <button type="button" id="editorCancelDup" class="modal-back">Cancel changes</button>
+        </div>`;
+      const openBtn = document.getElementById("editorOpenExisting");
+      if (openBtn) openBtn.onclick = async () => {
+        try {
+          const dup = await api(`/api/billing-relationships/find-duplicate?payer_kind=${encodeURIComponent(editState.payer_kind)}&payer_person_id=${encodeURIComponent(editState.payer_person_id || "")}&organization_billing_party_id=${encodeURIComponent(editState.organization_billing_party_id || "")}&covered_client_ids=${encodeURIComponent(editState.covered_client_ids.join(","))}`);
+          if (dup && dup.account_id) {
+            await openAccountRecord(dup.account_id, { returnContext });
+          }
+        } catch (_) {
+          dupBox.innerHTML = "<p>Could not find the existing relationship.</p>";
+        }
+      };
+      const cancelBtn = document.getElementById("editorCancelDup");
+      if (cancelBtn) cancelBtn.onclick = () => { dupBox.hidden = true; };
+    } else {
+      errorBox.hidden = false;
+      errorBox.textContent = escapeHtml(msg);
     }
-    await api("/api/account-members", {
-      method: "POST",
-      body: JSON.stringify({ account_id: accountId, person_id: match.person_id, relationship_role: "family_member", is_primary: false })
-    });
-    await loadClients();
-    await openAccountRecord(accountId, { returnContext });
-  };
-  if (!location.hash.startsWith("#clients")) {
-    location.hash = "clients";
-    showClients();
   }
 }
 
@@ -2650,7 +2961,7 @@ async function openPersonRecord(personId, options = {}) {
     : `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
 
   $("personRecordView").innerHTML = `
-    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
+    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
     <a href="#people" class="return-link" id="backToClients">← Back to Clients</a>
     <div class="client-workspace">
       <div class="client-header">
@@ -2827,18 +3138,33 @@ async function openPersonRecord(personId, options = {}) {
     };
   });
   document.querySelectorAll("[data-deactivate-billing]").forEach(button => {
-    button.onclick = async () => {
-      const confirmed = confirm("Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.");
-      if (!confirmed) return;
-      try {
-        await api(`/api/billing-parties/${button.dataset.deactivateBilling}`, {
-          method: "POST",
-          body: JSON.stringify({ active: false })
-        });
-        await openPersonRecord(personId, { showAllSessions });
-      } catch (err) {
-        showBillingSetupMessage(err.message || "Failed to deactivate billing setup.", "error");
-      }
+    button.onclick = () => {
+      const existing = document.getElementById("billingDeactConfirm");
+      if (existing) existing.remove();
+      const box = document.createElement("div");
+      box.id = "billingDeactConfirm";
+      box.className = "lifecycle-confirm-box";
+      box.style.display = "block";
+      box.innerHTML = `
+        <p>Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.</p>
+        <div class="wizard-confirm-actions">
+          <button type="button" id="billingDeactNo" class="modal-cancel">Cancel</button>
+          <button type="button" id="billingDeactYes" class="modal-submit">Deactivate</button>
+        </div>`;
+      button.closest(".billing-card")?.prepend(box);
+      document.getElementById("billingDeactNo").onclick = () => { box.remove(); button.focus(); };
+      document.getElementById("billingDeactYes").onclick = async () => {
+        box.remove();
+        try {
+          await api(`/api/billing-parties/${button.dataset.deactivateBilling}`, {
+            method: "POST",
+            body: JSON.stringify({ active: false })
+          });
+          await openPersonRecord(personId, { showAllSessions });
+        } catch (err) {
+          showBillingSetupMessage(err.message || "Failed to deactivate billing setup.", "error");
+        }
+      };
     };
   });
   document.querySelectorAll("[data-reactivate-billing]").forEach(button => {
@@ -2949,17 +3275,10 @@ function showBillingSetupForm(existing, defaultName) {
 }
 ["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? renderBillingDirRows() : loadPeople(), 180)));
 $("billingDirFilter").addEventListener("change", () => { billingDirState.filter = $("billingDirFilter").value; renderBillingDirRows(); });
-$("newAccountBtn").onclick = async () => {
+$("billingDirStatusFilter").addEventListener("change", () => { billingDirState.statusFilter = $("billingDirStatusFilter").value; renderBillingDirRows(); });
+$("newAccountBtn").onclick = () => {
   const returnContext = readReturnContext();
-  const name = prompt("Billing relationship name", relationshipNameSuggestion(returnContext));
-  if (!name) return;
-  const account = await api("/api/accounts", { method: "POST", body: JSON.stringify({ account_name: name, account_type: "individual" }) });
-  if (validReturnContext(returnContext)) {
-    persistReturnContext({ ...returnContext, accountId: account.account_id });
-    location.hash = returnContextHash({ ...returnContext, accountId: account.account_id });
-  }
-  await loadClients();
-  await openAccountRecord(account.account_id, { returnContext });
+  openCreateRelationshipModal(returnContext, $("newAccountBtn"));
 };
 $("newPersonBtn").onclick = async () => {
   const name = prompt("Client display name");
@@ -3074,4 +3393,982 @@ function titleTimeWarning(session) {
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[ch]));
+}
+
+/* ─── Round 1: In-page modals for billing relationship creation and add-client ─── */
+
+function closeBillingModal() {
+  const overlay = document.getElementById("billingModalOverlay");
+  if (overlay) {
+    overlay.remove();
+    document.body.style.overflow = "";
+  }
+  document.removeEventListener("keydown", billingModalTrapKeydown);
+}
+
+function billingModalTrapKeydown(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    const cancelBtn = document.getElementById("billingModalCancel");
+    if (cancelBtn) cancelBtn.click();
+    return;
+  }
+  if (e.key === "Tab") {
+    const modal = document.getElementById("billingModal");
+    if (!modal) return;
+    const focusable = modal.querySelectorAll('input, button, select, [tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+}
+
+
+function openCreateRelationshipModal(returnContext, originatingBtn) {
+  closeBillingModal();
+  const overlay = document.createElement("div");
+  overlay.id = "billingModalOverlay";
+  overlay.className = "billing-modal-overlay";
+  overlay.innerHTML = `
+    <div class="billing-modal billing-wizard" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingModalTitle">
+      <h3 id="billingModalTitle">Set up who pays</h3>
+      <p class="modal-instruction">Choose who should receive invoices and which clients they are paying for.</p>
+      <div class="wizard-progress" id="wizardProgress">Step 1 of 3</div>
+      <div class="wizard-body" id="wizardBody"></div>
+      <div class="modal-error" id="billingModalError" role="alert"></div>
+      <div class="modal-actions" id="wizardActions"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+
+  const errorDisplay = document.getElementById("billingModalError");
+  const actionsBox = document.getElementById("wizardActions");
+  const bodyBox = document.getElementById("wizardBody");
+  const progressBox = document.getElementById("wizardProgress");
+
+  let step = 1;
+  let payerType = null;
+  let payerPerson = null;
+  let payerOrg = null;
+  let coveredClients = [];
+  let useFuture = true;
+  let saving = false;
+  let setupResult = null;
+
+  const fromReview = validReturnContext(returnContext);
+  const ctxParticipants = (returnContext && Array.isArray(returnContext.participants)) ? returnContext.participants : [];
+
+  async function suggestPayerFromContext() {
+    if (!fromReview || !returnContext.billingPartyId) return;
+    try {
+      const bp = await api(`/api/billing-parties/${returnContext.billingPartyId}`);
+      if (!bp || !bp.billing_party_id) return;
+      if (bp.billing_party_type === "organization") {
+        payerType = "organization";
+        payerOrg = bp;
+      } else if (bp.person_id) {
+        const isParticipant = ctxParticipants.some(p => p.person_id === bp.person_id);
+        payerType = isParticipant ? "client" : "person";
+        const person = await api(`/api/people/${bp.person_id}`);
+        if (person && person.person_id) payerPerson = person;
+      }
+    } catch (_) { /* inactive or missing — no suggestion */ }
+  }
+
+  function preselectParticipants() {
+    if (!fromReview) return;
+    const confirmed = ctxParticipants.filter(p => p.person_id);
+    for (const p of confirmed) {
+      if (!coveredClients.some(c => c.person_id === p.person_id)) {
+        coveredClients.push({ person_id: p.person_id, display_name: p.display_name || "" });
+      }
+    }
+  }
+
+  const hasChanges = () => payerType || payerPerson || payerOrg || coveredClients.length > 0;
+
+  function doCancel() {
+    if (hasChanges()) {
+      const confirmBox = document.getElementById("wizardConfirmCancel");
+      if (!confirmBox) {
+        const confirmEl = document.createElement("div");
+        confirmEl.id = "wizardConfirmCancel";
+        confirmEl.className = "wizard-confirm-cancel";
+        confirmEl.innerHTML = `
+          <p>You have unsaved selections. Are you sure you want to cancel?</p>
+          <div class="wizard-confirm-actions">
+            <button type="button" id="wizardCancelNo" class="modal-cancel">Keep editing</button>
+            <button type="button" id="wizardCancelYes" class="modal-submit">Yes, cancel</button>
+          </div>
+        `;
+        bodyBox.appendChild(confirmEl);
+        document.getElementById("wizardCancelNo").onclick = () => { confirmEl.remove(); };
+        document.getElementById("wizardCancelYes").onclick = () => { closeBillingModal(); if (originatingBtn) originatingBtn.focus(); };
+      }
+    } else {
+      closeBillingModal();
+      if (originatingBtn) originatingBtn.focus();
+    }
+  }
+
+  function renderActions() {
+    let html = `<button type="button" class="modal-cancel" id="billingModalCancel">Cancel</button>`;
+    if (step === 1) {
+      html += `<button type="button" class="modal-submit" id="wizardContinue" disabled>Continue</button>`;
+    } else if (step === 2) {
+      html += `<button type="button" class="modal-back" id="wizardBack">Back</button>`;
+      html += `<button type="button" class="modal-submit" id="wizardContinue" disabled>Continue</button>`;
+    } else if (step === 3) {
+      html += `<button type="button" class="modal-back" id="wizardBack">Back</button>`;
+      html += `<button type="button" class="modal-submit" id="wizardSave">Save Billing Relationship</button>`;
+    }
+    actionsBox.innerHTML = html;
+
+    const cancelBtn = document.getElementById("billingModalCancel");
+    cancelBtn.onclick = doCancel;
+
+    if (step === 1 || step === 2) {
+      const cont = document.getElementById("wizardContinue");
+      if (cont) cont.onclick = () => { errorDisplay.textContent = ""; goNext(); };
+    }
+    if (step === 2 || step === 3) {
+      const back = document.getElementById("wizardBack");
+      if (back) back.onclick = () => { errorDisplay.textContent = ""; goBack(); };
+    }
+    if (step === 3) {
+      const save = document.getElementById("wizardSave");
+      if (save) save.onclick = doSave;
+    }
+  }
+
+  function goNext() {
+    if (step === 1) {
+      if (!payerType) { errorDisplay.textContent = "Select who receives the invoice."; return; }
+      if (payerType === "client" && !payerPerson) { errorDisplay.textContent = "Select a client."; return; }
+      if (payerType === "person" && !payerPerson) { errorDisplay.textContent = "Select a person."; return; }
+      if (payerType === "organization" && !payerOrg) { errorDisplay.textContent = "Select an organization."; return; }
+      step = 2;
+      renderStep();
+    } else if (step === 2) {
+      if (coveredClients.length === 0) { errorDisplay.textContent = "Select at least one client."; return; }
+      step = 3;
+      renderStep();
+    }
+  }
+
+  function goBack() {
+    if (step > 1) { step--; renderStep(); }
+  }
+
+  function renderStep() {
+    progressBox.textContent = `Step ${step} of 3`;
+    errorDisplay.textContent = "";
+    if (step === 1) renderStep1();
+    else if (step === 2) renderStep2();
+    else if (step === 3) renderStep3();
+    renderActions();
+  }
+
+  function renderStep1() {
+    bodyBox.innerHTML = `
+      <div class="wizard-payer-types" id="wizardPayerTypes">
+        <div class="wizard-payer-choice ${payerType === "client" ? "selected" : ""}" data-type="client" tabindex="0" role="radio" aria-checked="${payerType === "client"}">
+          <strong>A client</strong>
+          <span class="help">Someone who attends sessions and pays for themselves or others</span>
+        </div>
+        <div class="wizard-payer-choice ${payerType === "person" ? "selected" : ""}" data-type="person" tabindex="0" role="radio" aria-checked="${payerType === "person"}">
+          <strong>Another person</strong>
+          <span class="help">Someone who receives invoices but does not need to attend sessions</span>
+        </div>
+        <div class="wizard-payer-choice ${payerType === "organization" ? "selected" : ""}" data-type="organization" tabindex="0" role="radio" aria-checked="${payerType === "organization"}">
+          <strong>An organization</strong>
+          <span class="help">A company or agency that receives invoices on behalf of clients</span>
+        </div>
+      </div>
+      <div id="wizardPayerSearch" hidden></div>
+      <div id="wizardPayerSelected" hidden></div>
+    `;
+
+    const choices = bodyBox.querySelectorAll(".wizard-payer-choice");
+    choices.forEach(el => {
+      const clickHandler = () => selectPayerType(el.dataset.type);
+      el.addEventListener("click", clickHandler);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clickHandler(); } });
+    });
+
+    if (payerType) showPayerSearch();
+    updateContinueDisabled();
+  }
+
+  function selectPayerType(type) {
+    if (payerType !== type) {
+      const oldType = payerType;
+      payerType = type;
+      if (type === "organization") payerPerson = null;
+      if (type !== "organization") payerOrg = null;
+      if (oldType === "client" && type === "person") payerPerson = null;
+      if (oldType === "person" && type === "client") payerPerson = null;
+      if (type === "client" && payerPerson) {
+        if (!coveredClients.some(c => c.person_id === payerPerson.person_id)) {
+          coveredClients.unshift({ person_id: payerPerson.person_id, display_name: payerPerson.display_name });
+        }
+      }
+    }
+    renderStep1();
+  }
+
+  function showPayerSearch() {
+    const searchDiv = document.getElementById("wizardPayerSearch");
+    const selectedDiv = document.getElementById("wizardPayerSelected");
+    if (!payerType) { searchDiv.hidden = true; return; }
+    searchDiv.hidden = false;
+
+    if (payerType === "client" || payerType === "person") {
+      const label = payerType === "client" ? "Search existing clients" : "Search existing people";
+      const placeholder = payerType === "client" ? "Type a client name..." : "Type a person name...";
+      const createLabel = payerType === "client" ? "Create new client" : "Create another person";
+      searchDiv.innerHTML = `
+        <div class="modal-search-wrap">
+          <label for="wizardPayerInput">${escapeHtml(label)}</label>
+          <input id="wizardPayerInput" class="modal-search" type="search" placeholder="${escapeHtml(placeholder)}" autocomplete="off">
+        </div>
+        <div class="modal-results" id="wizardPayerResults"></div>
+        <div class="wizard-create-new">
+          <button type="button" id="wizardCreateNewPerson" class="wizard-create-btn">${escapeHtml(createLabel)}</button>
+        </div>
+      `;
+      const input = document.getElementById("wizardPayerInput");
+      const results = document.getElementById("wizardPayerResults");
+      const createBtn = document.getElementById("wizardCreateNewPerson");
+      let searchRows = [];
+      const doSearch = debounce(async (q) => {
+        if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+        try {
+          searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+          renderPayerResults(results, searchRows, "person");
+        } catch (err) { errorDisplay.textContent = err.message || "Search failed."; }
+      }, 200);
+      input.addEventListener("input", (e) => doSearch(e.target.value));
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+      createBtn.addEventListener("click", () => showCreatePersonForm(payerType));
+      if (payerPerson) showPayerSelected(selectedDiv, payerPerson.display_name, payerType);
+      input.focus();
+    } else if (payerType === "organization") {
+      searchDiv.innerHTML = `
+        <div class="modal-search-wrap">
+          <label for="wizardPayerInput">Search existing organizations</label>
+          <input id="wizardPayerInput" class="modal-search" type="search" placeholder="Type an organization name..." autocomplete="off">
+        </div>
+        <div class="modal-results" id="wizardPayerResults"></div>
+        <div class="wizard-create-new">
+          <button type="button" id="wizardCreateNewOrg" class="wizard-create-btn">Create new organization</button>
+        </div>
+      `;
+      const input = document.getElementById("wizardPayerInput");
+      const results = document.getElementById("wizardPayerResults");
+      const createOrgBtn = document.getElementById("wizardCreateNewOrg");
+      let searchRows = [];
+      const doSearch = debounce(async (q) => {
+        if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+        try {
+          searchRows = await api(`/api/organization-billing-parties?q=${encodeURIComponent(q)}`);
+          renderPayerResults(results, searchRows, "organization");
+        } catch (err) { errorDisplay.textContent = err.message || "Search failed."; }
+      }, 200);
+      input.addEventListener("input", (e) => doSearch(e.target.value));
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+      createOrgBtn.addEventListener("click", () => showCreateOrgForm());
+      if (payerOrg) showPayerSelected(selectedDiv, payerOrg.billing_name || payerOrg.organization_name, "organization");
+      input.focus();
+    }
+  }
+
+  function renderPayerResults(container, rows, kind) {
+    if (!rows.length) { container.innerHTML = '<div class="modal-empty">No results found. Try a different search.</div>'; return; }
+    const selectedId = kind === "person" ? (payerPerson ? payerPerson.person_id : null) : (payerOrg ? payerOrg.billing_party_id : null);
+    container.innerHTML = rows.map(row => {
+      const id = kind === "person" ? row.person_id : row.billing_party_id;
+      const name = kind === "person" ? (row.display_name || "Unnamed") : (row.organization_name || row.billing_name || "Unnamed");
+      const sub = kind === "person" ? (row.person_code || "") : (row.billing_name || "");
+      return `<div class="modal-result-row ${id === selectedId ? "selected" : ""}" data-id="${escapeHtml(id)}" tabindex="0" role="button">
+        <span>${escapeHtml(name)}</span>
+        ${sub ? `<span class="help">${escapeHtml(sub)}</span>` : ""}
+      </div>`;
+    }).join("");
+    container.querySelectorAll(".modal-result-row").forEach(el => {
+      const id = el.dataset.id;
+      el.addEventListener("click", () => selectPayer(id, rows, kind));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+    });
+  }
+
+  function selectPayer(id, rows, kind) {
+    if (kind === "person") {
+      const person = rows.find(r => r.person_id === id);
+      if (!person) return;
+      payerPerson = person;
+      if (payerType === "client") {
+        if (!coveredClients.some(c => c.person_id === person.person_id)) {
+          coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
+        }
+      }
+      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, payerType);
+    } else {
+      const org = rows.find(r => r.billing_party_id === id);
+      if (!org) return;
+      payerOrg = org;
+      showPayerSelected(document.getElementById("wizardPayerSelected"), org.organization_name || org.billing_name, "organization");
+    }
+    updateContinueDisabled();
+  }
+
+  function showPayerSelected(container, name, kind) {
+    container.hidden = false;
+    const label = kind === "client" ? "Selected client" : kind === "organization" ? "Selected organization" : "Selected person";
+    container.innerHTML = `${escapeHtml(label)}: <strong>${escapeHtml(name)}</strong>`;
+  }
+
+  function updateContinueDisabled() {
+    const cont = document.getElementById("wizardContinue");
+    if (!cont) return;
+    let disabled = true;
+    if (step === 1) {
+      if (payerType === "client" || payerType === "person") disabled = !payerPerson;
+      else if (payerType === "organization") disabled = !payerOrg;
+      else disabled = true;
+    } else if (step === 2) {
+      disabled = coveredClients.length === 0;
+    }
+    cont.disabled = disabled;
+  }
+
+  function renderStep2() {
+    bodyBox.innerHTML = `
+      <h4 class="wizard-step-heading">Who are they paying for?</h4>
+      <p class="modal-instruction">Select the clients whose sessions this payer should cover.</p>
+      <div class="modal-search-wrap">
+        <label for="wizardCoveredSearch">Search clients to add</label>
+        <input id="wizardCoveredSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
+      </div>
+      <div class="modal-results" id="wizardCoveredResults"></div>
+      <div class="wizard-create-new">
+        <button type="button" id="wizardCoveredCreateNew" class="wizard-create-btn">Create new client</button>
+      </div>
+      <div class="wizard-covered-selected" id="wizardCoveredSelected"></div>
+    `;
+    renderCoveredChips();
+    const input = document.getElementById("wizardCoveredSearch");
+    const results = document.getElementById("wizardCoveredResults");
+    const createBtn = document.getElementById("wizardCoveredCreateNew");
+    let searchRows = [];
+    const selectedIds = new Set(coveredClients.map(c => c.person_id));
+    const doSearch = debounce(async (q) => {
+      if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+      try {
+        searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+        renderCoveredResults(results, searchRows, selectedIds);
+      } catch (err) { errorDisplay.textContent = err.message || "Search failed."; }
+    }, 200);
+    input.addEventListener("input", (e) => doSearch(e.target.value));
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+    createBtn.addEventListener("click", () => showCreatePersonForm("client", true));
+    input.focus();
+    updateContinueDisabled();
+  }
+
+  function renderCoveredResults(container, rows, selectedIds) {
+    if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>'; return; }
+    container.innerHTML = rows.map(row => {
+      const isSelected = selectedIds.has(row.person_id);
+      return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
+        <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
+        ${isSelected ? '<span class="help already-included-label">Click to remove</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+      </div>`;
+    }).join("");
+    container.querySelectorAll(".modal-result-row").forEach(el => {
+      const pid = el.dataset.personId;
+      if (selectedIds.has(pid)) {
+        el.addEventListener("click", () => removeCoveredClient(pid));
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+      } else {
+        el.addEventListener("click", () => addCoveredClient(pid, rows));
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+      }
+    });
+  }
+
+  function addCoveredClient(personId, rows) {
+    if (coveredClients.some(c => c.person_id === personId)) return;
+    const person = rows.find(r => r.person_id === personId);
+    if (!person) return;
+    coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
+    renderCoveredChips();
+    renderStep2();
+  }
+
+  function removeCoveredClient(personId) {
+    coveredClients = coveredClients.filter(c => c.person_id !== personId);
+    renderCoveredChips();
+    renderStep2();
+  }
+
+  function renderCoveredChips() {
+    const container = document.getElementById("wizardCoveredSelected");
+    if (!container) return;
+    if (!coveredClients.length) {
+      container.innerHTML = '<div class="modal-empty">No clients selected yet.</div>';
+      return;
+    }
+    container.innerHTML = `<div class="wizard-chips">${coveredClients.map(c => `
+      <span class="wizard-chip" data-person-id="${escapeHtml(c.person_id)}">
+        ${escapeHtml(c.display_name)}
+        <button type="button" class="wizard-chip-remove" aria-label="Remove ${escapeHtml(c.display_name)}">&times;</button>
+      </span>`).join("")}</div>`;
+    container.querySelectorAll(".wizard-chip-remove").forEach(btn => {
+      btn.onclick = () => removeCoveredClient(btn.parentElement.dataset.personId);
+    });
+  }
+
+  function showCreatePersonForm(formPayerType, isStep2 = false) {
+    const heading = formPayerType === "client" ? "Create new client" : "Create another person";
+    const instruction = formPayerType === "client"
+      ? "Add a new client record. They will also be available as a session participant."
+      : "Add the person who should receive invoices. They will not be added as a session participant unless selected separately under Pays for.";
+    const submitLabel = formPayerType === "client" ? "Create Client" : "Create Person";
+
+    const formDiv = document.createElement("div");
+    formDiv.id = "wizardCreatePersonForm";
+    formDiv.className = "wizard-child-form";
+    formDiv.innerHTML = `
+      <h4 class="wizard-step-heading">${escapeHtml(heading)}</h4>
+      <p class="modal-instruction">${escapeHtml(instruction)}</p>
+      <div class="wizard-form-grid">
+        <label class="field">First name <span class="req">*</span><input id="wizardNewFirst" type="text" autocomplete="off"></label>
+        <label class="field">Last name <span class="req">*</span><input id="wizardNewLast" type="text" autocomplete="off"></label>
+        <label class="field">Preferred name <input id="wizardNewPreferred" type="text" autocomplete="off"></label>
+        <label class="field">Billing email <input id="wizardNewEmail" type="email" autocomplete="off"></label>
+        <label class="field">Billing phone <input id="wizardNewPhone" type="tel" autocomplete="off"></label>
+        <label class="field wide">Administrative notes <input id="wizardNewNotes" type="text" autocomplete="off"></label>
+      </div>
+      <div class="wizard-form-error" id="wizardFormError" role="alert"></div>
+      <div class="wizard-form-duplicate" id="wizardFormDuplicate" hidden></div>
+      <div class="wizard-form-actions">
+        <button type="button" id="wizardFormBack" class="modal-back">Back to search</button>
+        <button type="button" id="wizardFormCancel" class="modal-cancel">Cancel</button>
+        <button type="button" id="wizardFormSubmit" class="modal-submit">${escapeHtml(submitLabel)}</button>
+      </div>
+    `;
+
+    const searchDiv = document.getElementById("wizardPayerSearch") || document.getElementById("wizardCoveredResults");
+    const parentResults = isStep2 ? document.getElementById("wizardCoveredResults") : document.getElementById("wizardPayerResults");
+    const parentSearchWrap = isStep2 ? bodyBox.querySelector(".modal-search-wrap") : document.getElementById("wizardPayerSearch");
+    if (parentSearchWrap) parentSearchWrap.style.display = "none";
+    if (parentResults) parentResults.style.display = "none";
+    const createBtn = isStep2 ? document.getElementById("wizardCoveredCreateNew") : document.getElementById("wizardCreateNewPerson");
+    if (createBtn) createBtn.style.display = "none";
+
+    bodyBox.appendChild(formDiv);
+
+    const firstInput = document.getElementById("wizardNewFirst");
+    const lastInput = document.getElementById("wizardNewLast");
+    const preferredInput = document.getElementById("wizardNewPreferred");
+    const emailInput = document.getElementById("wizardNewEmail");
+    const phoneInput = document.getElementById("wizardNewPhone");
+    const notesInput = document.getElementById("wizardNewNotes");
+    const formError = document.getElementById("wizardFormError");
+    const dupBox = document.getElementById("wizardFormDuplicate");
+    const submitBtn = document.getElementById("wizardFormSubmit");
+    const backBtn = document.getElementById("wizardFormBack");
+    const cancelBtn = document.getElementById("wizardFormCancel");
+
+    let creating = false;
+
+    function closeForm() {
+      formDiv.remove();
+      if (parentSearchWrap) parentSearchWrap.style.display = "";
+      if (parentResults) parentResults.style.display = "";
+      if (createBtn) createBtn.style.display = "";
+      const input = isStep2 ? document.getElementById("wizardCoveredSearch") : document.getElementById("wizardPayerInput");
+      if (input) input.focus();
+    }
+
+    backBtn.addEventListener("click", closeForm);
+    cancelBtn.addEventListener("click", () => { closeForm(); doCancel(); });
+
+    async function doCreate() {
+      if (creating) return;
+      formError.textContent = "";
+      dupBox.hidden = true;
+      dupBox.innerHTML = "";
+
+      const first = firstInput.value.trim();
+      const last = lastInput.value.trim();
+      if (!first) { formError.textContent = "First name is required."; firstInput.focus(); return; }
+      if (!last) { formError.textContent = "Last name is required."; lastInput.focus(); return; }
+
+      creating = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating…";
+
+      const display_name = `${first} ${last}`.trim();
+      const payload = {
+        first_name: first,
+        last_name: last,
+        display_name,
+        preferred_name: preferredInput.value.trim() || null,
+        billing_email: emailInput.value.trim() || null,
+        billing_phone: phoneInput.value.trim() || null,
+        administrative_notes: notesInput.value.trim() || null,
+      };
+
+      try {
+        const person = await api("/api/people", { method: "POST", body: JSON.stringify(payload) });
+
+        if (person.existing && !person.created) {
+          creating = false;
+          submitBtn.disabled = false;
+          submitBtn.textContent = submitLabel;
+          dupBox.hidden = false;
+          dupBox.innerHTML = `
+            <p>A person with this name already exists.</p>
+            <div class="wizard-duplicate-info">
+              <strong>${escapeHtml(person.display_name)}</strong>
+              ${person.person_code ? `<span class="help">${escapeHtml(person.person_code)}</span>` : ""}
+            </div>
+            <div class="wizard-duplicate-actions">
+              <button type="button" id="wizardUseExistingPerson" class="modal-submit">Use existing person</button>
+              <button type="button" id="wizardEditAgain" class="modal-back">Go back and edit</button>
+            </div>
+          `;
+          document.getElementById("wizardUseExistingPerson").onclick = () => {
+            handlePersonCreated(person, formPayerType, isStep2);
+            closeForm();
+          };
+          document.getElementById("wizardEditAgain").onclick = () => {
+            dupBox.hidden = true;
+            dupBox.innerHTML = "";
+            firstInput.focus();
+          };
+          return;
+        }
+
+        handlePersonCreated(person, formPayerType, isStep2);
+        closeForm();
+      } catch (err) {
+        creating = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = submitLabel;
+        formError.textContent = (err && err.message) || "Failed to create person.";
+      }
+    }
+
+    submitBtn.addEventListener("click", doCreate);
+    firstInput.focus();
+  }
+
+  function handlePersonCreated(person, formPayerType, isStep2) {
+    if (isStep2) {
+      if (!coveredClients.some(c => c.person_id === person.person_id)) {
+        coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
+      }
+      renderStep2();
+    } else {
+      if (formPayerType === "client" && payerType === "client") {
+        payerPerson = person;
+        if (!coveredClients.some(c => c.person_id === person.person_id)) {
+          coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
+        }
+        renderStep1();
+        showPayerSearch();
+        showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
+        updateContinueDisabled();
+      } else if (formPayerType === "person" && payerType === "person") {
+        payerPerson = person;
+        renderStep1();
+        showPayerSearch();
+        showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "person");
+        updateContinueDisabled();
+      } else {
+        if (!coveredClients.some(c => c.person_id === person.person_id)) {
+          coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
+        }
+        renderStep1();
+        showPayerSearch();
+        if (payerPerson) {
+          showPayerSelected(document.getElementById("wizardPayerSelected"), payerPerson.display_name, payerType);
+        }
+        updateContinueDisabled();
+      }
+    }
+  }
+
+  function showCreateOrgForm() {
+    const formDiv = document.createElement("div");
+    formDiv.id = "wizardCreateOrgForm";
+    formDiv.className = "wizard-child-form";
+    formDiv.innerHTML = `
+      <h4 class="wizard-step-heading">Create new organization</h4>
+      <p class="modal-instruction">Add the organization that should receive invoices.</p>
+      <div class="wizard-form-grid">
+        <label class="field wide">Organization name <span class="req">*</span><input id="wizardOrgName" type="text" autocomplete="off"></label>
+        <label class="field wide">Billing contact name <input id="wizardOrgBillingName" type="text" autocomplete="off"></label>
+        <label class="field">Billing email <input id="wizardOrgEmail" type="email" autocomplete="off"></label>
+        <label class="field">Billing phone <input id="wizardOrgPhone" type="tel" autocomplete="off"></label>
+        <label class="field">Address line 1 <input id="wizardOrgAddr1" type="text" autocomplete="off"></label>
+        <label class="field">Address line 2 <input id="wizardOrgAddr2" type="text" autocomplete="off"></label>
+        <label class="field">City <input id="wizardOrgCity" type="text" autocomplete="off"></label>
+        <label class="field">State <input id="wizardOrgState" type="text" autocomplete="off"></label>
+        <label class="field">Postal code <input id="wizardOrgPostal" type="text" autocomplete="off"></label>
+        <label class="field">Preferred delivery method
+          <select id="wizardOrgDelivery">
+            <option value="unresolved">Unresolved</option>
+            <option value="email">Email</option>
+            <option value="mail">Mail</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
+        <label class="field wide">Administrative notes <input id="wizardOrgNotes" type="text" autocomplete="off"></label>
+      </div>
+      <div class="wizard-form-error" id="wizardOrgFormError" role="alert"></div>
+      <div class="wizard-form-duplicate" id="wizardOrgFormDuplicate" hidden></div>
+      <div class="wizard-form-actions">
+        <button type="button" id="wizardOrgFormBack" class="modal-back">Back to search</button>
+        <button type="button" id="wizardOrgFormCancel" class="modal-cancel">Cancel</button>
+        <button type="button" id="wizardOrgFormSubmit" class="modal-submit">Create Organization</button>
+      </div>
+    `;
+
+    const searchDiv = document.getElementById("wizardPayerSearch");
+    const createBtn = document.getElementById("wizardCreateNewOrg");
+    if (searchDiv) searchDiv.style.display = "none";
+    if (createBtn) createBtn.style.display = "none";
+
+    bodyBox.appendChild(formDiv);
+
+    const nameInput = document.getElementById("wizardOrgName");
+    const billingNameInput = document.getElementById("wizardOrgBillingName");
+    const emailInput = document.getElementById("wizardOrgEmail");
+    const phoneInput = document.getElementById("wizardOrgPhone");
+    const addr1Input = document.getElementById("wizardOrgAddr1");
+    const addr2Input = document.getElementById("wizardOrgAddr2");
+    const cityInput = document.getElementById("wizardOrgCity");
+    const stateInput = document.getElementById("wizardOrgState");
+    const postalInput = document.getElementById("wizardOrgPostal");
+    const deliveryInput = document.getElementById("wizardOrgDelivery");
+    const notesInput = document.getElementById("wizardOrgNotes");
+    const formError = document.getElementById("wizardOrgFormError");
+    const dupBox = document.getElementById("wizardOrgFormDuplicate");
+    const submitBtn = document.getElementById("wizardOrgFormSubmit");
+    const backBtn = document.getElementById("wizardOrgFormBack");
+    const cancelBtn = document.getElementById("wizardOrgFormCancel");
+
+    let creating = false;
+
+    function closeOrgForm() {
+      formDiv.remove();
+      if (searchDiv) searchDiv.style.display = "";
+      if (createBtn) createBtn.style.display = "";
+      const input = document.getElementById("wizardPayerInput");
+      if (input) input.focus();
+    }
+
+    backBtn.addEventListener("click", closeOrgForm);
+    cancelBtn.addEventListener("click", () => { closeOrgForm(); doCancel(); });
+
+    async function doCreateOrg() {
+      if (creating) return;
+      formError.textContent = "";
+      dupBox.hidden = true;
+      dupBox.innerHTML = "";
+
+      const orgName = nameInput.value.trim();
+      if (!orgName) { formError.textContent = "Organization name is required."; nameInput.focus(); return; }
+
+      creating = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating…";
+
+      const billingName = billingNameInput.value.trim() || orgName;
+      const payload = {
+        billing_party_type: "organization",
+        organization_name: orgName,
+        billing_name: billingName,
+        billing_email: emailInput.value.trim() || null,
+        billing_phone: phoneInput.value.trim() || null,
+        billing_address_line_1: addr1Input.value.trim() || null,
+        billing_address_line_2: addr2Input.value.trim() || null,
+        billing_city: cityInput.value.trim() || null,
+        billing_state: stateInput.value.trim() || null,
+        billing_postal_code: postalInput.value.trim() || null,
+        preferred_delivery_method: deliveryInput.value,
+        administrative_notes: notesInput.value.trim() || null,
+      };
+
+      try {
+        const org = await api("/api/billing-parties", { method: "POST", body: JSON.stringify(payload) });
+
+        if (org.existing && !org.created) {
+          creating = false;
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Create Organization";
+          dupBox.hidden = false;
+          dupBox.innerHTML = `
+            <p>An organization with this name already exists.</p>
+            <div class="wizard-duplicate-info">
+              <strong>${escapeHtml(org.organization_name || org.billing_name)}</strong>
+              ${org.billing_email ? `<span class="help">${escapeHtml(org.billing_email)}</span>` : ""}
+              ${org.billing_phone ? `<span class="help">${escapeHtml(org.billing_phone)}</span>` : ""}
+            </div>
+            <div class="wizard-duplicate-actions">
+              <button type="button" id="wizardOrgUseExisting" class="modal-submit">Use existing organization</button>
+              <button type="button" id="wizardOrgEditAgain" class="modal-back">Go back and edit</button>
+            </div>
+          `;
+          document.getElementById("wizardOrgUseExisting").onclick = () => {
+            handleOrgCreated(org);
+            closeOrgForm();
+          };
+          document.getElementById("wizardOrgEditAgain").onclick = () => {
+            dupBox.hidden = true;
+            dupBox.innerHTML = "";
+            nameInput.focus();
+          };
+          return;
+        }
+
+        handleOrgCreated(org);
+        closeOrgForm();
+      } catch (err) {
+        creating = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create Organization";
+        formError.textContent = (err && err.message) || "Failed to create organization.";
+      }
+    }
+
+    submitBtn.addEventListener("click", doCreateOrg);
+    nameInput.focus();
+  }
+
+  function handleOrgCreated(org) {
+    payerOrg = org;
+    renderStep1();
+    showPayerSearch();
+    showPayerSelected(
+      document.getElementById("wizardPayerSelected"),
+      org.organization_name || org.billing_name,
+      "organization"
+    );
+    updateContinueDisabled();
+  }
+
+  function renderStep3() {
+    const recipientName = payerType === "organization"
+      ? (payerOrg ? (payerOrg.organization_name || payerOrg.billing_name) : "")
+      : (payerPerson ? payerPerson.display_name : "");
+    const coveredNames = coveredClients.map(c => escapeHtml(c.display_name)).join(", ");
+    bodyBox.innerHTML = `
+      <h4 class="wizard-step-heading">Review billing relationship</h4>
+      <div class="wizard-review-section">
+        <div class="wizard-review-label">Invoice recipient</div>
+        <div class="wizard-review-value">${escapeHtml(recipientName)}</div>
+      </div>
+      <div class="wizard-review-section">
+        <div class="wizard-review-label">Pays for</div>
+        <div class="wizard-review-value">${coveredNames || "None"}</div>
+      </div>
+      <div class="wizard-review-section">
+        <label class="wizard-checkbox-label">
+          <input type="checkbox" id="wizardFutureSessions" ${useFuture ? "checked" : ""}>
+          Use this billing relationship for future sessions involving these clients
+        </label>
+      </div>
+    `;
+    const futureCb = document.getElementById("wizardFutureSessions");
+    if (futureCb) futureCb.addEventListener("change", () => { useFuture = futureCb.checked; });
+    renderActions();
+  }
+
+  async function doSave() {
+    if (saving) return;
+    const saveBtn = document.getElementById("wizardSave");
+    if (!saveBtn) return;
+    saving = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving relationship…";
+    errorDisplay.textContent = "";
+
+    const payload = {
+      payer_kind: payerType,
+      covered_client_ids: coveredClients.map(c => c.person_id),
+      use_for_future_sessions: useFuture,
+    };
+    if (payerType === "client" || payerType === "person") {
+      payload.payer_person_id = payerPerson.person_id;
+    } else if (payerType === "organization") {
+      payload.organization_billing_party_id = payerOrg.billing_party_id;
+    }
+
+    try {
+      const res = await fetch("/api/billing-relationships/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) throw json;
+
+      setupResult = json;
+      const accountId = json.account_id;
+      const billingPartyId = json.billing_party_id;
+
+      if (fromReview) {
+        saveBtn.textContent = "Attaching to session…";
+        await attachToSession(accountId, billingPartyId, saveBtn);
+      } else {
+        let nextContext = returnContext;
+        if (validReturnContext(returnContext)) {
+          nextContext = persistReturnContext({ ...returnContext, accountId });
+          location.hash = returnContextHash(nextContext);
+        }
+        closeBillingModal();
+        await loadClients();
+        await openAccountRecord(accountId, { returnContext: nextContext });
+      }
+    } catch (err) {
+      saving = false;
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save Billing Relationship";
+      if (err && (err.duplicate || (err.created === false))) {
+        const existingAccountId = err.account_id;
+        const existingBillingPartyId = err.billing_party_id;
+        if (fromReview) {
+          errorDisplay.innerHTML = `This billing relationship already exists. <button type="button" id="wizardUseExisting" class="modal-link-btn">Use this billing relationship</button> <button type="button" id="wizardOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+          const useBtn = document.getElementById("wizardUseExisting");
+          if (useBtn) {
+            useBtn.addEventListener("click", async () => {
+              saving = true;
+              saveBtn.disabled = true;
+              saveBtn.textContent = "Attaching to session…";
+              errorDisplay.textContent = "";
+              await attachToSession(existingAccountId, existingBillingPartyId, saveBtn);
+            });
+          }
+        } else {
+          errorDisplay.innerHTML = `This billing relationship already exists. <button type="button" id="wizardOpenExisting" class="modal-link-btn">Open existing relationship</button>`;
+        }
+        const openBtn = document.getElementById("wizardOpenExisting");
+        if (openBtn) {
+          openBtn.addEventListener("click", async () => {
+            let nextContext = returnContext;
+            if (validReturnContext(returnContext)) {
+              nextContext = persistReturnContext({ ...returnContext, accountId: existingAccountId });
+              location.hash = returnContextHash(nextContext);
+            }
+            closeBillingModal();
+            await loadClients();
+            await openAccountRecord(existingAccountId, { returnContext: nextContext });
+          });
+        }
+      } else {
+        errorDisplay.textContent = (err && err.error) || (err && err.message) || "Failed to save billing relationship.";
+      }
+    }
+  }
+
+  async function attachToSession(accountId, billingPartyId, saveBtn) {
+    const attachPayload = {
+      participants: ctxParticipants.map(p => ({
+        person_id: p.person_id,
+        display_name: p.display_name || "",
+        is_primary: !!p.is_primary,
+        relationship_role: p.relationship_role || "",
+      })),
+      account_id: accountId,
+      primary_person_id: ctxParticipants.find(p => p.is_primary)?.person_id || ctxParticipants[0]?.person_id || null,
+      billing_party_id: billingPartyId,
+      default_billing_party_id: billingPartyId,
+    };
+
+    try {
+      await api(`/api/review/candidates/${returnContext.candidateId}/save-relationship`, {
+        method: "POST",
+        body: JSON.stringify(attachPayload),
+      });
+
+      closeBillingModal();
+      clearReturnContext();
+      await showReviewWorkbench();
+      await selectCandidate(returnContext.candidateId);
+
+      const banner = document.createElement("div");
+      banner.className = "relationship-summary success";
+      banner.id = "wizardAttachSuccess";
+      banner.innerHTML = "<strong>Billing relationship saved for this session.</strong>";
+      const inspector = document.getElementById("inspector");
+      if (inspector) inspector.prepend(banner);
+      setTimeout(() => { if (banner) banner.remove(); }, 5000);
+
+      saving = false;
+    } catch (attachErr) {
+      saving = false;
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save Billing Relationship";
+      errorDisplay.innerHTML = `
+        The billing relationship was saved, but it could not be attached to this session.
+        <div class="wizard-recovery-actions">
+          <button type="button" id="wizardRetryAttach" class="modal-submit">Try attaching again</button>
+          <button type="button" id="wizardOpenRelFromRecovery" class="modal-link-btn">Open billing relationship</button>
+          <button type="button" id="wizardReturnNoAttach" class="modal-cancel">Return to review without attaching</button>
+        </div>
+      `;
+      const retryBtn = document.getElementById("wizardRetryAttach");
+      if (retryBtn) {
+        retryBtn.addEventListener("click", async () => {
+          saving = true;
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Attaching to session…";
+          errorDisplay.textContent = "";
+          await attachToSession(accountId, billingPartyId, saveBtn);
+        });
+      }
+      const openRelBtn = document.getElementById("wizardOpenRelFromRecovery");
+      if (openRelBtn) {
+        openRelBtn.addEventListener("click", async () => {
+          let nextContext = returnContext;
+          if (validReturnContext(returnContext)) {
+            nextContext = persistReturnContext({ ...returnContext, accountId });
+            location.hash = returnContextHash(nextContext);
+          }
+          closeBillingModal();
+          await loadClients();
+          await openAccountRecord(accountId, { returnContext: nextContext });
+        });
+      }
+      const returnBtn = document.getElementById("wizardReturnNoAttach");
+      if (returnBtn) {
+        returnBtn.addEventListener("click", async () => {
+          closeBillingModal();
+          await showReviewWorkbench();
+          await selectCandidate(returnContext.candidateId);
+        });
+      }
+    }
+  }
+
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) doCancel(); });
+  document.addEventListener("keydown", billingModalTrapKeydown);
+  preselectParticipants();
+  (async () => {
+    await suggestPayerFromContext();
+    renderStep();
+  })();
 }
