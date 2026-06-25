@@ -3710,8 +3710,8 @@ def normalize_service_mode(value: str) -> str:
 def normalize_time_category(value: str) -> str:
     normalized = text(value).lower().replace(" + ", "_").replace(" ", "_")
     return {
-        "weekend_evening": "weekend_evening",
-        "weekend_+_evening": "weekend_evening",
+        "weekend_evening": "weekend",
+        "weekend_+_evening": "weekend",
     }.get(normalized, normalized or "standard")
 
 

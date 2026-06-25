@@ -27,7 +27,8 @@ Legacy service modes (`phone`, `facetime`, `office`) and rate groups (`remote`, 
 - `standard`
 - `evening`
 - `weekend`
-- `weekend_evening`
+
+Weekend is one time category regardless of time of day. Saturday and Sunday sessions always use `weekend`, including evening hours. The legacy `weekend_evening` value is preserved for read compatibility on historical approved records but is no longer generated or selectable for new or pending sessions. When an unapproved/pending record with `weekend_evening` is saved or recalculated, it normalizes to `weekend`.
 
 Rate matching is exact on both dimensions. A rule with `time_category = 'standard'` matches only standard sessions; a rule with `time_category = 'evening'` matches only evening sessions; and so on. There is no fallback from one time category to another.
 
@@ -67,17 +68,16 @@ When Jordana changes the suggested rate during review, the UI asks `Apply this r
 
 Joint matching is order-independent and exact. Fred Colin + Bobsy Colin matches Bobsy Colin + Fred Colin, but does not match Fred alone.
 
-## Weekend Evening
+## Weekend Rate Selection
 
-Weekend-evening sessions are ambiguous until policy is configured. The default policy is `manual_review`.
+Weekend sessions use a single `weekend` time category regardless of time of day. Jordana selects the weekend rate case by case — the suggested/editable rate field remains available and weekend does not automatically force a special rate.
 
-Supported policy values: `use_weekend`, `use_evening`, `use_combined_rate`, `use_highest_rate`, `manual_review`.
+The legacy `weekend_evening_policy` rate policy remains in the database for backward compatibility but is no longer triggered for new or recalculated sessions, since `weekend_evening` is no longer generated as a time category.
 
 ## Developer Commands
 
 ```bash
 PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 seed-rate-rule --amount 150 --effective-from 2026-01-01 --duration-minutes 60 --billing-session-type psychotherapy
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 set-rate-policy weekend_evening_policy manual_review
 ```
 
 ## Review UI Rate Card
