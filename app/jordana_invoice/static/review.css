@@ -634,3 +634,42 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .billing-wizard .wizard-confirm-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
 .billing-wizard .modal-actions .modal-back { background: white; color: var(--text); border: 1px solid var(--line); }
 .billing-wizard .modal-actions .modal-back:hover { background: var(--soft); }
+
+/* ─── Round 2D1: Wizard child form styles ─── */
+.billing-wizard .wizard-create-new { margin: 8px 0; }
+.billing-wizard .wizard-create-btn {
+  background: none; border: 1px dashed var(--blue); color: var(--blue);
+  padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;
+}
+.billing-wizard .wizard-create-btn:hover { background: #e8f0fe; }
+.billing-wizard .wizard-child-form {
+  margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft);
+}
+.billing-wizard .wizard-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.billing-wizard .wizard-form-grid .field { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.billing-wizard .wizard-form-grid .field.wide { grid-column: 1 / -1; }
+.billing-wizard .wizard-form-grid .field input {
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; color: var(--text);
+}
+.billing-wizard .wizard-form-grid .field .req { color: var(--red); }
+.billing-wizard .wizard-form-error { color: var(--red); font-size: 12px; margin: 6px 0; min-height: 16px; }
+.billing-wizard .wizard-form-duplicate {
+  margin: 8px 0; padding: 10px; border: 1px solid var(--blue); border-radius: 6px; background: #e8f0fe;
+}
+.billing-wizard .wizard-form-duplicate p { margin: 0 0 6px; font-size: 13px; font-weight: 500; }
+.billing-wizard .wizard-duplicate-info { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.billing-wizard .wizard-duplicate-info strong { font-size: 13px; }
+.billing-wizard .wizard-duplicate-actions { display: flex; gap: 8px; }
+.billing-wizard .wizard-duplicate-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.billing-wizard .wizard-form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.billing-wizard .wizard-form-actions button {
+  min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer;
+}
+.billing-wizard .wizard-form-actions .modal-cancel { background: white; color: var(--text); }
+.billing-wizard .wizard-form-actions .modal-cancel:hover { background: var(--soft); }
+.billing-wizard .wizard-form-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
+.billing-wizard .wizard-form-actions .modal-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.billing-wizard .wizard-form-actions .modal-back { background: white; color: var(--text); }
+.billing-wizard .wizard-form-actions .modal-back:hover { background: var(--soft); }

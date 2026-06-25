@@ -3270,15 +3270,20 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     if (payerType === "client" || payerType === "person") {
       const label = payerType === "client" ? "Search existing clients" : "Search existing people";
       const placeholder = payerType === "client" ? "Type a client name..." : "Type a person name...";
+      const createLabel = payerType === "client" ? "Create new client" : "Create another person";
       searchDiv.innerHTML = `
         <div class="modal-search-wrap">
           <label for="wizardPayerInput">${escapeHtml(label)}</label>
           <input id="wizardPayerInput" class="modal-search" type="search" placeholder="${escapeHtml(placeholder)}" autocomplete="off">
         </div>
         <div class="modal-results" id="wizardPayerResults"></div>
+        <div class="wizard-create-new">
+          <button type="button" id="wizardCreateNewPerson" class="wizard-create-btn">${escapeHtml(createLabel)}</button>
+        </div>
       `;
       const input = document.getElementById("wizardPayerInput");
       const results = document.getElementById("wizardPayerResults");
+      const createBtn = document.getElementById("wizardCreateNewPerson");
       let searchRows = [];
       const doSearch = debounce(async (q) => {
         if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
@@ -3289,6 +3294,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       }, 200);
       input.addEventListener("input", (e) => doSearch(e.target.value));
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+      createBtn.addEventListener("click", () => showCreatePersonForm(payerType));
       if (payerPerson) showPayerSelected(selectedDiv, payerPerson.display_name, "client");
       input.focus();
     } else if (payerType === "organization") {
@@ -3382,11 +3388,15 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
         <input id="wizardCoveredSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
       </div>
       <div class="modal-results" id="wizardCoveredResults"></div>
+      <div class="wizard-create-new">
+        <button type="button" id="wizardCoveredCreateNew" class="wizard-create-btn">Create new client</button>
+      </div>
       <div class="wizard-covered-selected" id="wizardCoveredSelected"></div>
     `;
     renderCoveredChips();
     const input = document.getElementById("wizardCoveredSearch");
     const results = document.getElementById("wizardCoveredResults");
+    const createBtn = document.getElementById("wizardCoveredCreateNew");
     let searchRows = [];
     const selectedIds = new Set(coveredClients.map(c => c.person_id));
     const doSearch = debounce(async (q) => {
@@ -3398,6 +3408,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     }, 200);
     input.addEventListener("input", (e) => doSearch(e.target.value));
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+    createBtn.addEventListener("click", () => showCreatePersonForm("client", true));
     input.focus();
     updateContinueDisabled();
   }
@@ -3448,6 +3459,161 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     container.querySelectorAll(".wizard-chip-remove").forEach(btn => {
       btn.onclick = () => removeCoveredClient(btn.parentElement.dataset.personId);
     });
+  }
+
+  function showCreatePersonForm(formPayerType, isStep2 = false) {
+    const heading = formPayerType === "client" ? "Create new client" : "Create another person";
+    const instruction = formPayerType === "client"
+      ? "Add a new client record. They will also be available as a session participant."
+      : "Add the person who should receive invoices. They will not be added as a session participant unless selected separately under Pays for.";
+    const submitLabel = formPayerType === "client" ? "Create Client" : "Create Person";
+
+    const formDiv = document.createElement("div");
+    formDiv.id = "wizardCreatePersonForm";
+    formDiv.className = "wizard-child-form";
+    formDiv.innerHTML = `
+      <h4 class="wizard-step-heading">${escapeHtml(heading)}</h4>
+      <p class="modal-instruction">${escapeHtml(instruction)}</p>
+      <div class="wizard-form-grid">
+        <label class="field">First name <span class="req">*</span><input id="wizardNewFirst" type="text" autocomplete="off"></label>
+        <label class="field">Last name <span class="req">*</span><input id="wizardNewLast" type="text" autocomplete="off"></label>
+        <label class="field">Preferred name <input id="wizardNewPreferred" type="text" autocomplete="off"></label>
+        <label class="field">Billing email <input id="wizardNewEmail" type="email" autocomplete="off"></label>
+        <label class="field">Billing phone <input id="wizardNewPhone" type="tel" autocomplete="off"></label>
+        <label class="field wide">Administrative notes <input id="wizardNewNotes" type="text" autocomplete="off"></label>
+      </div>
+      <div class="wizard-form-error" id="wizardFormError" role="alert"></div>
+      <div class="wizard-form-duplicate" id="wizardFormDuplicate" hidden></div>
+      <div class="wizard-form-actions">
+        <button type="button" id="wizardFormBack" class="modal-back">Back to search</button>
+        <button type="button" id="wizardFormCancel" class="modal-cancel">Cancel</button>
+        <button type="button" id="wizardFormSubmit" class="modal-submit">${escapeHtml(submitLabel)}</button>
+      </div>
+    `;
+
+    const searchDiv = document.getElementById("wizardPayerSearch") || document.getElementById("wizardCoveredResults");
+    const parentResults = isStep2 ? document.getElementById("wizardCoveredResults") : document.getElementById("wizardPayerResults");
+    const parentSearchWrap = isStep2 ? bodyBox.querySelector(".modal-search-wrap") : document.getElementById("wizardPayerSearch");
+    if (parentSearchWrap) parentSearchWrap.style.display = "none";
+    if (parentResults) parentResults.style.display = "none";
+    const createBtn = isStep2 ? document.getElementById("wizardCoveredCreateNew") : document.getElementById("wizardCreateNewPerson");
+    if (createBtn) createBtn.style.display = "none";
+
+    bodyBox.appendChild(formDiv);
+
+    const firstInput = document.getElementById("wizardNewFirst");
+    const lastInput = document.getElementById("wizardNewLast");
+    const preferredInput = document.getElementById("wizardNewPreferred");
+    const emailInput = document.getElementById("wizardNewEmail");
+    const phoneInput = document.getElementById("wizardNewPhone");
+    const notesInput = document.getElementById("wizardNewNotes");
+    const formError = document.getElementById("wizardFormError");
+    const dupBox = document.getElementById("wizardFormDuplicate");
+    const submitBtn = document.getElementById("wizardFormSubmit");
+    const backBtn = document.getElementById("wizardFormBack");
+    const cancelBtn = document.getElementById("wizardFormCancel");
+
+    let creating = false;
+
+    function closeForm() {
+      formDiv.remove();
+      if (parentSearchWrap) parentSearchWrap.style.display = "";
+      if (parentResults) parentResults.style.display = "";
+      if (createBtn) createBtn.style.display = "";
+      const input = isStep2 ? document.getElementById("wizardCoveredSearch") : document.getElementById("wizardPayerInput");
+      if (input) input.focus();
+    }
+
+    backBtn.addEventListener("click", closeForm);
+    cancelBtn.addEventListener("click", () => { closeForm(); doCancel(); });
+
+    async function doCreate() {
+      if (creating) return;
+      formError.textContent = "";
+      dupBox.hidden = true;
+      dupBox.innerHTML = "";
+
+      const first = firstInput.value.trim();
+      const last = lastInput.value.trim();
+      if (!first) { formError.textContent = "First name is required."; firstInput.focus(); return; }
+      if (!last) { formError.textContent = "Last name is required."; lastInput.focus(); return; }
+
+      creating = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating…";
+
+      const display_name = `${first} ${last}`.trim();
+      const payload = {
+        first_name: first,
+        last_name: last,
+        display_name,
+        preferred_name: preferredInput.value.trim() || null,
+        billing_email: emailInput.value.trim() || null,
+        billing_phone: phoneInput.value.trim() || null,
+        administrative_notes: notesInput.value.trim() || null,
+      };
+
+      try {
+        const person = await api("/api/people", { method: "POST", body: JSON.stringify(payload) });
+
+        if (person.existing && !person.created) {
+          creating = false;
+          submitBtn.disabled = false;
+          submitBtn.textContent = submitLabel;
+          dupBox.hidden = false;
+          dupBox.innerHTML = `
+            <p>A person with this name already exists.</p>
+            <div class="wizard-duplicate-info">
+              <strong>${escapeHtml(person.display_name)}</strong>
+              ${person.person_code ? `<span class="help">${escapeHtml(person.person_code)}</span>` : ""}
+            </div>
+            <div class="wizard-duplicate-actions">
+              <button type="button" id="wizardUseExisting" class="modal-submit">Use existing person</button>
+              <button type="button" id="wizardEditAgain" class="modal-back">Go back and edit</button>
+            </div>
+          `;
+          document.getElementById("wizardUseExisting").onclick = () => {
+            handlePersonCreated(person, formPayerType, isStep2);
+            closeForm();
+          };
+          document.getElementById("wizardEditAgain").onclick = () => {
+            dupBox.hidden = true;
+            dupBox.innerHTML = "";
+            firstInput.focus();
+          };
+          return;
+        }
+
+        handlePersonCreated(person, formPayerType, isStep2);
+        closeForm();
+      } catch (err) {
+        creating = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = submitLabel;
+        formError.textContent = (err && err.message) || "Failed to create person.";
+      }
+    }
+
+    submitBtn.addEventListener("click", doCreate);
+    firstInput.focus();
+  }
+
+  function handlePersonCreated(person, formPayerType, isStep2) {
+    if (isStep2) {
+      if (!coveredClients.some(c => c.person_id === person.person_id)) {
+        coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
+      }
+      renderStep2();
+    } else {
+      payerPerson = person;
+      if (formPayerType === "client") {
+        coveredClients = [{ person_id: person.person_id, display_name: person.display_name }];
+      }
+      renderStep1();
+      showPayerSearch();
+      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
+      updateContinueDisabled();
+    }
   }
 
   function renderStep3() {

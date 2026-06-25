@@ -192,11 +192,12 @@ class TestWizardStaticJs(unittest.TestCase):
         self.assertIn("Add Client", self.js)
 
     def test_wizard_does_not_create_new_people(self):
-        """No new-record creation from the wizard."""
+        """No parallel person-creation function or non-API person creation in wizard."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
         wizard_end = self.js.index("\nfunction openAddClientModal")
         wizard_code = self.js[wizard_start:wizard_end]
-        self.assertNotIn("/api/people", wizard_code.replace("/api/people?q=", ""))
+        # Round 2D1 adds POST /api/people for person creation — that's expected
+        # But no parallel creation function should exist
         self.assertNotIn("createPerson", wizard_code)
         self.assertNotIn("create_person", wizard_code)
 

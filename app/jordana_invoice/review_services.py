@@ -1583,7 +1583,10 @@ def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any]) 
         (display_name,),
     ).fetchone()
     if existing:
-        return dict(existing)
+        result = dict(existing)
+        result["created"] = False
+        result["existing"] = True
+        return result
     now = now_iso()
     person_id = new_id()
     first = text(data.get("first_name") or split_name(display_name)[0])
@@ -1614,7 +1617,10 @@ def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any]) 
     )
     record_audit(conn, "person", person_id, "created_inline", {"display_name": display_name, "person_code": person_code})
     conn.commit()
-    return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
+    result = dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
+    result["created"] = True
+    result["existing"] = False
+    return result
 
 
 def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]) -> dict[str, Any]:

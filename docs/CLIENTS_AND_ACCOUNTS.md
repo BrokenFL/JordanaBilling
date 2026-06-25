@@ -413,8 +413,105 @@ Shows invoice recipient, Pays for list, and a future-sessions checkbox. Save cal
 
 #### Not Implemented in Round 2C
 
-- Creating new clients, people, or organizations from the wizard (planned for Round 2D)
+- Creating new clients, people, or organizations from the wizard — implemented in Round 2D1 (clients and people) and Round 2D2 (organizations)
 - Session Review relationship attachment
+- Automatic return to Session Review after save
+- Saved relationship editor redesign
+- Delete or deactivate controls
+
+### Round 2D1: In-Wizard Person Creation (Clients and Other People)
+
+The wizard now supports creating new person records directly inside Steps 1 and 2. No new schema fields or migrations are required — all person records use the existing `people` table via `POST /api/people`.
+
+#### Step 1: Create New Client or Another Person
+
+When "A client" or "Another person" is selected as the payer type, a "Create new client" (or "Create another person") button appears below the search results. Clicking it opens an in-wizard child form.
+
+**Form fields:**
+- First name — required
+- Last name — required
+- Preferred name — optional
+- Billing email — optional
+- Billing phone — optional
+- Administrative notes — optional (billing/administrative content only)
+
+**Not asked from the user:**
+- Display name (derived from first + last name)
+- Person code (generated server-side only after first and last names exist)
+- Account type, relationship name, clinical information
+
+**Display name derivation:** `"${first_name} ${last_name}".trim()` — follows existing repository conventions.
+
+**Person-code generation:** Uses the existing `generate_person_code()` function. Format: `PREFIX-NNN` (e.g., `JS-001`). Generated only when both first and last names are provided.
+
+**Buttons:**
+- Back to search — returns to the search view without losing parent wizard state
+- Cancel — follows the wizard's existing safe-cancel behavior
+- Create Client / Create Person — submits the form
+
+#### Step 2: Create New Client
+
+Step 2 also includes a "Create new client" button below the search results. After creation:
+- The new client is added to the Pays for list
+- The payer selection is preserved
+- All previously selected covered clients are preserved
+- Duplicate covered-client selections are prevented
+
+#### Duplicate-Person Handling
+
+Before final creation, the backend checks for an active person with the same normalized display name (`lower(display_name) = lower(?)`).
+
+When a possible duplicate exists:
+- No new person is silently created
+- The child form stays open
+- An inline warning shows: "A person with this name already exists."
+- The existing person's display name and person code are shown
+- Two options are offered:
+  - **Use existing person** — selects the existing record as the invoice recipient (or adds to Pays for in Step 2)
+  - **Go back and edit** — returns to the form fields to change the name
+
+The backend response now includes `created: true/false` and `existing: true/false` flags for unambiguous duplicate detection. This is backward compatible — existing callers that don't check these flags still work.
+
+#### Successful Creation Behavior
+
+After successful creation or explicit selection of an existing duplicate:
+- Returns to wizard Step 1 (or Step 2)
+- Selects the created/existing person as the invoice recipient
+- Preserves the chosen payer type
+- Preserves any previously selected Pays for clients
+- Preserves return context
+- Enables Continue
+
+For "A client":
+- The newly created client is preselected under Pays for when Step 2 is reached
+
+For "Another person":
+- The newly created person is NOT automatically added under Pays for
+
+#### Form Behavior
+
+- No browser `prompt()`, `alert()`, or `confirm()` used
+- Inline field validation (first and last name required)
+- User-controlled values escaped via `escapeHtml()`
+- Submission disabled while saving (shows "Creating…")
+- Double submission prevented via `creating` flag
+- Form stays open after API failure with inline error
+- First invalid field receives focus
+- Back returns without losing parent wizard state
+
+#### Backend Changes
+
+`create_person()` now returns `created: true` and `existing: false` for new records, and `created: false` and `existing: true` for duplicates. This is additive and backward compatible.
+
+#### Known Limitation: Client vs. Person Distinction
+
+The current schema does not formally distinguish clients from other people. All active people appear in both client and person search. The wizard's "A client" vs. "Another person" distinction is a UI-level payer-type choice, not a permanent classification. This is documented as a known limitation.
+
+#### Not Implemented in Round 2D1
+
+- Creating new organizations from the wizard (planned for Round 2D2)
+- Organization contact creation
+- Session Review attachment
 - Automatic return to Session Review after save
 - Saved relationship editor redesign
 - Delete or deactivate controls
@@ -423,7 +520,7 @@ Shows invoice recipient, Pays for list, and a future-sessions checkbox. Save cal
 
 The following remain planned and were not started:
 
-- In-wizard record creation (new clients, people, organizations) — Round 2D
+- In-wizard organization creation — Round 2D2
 - Session Review attachment via the setup endpoint
 - Automatic payer classification
 - Full right-panel redesign
