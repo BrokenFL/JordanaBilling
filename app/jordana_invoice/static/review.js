@@ -2425,65 +2425,98 @@ async function openAccountRecord(accountId, options = {}) {
   }
   state.returnCandidate = state.selected;
   const data = await api(`/api/accounts/${accountId}`);
-  const payerOptions = payerDisplayOptions(data.members || [], returnContext);
-  const billingDraft = recordBillingPartyDraft(data, payerOptions, returnContext);
+  const bp = data.billing_party || {};
   const isActive = data.account.active;
   const statusPill = isActive ? '<span class="status-pill active">Active</span>' : '<span class="status-pill inactive">Inactive</span>';
   const lifecycleBtn = isActive
     ? '<button id="deactivateAccountBtn" class="danger">Deactivate Billing Relationship</button>'
     : '<button id="reactivateAccountBtn" class="save">Reactivate Billing Relationship</button>';
+
+  const payerType = bp.billing_party_type === "organization" ? "organization" : (bp.person_id ? "person" : "person");
+  const payerName = bp.billing_name || bp.organization_name || "Not set";
+  const payerTypeLabel = payerType === "organization" ? "Organization" : (bp.person_id && (data.members || []).some(m => m.person_id === bp.person_id) ? "Client" : "Another person");
+  const addressSummary = billingAddressSummary(bp);
+  const deliveryLabel = { email: "Email", mail: "Mail", both: "Both", unresolved: "Unresolved" }[bp.preferred_delivery_method] || "Unresolved";
+
+  const coveredHtml = (data.members || []).length
+    ? `<div class="covered-clients-list">${data.members.map(m => `
+      <div class="covered-client-row" data-person-id="${escapeHtml(m.person_id)}">
+        <span class="covered-client-name">${escapeHtml(m.display_name)}</span>
+        ${m.person_code ? `<span class="help">${escapeHtml(m.person_code)}</span>` : ""}
+        <button type="button" class="covered-client-remove" data-person-id="${escapeHtml(m.person_id)}" aria-label="Remove ${escapeHtml(m.display_name)} from Pays for">&times;</button>
+      </div>`).join("")}</div>`
+    : '<div class="readonly-note">No covered clients.</div>';
+
   $("accountRecord").innerHTML = `
     ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
-    <h3>${fmt(data.account.account_name)}</h3>
-    <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span>${statusPill}</div>
-    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Client</button>${lifecycleBtn}</div>
+    <h3>${escapeHtml(data.account.account_name)}</h3>
+    <div class="meta"><span>${escapeHtml(data.account.account_code)}</span>${statusPill}</div>
     <div id="lifecycleConfirmBox" class="lifecycle-confirm-box" hidden></div>
-    <div class="field-grid">
-      <label class="field">Relationship Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
-      <label class="field">Type<select id="recordAccountType">${optionSet(["individual","household","family","couple","organization","other"], data.account.account_type)}</select></label>
-      <label class="field wide">Admin Notes<input id="recordAccountNotes" value="${data.account.administrative_notes || ""}"></label>
+    <div class="record-actions">${lifecycleBtn}</div>
+
+    <div class="editor-section" id="editorRecipientSection">
+      <h4>Invoice recipient</h4>
+      <div class="kv">
+        <label>Name</label><span>${escapeHtml(payerName)}</span>
+        <label>Type</label><span>${escapeHtml(payerTypeLabel)}</span>
+        <label>Email</label><span>${escapeHtml(bp.billing_email || "—")}</span>
+        <label>Phone</label><span>${escapeHtml(bp.billing_phone || "—")}</span>
+        <label>Delivery method</label><span>${escapeHtml(deliveryLabel)}</span>
+        ${addressSummary ? `<label>Address</label><span>${escapeHtml(addressSummary)}</span>` : ""}
+      </div>
+      <button type="button" id="changeRecipientBtn" class="save">Change invoice recipient</button>
+      <div id="recipientSearchArea" hidden></div>
     </div>
-    <h4>Members</h4><div class="compact-list">${data.members.map(m => `<div><span>${fmt(m.display_name)} ${m.is_primary ? "(Primary)" : ""}</span><span>${fmt(m.relationship_role)}</span></div>`).join("") || "<span class='readonly-note'>No members yet.</span>"}</div>
-    <h4>Billing</h4>
-    <div class="field-grid">
-      <label class="field">Payer Type<select id="recordBillingPartyType">
-        <option value="person" ${billingDraft.billing_party_type === "person" ? "selected" : ""}>Client payer</option>
-        <option value="organization" ${billingDraft.billing_party_type === "organization" ? "selected" : ""}>Organization payer</option>
-      </select></label>
-      <label class="field" id="recordPayerPersonField">Bill-to client<select id="recordPayerPersonId">
-        <option value="">Select client payer</option>
-        ${payerOptions.map(option => `<option value="${option.person_id}" ${option.person_id === billingDraft.person_id ? "selected" : ""}>${fmt(option.display_name)}</option>`).join("")}
-      </select></label>
-      <label class="field" id="recordOrgNameField">Organization name<input id="recordOrganizationName" value="${billingDraft.organization_name || ""}"></label>
-      <label class="field">Payer name<input id="recordBillingName" value="${billingDraft.billing_name || ""}"></label>
-      <label class="field">Email<input id="recordBillingEmail" value="${billingDraft.billing_email || ""}"></label>
-      <label class="field">Phone<input id="recordBillingPhone" value="${billingDraft.billing_phone || ""}"></label>
+
+    <div class="editor-section" id="editorCoveredSection">
+      <h4>Pays for</h4>
+      ${coveredHtml}
+      <button type="button" id="addCoveredBtn" class="save">Add client</button>
+      <div id="coveredSearchArea" hidden></div>
     </div>
-    <div class="kv"><label>Current default payer</label><span>${fmt(data.billing_party?.billing_name)}</span><label>Current email</label><span>${fmt(data.billing_party?.billing_email)}</span><label>Current phone</label><span>${fmt(data.billing_party?.billing_phone)}</span></div>
-    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No relationship-specific rates.</span>"}</div>
+
+    <div class="editor-section" id="editorDeliverySection">
+      <h4>Billing delivery</h4>
+      <div class="field-grid">
+        <label class="field">Billing name<input id="editBillingName" value="${escapeHtml(bp.billing_name || "")}"></label>
+        <label class="field">Billing email<input id="editBillingEmail" type="email" value="${escapeHtml(bp.billing_email || "")}"></label>
+        <label class="field">Billing phone<input id="editBillingPhone" type="tel" value="${escapeHtml(bp.billing_phone || "")}"></label>
+        <label class="field">Contact name<input id="editBillingContactName" value="${escapeHtml(bp.organization_name || "")}"></label>
+        <label class="field">Address line 1<input id="editAddr1" value="${escapeHtml(bp.billing_address_line_1 || "")}"></label>
+        <label class="field">Address line 2<input id="editAddr2" value="${escapeHtml(bp.billing_address_line_2 || "")}"></label>
+        <label class="field">City<input id="editCity" value="${escapeHtml(bp.billing_city || "")}"></label>
+        <label class="field">State<input id="editState" value="${escapeHtml(bp.billing_state || "")}"></label>
+        <label class="field">Postal code<input id="editPostal" value="${escapeHtml(bp.billing_postal_code || "")}"></label>
+        <label class="field">Preferred delivery method
+          <select id="editDeliveryMethod">
+            <option value="unresolved" ${bp.preferred_delivery_method === "unresolved" || !bp.preferred_delivery_method ? "selected" : ""}>Unresolved</option>
+            <option value="email" ${bp.preferred_delivery_method === "email" ? "selected" : ""}>Email</option>
+            <option value="mail" ${bp.preferred_delivery_method === "mail" ? "selected" : ""}>Mail</option>
+            <option value="both" ${bp.preferred_delivery_method === "both" ? "selected" : ""}>Both</option>
+          </select>
+        </label>
+        <label class="field wide">Administrative notes<input id="editAdminNotes" value="${escapeHtml(data.account.administrative_notes || "")}"></label>
+      </div>
+    </div>
+
+    <div class="record-actions">
+      <button type="button" id="saveBillingRelationshipBtn" class="save">Save changes</button>
+    </div>
+    <div id="editorErrorBox" class="lifecycle-confirm-box" hidden></div>
+    <div id="editorDuplicateBox" class="lifecycle-confirm-box" hidden></div>
+
     <h4>Session History</h4><div class="compact-list">${data.sessions.slice(0, 8).map(s => `<div><span>${fmt(s.session_date)} ${fmt(s.duration_minutes)} min ${serviceLabel(s.service_mode)} ${timeLabel(s.time_category)}</span><span>${money(centString(s.approved_rate_cents))} ${fmt(s.approved_rate_source || s.rate_source)}</span></div>`).join("") || "<span class='readonly-note'>No sessions yet.</span>"}</div>
-    <h4>Active Rate Exceptions</h4><div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div><span>${fmt(r.effective_from)} ${fmt(r.duration_minutes || "Any")} min ${serviceLabel(r.service_mode || r.rate_group || "Any")}</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No person-specific rate exceptions.</span>"}</div>
-    <h4>Shared Rate Exceptions</h4><div class="compact-list">${(data.joint_rate_exceptions || []).map(r => `<div><span>${fmt(r.participant_names)} ${fmt(r.duration_minutes || "Any")} min</span><span>${money(centString(r.amount_cents))}</span></div>`).join("") || "<span class='readonly-note'>No joint-session exceptions.</span>"}</div>
+    <h4>Rates</h4><div class="compact-list">${data.rates.map(r => `<div><span>${money(centString(r.amount_cents))} ${fmt(r.duration_minutes || "Any")} min</span><span>${r.active ? "Active" : "Inactive"}</span></div>`).join("") || "<span class='readonly-note'>No relationship-specific rates.</span>"}</div>
     <h4>Aliases</h4><div class="compact-list">${data.aliases.map(a => `<div><span>${fmt(a.raw_alias)}</span><span>${fmt(a.classification)}</span></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
   `;
-  const syncBillingPartyFields = () => {
-    const mode = $("recordBillingPartyType").value;
-    $("recordPayerPersonField").hidden = mode !== "person";
-    $("recordOrgNameField").hidden = mode !== "organization";
-    if (mode === "person") {
-      const payer = payerOptions.find(option => option.person_id === $("recordPayerPersonId").value) || payerOptions[0];
-      if (payer && !$("recordBillingName").value) $("recordBillingName").value = payer.display_name;
-    }
+
+  let editState = {
+    payer_kind: payerType === "organization" ? "organization" : (bp.person_id && (data.members || []).some(m => m.person_id === bp.person_id) ? "client" : "person"),
+    payer_person_id: bp.person_id || null,
+    organization_billing_party_id: payerType === "organization" ? bp.billing_party_id : null,
+    covered_client_ids: (data.members || []).map(m => m.person_id),
   };
-  $("recordBillingPartyType").onchange = syncBillingPartyFields;
-  if ($("recordPayerPersonId")) {
-    $("recordPayerPersonId").onchange = () => {
-      const payer = payerOptions.find(option => option.person_id === $("recordPayerPersonId").value);
-      if (payer) $("recordBillingName").value = payer.display_name;
-      syncBillingPartyFields();
-    };
-  }
-  syncBillingPartyFields();
+
   if ($("returnFromAccount")) $("returnFromAccount").onclick = async (event) => {
     event.preventDefault();
     if (!validReturnContext(returnContext)) {
@@ -2496,86 +2529,300 @@ async function openAccountRecord(accountId, options = {}) {
     await showReviewWorkbench();
     await selectCandidate(returnContext.candidateId);
   };
-  $("editAccountRecord").onclick = async () => {
-    const accountPayload = {
-      account_name: $("recordAccountName").value,
-      account_type: $("recordAccountType").value,
-      administrative_notes: $("recordAccountNotes").value
-    };
-    const payerMode = $("recordBillingPartyType").value;
-    const selectedPayerPersonId = $("recordPayerPersonId")?.value || "";
-    const orgBillingName = $("recordBillingName").value.trim();
-    if (validReturnContext(returnContext) && payerMode === "person" && !selectedPayerPersonId) {
-      alert("Select the bill-to client before saving this billing relationship.");
-      return;
-    }
-    if (validReturnContext(returnContext) && payerMode === "organization" && !orgBillingName) {
-      alert("Enter the payer name before saving this billing relationship.");
-      return;
-    }
-    await api(`/api/accounts/${accountId}`, { method: "POST", body: JSON.stringify(accountPayload) });
-    if (validReturnContext(returnContext)) {
-      const currentContext = persistReturnContext({ ...returnContext, accountId });
-      const relationshipPayload = {
-        participants: (currentContext.participants || []).map((participant, index) => ({
-          person_id: participant.person_id,
-          display_name: participant.display_name,
-          is_primary: participant.is_primary || index === 0,
-          relationship_role: participant.relationship_role || (index === 0 ? "primary" : "family_member")
-        })),
-        account_id: accountId,
-        primary_person_id: (currentContext.participants || []).find(participant => participant.is_primary)?.person_id || currentContext.participants?.[0]?.person_id || null
-      };
-      await api(`/api/review/candidates/${currentContext.candidateId}/save-relationship`, { method: "POST", body: JSON.stringify(relationshipPayload) });
-      if (payerMode === "person") {
-        await api(`/api/review/candidates/${currentContext.candidateId}/save-billing`, {
-          method: "POST",
-          body: JSON.stringify({ bill_to_person_id: selectedPayerPersonId })
-        });
-      } else {
-        const billingPayload = {
-          billing_party_id: billingDraft.billing_party_id || "",
-          billing_party_type: "organization",
-          organization_name: $("recordOrganizationName").value.trim() || null,
-          billing_name: orgBillingName,
-          billing_email: $("recordBillingEmail").value.trim() || null,
-          billing_phone: $("recordBillingPhone").value.trim() || null
-        };
-        const billingResult = billingPayload.billing_party_id
-          ? await api(`/api/billing-parties/${billingPayload.billing_party_id}`, { method: "POST", body: JSON.stringify(billingPayload) })
-          : await api("/api/billing-parties", { method: "POST", body: JSON.stringify(billingPayload) });
-        await api(`/api/accounts/${accountId}`, {
-          method: "POST",
-          body: JSON.stringify({ ...accountPayload, default_billing_party_id: billingResult.billing_party_id })
-        });
-        await api(`/api/review/candidates/${currentContext.candidateId}/save-billing`, {
-          method: "POST",
-          body: JSON.stringify({ billing_party_id: billingResult.billing_party_id })
-        });
-      }
-      clearReturnContext();
-      location.hash = "";
-      await loadList();
-      await showReviewWorkbench();
-      await selectCandidate(currentContext.candidateId);
-      return;
-    }
-    await openAccountRecord(accountId);
-    await loadClients();
-  };
-  $("addMemberRecord").onclick = () => {
-    const existingIds = (data.members || []).map(m => m.person_id);
-    openAddClientModal(accountId, returnContext, $("addMemberRecord"), existingIds);
-  };
+
   if ($("deactivateAccountBtn")) {
     $("deactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "deactivate", data.account.account_name);
   }
   if ($("reactivateAccountBtn")) {
     $("reactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "reactivate", data.account.account_name);
   }
+
+  $("changeRecipientBtn").onclick = () => openRecipientSearch(accountId, data, editState, returnContext);
+  $("addCoveredBtn").onclick = () => openCoveredSearch(accountId, data, editState, returnContext);
+  $("saveBillingRelationshipBtn").onclick = () => saveBillingRelationship(accountId, editState, returnContext);
+
+  document.querySelectorAll(".covered-client-remove").forEach(btn => {
+    btn.onclick = () => {
+      const pid = btn.dataset.personId;
+      editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
+      btn.closest(".covered-client-row").remove();
+    };
+  });
+
   if (!location.hash.startsWith("#clients")) {
     location.hash = "clients";
     showClients();
+  }
+}
+
+function openRecipientSearch(accountId, data, editState, returnContext) {
+  const area = $("recipientSearchArea");
+  area.hidden = false;
+  area.innerHTML = `
+    <div class="wizard-payer-types" id="editorPayerTypes">
+      <div class="wizard-payer-choice ${editState.payer_kind === "client" ? "selected" : ""}" data-type="client" tabindex="0" role="radio">
+        <strong>A client</strong><span class="help">Someone who attends sessions and pays for themselves</span>
+      </div>
+      <div class="wizard-payer-choice ${editState.payer_kind === "person" ? "selected" : ""}" data-type="person" tabindex="0" role="radio">
+        <strong>Another person</strong><span class="help">Someone who receives invoices but does not attend</span>
+      </div>
+      <div class="wizard-payer-choice ${editState.payer_kind === "organization" ? "selected" : ""}" data-type="organization" tabindex="0" role="radio">
+        <strong>An organization</strong><span class="help">A company or agency that receives invoices</span>
+      </div>
+    </div>
+    <div class="modal-search-wrap">
+      <label for="editorRecipientInput">Search</label>
+      <input id="editorRecipientInput" class="modal-search" type="search" placeholder="Type a name..." autocomplete="off">
+    </div>
+    <div class="modal-results" id="editorRecipientResults"></div>
+    <div class="modal-selected" id="editorRecipientSelected" hidden></div>
+  `;
+  const choices = area.querySelectorAll(".wizard-payer-choice");
+  choices.forEach(el => {
+    el.addEventListener("click", () => {
+      choices.forEach(c => c.classList.remove("selected"));
+      el.classList.add("selected");
+      editState.payer_kind = el.dataset.type;
+      if (el.dataset.type !== "organization") {
+        editState.organization_billing_party_id = null;
+      }
+      if (el.dataset.type === "organization") {
+        editState.payer_person_id = null;
+      }
+      $("editorRecipientSelected").hidden = true;
+      $("editorRecipientResults").innerHTML = "";
+      $("editorRecipientInput").value = "";
+      $("editorRecipientInput").focus();
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
+
+  const input = $("editorRecipientInput");
+  const results = $("editorRecipientResults");
+  const selectedDiv = $("editorRecipientSelected");
+  let searchRows = [];
+
+  const doSearch = debounce(async (q) => {
+    if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+    try {
+      if (editState.payer_kind === "organization") {
+        searchRows = await api(`/api/organization-billing-parties?q=${encodeURIComponent(q)}`);
+      } else {
+        searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      }
+      renderRecipientResults(results, searchRows, editState.payer_kind, editState);
+    } catch (err) { results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`; }
+  }, 200);
+  input.addEventListener("input", (e) => doSearch(e.target.value));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  input.focus();
+}
+
+function renderRecipientResults(container, rows, kind, editState) {
+  if (!rows.length) { container.innerHTML = '<div class="modal-empty">No results found.</div>'; return; }
+  const selectedId = kind === "organization" ? editState.organization_billing_party_id : editState.payer_person_id;
+  container.innerHTML = rows.map(row => {
+    const id = kind === "organization" ? row.billing_party_id : row.person_id;
+    const name = kind === "organization" ? (row.organization_name || row.billing_name || "Unnamed") : (row.display_name || "Unnamed");
+    return `<div class="modal-result-row ${id === selectedId ? "selected" : ""}" data-id="${escapeHtml(id)}" tabindex="0" role="button">
+      <span>${escapeHtml(name)}</span>
+    </div>`;
+  }).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.id;
+      if (kind === "organization") {
+        editState.organization_billing_party_id = id;
+        editState.payer_person_id = null;
+        const org = rows.find(r => r.billing_party_id === id);
+        showEditorRecipientSelected(org.organization_name || org.billing_name, "organization");
+      } else {
+        editState.payer_person_id = id;
+        editState.organization_billing_party_id = null;
+        const person = rows.find(r => r.person_id === id);
+        showEditorRecipientSelected(person.display_name, kind);
+      }
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
+}
+
+function showEditorRecipientSelected(name, kind) {
+  const div = $("editorRecipientSelected");
+  div.hidden = false;
+  const label = kind === "organization" ? "Selected organization" : kind === "client" ? "Selected client" : "Selected person";
+  div.innerHTML = `${escapeHtml(label)}: <strong>${escapeHtml(name)}</strong>`;
+}
+
+function openCoveredSearch(accountId, data, editState, returnContext) {
+  const area = $("coveredSearchArea");
+  area.hidden = false;
+  area.innerHTML = `
+    <div class="modal-search-wrap">
+      <label for="editorCoveredInput">Search clients to add</label>
+      <input id="editorCoveredInput" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
+    </div>
+    <div class="modal-results" id="editorCoveredResults"></div>
+  `;
+  const input = $("editorCoveredInput");
+  const results = $("editorCoveredResults");
+  let searchRows = [];
+
+  const doSearch = debounce(async (q) => {
+    if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+    try {
+      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      const selectedIds = new Set(editState.covered_client_ids);
+      renderEditorCoveredResults(results, searchRows, selectedIds, editState);
+    } catch (err) { results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`; }
+  }, 200);
+  input.addEventListener("input", (e) => doSearch(e.target.value));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  input.focus();
+}
+
+function renderEditorCoveredResults(container, rows, selectedIds, editState) {
+  if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found.</div>'; return; }
+  container.innerHTML = rows.map(row => {
+    const isSelected = selectedIds.has(row.person_id);
+    return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
+      <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
+      ${isSelected ? '<span class="help already-included-label">Click to remove</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+    </div>`;
+  }).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    const pid = el.dataset.personId;
+    if (selectedIds.has(pid)) {
+      el.addEventListener("click", () => {
+        editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
+        const row = el.closest(".covered-client-row") || document.querySelector(`.covered-client-row[data-person-id="${pid}"]`);
+        if (row) row.remove();
+        const newSelected = new Set(editState.covered_client_ids);
+        renderEditorCoveredResults(container, rows, newSelected, editState);
+      });
+    } else {
+      el.addEventListener("click", () => {
+        if (!editState.covered_client_ids.includes(pid)) {
+          editState.covered_client_ids.push(pid);
+          const person = rows.find(r => r.person_id === pid);
+          const list = document.querySelector(".covered-clients-list");
+          if (list && person) {
+            const div = document.createElement("div");
+            div.className = "covered-client-row";
+            div.dataset.personId = pid;
+            div.innerHTML = `<span class="covered-client-name">${escapeHtml(person.display_name)}</span>${person.person_code ? `<span class="help">${escapeHtml(person.person_code)}</span>` : ""}<button type="button" class="covered-client-remove" data-person-id="${escapeHtml(pid)}" aria-label="Remove ${escapeHtml(person.display_name)}">&times;</button>`;
+            list.appendChild(div);
+            div.querySelector(".covered-client-remove").onclick = () => {
+              editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
+              div.remove();
+            };
+          }
+        }
+        const newSelected = new Set(editState.covered_client_ids);
+        renderEditorCoveredResults(container, rows, newSelected, editState);
+      });
+    }
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
+}
+
+async function saveBillingRelationship(accountId, editState, returnContext) {
+  const saveBtn = $("saveBillingRelationshipBtn");
+  const errorBox = $("editorErrorBox");
+  const dupBox = $("editorDuplicateBox");
+  if (saveBtn.disabled) return;
+
+  if (!editState.payer_person_id && !editState.organization_billing_party_id) {
+    errorBox.hidden = false;
+    errorBox.textContent = "Select an invoice recipient before saving.";
+    return;
+  }
+  if (!editState.covered_client_ids || editState.covered_client_ids.length === 0) {
+    errorBox.hidden = false;
+    errorBox.textContent = "At least one covered client is required for an active relationship.";
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving changes…";
+  errorBox.hidden = true;
+  dupBox.hidden = true;
+
+  const billingDelivery = {};
+  const fields = [
+    ["editBillingName", "billing_name"],
+    ["editBillingEmail", "billing_email"],
+    ["editBillingPhone", "billing_phone"],
+    ["editBillingContactName", "organization_name"],
+    ["editAddr1", "billing_address_line_1"],
+    ["editAddr2", "billing_address_line_2"],
+    ["editCity", "billing_city"],
+    ["editState", "billing_state"],
+    ["editPostal", "billing_postal_code"],
+    ["editDeliveryMethod", "preferred_delivery_method"],
+  ];
+  for (const [elId, field] of fields) {
+    const el = $(elId);
+    if (el) billingDelivery[field] = el.value.trim() || null;
+  }
+  const adminNotesEl = $("editAdminNotes");
+  const adminNotes = adminNotesEl ? adminNotesEl.value.trim() : null;
+
+  const payload = {
+    payer_kind: editState.payer_kind,
+    covered_client_ids: editState.covered_client_ids,
+    billing_delivery: billingDelivery,
+    administrative_notes: adminNotes,
+  };
+  if (editState.payer_kind === "organization") {
+    payload.organization_billing_party_id = editState.organization_billing_party_id;
+  } else {
+    payload.payer_person_id = editState.payer_person_id;
+  }
+
+  try {
+    await api(`/api/accounts/${accountId}/update-billing-relationship`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (validReturnContext(returnContext)) {
+      clearReturnContext();
+      location.hash = "";
+      await loadList();
+      await showReviewWorkbench();
+      await selectCandidate(returnContext.candidateId);
+      return;
+    }
+    await openAccountRecord(accountId);
+    await loadClients();
+  } catch (err) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Save changes";
+    const msg = err && (err.error || err.message) ? (err.error || err.message) : "Failed to save billing relationship.";
+    if (msg.includes("already exists")) {
+      dupBox.hidden = false;
+      dupBox.innerHTML = `<p>This billing relationship already exists.</p>
+        <div class="wizard-duplicate-actions">
+          <button type="button" id="editorOpenExisting" class="modal-submit">Open existing relationship</button>
+          <button type="button" id="editorCancelDup" class="modal-back">Cancel changes</button>
+        </div>`;
+      const openBtn = document.getElementById("editorOpenExisting");
+      if (openBtn) openBtn.onclick = async () => {
+        try {
+          const dup = await api(`/api/billing-relationships/find-duplicate?payer_kind=${encodeURIComponent(editState.payer_kind)}&payer_person_id=${encodeURIComponent(editState.payer_person_id || "")}&organization_billing_party_id=${encodeURIComponent(editState.organization_billing_party_id || "")}&covered_client_ids=${encodeURIComponent(editState.covered_client_ids.join(","))}`);
+          if (dup && dup.account_id) {
+            await openAccountRecord(dup.account_id, { returnContext });
+          }
+        } catch (_) {
+          dupBox.innerHTML = "<p>Could not find the existing relationship.</p>";
+        }
+      };
+      const cancelBtn = document.getElementById("editorCancelDup");
+      if (cancelBtn) cancelBtn.onclick = () => { dupBox.hidden = true; };
+    } else {
+      errorBox.hidden = false;
+      errorBox.textContent = escapeHtml(msg);
+    }
   }
 }
 
@@ -3366,9 +3613,12 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
 
   function selectPayerType(type) {
     if (payerType !== type) {
+      const oldType = payerType;
       payerType = type;
       if (type === "organization") payerPerson = null;
       if (type !== "organization") payerOrg = null;
+      if (oldType === "client" && type === "person") payerPerson = null;
+      if (oldType === "person" && type === "client") payerPerson = null;
       if (type === "client" && payerPerson) {
         if (!coveredClients.some(c => c.person_id === payerPerson.person_id)) {
           coveredClients.unshift({ person_id: payerPerson.person_id, display_name: payerPerson.display_name });
@@ -3541,15 +3791,20 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>'; return; }
     container.innerHTML = rows.map(row => {
       const isSelected = selectedIds.has(row.person_id);
-      return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="${isSelected ? "-1" : "0"}" role="${isSelected ? "text" : "button"}">
+      return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
         <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
-        ${isSelected ? '<span class="help already-included-label">Selected</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+        ${isSelected ? '<span class="help already-included-label">Click to remove</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
       </div>`;
     }).join("");
     container.querySelectorAll(".modal-result-row").forEach(el => {
-      if (selectedIds.has(el.dataset.personId)) return;
-      el.addEventListener("click", () => addCoveredClient(el.dataset.personId, rows));
-      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+      const pid = el.dataset.personId;
+      if (selectedIds.has(pid)) {
+        el.addEventListener("click", () => removeCoveredClient(pid));
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+      } else {
+        el.addEventListener("click", () => addCoveredClient(pid, rows));
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+      }
     });
   }
 
@@ -3729,16 +3984,32 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       }
       renderStep2();
     } else {
-      payerPerson = person;
-      if (formPayerType === "client") {
+      if (formPayerType === "client" && payerType === "client") {
+        payerPerson = person;
         if (!coveredClients.some(c => c.person_id === person.person_id)) {
           coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
         }
+        renderStep1();
+        showPayerSearch();
+        showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
+        updateContinueDisabled();
+      } else if (formPayerType === "person" && payerType === "person") {
+        payerPerson = person;
+        renderStep1();
+        showPayerSearch();
+        showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "person");
+        updateContinueDisabled();
+      } else {
+        if (!coveredClients.some(c => c.person_id === person.person_id)) {
+          coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
+        }
+        renderStep1();
+        showPayerSearch();
+        if (payerPerson) {
+          showPayerSelected(document.getElementById("wizardPayerSelected"), payerPerson.display_name, payerType);
+        }
+        updateContinueDisabled();
       }
-      renderStep1();
-      showPayerSearch();
-      showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, formPayerType);
-      updateContinueDisabled();
     }
   }
 

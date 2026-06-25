@@ -930,6 +930,77 @@ The `client_accounts.active` column already existed as `INTEGER NOT NULL DEFAULT
 
 The following remain planned and were not started:
 
-- Round 3B: saved-record editor redesign
 - Automatic payer classification
 - Full right-panel redesign
+
+### Round 3B: Simplify and Correct the Billing Relationship Editor
+
+Round 3B fixes a confirmed browser bug and simplifies the saved billing relationship editor.
+
+#### Bug Fix: New Client Creation No Longer Silently Changes Payer
+
+**Root cause**: When a user selected "A client" and created a person, then switched to "Another person", the `payerPerson` variable was not cleared — the old client remained as the selected payer. Additionally, `handlePersonCreated` always set `payerPerson = person` regardless of whether the creation context matched the current payer type.
+
+**Fix**:
+- `selectPayerType` now clears `payerPerson` when switching between "client" and "person" types
+- `handlePersonCreated` checks that `formPayerType` matches the current `payerType` before setting `payerPerson`; if they don't match, the created person is added to covered clients only
+- Step 2 covered-client search results are now clickable to remove (previously non-interactive "Selected" labels)
+
+#### Simplified Editor
+
+The saved billing relationship editor (`openAccountRecord`) has been redesigned around four concepts:
+
+1. **Invoice recipient** — read-only display of current payer name, type, email, phone, delivery method, and address. A "Change invoice recipient" button opens an inline search with payer type choices (A client, Another person, An organization).
+
+2. **Pays for** — list of covered clients with × remove buttons. An "Add client" button opens an inline search. Already-selected clients show "Click to remove" and can be toggled.
+
+3. **Billing delivery** — editable fields: billing name, email, phone, contact name, address lines, city, state, postal code, preferred delivery method, and administrative notes.
+
+4. **Status** — Active/Inactive pill with deactivate/reactivate button (from Round 3A).
+
+A single **Save changes** button calls `POST /api/accounts/{account_id}/update-billing-relationship` transactionally.
+
+#### Backend: Transactional Update
+
+`update_billing_relationship(conn, account_id, payload)`:
+- Validates payer_kind, covered_client_ids, and payer person/org
+- Checks for exact duplicate (excluding self)
+- Transactionally updates: billing party, account members (add/remove/update), billing delivery fields, admin notes
+- Writes audit entry with action `updated_billing_relationship`
+- Preserves account UUID, account code, sessions, invoices, payments, rates
+- Rejects editing inactive accounts
+- Returns full account record via `get_account_record`
+
+`remove_account_member(conn, account_id, person_id)`:
+- Removes a covered client from a billing relationship
+- Preserves the person record and all historical sessions
+- Writes audit entry with action `removed`
+
+#### Backend API
+
+- `POST /api/accounts/{account_id}/update-billing-relationship` — transactional update
+- `POST /api/accounts/{account_id}/remove-member` — remove a covered client
+- `GET /api/billing-relationships/find-duplicate` — find duplicate for editor's "Open existing" prompt
+
+#### Duplicate Handling During Edit
+
+If the edited payer and covered-client set matches an existing active relationship, the backend returns a 400 error with "This billing relationship already exists." The editor shows an in-page prompt with "Open existing relationship" and "Cancel changes" buttons.
+
+#### No Browser Prompts
+
+The editor uses in-page error boxes and duplicate boxes — no `alert()`, `prompt()`, or `confirm()`.
+
+#### No Schema Migration
+
+No schema changes were needed. All existing tables and columns are used as-is.
+
+#### Tests
+
+`tests/test_billing_relationships_round3b.py` contains 68 tests covering:
+- Backend `update_billing_relationship`: changes payer, adds/removes covered clients, preserves account ID, writes audit, rejects inactive accounts, rejects duplicates, allows same-relationship update, validates empty covered/invalid payer kind/missing payer/nonexistent account, updates billing delivery and admin notes, preserves sessions, handles organization payer
+- Backend `remove_account_member`: removes member, preserves person, writes audit, raises for nonexistent
+- Wizard bug fix: `selectPayerType` clears `payerPerson`, `handlePersonCreated` checks payer type match, Step 2 results are clickable to remove, no alert in handler
+- Editor JS: has Invoice recipient/Pays for/Billing delivery/Status sections, Save changes button, no old field IDs, no alert/prompt/confirm in save flow, validation messages, recipient search with payer type choices, covered search allows remove
+- Editor CSS: `.editor-section`, `.covered-client-row`, `.covered-client-remove`
+- Round 3A still works: deactivate/reactivate buttons, status filter, lifecycle confirm
+- No schema migration: no ALTER TABLE, SCHEMA unchanged

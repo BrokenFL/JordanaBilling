@@ -180,9 +180,9 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertNotIn('prompt("Add which existing client', self.js)
 
     def test_no_fuzzy_first_result_selection(self):
-        """The old add-member code selected rows[0] as fallback — verify it's gone from addMemberRecord handler."""
-        start = self.js.index('$("addMemberRecord").onclick')
-        end = self.js.index("};", start) + 2
+        """The old add-member code selected rows[0] as fallback — verify it's gone from covered client search."""
+        start = self.js.index("function openCoveredSearch")
+        end = self.js.index("function renderEditorCoveredResults", start)
         handler = self.js[start:end]
         self.assertNotIn("|| rows[0]", handler)
 
@@ -248,12 +248,13 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertNotIn("prompt(", handler)
 
     def test_addMemberRecord_uses_modal_not_prompt(self):
-        start = self.js.index('$("addMemberRecord").onclick')
-        end = self.js.index("};", start) + 2
-        handler = self.js[start:end]
-        self.assertIn("openAddClientModal", handler)
-        self.assertNotIn("prompt(", handler)
-        self.assertNotIn("rows[0]", handler)
+        # The editor now uses addCoveredBtn with inline search, not prompt
+        self.assertIn("addCoveredBtn", self.js)
+        self.assertIn("openCoveredSearch", self.js)
+        # Verify no prompt in the covered search area
+        start = self.js.index("function openCoveredSearch")
+        end = self.js.index("function renderEditorCoveredResults", start)
+        self.assertNotIn("prompt(", self.js[start:end])
 
     def test_dead_showAccountEditor_removed(self):
         self.assertNotIn("function showAccountEditor", self.js)
@@ -263,8 +264,8 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertIn("returnContext: nextContext", self.js)
 
     def test_existing_member_ids_passed_to_add_modal(self):
-        """The add-member handler collects existing member person_ids."""
-        self.assertIn("existingIds", self.js)
+        """The editor tracks covered client IDs from existing members."""
+        self.assertIn("covered_client_ids", self.js)
         self.assertIn("data.members", self.js)
 
     def test_modal_submit_disabled_until_selection(self):

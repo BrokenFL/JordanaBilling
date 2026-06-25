@@ -2089,6 +2089,152 @@ def reactivate_account(conn: sqlite3.Connection, account_id: str) -> dict[str, A
     return dict(conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone())
 
 
+def update_billing_relationship(
+    conn: sqlite3.Connection,
+    account_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Transactionally update a billing relationship's payer, covered clients, and delivery fields.
+
+    Preserves account UUID, account code, and all historical sessions/invoices/payments.
+    Prevents active exact duplicates. Writes audit entries.
+    """
+    init_db(conn)
+    account = conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+    if not account:
+        raise ValueError("Account not found.")
+    if account["active"] == 0:
+        raise ValueError("Cannot edit an inactive billing relationship. Reactivate it first.")
+
+    payer_kind = (payload.get("payer_kind") or "").strip().lower()
+    if payer_kind not in ("client", "person", "organization"):
+        raise ValueError("payer_kind must be one of: client, person, organization.")
+
+    raw_covered = payload.get("covered_client_ids") or []
+    if not isinstance(raw_covered, list) or not raw_covered:
+        raise ValueError("At least one covered client is required for an active relationship.")
+    covered_client_ids = []
+    seen = set()
+    for cid in raw_covered:
+        cid = str(cid).strip()
+        if not cid:
+            raise ValueError("Covered client IDs must be non-empty strings.")
+        if cid in seen:
+            raise ValueError("Duplicate covered client IDs are not allowed.")
+        seen.add(cid)
+        covered_client_ids.append(cid)
+
+    for cid in covered_client_ids:
+        row = conn.execute("SELECT person_id FROM people WHERE person_id = ? AND active = 1", (cid,)).fetchone()
+        if not row:
+            raise ValueError(f"Covered client {cid} does not exist or is not active.")
+
+    payer_person_id = None
+    organization_billing_party_id = None
+    if payer_kind in ("client", "person"):
+        payer_person_id = str(payload.get("payer_person_id") or "").strip()
+        if not payer_person_id:
+            raise ValueError("payer_person_id is required for client or person payer kind.")
+        payer_row = conn.execute("SELECT * FROM people WHERE person_id = ? AND active = 1", (payer_person_id,)).fetchone()
+        if not payer_row:
+            raise ValueError("Payer person does not exist or is not active.")
+    elif payer_kind == "organization":
+        organization_billing_party_id = str(payload.get("organization_billing_party_id") or "").strip()
+        if not organization_billing_party_id:
+            raise ValueError("organization_billing_party_id is required for organization payer kind.")
+        org_row = conn.execute(
+            "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1 AND billing_party_type = 'organization'",
+            (organization_billing_party_id,),
+        ).fetchone()
+        if not org_row:
+            raise ValueError("Organization billing party does not exist, is not active, or is not an organization.")
+
+    duplicate = find_duplicate_billing_relationship(
+        conn, payer_kind, payer_person_id, organization_billing_party_id, covered_client_ids
+    )
+    if duplicate and duplicate["account_id"] != account_id:
+        raise ValueError("This billing relationship already exists.")
+
+    try:
+        if payer_kind in ("client", "person"):
+            billing_party_id = billing_party_for_person(conn, payer_person_id, commit=False)
+        else:
+            billing_party_id = organization_billing_party_id
+
+        current_members = {
+            r["person_id"]: r for r in conn.execute(
+                "SELECT * FROM account_members WHERE account_id = ?", (account_id,)
+            ).fetchall()
+        }
+        new_set = set(covered_client_ids)
+
+        for old_pid in current_members:
+            if old_pid not in new_set:
+                conn.execute(
+                    "DELETE FROM account_members WHERE account_member_id = ?",
+                    (current_members[old_pid]["account_member_id"],),
+                )
+                record_audit(conn, "account_member", current_members[old_pid]["account_member_id"], "removed", {
+                    "account_id": account_id, "person_id": old_pid,
+                })
+
+        primary_person_id = None
+        if payer_kind == "client" and payer_person_id in covered_client_ids:
+            primary_person_id = payer_person_id
+        elif covered_client_ids:
+            primary_person_id = covered_client_ids[0]
+
+        for cid in covered_client_ids:
+            if cid in current_members:
+                is_primary = (cid == primary_person_id)
+                role = "primary" if is_primary else "family_member"
+                conn.execute(
+                    "UPDATE account_members SET relationship_role = ?, is_primary = ?, updated_at = ? WHERE account_member_id = ?",
+                    (role, 1 if is_primary else 0, now_iso(), current_members[cid]["account_member_id"]),
+                )
+            else:
+                is_primary = (cid == primary_person_id)
+                role = "primary" if is_primary else "family_member"
+                add_account_member(conn, account_id, cid, role, is_primary, commit=False)
+
+        now = now_iso()
+        conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
+            (billing_party_id, now, account_id),
+        )
+
+        billing_delivery = payload.get("billing_delivery") or {}
+        if billing_delivery:
+            bp_update = {}
+            for field in ("billing_email", "billing_phone", "billing_name", "billing_address_line_1",
+                          "billing_address_line_2", "billing_city", "billing_state", "billing_postal_code",
+                          "preferred_delivery_method", "administrative_notes"):
+                if field in billing_delivery:
+                    bp_update[field] = billing_delivery[field]
+            if bp_update:
+                bp_update["billing_party_id"] = billing_party_id
+                update_billing_party(conn, billing_party_id, bp_update)
+
+        admin_notes = payload.get("administrative_notes")
+        if admin_notes is not None:
+            conn.execute(
+                "UPDATE client_accounts SET administrative_notes = ?, updated_at = ? WHERE account_id = ?",
+                (admin_notes, now, account_id),
+            )
+
+        record_audit(conn, "client_account", account_id, "updated_billing_relationship", {
+            "payer_kind": payer_kind,
+            "covered_client_count": len(covered_client_ids),
+        })
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return get_account_record(conn, account_id)
+
+
 def search_billing_parties(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
     return search_table(conn, "billing_parties", "billing_party_id", "billing_name", query)
 
@@ -2447,6 +2593,37 @@ def ensure_account_member(
         (member_id, account_id, person_id, relationship_role, 1 if is_primary else 0, now, now),
     )
     return member_id
+
+
+def remove_account_member(
+    conn: sqlite3.Connection,
+    account_id: str,
+    person_id: str,
+    *,
+    commit: bool = True,
+) -> None:
+    """Remove a covered client from a billing relationship.
+
+    Does NOT delete the person record. Does NOT alter historical sessions.
+    Writes an audit entry.
+    """
+    if commit:
+        init_db(conn)
+    existing = conn.execute(
+        "SELECT account_member_id FROM account_members WHERE account_id = ? AND person_id = ?",
+        (account_id, person_id),
+    ).fetchone()
+    if not existing:
+        raise ValueError("This client is not a member of this billing relationship.")
+    conn.execute(
+        "DELETE FROM account_members WHERE account_member_id = ?",
+        (existing["account_member_id"],),
+    )
+    record_audit(conn, "account_member", existing["account_member_id"], "removed", {
+        "account_id": account_id, "person_id": person_id,
+    })
+    if commit:
+        conn.commit()
 
 
 def add_session_participant(

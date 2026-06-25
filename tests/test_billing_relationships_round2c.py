@@ -71,8 +71,9 @@ class TestWizardStaticJs(unittest.TestCase):
     def test_no_payer_kind_terminology_exposed(self):
         """Step 1 does not expose 'payer_kind' in user-facing text."""
         # The payer choices should use user-friendly labels, not 'payer_kind'
-        step1_start = self.js.index("wizard-payer-types")
-        step1_end = self.js.index("</div>", self.js.index("wizardPayerSearch"))
+        # Look at the wizard's renderStep1 function specifically
+        step1_start = self.js.index("function renderStep1()")
+        step1_end = self.js.index("function selectPayerType", step1_start)
         step1_html = self.js[step1_start:step1_end]
         self.assertNotIn("payer_kind", step1_html)
         self.assertNotIn("account_type", step1_html)

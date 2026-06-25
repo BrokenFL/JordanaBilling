@@ -704,3 +704,19 @@ th:nth-child(10), td:nth-child(10) { width: 88px; }
 .status-pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
 .status-pill.active { background: #d4edda; color: #155724; }
 .status-pill.inactive { background: #f8d7da; color: #721c24; }
+
+.editor-section { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.editor-section:first-of-type { border-top: none; }
+.editor-section h4 { margin: 0 0 8px; font-size: 15px; }
+.covered-clients-list { margin: 8px 0; }
+.covered-client-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 6px; margin-bottom: 4px; background: #fff;
+}
+.covered-client-name { font-weight: 500; font-size: 14px; }
+.covered-client-remove {
+  margin-left: auto; background: none; border: none; color: #c0392b;
+  font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+}
+.covered-client-remove:hover { color: #a93226; }
+#recipientSearchArea, #coveredSearchArea { margin-top: 8px; }

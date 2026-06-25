@@ -28,6 +28,7 @@ from .review_services import (
     create_rate_rule_from_payload,
     dashboard_status,
     end_rate_rule,
+    find_duplicate_billing_relationship,
     get_account_record,
     get_organization_billing_record,
     get_person_record,
@@ -48,6 +49,7 @@ from .review_services import (
     refresh_candidate_suggestions,
     replace_rate_rule_from_payload,
     reactivate_account,
+    remove_account_member,
     save_billing_section,
     save_interpretation,
     save_person_alias,
@@ -61,6 +63,7 @@ from .review_services import (
     setup_billing_relationship,
     update_account,
     update_billing_party,
+    update_billing_relationship,
     update_person,
 )
 from .invoice_services import (
@@ -159,6 +162,16 @@ def make_handler(database_path: str):
                     return
                 if parsed.path == "/api/billing-relationships":
                     self.send_json(list_billing_relationship_records(self.conn()))
+                    return
+                if parsed.path == "/api/billing-relationships/find-duplicate":
+                    qs = parse_qs(parsed.query)
+                    payer_kind = first(qs, "payer_kind") or ""
+                    payer_person_id = first(qs, "payer_person_id") or None
+                    org_bp_id = first(qs, "organization_billing_party_id") or None
+                    covered_str = first(qs, "covered_client_ids") or ""
+                    covered_ids = [c.strip() for c in covered_str.split(",") if c.strip()] if covered_str else []
+                    dup = find_duplicate_billing_relationship(self.conn(), payer_kind, payer_person_id, org_bp_id, covered_ids)
+                    self.send_json(dup or {})
                     return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(search_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
@@ -298,6 +311,19 @@ def make_handler(database_path: str):
                             self.send_json(reactivate_account(self.conn(), account_id))
                         except ValueError:
                             self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        return
+                    if action == "update-billing-relationship":
+                        try:
+                            self.send_json(update_billing_relationship(self.conn(), account_id, data))
+                        except ValueError as e:
+                            self.send_json({"ok": False, "error": str(e)}, status=400)
+                        return
+                    if action == "remove-member":
+                        try:
+                            remove_account_member(self.conn(), account_id, data["person_id"])
+                            self.send_json({"ok": True})
+                        except ValueError as e:
+                            self.send_json({"ok": False, "error": str(e)}, status=400)
                         return
                     self.send_json(update_account(self.conn(), account_id, data))
                     return

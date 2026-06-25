@@ -416,13 +416,11 @@ class ReviewUiStaticTests(unittest.TestCase):
         end = js.index("async function loadPeople")
         account_record = js[start:end]
 
-        self.assertIn("/save-relationship", account_record)
-        self.assertIn("/save-billing", account_record)
+        self.assertIn("update-billing-relationship", account_record)
         self.assertIn("await loadList();", account_record)
         self.assertIn("await showReviewWorkbench();", account_record)
-        self.assertIn("await selectCandidate(currentContext.candidateId);", account_record)
-        self.assertIn('billing_party_type: "organization"', account_record)
-        self.assertIn("Select the bill-to client before saving this billing relationship.", account_record)
+        self.assertIn("await selectCandidate(returnContext.candidateId);", account_record)
+        self.assertIn("Save changes", account_record)
 
     def test_invalid_or_missing_return_context_falls_back_to_normal_clients_screen(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
