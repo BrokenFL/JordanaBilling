@@ -1004,3 +1004,58 @@ No schema changes were needed. All existing tables and columns are used as-is.
 - Editor CSS: `.editor-section`, `.covered-client-row`, `.covered-client-remove`
 - Round 3A still works: deactivate/reactivate buttons, status filter, lifecycle confirm
 - No schema migration: no ALTER TABLE, SCHEMA unchanged
+
+### Round 3C: Final Integration Hardening
+
+Round 3C completes the billing relationship editor with verified defect fixes, terminology cleanup, and runtime test coverage.
+
+#### Verified Defects Fixed
+
+1. **XSS in return links** — `raw_calendar_title` and `session_date` in editor return links were rendered via `fmt()` without escaping. Fixed: all user-provided values in return links now use `escapeHtml()`.
+
+2. **Dead code removal** — Removed unused functions from the old editor refactor: `openAddClientModal`, `renderModalSearchResults`, `payerDisplayOptions`, `recordBillingPartyDraft`, `relationshipNameSuggestion`. Removed unused `ACCOUNT_TYPE_LABELS` constant.
+
+3. **Backend-only labels in UI** — Removed `account_code` from the editor meta display. Removed `account_code` and `account_type` columns from the organization panel's linked accounts table. Changed "Default bill to:" to "Invoice recipient:" in the billing directory.
+
+4. **Organization name field** — The "Organization name" input in the editor's Billing delivery section is now shown only when the payer type is `organization`. Person and client payers do not see this field.
+
+5. **Unsaved changes detection** — The editor now tracks unsaved changes via an `editorDirty` flag. Modifying any delivery field, removing a covered client, or changing the invoice recipient sets the flag. Clicking the return link with unsaved changes shows an in-page confirmation with "Keep editing" and "Return without saving" options.
+
+6. **Browser `confirm()` removal** — Organization deactivation and billing party deactivation now use in-page confirmation boxes with Cancel and Deactivate buttons, replacing native `confirm()` dialogs.
+
+7. **Organization name in `update_billing_relationship`** — The backend `update_billing_relationship` function now processes `organization_name` from `billing_delivery` payload, allowing organization name updates through the editor.
+
+#### Terminology Changes
+
+| Old | New | Location |
+|-----|-----|----------|
+| "Default bill to:" | "Invoice recipient:" | Billing directory account rows |
+| "Add client" | "Add Client" | Editor button (capitalization) |
+| `account_code` in meta | Removed | Editor header |
+| `account_code` column | Removed | Org linked accounts table |
+| `account_type` column | Removed | Org linked accounts table |
+| "Contact name" field | "Organization name" (org payers only) | Editor billing delivery |
+
+#### Tests
+
+`tests/test_billing_relationships_round3c.py` contains 59 tests covering:
+
+- **XSS**: return links use `escapeHtml` for calendar title and session date; `fmt()` not used for raw calendar title
+- **Dead code**: `openAddClientModal`, `payerDisplayOptions`, `recordBillingPartyDraft`, `renderModalSearchResults`, `ACCOUNT_TYPE_LABELS`, `relationshipNameSuggestion` all removed
+- **Terminology**: no `account_code` in editor, no `account_code`/`account_type` in org linked accounts table, directory uses "Invoice recipient:" not "Default bill to:", organization name field only for org payers, no "Contact name" label
+- **Unsaved changes**: editor has `editorDirty` flag, `markEditorDirty` function, return link checks dirty, dirty confirm has "Keep editing" and "Return without saving", delivery inputs mark dirty, covered removal marks dirty
+- **No `confirm()`**: org deactivation, billing party deactivation, wizard, and editor save all free of `confirm()` calls; org and billing party deactivation have in-page confirmation boxes
+- **Backend runtime**: preserves historical rates, idempotent same covered, duplicate detection with org payer, remove member doesn't affect other accounts, update doesn't change account name, null billing delivery preserves existing, empty billing delivery sets null, deactivate→reactivate→update works, person payer also covered client, organization name in billing delivery
+- **JS runtime**: save re-enables button on error, duplicate box has Open existing and Cancel, lifecycle confirm box exists, org/billing deact confirm has Cancel and Deactivate, editor dirty confirm has buttons
+- **CSS**: `.wizard-confirm-actions` and `.lifecycle-confirm-box` classes exist
+- **No schema migration**: no ALTER TABLE in review_services, schema unchanged
+- **Round 3A still works**: deactivate/reactivate buttons, lifecycle confirm, status filter
+- **Round 3B still works**: editor has Invoice recipient/Pays for sections, calls update endpoint, has covered/recipient search
+
+#### No Schema Migration
+
+No schema changes were needed. All fixes use existing tables and columns.
+
+#### No New Features
+
+Round 3C fixes verified defects only. No new major features, no UI redesign, no schema migration, no permanent deletion.

@@ -169,7 +169,9 @@ class TestWizardStaticJs(unittest.TestCase):
         self.assertIn("unsaved selections", self.js)
         # Must not use browser confirm() in the wizard
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         # Check no standalone confirm() call in wizard
         self.assertNotIn("confirm(", wizard_code)
@@ -182,20 +184,26 @@ class TestWizardStaticJs(unittest.TestCase):
     def test_no_browser_prompt_in_wizard(self):
         """25. No browser prompt() or alert() in the wizard workflow."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("prompt(", wizard_code)
         self.assertNotIn("alert(", wizard_code)
 
     def test_add_client_modal_still_exists(self):
-        """24. Existing Round 1 Add Client modal still works."""
-        self.assertIn("function openAddClientModal", self.js)
+        """24. Editor's Add Client search still works."""
+        self.assertIn("function openCoveredSearch", self.js)
         self.assertIn("Add Client", self.js)
 
     def test_wizard_does_not_create_new_people(self):
         """No parallel person-creation function or non-API person creation in wizard."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         # Round 2D1 adds POST /api/people for person creation — that's expected
         # But no parallel creation function should exist
@@ -205,7 +213,9 @@ class TestWizardStaticJs(unittest.TestCase):
     def test_wizard_does_not_attach_to_session(self):
         """No Session Review approval or interpretation from the wizard."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("save_interpretation", wizard_code)
         self.assertNotIn("approve_candidate", wizard_code)
@@ -237,7 +247,9 @@ class TestWizardStaticJs(unittest.TestCase):
     def test_escape_html_used_for_user_values(self):
         """User-controlled values are escaped via escapeHtml."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertIn("escapeHtml", wizard_code)
 

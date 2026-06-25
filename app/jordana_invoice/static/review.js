@@ -523,41 +523,6 @@ function clearReturnContext() {
   if (location.hash.startsWith("#clients?")) location.hash = "#clients";
 }
 
-function payerDisplayOptions(members = [], returnContext = null) {
-  const seen = new Set();
-  const options = [];
-  const add = (personId, displayName) => {
-    if (!personId || seen.has(personId)) return;
-    seen.add(personId);
-    options.push({ person_id: personId, display_name: displayName || "Unnamed client" });
-  };
-  members.forEach(member => add(member.person_id, member.display_name));
-  (returnContext?.participants || []).forEach(participant => add(participant.person_id, participant.display_name));
-  return options;
-}
-
-function relationshipNameSuggestion(returnContext) {
-  const names = (returnContext?.participants || []).map(p => p.display_name).filter(Boolean);
-  if (!names.length) return "New Billing Relationship";
-  if (names.length === 1) return `${names[0]} Billing Relationship`;
-  return `${names[0]} + ${names[1]} Billing Relationship`;
-}
-
-function recordBillingPartyDraft(data, payerOptions, returnContext) {
-  const billing = data.billing_party || {};
-  const isPerson = billing.person_id || billing.billing_party_type === "person" || (!billing.billing_party_type && payerOptions.length);
-  const selectedPersonId = billing.person_id || returnContext?.billToPersonId || payerOptions[0]?.person_id || "";
-  return {
-    billing_party_id: billing.billing_party_id || "",
-    billing_party_type: isPerson ? "person" : "organization",
-    person_id: selectedPersonId,
-    organization_name: billing.organization_name || "",
-    billing_name: billing.billing_name || "",
-    billing_email: billing.billing_email || "",
-    billing_phone: billing.billing_phone || "",
-    administrative_notes: data.account?.administrative_notes || ""
-  };
-}
 
 function splitDisplayName(name) {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -1878,15 +1843,6 @@ const BILLING_DIR_TYPE_LABELS = {
   account: "Shared billing group",
 };
 
-const ACCOUNT_TYPE_LABELS = {
-  individual: "Individual",
-  household: "Household",
-  family: "Family",
-  couple: "Couple",
-  organization: "Organization",
-  other: "Other",
-};
-
 function billingDirCoversText(rec) {
   const people = rec.covered_people || [];
   if (!people.length) return "—";
@@ -1925,14 +1881,10 @@ function billingDirPayerSubtext(rec) {
     return "";
   }
   if (rec.record_type === "account") {
-    const parts = [];
-    if (rec.account_type && ACCOUNT_TYPE_LABELS[rec.account_type]) {
-      parts.push(ACCOUNT_TYPE_LABELS[rec.account_type]);
-    }
     if (rec.billing_name) {
-      parts.push(`Default bill to: ${escapeHtml(rec.billing_name)}`);
+      return `Invoice recipient: ${escapeHtml(rec.billing_name)}`;
     }
-    return parts.join(" • ");
+    return "";
   }
   return "";
 }
@@ -1942,7 +1894,7 @@ function billingDirLinkedText(rec) {
     return `<div class="dir-muted">Linked to shared billing group: ${escapeHtml(rec.account_name || "")}</div>`;
   }
   if (rec.record_type === "account" && rec.billing_name) {
-    return `<div class="dir-muted">Default bill to: ${escapeHtml(rec.billing_name)}</div>`;
+    return `<div class="dir-muted">Invoice recipient: ${escapeHtml(rec.billing_name)}</div>`;
   }
   return "";
 }
@@ -2220,11 +2172,9 @@ async function openOrganizationRecord(billingPartyId) {
     : `<span class="readonly-note">No invoices addressed to this organization yet.</span>`;
 
   const linkedAccountsHtml = (data.linked_accounts || []).length
-    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Code</th><th>Type</th><th>Status</th><th>Members</th><th>Open</th></tr></thead><tbody>
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Status</th><th>Members</th><th>Open</th></tr></thead><tbody>
         ${(data.linked_accounts || []).map(a => `<tr>
           <td>${escapeHtml(a.account_name)}</td>
-          <td>${escapeHtml(a.account_code)}</td>
-          <td>${escapeHtml(a.account_type)}</td>
           <td>${a.active ? "Active" : "Inactive"}</td>
           <td>${escapeHtml((a.members || []).map(m => m.display_name).join(", ") || "None")}</td>
           <td><button class="mini" data-open-account="${escapeHtml(a.account_id)}">Open</button></td>
@@ -2304,19 +2254,35 @@ async function openOrganizationRecord(billingPartyId) {
   if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
 
   if ($("orgEditBtn")) $("orgEditBtn").onclick = () => showOrgEditForm(data.billing_party);
-  if ($("orgDeactivateBtn")) $("orgDeactivateBtn").onclick = async () => {
-    const confirmed = confirm("Deactivating this organization billing record prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.");
-    if (!confirmed) return;
-    try {
-      await api(`/api/billing-parties/${bp.billing_party_id}`, {
-        method: "POST",
-        body: JSON.stringify({ active: false })
-      });
-      await openOrganizationRecord(bp.billing_party_id);
-      await loadClients();
-    } catch (err) {
-      showOrgMessage(err.message || "Failed to deactivate organization.", "error");
-    }
+  if ($("orgDeactivateBtn")) $("orgDeactivateBtn").onclick = () => {
+    showOrgMessage("", "");
+    const existing = document.getElementById("orgDeactivateConfirm");
+    if (existing) existing.remove();
+    const box = document.createElement("div");
+    box.id = "orgDeactivateConfirm";
+    box.className = "lifecycle-confirm-box";
+    box.style.display = "block";
+    box.innerHTML = `
+      <p>Deactivating this organization prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.</p>
+      <div class="wizard-confirm-actions">
+        <button type="button" id="orgDeactNo" class="modal-cancel">Cancel</button>
+        <button type="button" id="orgDeactYes" class="modal-submit">Deactivate</button>
+      </div>`;
+    panel.prepend(box);
+    document.getElementById("orgDeactNo").onclick = () => { box.remove(); $("orgDeactivateBtn").focus(); };
+    document.getElementById("orgDeactYes").onclick = async () => {
+      box.remove();
+      try {
+        await api(`/api/billing-parties/${bp.billing_party_id}`, {
+          method: "POST",
+          body: JSON.stringify({ active: false })
+        });
+        await openOrganizationRecord(bp.billing_party_id);
+        await loadClients();
+      } catch (err) {
+        showOrgMessage(err.message || "Failed to deactivate organization.", "error");
+      }
+    };
   };
   if ($("orgReactivateBtn")) $("orgReactivateBtn").onclick = async () => {
     try {
@@ -2448,9 +2414,9 @@ async function openAccountRecord(accountId, options = {}) {
     : '<div class="readonly-note">No covered clients.</div>';
 
   $("accountRecord").innerHTML = `
-    ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
+    ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
     <h3>${escapeHtml(data.account.account_name)}</h3>
-    <div class="meta"><span>${escapeHtml(data.account.account_code)}</span>${statusPill}</div>
+    <div class="meta">${statusPill}</div>
     <div id="lifecycleConfirmBox" class="lifecycle-confirm-box" hidden></div>
     <div class="record-actions">${lifecycleBtn}</div>
 
@@ -2471,7 +2437,7 @@ async function openAccountRecord(accountId, options = {}) {
     <div class="editor-section" id="editorCoveredSection">
       <h4>Pays for</h4>
       ${coveredHtml}
-      <button type="button" id="addCoveredBtn" class="save">Add client</button>
+      <button type="button" id="addCoveredBtn" class="save">Add Client</button>
       <div id="coveredSearchArea" hidden></div>
     </div>
 
@@ -2481,7 +2447,7 @@ async function openAccountRecord(accountId, options = {}) {
         <label class="field">Billing name<input id="editBillingName" value="${escapeHtml(bp.billing_name || "")}"></label>
         <label class="field">Billing email<input id="editBillingEmail" type="email" value="${escapeHtml(bp.billing_email || "")}"></label>
         <label class="field">Billing phone<input id="editBillingPhone" type="tel" value="${escapeHtml(bp.billing_phone || "")}"></label>
-        <label class="field">Contact name<input id="editBillingContactName" value="${escapeHtml(bp.organization_name || "")}"></label>
+        ${payerType === "organization" ? `<label class="field">Organization name<input id="editBillingContactName" value="${escapeHtml(bp.organization_name || "")}"></label>` : ""}
         <label class="field">Address line 1<input id="editAddr1" value="${escapeHtml(bp.billing_address_line_1 || "")}"></label>
         <label class="field">Address line 2<input id="editAddr2" value="${escapeHtml(bp.billing_address_line_2 || "")}"></label>
         <label class="field">City<input id="editCity" value="${escapeHtml(bp.billing_city || "")}"></label>
@@ -2517,8 +2483,41 @@ async function openAccountRecord(accountId, options = {}) {
     covered_client_ids: (data.members || []).map(m => m.person_id),
   };
 
+  let editorDirty = false;
+  const markEditorDirty = () => { editorDirty = true; };
+
   if ($("returnFromAccount")) $("returnFromAccount").onclick = async (event) => {
     event.preventDefault();
+    if (editorDirty) {
+      const confirmBox = $("editorDirtyConfirm");
+      if (!confirmBox) {
+        const box = document.createElement("div");
+        box.id = "editorDirtyConfirm";
+        box.className = "lifecycle-confirm-box";
+        box.style.display = "block";
+        box.innerHTML = `
+          <p>You have unsaved changes. Return to review without saving?</p>
+          <div class="wizard-confirm-actions">
+            <button type="button" id="editorDirtyNo" class="modal-cancel">Keep editing</button>
+            <button type="button" id="editorDirtyYes" class="modal-submit">Return without saving</button>
+          </div>`;
+        $("accountRecord").prepend(box);
+        document.getElementById("editorDirtyNo").onclick = () => { box.remove(); };
+        document.getElementById("editorDirtyYes").onclick = async () => {
+          box.remove();
+          if (!validReturnContext(returnContext)) {
+            clearReturnContext();
+            location.hash = "";
+            showReviewWorkbench();
+            return;
+          }
+          location.hash = "";
+          await showReviewWorkbench();
+          await selectCandidate(returnContext.candidateId);
+        };
+        return;
+      }
+    }
     if (!validReturnContext(returnContext)) {
       clearReturnContext();
       location.hash = "";
@@ -2537,8 +2536,8 @@ async function openAccountRecord(accountId, options = {}) {
     $("reactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "reactivate", data.account.account_name);
   }
 
-  $("changeRecipientBtn").onclick = () => openRecipientSearch(accountId, data, editState, returnContext);
-  $("addCoveredBtn").onclick = () => openCoveredSearch(accountId, data, editState, returnContext);
+  $("changeRecipientBtn").onclick = () => { markEditorDirty(); openRecipientSearch(accountId, data, editState, returnContext); };
+  $("addCoveredBtn").onclick = () => { markEditorDirty(); openCoveredSearch(accountId, data, editState, returnContext); };
   $("saveBillingRelationshipBtn").onclick = () => saveBillingRelationship(accountId, editState, returnContext);
 
   document.querySelectorAll(".covered-client-remove").forEach(btn => {
@@ -2546,7 +2545,14 @@ async function openAccountRecord(accountId, options = {}) {
       const pid = btn.dataset.personId;
       editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
       btn.closest(".covered-client-row").remove();
+      markEditorDirty();
     };
+  });
+
+  const deliveryInputs = ["editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
+  deliveryInputs.forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener("change", markEditorDirty);
   });
 
   if (!location.hash.startsWith("#clients")) {
@@ -2955,7 +2961,7 @@ async function openPersonRecord(personId, options = {}) {
     : `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
 
   $("personRecordView").innerHTML = `
-    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
+    ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
     <a href="#people" class="return-link" id="backToClients">← Back to Clients</a>
     <div class="client-workspace">
       <div class="client-header">
@@ -3132,18 +3138,33 @@ async function openPersonRecord(personId, options = {}) {
     };
   });
   document.querySelectorAll("[data-deactivate-billing]").forEach(button => {
-    button.onclick = async () => {
-      const confirmed = confirm("Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.");
-      if (!confirmed) return;
-      try {
-        await api(`/api/billing-parties/${button.dataset.deactivateBilling}`, {
-          method: "POST",
-          body: JSON.stringify({ active: false })
-        });
-        await openPersonRecord(personId, { showAllSessions });
-      } catch (err) {
-        showBillingSetupMessage(err.message || "Failed to deactivate billing setup.", "error");
-      }
+    button.onclick = () => {
+      const existing = document.getElementById("billingDeactConfirm");
+      if (existing) existing.remove();
+      const box = document.createElement("div");
+      box.id = "billingDeactConfirm";
+      box.className = "lifecycle-confirm-box";
+      box.style.display = "block";
+      box.innerHTML = `
+        <p>Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.</p>
+        <div class="wizard-confirm-actions">
+          <button type="button" id="billingDeactNo" class="modal-cancel">Cancel</button>
+          <button type="button" id="billingDeactYes" class="modal-submit">Deactivate</button>
+        </div>`;
+      button.closest(".billing-card")?.prepend(box);
+      document.getElementById("billingDeactNo").onclick = () => { box.remove(); button.focus(); };
+      document.getElementById("billingDeactYes").onclick = async () => {
+        box.remove();
+        try {
+          await api(`/api/billing-parties/${button.dataset.deactivateBilling}`, {
+            method: "POST",
+            body: JSON.stringify({ active: false })
+          });
+          await openPersonRecord(personId, { showAllSessions });
+        } catch (err) {
+          showBillingSetupMessage(err.message || "Failed to deactivate billing setup.", "error");
+        }
+      };
     };
   });
   document.querySelectorAll("[data-reactivate-billing]").forEach(button => {
@@ -3409,30 +3430,6 @@ function billingModalTrapKeydown(e) {
   }
 }
 
-function renderModalSearchResults(containerId, rows, selectedPersonId, onSelect, knownIds) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  if (!rows.length) {
-    container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>';
-    return;
-  }
-  const known = knownIds || new Set();
-  container.innerHTML = rows.map(row => {
-    const isIncluded = known.has(row.person_id);
-    return `
-    <div class="modal-result-row ${row.person_id === selectedPersonId ? "selected" : ""} ${isIncluded ? "already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="${isIncluded ? "-1" : "0"}" role="${isIncluded ? "text" : "button"}">
-      <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
-      ${isIncluded ? '<span class="help already-included-label">Already included</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
-    </div>`;
-  }).join("");
-  container.querySelectorAll(".modal-result-row").forEach(el => {
-    const personId = el.dataset.personId;
-    if (known.has(personId)) return;
-    const clickHandler = () => onSelect(personId);
-    el.addEventListener("click", clickHandler);
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clickHandler(); } });
-  });
-}
 
 function openCreateRelationshipModal(returnContext, originatingBtn) {
   closeBillingModal();
@@ -4374,113 +4371,4 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     await suggestPayerFromContext();
     renderStep();
   })();
-}
-
-function openAddClientModal(accountId, returnContext, originatingBtn, existingMemberPersonIds) {
-  closeBillingModal();
-  const overlay = document.createElement("div");
-  overlay.id = "billingModalOverlay";
-  overlay.className = "billing-modal-overlay";
-  overlay.innerHTML = `
-    <div class="billing-modal" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingModalTitle">
-      <h3 id="billingModalTitle">Add Client</h3>
-      <p class="modal-instruction">Search existing clients to add to this billing relationship.</p>
-      <div class="modal-search-wrap">
-        <label for="billingModalSearch">Search existing clients</label>
-        <input id="billingModalSearch" class="modal-search" type="search" placeholder="Type a client name..." autocomplete="off">
-      </div>
-      <div class="modal-results" id="billingModalResults"></div>
-      <div class="modal-selected" id="billingModalSelected" hidden></div>
-      <div class="modal-error" id="billingModalError" role="alert"></div>
-      <div class="modal-actions">
-        <button type="button" class="modal-cancel" id="billingModalCancel">Cancel</button>
-        <button type="button" class="modal-submit" id="billingModalSubmit" disabled>Add</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.body.style.overflow = "hidden";
-
-  const knownIds = new Set(existingMemberPersonIds || []);
-  let selectedPerson = null;
-  let searchRows = [];
-
-  const searchInput = document.getElementById("billingModalSearch");
-  const resultsContainer = document.getElementById("billingModalResults");
-  const selectedDisplay = document.getElementById("billingModalSelected");
-  const errorDisplay = document.getElementById("billingModalError");
-  const submitBtn = document.getElementById("billingModalSubmit");
-  const cancelBtn = document.getElementById("billingModalCancel");
-
-  const handleSelect = (personId) => {
-    const person = searchRows.find(r => r.person_id === personId);
-    if (!person) return;
-    if (knownIds.has(personId)) {
-      errorDisplay.textContent = "This client is already included in this billing relationship.";
-      return;
-    }
-    selectedPerson = person;
-    selectedDisplay.hidden = false;
-    selectedDisplay.innerHTML = `Selected client: <strong>${escapeHtml(person.display_name)}</strong>`;
-    submitBtn.disabled = false;
-    errorDisplay.textContent = "";
-    renderModalSearchResults("billingModalResults", searchRows, personId, handleSelect, knownIds);
-  };
-
-  const doSearch = debounce(async (q) => {
-    errorDisplay.textContent = "";
-    if (!q.trim()) {
-      searchRows = [];
-      resultsContainer.innerHTML = "";
-      return;
-    }
-    try {
-      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
-      renderModalSearchResults("billingModalResults", searchRows, selectedPerson ? selectedPerson.person_id : null, handleSelect, knownIds);
-    } catch (err) {
-      errorDisplay.textContent = err.message || "Search failed.";
-    }
-  }, 200);
-
-  searchInput.addEventListener("input", (e) => doSearch(e.target.value));
-  searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
-
-  cancelBtn.addEventListener("click", () => {
-    closeBillingModal();
-    if (originatingBtn) originatingBtn.focus();
-  });
-
-  submitBtn.addEventListener("click", async () => {
-    if (!selectedPerson) {
-      errorDisplay.textContent = "Select a client before adding.";
-      return;
-    }
-    if (knownIds.has(selectedPerson.person_id)) {
-      errorDisplay.textContent = "This client is already included in this billing relationship.";
-      return;
-    }
-    submitBtn.disabled = true;
-    errorDisplay.textContent = "";
-    try {
-      await api("/api/account-members", {
-        method: "POST",
-        body: JSON.stringify({
-          account_id: accountId,
-          person_id: selectedPerson.person_id,
-          relationship_role: "family_member",
-          is_primary: false
-        })
-      });
-      closeBillingModal();
-      await loadClients();
-      await openAccountRecord(accountId, { returnContext });
-    } catch (err) {
-      errorDisplay.textContent = err.message || "Failed to add client.";
-      submitBtn.disabled = false;
-    }
-  });
-
-  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) cancelBtn.click(); });
-  document.addEventListener("keydown", billingModalTrapKeydown);
-  searchInput.focus();
 }

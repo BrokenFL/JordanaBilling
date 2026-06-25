@@ -160,7 +160,9 @@ class TestCreatePersonStaticJs(unittest.TestCase):
     def test_no_browser_prompt_alert_confirm(self):
         """21. No browser prompt, alert, or confirm in the create-person flow."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("prompt(", wizard_code)
         self.assertNotIn("alert(", wizard_code)
@@ -202,14 +204,18 @@ class TestCreatePersonStaticJs(unittest.TestCase):
     def test_no_new_organization_creation(self):
         """No parallel organization creation function (Round 2D2 adds UI, not a parallel function)."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("create_organization", wizard_code)
 
     def test_no_session_review_attachment(self):
         """No Session Review attachment."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("save_interpretation", wizard_code)
         self.assertNotIn("approve_candidate", wizard_code)

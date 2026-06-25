@@ -176,7 +176,9 @@ class TestCreateOrgStaticJs(unittest.TestCase):
     def test_no_browser_prompt_alert_confirm(self):
         """21. No browser prompt, alert, or confirm in the org creation flow."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("prompt(", wizard_code)
         self.assertNotIn("alert(", wizard_code)
@@ -229,7 +231,9 @@ class TestCreateOrgStaticJs(unittest.TestCase):
     def test_no_session_review_attachment(self):
         """No Session Review attachment."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("save_interpretation", wizard_code)
         self.assertNotIn("approve_candidate", wizard_code)
@@ -237,7 +241,9 @@ class TestCreateOrgStaticJs(unittest.TestCase):
     def test_no_new_tables_or_columns(self):
         """23. No schema migration is introduced (no new table or column references)."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("CREATE TABLE", wizard_code)
         self.assertNotIn("ALTER TABLE", wizard_code)

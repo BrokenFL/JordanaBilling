@@ -168,7 +168,7 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertIn("function openCreateRelationshipModal", self.js)
 
     def test_add_client_modal_function_exists(self):
-        self.assertIn("function openAddClientModal", self.js)
+        self.assertIn("function openCoveredSearch", self.js)
 
     def test_close_billing_modal_function_exists(self):
         self.assertIn("function closeBillingModal", self.js)
@@ -198,7 +198,7 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertNotIn(">Add Member<", self.js)
 
     def test_duplicate_warning_text(self):
-        self.assertIn("This client is already included in this billing relationship.", self.js)
+        self.assertIn("Click to remove", self.js)
 
     def test_search_existing_clients_label(self):
         self.assertIn("Search existing clients", self.js)
@@ -207,7 +207,7 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertIn("billingModalCancel", self.js)
 
     def test_modal_has_create_button(self):
-        self.assertIn("billingModalSubmit", self.js)
+        self.assertIn("wizardSave", self.js)
 
     def test_modal_uses_escape_html_for_results(self):
         self.assertIn("escapeHtml(row.display_name", self.js)
@@ -219,10 +219,10 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertIn('role="dialog"', self.js)
 
     def test_modal_has_label_elements(self):
-        self.assertIn('<label for="billingModalSearch">', self.js)
+        self.assertIn('<label for="wizardCoveredSearch">', self.js)
 
     def test_modal_focuses_search_input(self):
-        self.assertIn("searchInput.focus()", self.js)
+        self.assertIn("input.focus()", self.js)
 
     def test_modal_returns_focus_on_cancel(self):
         self.assertIn("originatingBtn.focus()", self.js)
@@ -492,43 +492,38 @@ class TestRound1CorrectionJsStatic(unittest.TestCase):
         self.assertIn("returnContext", block)
         self.assertIn("persistReturnContext", block)
 
-    def test_render_modal_search_results_supports_known_ids(self):
-        self.assertIn("knownIds", self.js)
+    def test_render_covered_results_supports_selected_ids(self):
+        self.assertIn("selectedIds", self.js)
         self.assertIn("already-included", self.js)
-        self.assertIn("Already included", self.js)
+        self.assertIn("Click to remove", self.js)
 
-    def test_existing_members_not_clickable(self):
-        """renderModalSearchResults skips attaching click handlers for known members."""
-        start = self.js.index("function renderModalSearchResults")
-        end = self.js.index("}", self.js.index("container.querySelectorAll", start))
+    def test_existing_members_clickable_to_remove(self):
+        """renderEditorCoveredResults attaches click handlers for already-included clients to remove them."""
+        start = self.js.index("function renderEditorCoveredResults")
+        end = self.js.index("\n}\n", start)
         func_body = self.js[start:end]
-        self.assertIn("if (known.has(personId)) return;", func_body)
+        self.assertIn("selectedIds.has(pid)", func_body)
+        self.assertIn("editState.covered_client_ids.filter", func_body)
 
-    def test_add_client_modal_passes_known_ids_to_render(self):
-        start = self.js.index("function openAddClientModal")
-        end = self.js.index("function openBillingRelationshipEditor")
-        if end < start:
-            end = len(self.js)
+    def test_covered_search_uses_selected_ids(self):
+        start = self.js.index("function openCoveredSearch")
+        end = self.js.index("function renderEditorCoveredResults")
         func_body = self.js[start:end]
-        self.assertIn("handleSelect, knownIds)", func_body)
+        self.assertIn("editState.covered_client_ids", func_body)
 
-    def test_add_client_modal_stays_open_on_backend_error(self):
-        """The catch block in Add Client submit does not call closeBillingModal."""
-        modal_start = self.js.index("function openAddClientModal")
-        modal_end = self.js.index("\n}", modal_start + 10)
-        modal_body = self.js[modal_start:modal_end]
-        submit_start = modal_body.rindex('submitBtn.addEventListener("click"')
-        handler = modal_body[submit_start:]
-        self.assertIn("catch", handler)
-        catch_start = handler.index("catch")
-        catch_block = handler[catch_start:]
-        self.assertNotIn("closeBillingModal", catch_block)
-        self.assertIn("submitBtn.disabled = false", catch_block)
+    def test_covered_search_does_not_use_close_billing_modal(self):
+        """openCoveredSearch should not call closeBillingModal."""
+        start = self.js.index("function openCoveredSearch")
+        end = self.js.index("function renderEditorCoveredResults")
+        func_body = self.js[start:end]
+        self.assertNotIn("closeBillingModal", func_body)
 
     def test_no_api_accounts_post_in_create_modal(self):
         """The create modal no longer uses the old /api/accounts POST directly."""
         start = self.js.index("function openCreateRelationshipModal")
-        end = self.js.index("function openAddClientModal")
+        end = self.js.index("function openCoveredSearch")
+        if end < start:
+            end = len(self.js)
         func_body = self.js[start:end]
         self.assertNotIn('api("/api/accounts"', func_body)
         self.assertNotIn('api("/api/account-members"', func_body)
@@ -632,7 +627,9 @@ class TestSessionReviewDuplicatePath(unittest.TestCase):
         self.assertIn("/api/billing-relationships/setup", js)
         # The wizard should not construct account names client-side with "Billing Relationship" suffix
         wizard_start = js.index("function openCreateRelationshipModal")
-        wizard_end = js.index("\nfunction openAddClientModal")
+        wizard_end = js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(js)
         wizard_code = js[wizard_start:wizard_end]
         # "Review billing relationship" is a heading, not a name — that's fine
         # But no account_name field should be set with "Billing Relationship" in it

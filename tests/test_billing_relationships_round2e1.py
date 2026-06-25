@@ -247,7 +247,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_no_auto_approval(self):
         """30. Session remains unapproved — no approval calls."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("approve_candidate", wizard_code)
         self.assertNotIn("review_status", wizard_code)
@@ -256,7 +258,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_no_invoice_generation(self):
         """31. No invoice is created."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("/api/invoices", wizard_code)
         self.assertNotIn("create_invoice", wizard_code)
@@ -264,7 +268,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_no_payment_creation(self):
         """32. No payment is created."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("/api/payments", wizard_code)
         self.assertNotIn("create_payment", wizard_code)
@@ -272,7 +278,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_no_calendar_evidence_changed(self):
         """33. Raw calendar evidence is unchanged."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("raw_calendar", wizard_code)
         self.assertNotIn("calendar_event", wizard_code)
@@ -287,8 +295,8 @@ class TestRound2E1StaticJs(unittest.TestCase):
         self.assertNotIn("client_family_account", inspector_code)
 
     def test_round1_add_client_still_works(self):
-        """35. Existing Round 1 Add Client behavior still works."""
-        self.assertIn("function openAddClientModal", self.js)
+        """35. Editor's Add Client search still works."""
+        self.assertIn("function openCoveredSearch", self.js)
         self.assertIn("Add Client", self.js)
 
     def test_saving_states_shown(self):
@@ -303,7 +311,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_no_browser_prompt_alert_confirm(self):
         """No browser prompt, alert, or confirm in the wizard."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("prompt(", wizard_code)
         self.assertNotIn("alert(", wizard_code)
@@ -312,7 +322,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_escape_html_on_user_values(self):
         """User-controlled values escaped."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertIn("escapeHtml", wizard_code)
 
@@ -323,7 +335,9 @@ class TestRound2E1StaticJs(unittest.TestCase):
     def test_no_schema_migration_in_js(self):
         """No schema migration references in JS."""
         wizard_start = self.js.index("function openCreateRelationshipModal")
-        wizard_end = self.js.index("\nfunction openAddClientModal")
+        wizard_end = self.js.index("\nfunction openCoveredSearch")
+        if wizard_end < wizard_start:
+            wizard_end = len(self.js)
         wizard_code = self.js[wizard_start:wizard_end]
         self.assertNotIn("CREATE TABLE", wizard_code)
         self.assertNotIn("ALTER TABLE", wizard_code)

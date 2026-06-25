@@ -714,7 +714,6 @@ class ReviewUiStaticTests(unittest.TestCase):
     def test_billing_directory_account_rows_render(self):
         js = self._clients_js()
         self.assertIn('"account"', js)
-        self.assertIn("ACCOUNT_TYPE_LABELS", js)
 
     def test_billing_directory_linked_payer_identifies_account(self):
         js = self._clients_js()
@@ -722,7 +721,7 @@ class ReviewUiStaticTests(unittest.TestCase):
 
     def test_billing_directory_account_row_identifies_default_bill_to(self):
         js = self._clients_js()
-        self.assertIn("Default bill to:", js)
+        self.assertIn("Invoice recipient:", js)
 
     def test_billing_directory_person_payer_open_navigates_to_people(self):
         js = self._clients_js()

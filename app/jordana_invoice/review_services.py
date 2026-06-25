@@ -2208,7 +2208,7 @@ def update_billing_relationship(
             bp_update = {}
             for field in ("billing_email", "billing_phone", "billing_name", "billing_address_line_1",
                           "billing_address_line_2", "billing_city", "billing_state", "billing_postal_code",
-                          "preferred_delivery_method", "administrative_notes"):
+                          "preferred_delivery_method", "administrative_notes", "organization_name"):
                 if field in billing_delivery:
                     bp_update[field] = billing_delivery[field]
             if bp_update:

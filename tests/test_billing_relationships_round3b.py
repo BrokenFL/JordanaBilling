@@ -382,7 +382,7 @@ class TestRound3BEditorJS(unittest.TestCase):
 
     def test_editor_has_add_client_button(self):
         self.assertIn("addCoveredBtn", self.editor)
-        self.assertIn("Add client", self.editor)
+        self.assertIn("Add Client", self.editor)
 
     def test_editor_has_covered_client_remove_buttons(self):
         self.assertIn("covered-client-remove", self.editor)
