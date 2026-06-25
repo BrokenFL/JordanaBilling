@@ -209,7 +209,7 @@ def effective_billing_party_lookup(
             SELECT bp.billing_party_id
             FROM client_accounts ca
             JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
-            WHERE ca.account_id = ? AND bp.active = 1
+            WHERE ca.account_id = ? AND ca.active = 1 AND bp.active = 1
             """,
             (account_id,),
         ).fetchone()
@@ -2042,6 +2042,49 @@ def update_account(conn: sqlite3.Connection, account_id: str, data: dict[str, An
         ),
     )
     record_audit(conn, "client_account", account_id, "updated_inline", data)
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone())
+
+
+def deactivate_account(conn: sqlite3.Connection, account_id: str) -> dict[str, Any]:
+    """Set a billing relationship (client_account) to inactive.
+
+    Idempotent: if the account is already inactive, no audit entry is written.
+    Preserves all historical records, members, billing parties, sessions, invoices, and payments.
+    """
+    init_db(conn)
+    existing = conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+    if not existing:
+        raise ValueError("Account not found.")
+    if existing["active"] == 0:
+        return dict(existing)
+    now = now_iso()
+    conn.execute(
+        "UPDATE client_accounts SET active = 0, updated_at = ? WHERE account_id = ?",
+        (now, account_id),
+    )
+    record_audit(conn, "client_account", account_id, "deactivated", {"account_name": existing["account_name"]})
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone())
+
+
+def reactivate_account(conn: sqlite3.Connection, account_id: str) -> dict[str, Any]:
+    """Set a billing relationship (client_account) back to active.
+
+    Idempotent: if the account is already active, no audit entry is written.
+    """
+    init_db(conn)
+    existing = conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+    if not existing:
+        raise ValueError("Account not found.")
+    if existing["active"] == 1:
+        return dict(existing)
+    now = now_iso()
+    conn.execute(
+        "UPDATE client_accounts SET active = 1, updated_at = ? WHERE account_id = ?",
+        (now, account_id),
+    )
+    record_audit(conn, "client_account", account_id, "reactivated", {"account_name": existing["account_name"]})
     conn.commit()
     return dict(conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone())
 

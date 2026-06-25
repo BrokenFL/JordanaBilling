@@ -1869,7 +1869,7 @@ async function promptToEndRateRule(ruleId) {
   await loadRateRules();
 }
 
-const billingDirState = { records: [], filter: "all" };
+const billingDirState = { records: [], filter: "all", statusFilter: "active" };
 
 const BILLING_DIR_TYPE_LABELS = {
   self_pay: "Self-pay",
@@ -1969,8 +1969,14 @@ function billingDirOpenButton(rec) {
 
 function renderBillingDirRows() {
   const filter = billingDirState.filter;
+  const statusFilter = billingDirState.statusFilter;
   const search = ($("clientSearch").value || "").toLowerCase();
   let rows = billingDirState.records;
+  if (statusFilter === "active") {
+    rows = rows.filter(r => r.active);
+  } else if (statusFilter === "inactive") {
+    rows = rows.filter(r => !r.active);
+  }
   if (filter !== "all") {
     rows = rows.filter(r => r.record_type === filter);
   }
@@ -2345,6 +2351,70 @@ async function openOrganizationRecord(billingPartyId) {
   });
 }
 
+function showLifecycleConfirm(accountId, action, accountName) {
+  const box = $("lifecycleConfirmBox");
+  if (!box) return;
+  const isDeactivate = action === "deactivate";
+  const heading = isDeactivate ? "Deactivate this billing relationship?" : "Reactivate this billing relationship?";
+  const explanation = isDeactivate
+    ? "It will no longer appear in active searches or be suggested for future sessions. Existing sessions, invoices, rates, payments, and history will remain unchanged."
+    : "It will appear in active searches and be suggested for future sessions again.";
+  const confirmLabel = isDeactivate ? "Deactivate" : "Reactivate";
+  const confirmBtnId = isDeactivate ? "confirmDeactivateBtn" : "confirmReactivateBtn";
+  const spinnerText = isDeactivate ? "Deactivating…" : "Reactivating…";
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="lifecycle-confirm-content">
+      <h4>${escapeHtml(heading)}</h4>
+      <p class="lifecycle-explanation">${escapeHtml(explanation)}</p>
+      <div class="lifecycle-confirm-actions">
+        <button type="button" id="lifecycleCancelBtn" class="modal-back">Cancel</button>
+        <button type="button" id="${confirmBtnId}" class="${isDeactivate ? "danger" : "save"}">${escapeHtml(confirmLabel)}</button>
+      </div>
+      <div class="lifecycle-error" id="lifecycleError"></div>
+    </div>
+  `;
+  const cancelBtn = $("lifecycleCancelBtn");
+  const confirmBtn = $(confirmBtnId);
+  const errorDisplay = $("lifecycleError");
+  const triggerBtn = isDeactivate ? $("deactivateAccountBtn") : $("reactivateAccountBtn");
+  let inFlight = false;
+
+  function closeConfirm() {
+    box.hidden = true;
+    box.innerHTML = "";
+    if (triggerBtn) triggerBtn.focus();
+  }
+
+  cancelBtn.onclick = closeConfirm;
+  document.addEventListener("keydown", function escHandler(e) {
+    if (e.key === "Escape" && !box.hidden) {
+      closeConfirm();
+      document.removeEventListener("keydown", escHandler);
+    }
+  });
+
+  confirmBtn.onclick = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    confirmBtn.textContent = spinnerText;
+    errorDisplay.textContent = "";
+    try {
+      await api(`/api/accounts/${accountId}/${action}`, { method: "POST", body: "{}" });
+      await openAccountRecord(accountId);
+      await loadClients();
+    } catch (err) {
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+      confirmBtn.textContent = confirmLabel;
+      inFlight = false;
+      errorDisplay.textContent = escapeHtml(err.message || "Request failed.");
+    }
+  };
+}
+
 async function openAccountRecord(accountId, options = {}) {
   if (!accountId) return alert("Select or create a billing relationship first.");
   closeOrganizationRecord();
@@ -2357,11 +2427,17 @@ async function openAccountRecord(accountId, options = {}) {
   const data = await api(`/api/accounts/${accountId}`);
   const payerOptions = payerDisplayOptions(data.members || [], returnContext);
   const billingDraft = recordBillingPartyDraft(data, payerOptions, returnContext);
+  const isActive = data.account.active;
+  const statusPill = isActive ? '<span class="status-pill active">Active</span>' : '<span class="status-pill inactive">Inactive</span>';
+  const lifecycleBtn = isActive
+    ? '<button id="deactivateAccountBtn" class="danger">Deactivate Billing Relationship</button>'
+    : '<button id="reactivateAccountBtn" class="save">Reactivate Billing Relationship</button>';
   $("accountRecord").innerHTML = `
     ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${fmt(state.detail?.session?.raw_calendar_title)} — ${fmt(state.detail?.session?.session_date)}</a>` : ""}
     <h3>${fmt(data.account.account_name)}</h3>
-    <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span><span>${data.account.active ? "Active" : "Inactive"}</span></div>
-    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Client</button></div>
+    <div class="meta"><span>${fmt(data.account.account_code)}</span><span>${fmt(data.account.account_type)}</span>${statusPill}</div>
+    <div class="record-actions"><button id="editAccountRecord" class="save">Save Billing Relationship</button><button id="addMemberRecord">Add Client</button>${lifecycleBtn}</div>
+    <div id="lifecycleConfirmBox" class="lifecycle-confirm-box" hidden></div>
     <div class="field-grid">
       <label class="field">Relationship Name<input id="recordAccountName" value="${fmt(data.account.account_name)}"></label>
       <label class="field">Type<select id="recordAccountType">${optionSet(["individual","household","family","couple","organization","other"], data.account.account_type)}</select></label>
@@ -2491,6 +2567,12 @@ async function openAccountRecord(accountId, options = {}) {
     const existingIds = (data.members || []).map(m => m.person_id);
     openAddClientModal(accountId, returnContext, $("addMemberRecord"), existingIds);
   };
+  if ($("deactivateAccountBtn")) {
+    $("deactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "deactivate", data.account.account_name);
+  }
+  if ($("reactivateAccountBtn")) {
+    $("reactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "reactivate", data.account.account_name);
+  }
   if (!location.hash.startsWith("#clients")) {
     location.hash = "clients";
     showClients();
@@ -2925,6 +3007,7 @@ function showBillingSetupForm(existing, defaultName) {
 }
 ["clientSearch","peopleSearch"].forEach(id => $(id).addEventListener("input", debounce(() => id === "clientSearch" ? renderBillingDirRows() : loadPeople(), 180)));
 $("billingDirFilter").addEventListener("change", () => { billingDirState.filter = $("billingDirFilter").value; renderBillingDirRows(); });
+$("billingDirStatusFilter").addEventListener("change", () => { billingDirState.statusFilter = $("billingDirStatusFilter").value; renderBillingDirRows(); });
 $("newAccountBtn").onclick = () => {
   const returnContext = readReturnContext();
   openCreateRelationshipModal(returnContext, $("newAccountBtn"));

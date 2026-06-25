@@ -821,10 +821,115 @@ The sanitized demo CSV (`data/samples/sanitized_demo_calendar_snapshots.csv`) co
 
 No changes to the demo CSV or demo script were needed.
 
+### Round 3A: Deactivate and Reactivate Billing Relationships
+
+Round 3A adds safe lifecycle management for billing relationships. A relationship can be deactivated when no longer needed and reactivated later if circumstances change. This is **not** deletion — all historical records are preserved.
+
+#### Deactivation
+
+A **Deactivate Billing Relationship** button appears in the open account record for active relationships. Clicking it shows an in-page confirmation:
+
+> **Deactivate this billing relationship?**
+> It will no longer appear in active searches or be suggested for future sessions. Existing sessions, invoices, rates, payments, and history will remain unchanged.
+
+Buttons: **Cancel** and **Deactivate**.
+
+After confirmation:
+- Sets `client_accounts.active = 0`
+- Preserves the account UUID, code, members, billing parties, sessions, invoices, payments, rates, and audit history
+- Writes an audit entry with action `deactivated`
+- Refreshes the record to show **Inactive** status
+
+#### Reactivation
+
+For an inactive relationship, the deactivate button is replaced with **Reactivate Billing Relationship**. The in-page confirmation says:
+
+> **Reactivate this billing relationship?**
+> It will appear in active searches and be suggested for future sessions again.
+
+After confirmation:
+- Sets `client_accounts.active = 1`
+- Preserves all historical values
+- Writes an audit entry with action `reactivated`
+- Refreshes the directory and record to show **Active** status
+
+#### Directory Filtering
+
+The Billing Relationships directory has a status filter with three values:
+
+- **Active** (default) — shows only active relationships
+- **Inactive** — shows only inactive relationships
+- **All** — shows both
+
+The status filter works alongside the existing type filter. Search respects the selected status filter. Opening an inactive record still works from any filter view.
+
+#### Suggestions and Duplicate Detection
+
+Inactive relationships are excluded from:
+- Session Review billing party suggestions (`effective_billing_party_lookup` checks `ca.active = 1`)
+- Exact duplicate matching during relationship creation (`find_duplicate_billing_relationship` checks `a.active = 1`)
+- Equivalent account lookup (`find_equivalent_account` checks `a.active = 1`)
+- Account name duplicate detection (`create_account` checks `active = 1`)
+
+A new active relationship with the same payer and covered-client set can be created after deactivation. The inactive record is not automatically reactivated.
+
+#### Historical Preservation
+
+Deactivating a relationship does not alter:
+- `sessions.account_id` or `sessions.billing_party_id`
+- Invoice linkage (`invoices.bill_to_party_id`)
+- Payment status (`sessions.payment_status`)
+- Approved rates (`sessions.approved_rate_cents`, `rate_rules`)
+- Account members (`account_members`)
+- Billing parties (`billing_parties`)
+- Raw calendar evidence (`raw_calendar_snapshots`)
+- Audit history
+
+#### Backend API
+
+Two focused endpoints:
+
+- `POST /api/accounts/{account_id}/deactivate` — sets active to 0
+- `POST /api/accounts/{account_id}/reactivate` — sets active to 1
+
+Both are idempotent: if the state is already at the requested value, no audit entry is written. Both return the resulting account dict with the `active` field. Missing accounts return 404.
+
+Audit actions: `deactivated` and `reactivated`. Audit details contain only `account_name` — no sensitive billing information.
+
+#### Accessibility and UI Behavior
+
+- In-page confirmation dialog (no browser `confirm()` or `alert()`)
+- Escape key cancels safely
+- Focus returns to the initiating button on cancel
+- Buttons disabled while request is active
+- Spinner text: "Deactivating…" / "Reactivating…"
+- Inline API error display
+- Double-click protection via `inFlight` flag
+- All user-controlled values escaped with `escapeHtml`
+
+#### No Permanent Deletion
+
+Permanent deletion is not implemented and will not be implemented in this round. Deactivation is the only lifecycle action. No cascade deletes, no membership removal, no billing party removal.
+
+#### No Schema Migration
+
+The `client_accounts.active` column already existed as `INTEGER NOT NULL DEFAULT 1`. No migration was needed.
+
+#### Tests
+
+`tests/test_billing_relationships_round3a.py` contains 64 tests covering:
+- Backend deactivate/reactivate with idempotency and audit
+- Directory filtering by active/inactive/all
+- Suggestion and duplicate exclusion for inactive relationships
+- Historical preservation (sessions, invoices, payment status, rates, members)
+- Frontend JS behavior (in-page confirmation, escape, focus, double-click, spinner, no browser prompts)
+- API integration via HTTP (200, 404, idempotent, no side effects)
+- No permanent delete action, no schema migration, raw evidence unchanged
+
 ### Out of Scope (Remaining)
 
 The following remain planned and were not started:
 
-- Round 3: saved-record editor redesign
+- Round 3B: saved-record editor redesign
 - Automatic payer classification
 - Full right-panel redesign

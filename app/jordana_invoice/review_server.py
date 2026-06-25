@@ -22,6 +22,7 @@ from .review_services import (
     BillingPartyTypeError,
     create_account,
     create_account_or_return_existing,
+    deactivate_account,
     create_billing_party,
     create_person,
     create_rate_rule_from_payload,
@@ -46,6 +47,7 @@ from .review_services import (
     preview_rate_suggestion,
     refresh_candidate_suggestions,
     replace_rate_rule_from_payload,
+    reactivate_account,
     save_billing_section,
     save_interpretation,
     save_person_alias,
@@ -282,7 +284,21 @@ def make_handler(database_path: str):
                         self.send_json({"ok": True, "existing": False, "account_id": result["account"]["account_id"], "account_name": result["account"]["account_name"]})
                     return
                 if parsed.path.startswith("/api/accounts/"):
-                    account_id = parsed.path.rsplit("/", 1)[-1]
+                    parts = parsed.path.strip("/").split("/")
+                    account_id = parts[2]
+                    action = parts[3] if len(parts) > 3 else ""
+                    if action == "deactivate":
+                        try:
+                            self.send_json(deactivate_account(self.conn(), account_id))
+                        except ValueError:
+                            self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        return
+                    if action == "reactivate":
+                        try:
+                            self.send_json(reactivate_account(self.conn(), account_id))
+                        except ValueError:
+                            self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        return
                     self.send_json(update_account(self.conn(), account_id, data))
                     return
                 if parsed.path == "/api/billing-parties":
