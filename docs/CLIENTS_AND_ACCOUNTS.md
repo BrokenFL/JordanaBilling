@@ -329,7 +329,7 @@ Still allowed: same payer with different client set, different payer with same c
 
 #### Transaction Safety
 
-Helper functions (`create_account`, `create_billing_party`, `add_account_member`, `billing_party_for_person`) accept a backward-compatible `commit: bool = True` keyword argument. When `commit=False`, they skip `init_db()` (which would otherwise commit) and skip their own `conn.commit()`, allowing the caller to compose them in a single atomic transaction.
+Helper functions (`create_account`, `create_billing_party`, `add_account_member`, `billing_party_for_person`) accept a backward-compatible `commit: bool = True` keyword argument. When `commit=False`, they skip their own `conn.commit()`, allowing the caller to compose them in a single atomic transaction. (Note: `init_db()` is now a no-op in request-path code; schema migrations run explicitly at startup via `migrate_database()`.)
 
 #### API Response
 

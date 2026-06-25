@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .db import connect, init_db
+from .db import connect, migrate_database
 from .backfill import backfill_phase2
 from .google_sync import SyncError, cli_sync_status, load_config, sync_now
 from .importer import import_csv
@@ -137,12 +137,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "init-db":
-        conn = connect(args.db)
-        init_db(conn)
-        print(f"Initialized {args.db}")
+        result = migrate_database(args.db)
+        if result["migrated"]:
+            print(f"Migrated {args.db}")
+            if result["backup_path"]:
+                print(f"Backup: {result['backup_path']}")
+        else:
+            print(f"Schema already current: {args.db}")
         return 0
 
     if args.command == "import-csv":
+        migrate_database(args.db)
         conn = connect(args.db)
         import_run_id = import_csv(conn, args.csv_path, args.source_name)
         report = acceptance_report(conn, import_run_id)
@@ -186,8 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "seed-rate-rule":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         rule_id = seed_rate_rule(
             conn,
             amount_cents=dollars_to_cents(args.amount),
@@ -206,16 +211,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "set-rate-policy":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         set_rate_policy(conn, args.policy_name, args.policy_value)
         conn.commit()
         print(f"{args.policy_name}={args.policy_value}")
         return 0
 
     if args.command == "record-review":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         review_id = record_review_decision(
             conn,
             candidate_id=args.candidate_id,
@@ -229,8 +234,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "normalize-existing":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         updated = backfill_phase2(conn)
         conn.commit()
         print(f"normalized_existing={updated}")
@@ -241,24 +246,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "set-business-profile":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         profile = save_business_profile(conn, json.loads(Path(args.json_path).read_text(encoding="utf-8")))
         conn.close()
         print(f"business_profile_id={profile['business_profile_id']}")
         return 0
 
     if args.command == "list-services":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         for service in list_services(conn, args.include_inactive):
             print(f"{service['service_catalog_id']}\t{service['display_name']}\t{'active' if service['active'] else 'inactive'}")
         conn.close()
         return 0
 
     if args.command == "set-service-active":
+        migrate_database(args.db)
         conn = connect(args.db)
-        init_db(conn)
         service = set_service_active(conn, args.service_catalog_id, not args.inactive)
         conn.close()
         print(f"{service['display_name']}={'active' if service['active'] else 'inactive'}")

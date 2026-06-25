@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .db import connect, init_db
+from .db import MigrationError, connect, migrate_database
 from .google_sync import (
     default_transport,
     load_sync_config_for_database,
@@ -483,7 +483,6 @@ def make_handler(database_path: str):
         def conn(self):
             if not hasattr(self, "_database_connection"):
                 self._database_connection = connect(database_path)
-                init_db(self._database_connection)
             return self._database_connection
 
         def finish(self) -> None:
@@ -541,6 +540,17 @@ def first(query: dict[str, list[str]], key: str) -> str:
 
 
 def serve(database_path: str, host: str = "127.0.0.1", port: int = 8765) -> None:
+    try:
+        result = migrate_database(database_path)
+        if result["migrated"]:
+            print(f"Database migrated: {database_path}")
+            if result["backup_path"]:
+                print(f"Backup created: {result['backup_path']}")
+    except MigrationError as error:
+        print(f"Database migration failed: {error}")
+        if error.backup_path:
+            print(f"Backup preserved at: {error.backup_path}")
+        raise SystemExit(1)
     server = ThreadingHTTPServer((host, port), make_handler(database_path))
     print(f"Review UI running at http://{host}:{port}/review")
     server.serve_forever()

@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .db import connect, init_db
+from .db import connect, migrate_database
 from .session_types import (
     map_legacy_to_billing_type,
     map_legacy_to_appointment_method,
@@ -366,8 +366,8 @@ def main():
         backup_path = backup_database(db_path)
         print(f"Created backup: {backup_path}")
     
+    migrate_database(db_path)
     conn = connect(db_path)
-    init_db(conn)
     
     if not integrity_check(conn):
         print("ERROR: Database integrity check failed!")

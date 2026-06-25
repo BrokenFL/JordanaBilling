@@ -150,3 +150,29 @@ Removal prerequisites are unchanged: no destructive cleanup of legacy `clients`,
 - `sessions.service_catalog_id`: additive catalog link; `service_mode` remains the historical text value.
 
 No legacy client/rate table was removed or repurposed.
+
+## Explicit Migration System
+
+Database schema migrations and seed data now run only during explicit startup/init/migrate flows, never during normal API/web requests.
+
+### How it works
+
+- `migrate_database(db_path)` in `db.py` is the single entry point for schema migrations.
+- It checks the `schema_migrations` table for applied migration IDs.
+- If all migrations are already applied, it does nothing (no backup, no writes).
+- For existing databases needing migration, it creates a timestamped backup, verifies the backup with `PRAGMA integrity_check`, runs migrations transactionally, and records each migration ID.
+- If a migration fails, it rolls back the transaction, restores the original database from backup, raises `MigrationError`, and the app refuses to start.
+- `init_db(conn)` remains for backward compatibility but is a no-op when the schema is already current. It is no longer called from request-path code.
+- The review server calls `migrate_database()` at startup in `serve()`. If migration fails, the server exits with status 1.
+- CLI commands call `migrate_database()` before connecting when database access is needed.
+- Sync operations (`sync_now`, `get_unresolved_count`) call `migrate_database()` before connecting.
+
+### Migration list
+
+Migrations are defined in `MIGRATIONS` in `db.py`. Each entry is a `(migration_id, function)` tuple. The current migration is `001_base`, which runs `migrate_existing_db`, `executescript(SCHEMA)`, `migrate_phase2_columns`, and `seed_service_catalog`.
+
+### Adding a new migration
+
+1. Append a new `(migration_id, function)` tuple to `MIGRATIONS`.
+2. The function should be additive, idempotent, and backward compatible.
+3. Add tests in `tests/test_migration_safety.py`.

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Any
 
 from .csv_reports import write_reports
-from .db import connect, init_db
+from .db import connect, migrate_database
 from .backfill import backfill_phase2
 from .importer import import_rows
 from .util import now_iso, text
@@ -137,8 +137,8 @@ def sync_now(
     transport: Transport = default_transport,
 ) -> SyncResult:
     config = config or load_config()
+    migrate_database(config.database_path)
     conn = connect(config.database_path)
-    init_db(conn)
     return sync_with_connection(
         conn,
         config,
@@ -155,7 +155,6 @@ def sync_with_connection(
     dry_run: bool = False,
     transport: Transport = default_transport,
 ) -> SyncResult:
-    init_db(conn)
     attempt_at = now_iso()
     set_sync_attempt(conn, attempt_at)
 
@@ -316,7 +315,6 @@ def count_raw_rows(conn: sqlite3.Connection) -> int:
 
 
 def sync_status_for_connection(conn: sqlite3.Connection) -> dict[str, Any]:
-    init_db(conn)
     row = conn.execute(
         "SELECT * FROM sync_state WHERE source_name = ?",
         (SOURCE_NAME,),
@@ -353,8 +351,8 @@ def get_last_success_time(config: SyncConfig | None = None) -> str:
 
 def get_unresolved_count(config: SyncConfig | None = None) -> int:
     config = config or load_config()
+    migrate_database(config.database_path)
     conn = connect(config.database_path)
-    init_db(conn)
     row = conn.execute(
         "SELECT COUNT(*) AS count FROM review_queue WHERE status = 'open'"
     ).fetchone()

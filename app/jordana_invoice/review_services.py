@@ -12,7 +12,6 @@ from .appointment_ledger import list_appointment_ledger_page
 from .backfill import backfill_phase2
 from .calendar_preferences import classify_calendar, upsert_calendar_preference
 from .csv_reports import write_reports
-from .db import init_db
 from .rates import (
     cents_to_dollars,
     dollars_to_cents,
@@ -39,6 +38,11 @@ from .importer import apply_calendar_signal, initial_billing_treatment, maybe_in
 from .parser import parse_event
 from .review import review_status_for_parse
 from .util import json_dumps, new_id, now_iso, normalize_payment_status, parse_int, text
+
+
+def init_db(_conn: sqlite3.Connection) -> None:
+    """No-op; schema migrations run explicitly at startup via migrate_database()."""
+    pass
 
 
 class BillingPartyNotFoundError(ValueError):

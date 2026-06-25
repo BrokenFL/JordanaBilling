@@ -8,11 +8,15 @@ from pathlib import Path
 from typing import Iterable
 
 from .calendar_preferences import CalendarDisposition, classify_calendar
-from .db import init_db
 from .parser import ParseResult, parse_event
 from .rates import suggest_rate
 from .review import review_status_for_parse, unresolved_fields_for_session
 from .util import json_dumps, new_id, now_iso, parse_int, stable_hash, text
+
+
+def init_db(_conn: sqlite3.Connection) -> None:
+    """No-op; schema migrations run explicitly at startup via migrate_database()."""
+    pass
 
 
 RAW_HEADER_MAP = {

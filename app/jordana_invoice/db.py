@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 
@@ -568,6 +570,114 @@ CREATE INDEX IF NOT EXISTS idx_custom_service_mappings_person
 """
 
 
+CURRENT_SCHEMA_VERSION = "001_base"
+
+
+class MigrationError(Exception):
+    """Raised when a database migration fails."""
+
+    def __init__(self, message: str, backup_path: str | None = None) -> None:
+        super().__init__(message)
+        self.backup_path = backup_path
+
+
+def _get_applied_migrations(conn: sqlite3.Connection) -> set[str]:
+    try:
+        return {
+            row["migration_id"]
+            for row in conn.execute("SELECT migration_id FROM schema_migrations").fetchall()
+        }
+    except sqlite3.OperationalError:
+        return set()
+
+
+def _create_backup(db_path: Path) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = db_path.parent / f"{db_path.stem}.backup-migrate-{timestamp}{db_path.suffix}"
+    shutil.copy2(db_path, backup_path)
+    return backup_path
+
+
+def _verify_backup(backup_path: Path) -> None:
+    if not backup_path.exists():
+        raise MigrationError(f"Backup file was not created: {backup_path}")
+    test_conn = sqlite3.connect(str(backup_path))
+    try:
+        result = test_conn.execute("PRAGMA integrity_check").fetchone()
+        if result[0] != "ok":
+            raise MigrationError(f"Backup integrity check failed: {backup_path}")
+    finally:
+        test_conn.close()
+
+
+def _apply_migration_001(conn: sqlite3.Connection) -> None:
+    migrate_existing_db(conn)
+    conn.executescript(SCHEMA)
+    migrate_phase2_columns(conn)
+    seed_service_catalog(conn)
+
+
+MIGRATIONS: list[tuple[str, object]] = [
+    (CURRENT_SCHEMA_VERSION, _apply_migration_001),
+]
+
+
+def migrate_database(db_path: str | Path) -> dict:
+    """Run pending database migrations with backup and rollback.
+
+    - If the schema is already current, does nothing.
+    - For existing databases needing migration, creates a timestamped backup first.
+    - Runs migrations transactionally.
+    - On failure, rolls back and restores the original database.
+    """
+    from .util import now_iso
+
+    db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not db_path.exists()
+
+    backup_path: Path | None = None
+    if not is_new:
+        backup_path = _create_backup(db_path)
+        _verify_backup(backup_path)
+
+    conn = connect(db_path)
+
+    applied = _get_applied_migrations(conn)
+    pending = [(mid, fn) for mid, fn in MIGRATIONS if mid not in applied]
+
+    if not pending:
+        conn.close()
+        if backup_path:
+            backup_path.unlink()
+        return {"migrated": False, "backup_path": None, "is_new": is_new}
+
+    try:
+        conn.execute("BEGIN")
+        for mid, migration_fn in pending:
+            migration_fn(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+                (mid, now_iso()),
+            )
+        conn.commit()
+        conn.close()
+        return {
+            "migrated": True,
+            "backup_path": str(backup_path) if backup_path else None,
+            "is_new": is_new,
+        }
+    except Exception as error:
+        conn.rollback()
+        conn.close()
+        if backup_path:
+            shutil.copy2(backup_path, db_path)
+        raise MigrationError(
+            f"Migration failed: {error}",
+            backup_path=str(backup_path) if backup_path else None,
+        ) from error
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
     db_path = Path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -578,10 +688,19 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    from .util import now_iso
+
+    applied = _get_applied_migrations(conn)
+    if CURRENT_SCHEMA_VERSION in applied:
+        return
     migrate_existing_db(conn)
     conn.executescript(SCHEMA)
     migrate_phase2_columns(conn)
     seed_service_catalog(conn)
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+        (CURRENT_SCHEMA_VERSION, now_iso()),
+    )
     conn.commit()
 
 

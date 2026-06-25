@@ -7,11 +7,15 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .db import init_db
 from .invoice_pdf import generate_invoice_pdf
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
 from .util import json_dumps, new_id, normalize_payment_status, now_iso
+
+
+def init_db(_conn: sqlite3.Connection) -> None:
+    """No-op; schema migrations run explicitly at startup via migrate_database()."""
+    pass
 
 
 DELIVERY_METHODS = {"email", "mail", "both", "unresolved"}

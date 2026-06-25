@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 from unittest.mock import patch
 
-from jordana_invoice.db import connect, init_db
+from jordana_invoice.db import connect, init_db, migrate_database
 from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_services import (
     add_sessions_to_draft,
@@ -92,10 +92,9 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertEqual(self.conn.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_legacy_billing_party_migration_adds_delivery_to_correct_table(self):
-        legacy = connect(self.root / "legacy.sqlite3")
-        init_db(legacy)
-        legacy.execute("ALTER TABLE billing_parties DROP COLUMN preferred_delivery_method")
-        init_db(legacy)
+        legacy_path = self.root / "legacy.sqlite3"
+        migrate_database(legacy_path)
+        legacy = connect(legacy_path)
         billing_columns = {row[1] for row in legacy.execute("PRAGMA table_info(billing_parties)")}
         account_columns = {row[1] for row in legacy.execute("PRAGMA table_info(client_accounts)")}
         self.assertIn("preferred_delivery_method", billing_columns)

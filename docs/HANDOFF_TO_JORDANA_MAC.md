@@ -17,7 +17,7 @@ Continue the local-first invoice system without relying on prior chat history.
 scripts/setup_jordana_mac.sh
 ```
 
-The setup script creates `.venv`, required folders, initializes or migrates SQLite without overwriting an existing live database, creates a first backup when a database already exists, and runs verification.
+The setup script creates `.venv`, required folders, initializes or migrates SQLite without overwriting an existing live database, creates a timestamped backup when a database already exists, verifies the backup, and runs verification. Schema migrations run only during explicit startup/init/migrate flows — normal API/web requests never run migrations or seed data.
 
 ## Configure Automated Sync
 
