@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve project directory from the .app bundle location.
+# The .app lives at the project root, so project dir is two levels up.
+BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_DIR="$(cd "$BUNDLE_DIR/../.." && pwd)"
+
+# Determine if this is a first run (no .venv or no database)
+FIRST_RUN=0
+if [[ ! -d "$PROJECT_DIR/.venv" ]] || [[ ! -f "$PROJECT_DIR/data/jordana_invoice.sqlite3" ]]; then
+  FIRST_RUN=1
+fi
+
+if [[ "$FIRST_RUN" -eq 1 ]]; then
+  bash "$PROJECT_DIR/scripts/bootstrap.sh"
+else
+  bash "$PROJECT_DIR/scripts/start_jordana.sh"
+fi
