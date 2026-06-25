@@ -57,7 +57,7 @@ The panel displays:
 
 - **Header:** Organization name (falling back to billing name), billing name as secondary when different, Active/Inactive status, and a Close button. Internal UUIDs are not displayed prominently.
 - **Billing Details:** Read-only organization name, billing name, email, phone, address, preferred delivery method, and administrative notes. Missing values show a neutral fallback (em dash). No Edit, Save, Delete, Deactivate, or Reactivate controls appear.
-- **Billing Summary:** Five compact cards — Sessions, Approved Uninvoiced Sessions, Invoices, Total Invoiced, and Outstanding Balance*. The balance uses the backend's current no-payments convention (non-void invoice totals). A muted note explains: "Payment tracking is not yet implemented. This currently reflects non-void invoice totals."
+- **Billing Summary:** Five compact cards — Sessions, Approved Uninvoiced Sessions, Invoices, Total Invoiced, and Finalized Invoice Total. The total reflects non-void finalized invoice totals only. A muted note explains: "Finalized invoice totals reflect non-void finalized invoices only. Payment tracking is not yet implemented."
 - **Covered Clients:** Table with client name, person code, session count, latest session date, and Open (navigates to `#people/{person_id}`). Empty state: "No clients have sessions billed to this organization yet." No account membership is inferred from sessions.
 - **Sessions:** Table with date, participants, session type, duration, time category, stored approved rate, review status, invoice, and Open in Review. Sessions are newest first. Rates are displayed as stored — no recalculation. Draft invoices with an `invoice_id` but no `invoice_number` show "Draft invoice." Open in Review navigates to the existing review workbench via `candidate_id`.
 - **Invoice History:** Table with invoice number, billing period, issue date, status, total, balance, and Open. Void invoices show zero balance. Open uses the existing invoice view. No Finalize, Mark Paid, Delete, or payment controls appear.
@@ -74,7 +74,7 @@ The panel fetches data from `GET /api/billing-parties/{billing_party_id}`. This 
 - No person or account is automatically created.
 - Invoices may be opened read-only via the existing invoice view.
 - No payment or finalization controls are available.
-- Outstanding Balance currently uses the no-payments convention.
+- Finalized Invoice Total reflects non-void finalized invoices only; invoice payments are not yet tracked.
 - No schema migration was required.
 
 ### Organization Editing
@@ -187,7 +187,7 @@ Four compact summary cards appear near the top of the client workspace:
 1. **Active Billing Records** — count of active billing parties where this person is the payer
 2. **Approved Uninvoiced Sessions** — count of approved, billable, non-future sessions billed to this person that are not already attached to a draft or finalized invoice
 3. **Total Invoiced** — sum of all non-void invoice totals for billing parties belonging to this person
-4. **Outstanding Balance** — sum of balances for non-void invoices; currently equals total invoiced because payment tracking is not implemented
+4. **Finalized Invoice Total** — sum of totals for non-void finalized invoices; invoice payments are not yet tracked
 
 ### Client Invoice History
 

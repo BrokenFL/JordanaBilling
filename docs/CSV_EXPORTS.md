@@ -64,8 +64,8 @@ Columns:
 - `participant_names`
 - `session_count`
 - `billed_amount`
-- `paid_amount`
-- `outstanding_amount`
+- `paid_at_session_amount`
+- `unpaid_amount`
 - `last_session_date`
 
 ## Session Log Export
