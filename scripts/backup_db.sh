@@ -10,13 +10,13 @@ cd "$PROJECT_DIR"
 
 DB_PATH="${1:-$PROJECT_DIR/data/jordana_invoice.sqlite3}"
 
-# Default backup directory: use JORDANA_BACKUP_DIR if set, otherwise ~/.jordana_invoice/backups
-BACKUP_DIR="${JORDANA_BACKUP_DIR:-~/.jordana_invoice/backups}"
+export JORDANA_BACKUP_DIR
+BACKUP_DIR="$(python3 <<'PY'
+import os
 
-# Expand ~ if present at the beginning of the path
-if [[ "$BACKUP_DIR" == "~"* ]]; then
-  BACKUP_DIR="${BACKUP_DIR/#\~/$HOME}"
-fi
+print(os.path.expanduser(os.environ.get("JORDANA_BACKUP_DIR", "~/.jordana_invoice/backups")))
+PY
+)"
 
 mkdir -p "$BACKUP_DIR"
 

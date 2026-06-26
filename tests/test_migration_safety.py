@@ -429,33 +429,26 @@ class BackupScriptTests(unittest.TestCase):
         finally:
             writer.close()
 
-        custom_backup_dir_path = Path.home() / "jordana_test_script_backups"
-        if custom_backup_dir_path.exists():
-            import shutil
-            shutil.rmtree(custom_backup_dir_path, ignore_errors=True)
-
         env = os.environ.copy()
+        fake_home = self.root / "fake_home"
+        env["HOME"] = str(fake_home)
         env["JORDANA_BACKUP_DIR"] = "~/jordana_test_script_backups"
+        custom_backup_dir_path = fake_home / "jordana_test_script_backups"
 
-        try:
-            result = subprocess.run(
-                ["bash", str(PROJECT_DIR / "scripts" / "backup_db.sh"), str(db_path)],
-                cwd=str(PROJECT_DIR),
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        result = subprocess.run(
+            ["bash", str(PROJECT_DIR / "scripts" / "backup_db.sh"), str(db_path)],
+            cwd=str(PROJECT_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(custom_backup_dir_path.exists())
-            
-            backups = list(custom_backup_dir_path.glob("script_override.backup-*.sqlite3"))
-            self.assertEqual(len(backups), 1)
-        finally:
-            if custom_backup_dir_path.exists():
-                import shutil
-                shutil.rmtree(custom_backup_dir_path, ignore_errors=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(custom_backup_dir_path.exists())
+
+        backups = list(custom_backup_dir_path.glob("script_override.backup-*.sqlite3"))
+        self.assertEqual(len(backups), 1)
 
 
 if __name__ == "__main__":
