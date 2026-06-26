@@ -4,6 +4,7 @@ import fcntl
 import os
 import sqlite3
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +22,21 @@ _DEFAULT_DB_PATH = "data/jordana_invoice.sqlite3"
 class OperationalDatabaseError(Exception):
     """Raised when a destructive operation targets the operational database
     without explicit authorization."""
+
+
+@dataclass(frozen=True)
+class OperationalImportAuthorization:
+    """Deliberate authorization object for importing into the operational DB.
+
+    Created by :func:`authorize_operational_import` after validating that
+    the caller has confirmed the exact canonical operational path and that
+    a verified backup has been created.
+
+    Pass this to :func:`import_csv` (via ``allow_operational_db=``) or to
+    :func:`assert_csv_import_safe` to prove the import is intentional.
+    """
+    confirmed_path: Path
+    backup_path: Path | None = None
 
 
 def get_configured_operational_db_path() -> Path:
@@ -76,17 +92,86 @@ def _get_db_path_from_conn(conn: sqlite3.Connection) -> Path | None:
     return None
 
 
+def authorize_operational_import(
+    db_path: str | Path,
+    confirmed_path: str | Path | None = None,
+) -> OperationalImportAuthorization:
+    """Validate authorization and create a verified backup before any mutation.
+
+    This function should be called **before** migration or import when the
+    target database is the configured operational database.
+
+    Parameters:
+        db_path: The database path being targeted.
+        confirmed_path: The exact canonical path the caller confirmed.
+            Must resolve to the same canonical path as the configured
+            operational database.  Required for operational databases.
+
+    Returns:
+        An :class:`OperationalImportAuthorization` with the confirmed path
+        and backup path.
+
+    Raises:
+        OperationalDatabaseError: If the database is operational but
+            *confirmed_path* is missing or does not match.
+    """
+    if not is_operational_db_path(db_path):
+        raise OperationalDatabaseError(
+            f"authorize_operational_import called for a non-operational "
+            f"database: {db_path}"
+        )
+
+    configured = get_configured_operational_db_path().expanduser().resolve()
+
+    if confirmed_path is None:
+        raise OperationalDatabaseError(
+            f"Refused: importing into the operational database ({configured}) "
+            f"requires explicit path confirmation. "
+            f"Provide --confirm-operational-db-path with the exact canonical path."
+        )
+
+    try:
+        confirmed_resolved = Path(confirmed_path).expanduser().resolve()
+    except (TypeError, ValueError, OSError) as error:
+        raise OperationalDatabaseError(
+            f"Refused: could not resolve confirmation path: {error}"
+        ) from error
+
+    if confirmed_resolved != configured:
+        raise OperationalDatabaseError(
+            f"Refused: confirmation path ({confirmed_resolved}) does not match "
+            f"the configured operational database ({configured})."
+        )
+
+    # Authorization confirmed — create and verify backup.
+    db_path_obj = Path(db_path)
+    backup_path: Path | None = None
+    if db_path_obj.exists():
+        backup_path = _create_backup(db_path_obj)
+        _verify_backup(backup_path)
+
+    return OperationalImportAuthorization(
+        confirmed_path=confirmed_resolved,
+        backup_path=backup_path,
+    )
+
+
 def assert_csv_import_safe(
     conn: sqlite3.Connection,
-    allow_operational: bool = False,
+    allow_operational: bool | OperationalImportAuthorization = False,
 ) -> Path | None:
     """Safety guard for CSV imports into the operational database.
 
     If the connection's database resolves to the configured operational path
     and *allow_operational* is ``False``, raise ``OperationalDatabaseError``.
 
-    If *allow_operational* is ``True`` and the connection is operational,
-    create and verify a timestamped SQLite backup before returning.
+    If *allow_operational* is an :class:`OperationalImportAuthorization`,
+    the backup has already been created by :func:`authorize_operational_import`
+    — no duplicate backup is created here.
+
+    If *allow_operational* is ``True`` (legacy boolean), create and verify
+    a backup before returning.  This path is kept for backward compatibility
+    but new callers should use the authorization object.
 
     Returns the backup path (or ``None`` if no backup was needed).
     """
@@ -95,6 +180,9 @@ def assert_csv_import_safe(
         return None
     if not is_operational_db_path(db_path):
         return None
+    if isinstance(allow_operational, OperationalImportAuthorization):
+        # Backup already created by authorize_operational_import.
+        return allow_operational.backup_path
     if not allow_operational:
         configured = get_configured_operational_db_path().resolve()
         raise OperationalDatabaseError(
@@ -104,10 +192,10 @@ def assert_csv_import_safe(
             f"approved sessions. "
             f"Use scripts/run_acceptance_test.sh for acceptance testing. "
             f"If you genuinely need to import into the live database, "
-            f"pass allow_operational_db=True and a verified backup "
-            f"will be created automatically."
+            f"pass an OperationalImportAuthorization from "
+            f"authorize_operational_import()."
         )
-    # Authorized operational import — create and verify backup first.
+    # Legacy boolean True — create and verify backup.
     if not db_path.exists():
         return None
     backup_path = _create_backup(db_path)
@@ -867,6 +955,11 @@ def _create_backup(db_path: Path) -> Path:
     backup_dir = get_backup_dir()
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{db_path.stem}.backup-migrate-{timestamp}{db_path.suffix}"
+    # Handle same-second collisions by appending a counter.
+    counter = 1
+    while backup_path.exists():
+        backup_path = backup_dir / f"{db_path.stem}.backup-migrate-{timestamp}-{counter}{db_path.suffix}"
+        counter += 1
     _backup_sqlite_database(db_path, backup_path)
     return backup_path
 

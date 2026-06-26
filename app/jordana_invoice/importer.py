@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .calendar_preferences import CalendarDisposition, classify_calendar
-from .db import assert_csv_import_safe
+from .db import OperationalImportAuthorization, assert_csv_import_safe
 from .parser import ParseResult, parse_event
 from .rates import suggest_rate
 from .review import review_status_for_parse, unresolved_fields_for_session
@@ -53,7 +53,7 @@ def import_csv(
     conn: sqlite3.Connection,
     csv_path: str | Path,
     source_name: str | None = None,
-    allow_operational_db: bool = False,
+    allow_operational_db: bool | OperationalImportAuthorization = False,
 ) -> str:
     assert_csv_import_safe(conn, allow_operational=allow_operational_db)
     path = Path(csv_path)
