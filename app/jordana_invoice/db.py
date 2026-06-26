@@ -8,6 +8,72 @@ from datetime import datetime
 from pathlib import Path
 
 
+# ---------------------------------------------------------------------------
+# Operational database identity
+# ---------------------------------------------------------------------------
+
+# Filenames that are considered the live operational database.
+# Any CLI command that would destructively modify data (e.g. import-csv)
+# must refuse to proceed when the resolved path matches one of these names
+# *unless* an explicit bypass flag is provided by the caller.
+_OPERATIONAL_DB_FILENAMES: frozenset[str] = frozenset({"jordana_invoice.sqlite3"})
+
+# Directory-name tokens that unmistakably identify temporary / test paths.
+# If the resolved parent directory contains any of these tokens the path is
+# treated as a test path, not an operational one.
+_TEMP_DIR_TOKENS: frozenset[str] = frozenset({
+    "tmp",
+    "temp",
+    "tmpdir",
+    "tempdir",
+    "temporary",
+    "temporarydirectory",
+    "pytest",
+    "test_",
+    "_test",
+    "demo",
+})
+
+
+def is_operational_db_path(path: str | Path) -> bool:
+    """Return True when *path* resolves to the configured operational database.
+
+    The check uses two signals:
+
+    1.  **Filename**: The resolved basename must be in
+        ``_OPERATIONAL_DB_FILENAMES``.  Relative paths, ``./`` prefixes, and
+        symlinks are all normalised via ``Path.resolve()`` before comparison.
+
+    2.  **Parent directory**: If any token in ``_TEMP_DIR_TOKENS`` appears
+        (case-insensitively) in the resolved parent's full string
+        representation, the path is treated as a temporary / test path and
+        this function returns ``False``.  This lets tests safely create a
+        temp-directory copy of the same filename without triggering the guard.
+
+    Examples::
+
+        is_operational_db_path("data/jordana_invoice.sqlite3")          # True
+        is_operational_db_path("/abs/data/jordana_invoice.sqlite3")     # True
+        is_operational_db_path("/tmp/xyz/jordana_invoice.sqlite3")      # False
+        is_operational_db_path("/tmp/xyz/test_billing.sqlite3")         # False
+    """
+    try:
+        resolved = Path(path).resolve()
+    except (TypeError, ValueError, OSError):
+        return False
+
+    if resolved.name not in _OPERATIONAL_DB_FILENAMES:
+        return False
+
+    # Check parent path components for temp-dir tokens.
+    parent_lower = str(resolved.parent).lower()
+    for token in _TEMP_DIR_TOKENS:
+        if token in parent_lower:
+            return False
+
+    return True
+
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 

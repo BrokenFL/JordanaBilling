@@ -52,10 +52,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install .
 jordana-invoice --db data/jordana_invoice.sqlite3 init-db
-jordana-invoice --db data/jordana_invoice.sqlite3 import-csv data/samples/june_calendar_snapshots.csv --report data/acceptance_report.md
 ```
 
-The report is written to `data/acceptance_report.md`.
+To run an acceptance test without touching the operational database:
+
+```bash
+scripts/run_acceptance_test.sh
+```
+
+The acceptance report is written to `data/acceptance_report.md`.
+
 
 ## Automated Sync
 
@@ -185,12 +191,15 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 
 ## Acceptance Test
 
+> **Never run `rm -f data/jordana_invoice.sqlite3` before this step.**
+> Use `scripts/run_acceptance_test.sh` which operates on a temporary database
+> and never touches the live operational database.
+
 Run:
 
 ```bash
-PYTHONPATH=app python -m unittest discover -s tests
-rm -f data/jordana_invoice.sqlite3 data/acceptance_report.md
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 import-csv data/samples/june_calendar_snapshots.csv --report data/acceptance_report.md
+PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
+scripts/run_acceptance_test.sh
 ```
 
 Expected output:
@@ -199,6 +208,7 @@ Expected output:
 2. Likely personal/admin/nonbillable events are listed separately.
 3. Ambiguous rows are in the review section.
 4. No invoices are generated.
+
 
 ## Schema Audit
 

@@ -32,6 +32,32 @@ This project is a local-first billing normalization app for Jordana.
 - Before any GitHub push, run `scripts/git_safety_check.sh`.
 - Do not commit live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, or credentials.
 
+## Operational Database Safety
+
+The operational SQLite database is at `data/jordana_invoice.sqlite3`.
+Manual approval decisions and invoice-staging work stored there are **real data**,
+even during demo development.  Destroying them requires manual re-entry.
+
+**These actions are permanently prohibited without explicit human confirmation:**
+
+- `rm -f data/jordana_invoice.sqlite3` or any variant
+- `import-csv --db data/jordana_invoice.sqlite3` without `--allow-operational-db`
+- Any script or CLI invocation that deletes, truncates, recreates, or replaces the file
+- Any migration that is not additive (drop-column, drop-table, truncate) on the live path
+
+**For acceptance testing, always use:**
+
+```bash
+scripts/run_acceptance_test.sh
+```
+
+This script creates a temporary database, runs the import, writes the report to
+`data/acceptance_report.md`, and deletes the temp DB on exit — the operational
+database is never touched.
+
+If you ever need to import into the live database (e.g. initial population on a
+fresh install), pass `--allow-operational-db` explicitly and document why.
+
 ## Start Here
 
 Read these files before making changes:
@@ -60,21 +86,27 @@ Read these files before making changes:
 
 ## Verification
 
-Run:
+Run unit tests:
 
 ```bash
-PYTHONPATH=app python -m unittest discover -s tests
-rm -f data/jordana_invoice.sqlite3 data/acceptance_report.md
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 import-csv data/samples/june_calendar_snapshots.csv --report data/acceptance_report.md
+PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
 ```
 
-Confirm the report lists likely client sessions, likely personal/admin events, review items, proposed client/time/duration, and no generated invoices.
+Run the import-csv acceptance test **without touching the operational database**:
+
+```bash
+scripts/run_acceptance_test.sh
+```
+
+Confirm the report at `data/acceptance_report.md` lists likely client sessions,
+likely personal/admin events, review items, proposed client/time/duration,
+and no generated invoices.
 
 For remote sync work, verify:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice sync --dry-run
-PYTHONPATH=app python -m jordana_invoice sync-status
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync-status
 ```
 
 Before committing or pushing, run:

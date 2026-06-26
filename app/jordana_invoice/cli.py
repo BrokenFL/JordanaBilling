@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .db import connect, migrate_database
+from .db import connect, is_operational_db_path, migrate_database
 from .backfill import backfill_phase2
 from .google_sync import SyncError, cli_sync_status, load_config, sync_now
 from .importer import import_csv
@@ -40,6 +40,18 @@ def main(argv: list[str] | None = None) -> int:
         "--report",
         default=None,
         help="Optional Markdown file to write the acceptance report.",
+    )
+    import_parser.add_argument(
+        "--allow-operational-db",
+        action="store_true",
+        default=False,
+        help=(
+            "Bypass the operational-database safety guard.  "
+            "Required when --db points to the live application database "
+            "(e.g. data/jordana_invoice.sqlite3).  "
+            "Do NOT use for routine acceptance testing — use "
+            "scripts/run_acceptance_test.sh instead."
+        ),
     )
 
     report_parser = subparsers.add_parser(
@@ -147,6 +159,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "import-csv":
+        if is_operational_db_path(args.db) and not args.allow_operational_db:
+            print(
+                f"REFUSED: '{args.db}' appears to be the operational database.\n"
+                "Running import-csv against the live database can overwrite or "
+                "corrupt manual review decisions and approved sessions.\n"
+                "\n"
+                "To run acceptance tests safely, use:\n"
+                "  scripts/run_acceptance_test.sh\n"
+                "\n"
+                "If you genuinely need to import into the live database, add:\n"
+                "  --allow-operational-db",
+                file=__import__('sys').stderr,
+            )
+            return 1
         migrate_database(args.db)
         conn = connect(args.db)
         import_run_id = import_csv(conn, args.csv_path, args.source_name)
