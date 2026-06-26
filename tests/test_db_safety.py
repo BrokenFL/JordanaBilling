@@ -198,24 +198,24 @@ class AssertCsvImportSafeTests(unittest.TestCase):
         migrate_database(db_path)
         return db_path
 
-    def test_non_operational_db_passes_without_flag(self):
+    def test_non_operational_db_passes_without_authorization(self):
         """assert_csv_import_safe does not raise for a non-operational DB."""
         db_path = self._make_db()
         conn = connect(db_path)
         try:
-            result = assert_csv_import_safe(conn, allow_operational=False)
+            result = assert_csv_import_safe(conn, authorization=None)
             self.assertIsNone(result)
         finally:
             conn.close()
 
-    def test_operational_db_raises_without_flag(self):
+    def test_operational_db_raises_without_authorization(self):
         """assert_csv_import_safe raises for the operational DB without authorization."""
         db_path = self._make_db("jordana_invoice.sqlite3")
         os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
         conn = connect(db_path)
         try:
             with self.assertRaises(OperationalDatabaseError) as ctx:
-                assert_csv_import_safe(conn, allow_operational=False)
+                assert_csv_import_safe(conn, authorization=None)
             self.assertIn("Refused", str(ctx.exception))
             self.assertIn("run_acceptance_test.sh", str(ctx.exception))
         finally:
@@ -232,7 +232,7 @@ class AssertCsvImportSafeTests(unittest.TestCase):
             self.assertIsNotNone(auth.backup_path)
             self.assertTrue(auth.backup_path.exists())
             # Pass to assert_csv_import_safe — should NOT create another backup.
-            result = assert_csv_import_safe(conn, allow_operational=auth)
+            result = assert_csv_import_safe(conn, authorization=auth)
             self.assertEqual(result, auth.backup_path)
             # Only one backup file should exist.
             backups = list(self.root.glob("*backup-migrate-*"))
@@ -240,13 +240,40 @@ class AssertCsvImportSafeTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_non_operational_db_with_flag_does_not_create_backup(self):
+    def test_non_operational_db_ignores_authorization(self):
         """assert_csv_import_safe does not create a backup for non-operational DBs."""
         db_path = self._make_db()
         conn = connect(db_path)
         try:
-            result = assert_csv_import_safe(conn, allow_operational=True)
+            result = assert_csv_import_safe(conn, authorization=None)
             self.assertIsNone(result)
+        finally:
+            conn.close()
+
+    def test_operational_db_rejects_boolean_true(self):
+        """assert_csv_import_safe rejects a plain Boolean True for operational DB."""
+        db_path = self._make_db("jordana_invoice.sqlite3")
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            with self.assertRaises(OperationalDatabaseError):
+                assert_csv_import_safe(conn, authorization=True)  # type: ignore[arg-type]
+        finally:
+            conn.close()
+
+    def test_operational_db_rejects_fabricated_authorization_wrong_path(self):
+        """assert_csv_import_safe rejects a fabricated authorization with wrong confirmed_path."""
+        db_path = self._make_db("jordana_invoice.sqlite3")
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            fake_auth = OperationalImportAuthorization(
+                confirmed_path=Path("/wrong/path.sqlite3"),
+                backup_path=None,
+            )
+            with self.assertRaises(OperationalDatabaseError) as ctx:
+                assert_csv_import_safe(conn, authorization=fake_auth)
+            self.assertIn("does not match", str(ctx.exception))
         finally:
             conn.close()
 
@@ -311,12 +338,62 @@ class ImportCsvServiceLayerGuardTests(unittest.TestCase):
         auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
         conn = connect(db_path)
         try:
-            import_csv(conn, str(SAMPLE_CSV), allow_operational_db=auth)
+            import_csv(conn, str(SAMPLE_CSV), operational_authorization=auth)
             # Exactly one backup should exist (from authorize, not from assert).
             backups = list(self.root.glob("*backup-migrate-*"))
             self.assertEqual(len(backups), 1)
         finally:
             conn.close()
+
+    def test_import_csv_rejects_boolean_true_on_operational(self):
+        """import_csv with allow_operational_db=True (legacy bool) is now rejected."""
+        from jordana_invoice.importer import import_csv
+
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            with self.assertRaises(OperationalDatabaseError):
+                import_csv(conn, str(SAMPLE_CSV), operational_authorization=True)  # type: ignore[arg-type]
+        finally:
+            conn.close()
+
+    def test_import_csv_rejects_authorization_for_different_db(self):
+        """Authorization created for one operational DB cannot be reused for another."""
+        from jordana_invoice.importer import import_csv
+
+        # Create two separate operational DBs in different temp dirs.
+        tmp1 = tempfile.mkdtemp()
+        tmp2 = tempfile.mkdtemp()
+        old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        try:
+            db1 = Path(tmp1) / "jordana_invoice.sqlite3"
+            db2 = Path(tmp2) / "jordana_invoice.sqlite3"
+            migrate_database(db1)
+            migrate_database(db2)
+
+            # Authorize for db1.
+            os.environ["JORDANA_DATABASE_PATH"] = str(db1)
+            os.environ["JORDANA_BACKUP_DIR"] = tmp1
+            auth1 = authorize_operational_import(db1, confirmed_path=str(db1))
+
+            # Switch configured operational to db2, try using auth1.
+            os.environ["JORDANA_DATABASE_PATH"] = str(db2)
+            os.environ["JORDANA_BACKUP_DIR"] = tmp2
+            conn = connect(db2)
+            try:
+                with self.assertRaises(OperationalDatabaseError) as ctx:
+                    import_csv(conn, str(SAMPLE_CSV), operational_authorization=auth1)
+                self.assertIn("does not match", str(ctx.exception))
+            finally:
+                conn.close()
+        finally:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+            if old_backup:
+                os.environ["JORDANA_BACKUP_DIR"] = old_backup
+            else:
+                os.environ.pop("JORDANA_BACKUP_DIR", None)
 
 
 class CliImportCsvGuardTests(unittest.TestCase):
@@ -712,7 +789,7 @@ class BackupBeforeMigrationTests(unittest.TestCase):
         # Pass to assert_csv_import_safe (should NOT create backup #2).
         conn = connect(db_path)
         try:
-            result = assert_csv_import_safe(conn, allow_operational=auth)
+            result = assert_csv_import_safe(conn, authorization=auth)
             self.assertEqual(result, auth.backup_path)
         finally:
             conn.close()
