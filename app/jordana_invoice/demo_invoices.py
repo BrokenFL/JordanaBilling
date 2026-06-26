@@ -59,7 +59,6 @@ def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> di
 
     first = create_invoice_draft(conn, _draft_payload(avery_party["billing_party_id"], [sessions[0]]))
     finalized = finalize_invoice(conn, first["invoice"]["invoice_id"], pdf_root=pdf_root)
-    second = create_invoice_draft(conn, _draft_payload(avery_party["billing_party_id"], sessions[1:2] + sessions[3:6]))
     parent = create_invoice_draft(conn, _draft_payload(parent_party["billing_party_id"], [sessions[2]]))
 
     long_sessions = []
@@ -71,6 +70,8 @@ def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> di
     voided = void_invoice(conn, finalized["invoice"]["invoice_id"], "Sanitized void-and-reissue demonstration")
     reissue = create_invoice_draft(conn, _draft_payload(avery_party["billing_party_id"], [sessions[0]]))
     finalize_invoice(conn, reissue["invoice"]["invoice_id"], pdf_root=pdf_root)
+
+    second = create_invoice_draft(conn, _draft_payload(avery_party["billing_party_id"], sessions[1:2] + sessions[3:6]))
 
     org_party = create_billing_party(conn, {
         "billing_name": "Cedar Family Trust",
