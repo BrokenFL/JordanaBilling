@@ -76,9 +76,6 @@ def get_duration_options() -> list[dict[str, str]]:
 
 
 def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
-    init_db(conn)
-    backfill_phase2(conn)
-    apply_smart_prefill(conn)
     rows = conn.execute(
         """
         SELECT review_status, COUNT(*) AS count
@@ -273,9 +270,6 @@ def list_review_candidates(
     limit: int = 25,
     offset: int = 0,
 ) -> dict[str, Any]:
-    init_db(conn)
-    backfill_phase2(conn)
-    apply_smart_prefill(conn)
     filters = []
     params: list[Any] = []
     if query:
