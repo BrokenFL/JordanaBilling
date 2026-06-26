@@ -487,6 +487,177 @@ class ReviewServerRequestBodyLimitTests(unittest.TestCase):
         self.assertEqual(captured2["status"], 400)
         self.assertNotIn(unique_marker, json.dumps(captured2["payload"]))
 
+class ReviewServerHeaderValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, command, headers, body=b"{}"):
+        handler = object.__new__(self.handler_cls)
+        handler.command = command
+        handler.path = "/api/status"
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        
+        captured = {}
+        def mock_send_json(payload, status=200):
+            captured["payload"] = payload
+            captured["status"] = status
+        handler.send_json = mock_send_json
+        handler.finish = lambda: None
+        return handler, captured
+
+    def test_valid_host_headers(self):
+        valid_hosts = [
+            "localhost",
+            "localhost:8765",
+            "127.0.0.1",
+            "127.0.0.1:8765",
+            "[::1]",
+            "[::1]:8765",
+            "LOCALHOST",
+            "LocalHost:8765",
+            "localhost:1",
+            "localhost:65535",
+        ]
+        for host in valid_hosts:
+            with self.subTest(host=host):
+                handler, captured = self._handler("GET", {"Host": host})
+                result = handler.validate_host_and_origin()
+                self.assertTrue(result)
+                self.assertNotIn("status", captured)
+
+    def test_missing_or_empty_host_header(self):
+        # Missing Host
+        handler, captured = self._handler("GET", {})
+        result = handler.validate_host_and_origin()
+        self.assertFalse(result)
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Host header is required."})
+
+        # Empty Host
+        handler, captured = self._handler("GET", {"Host": ""})
+        result = handler.validate_host_and_origin()
+        self.assertFalse(result)
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Invalid Host header."})
+
+    def test_malformed_host_headers(self):
+        malformed_hosts = [
+            "localhost:invalid",
+            "localhost:8765:9000",
+            "[::1]8765",
+            "[::1]:",
+            "localhost:",
+            "[::1:8765",
+            "localhost:65536",
+            "localhost:0",
+            "localhost:-8765",
+            "[::1]:-8765",
+            "[::1]:0",
+            "localhost:8765 ",
+            " localhost:8765",
+            "local host",
+            "user@localhost",
+            "user:pass@localhost:8765",
+            "localhost/path",
+            "localhost?query",
+            "localhost#fragment",
+            "localhost\\path",
+        ]
+        for host in malformed_hosts:
+            with self.subTest(host=host):
+                handler, captured = self._handler("GET", {"Host": host})
+                result = handler.validate_host_and_origin()
+                self.assertFalse(result)
+                self.assertEqual(captured.get("status"), 400)
+                self.assertEqual(captured.get("payload"), {"ok": False, "error": "Invalid Host header."})
+
+    def test_external_host_headers(self):
+        external_hosts = [
+            "example.com",
+            "google.com",
+            "192.168.1.1",
+            "localhost.evil.com",
+            "127.0.0.1.evil.com",
+            "[::1].evil.com",
+        ]
+        for host in external_hosts:
+            with self.subTest(host=host):
+                handler, captured = self._handler("GET", {"Host": host})
+                result = handler.validate_host_and_origin()
+                self.assertFalse(result)
+                self.assertEqual(captured.get("status"), 400)
+                self.assertEqual(captured.get("payload"), {"ok": False, "error": "Invalid Host header."})
+
+    def test_mutating_requests_with_valid_origins(self):
+        valid_origins = [
+            "http://localhost",
+            "http://localhost:8765",
+            "http://127.0.0.1",
+            "http://127.0.0.1:8765",
+            "http://[::1]",
+            "http://[::1]:8765",
+            "http://LOCALHOST",
+            "http://LocalHost:8765",
+            "http://localhost:1",
+            "http://localhost:65535",
+        ]
+        for origin in valid_origins:
+            with self.subTest(origin=origin):
+                handler, captured = self._handler("POST", {"Host": "localhost", "Origin": origin})
+                result = handler.validate_host_and_origin()
+                self.assertTrue(result)
+                self.assertNotIn("status", captured)
+
+    def test_mutating_requests_with_missing_origin(self):
+        # Absent Origin should be allowed
+        handler, captured = self._handler("POST", {"Host": "localhost"})
+        result = handler.validate_host_and_origin()
+        self.assertTrue(result)
+        self.assertNotIn("status", captured)
+
+    def test_mutating_requests_with_invalid_or_malformed_origins(self):
+        invalid_origins = [
+            "https://localhost",  # wrong scheme
+            "http://example.com",
+            "http://localhost.evil.com",  # suffix attack
+            "http://127.0.0.1.evil.com",
+            "http://[::1].evil.com",
+            "http://localhost:invalid",
+            "http://localhost:65536",
+            "http://localhost:0",
+            "null",
+            "http://localhost/",  # trailing slash
+            "http://user@localhost",
+            "http://user:pass@localhost:8765",
+            "http://localhost/path",
+            "http://localhost?query",
+            "http://localhost#fragment",
+            "http://localhost\\path",
+            "http://localhost:8765 ",
+            "http:// localhost:8765",
+        ]
+        for origin in invalid_origins:
+            with self.subTest(origin=origin):
+                handler, captured = self._handler("POST", {"Host": "localhost", "Origin": origin})
+                result = handler.validate_host_and_origin()
+                self.assertFalse(result)
+                self.assertEqual(captured.get("status"), 403)
+                self.assertEqual(captured.get("payload"), {"ok": False, "error": "Invalid Origin header."})
+
+    def test_non_mutating_requests_ignore_origin(self):
+        # Origin is non-local, but request is GET, so should be ignored/allowed
+        handler, captured = self._handler("GET", {"Host": "localhost", "Origin": "http://evil.com"})
+        result = handler.validate_host_and_origin()
+        self.assertTrue(result)
+        self.assertNotIn("status", captured)
+
 
 if __name__ == "__main__":
     unittest.main()

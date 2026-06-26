@@ -192,6 +192,87 @@ def make_handler(database_path: str):
         def log_message(self, format: str, *args: object) -> None:
             return
 
+        def parse_request(self) -> bool:
+            if not super().parse_request():
+                return False
+            if not self.validate_host_and_origin():
+                return False
+            return True
+        def validate_host_and_origin(self) -> bool:
+            host_header = self.headers.get("Host")
+            if host_header is None:
+                self.send_json({"ok": False, "error": "Host header is required."}, status=400)
+                return False
+
+            if not self.is_valid_local_host(host_header):
+                self.send_json({"ok": False, "error": "Invalid Host header."}, status=400)
+                return False
+
+            if self.command in {"POST", "PUT", "PATCH", "DELETE"}:
+                origin_header = self.headers.get("Origin")
+                if origin_header is not None:
+                    if not origin_header.startswith("http://"):
+                        self.send_json({"ok": False, "error": "Invalid Origin header."}, status=403)
+                        return False
+                    rest = origin_header[len("http://"):]
+                    if not self.is_valid_local_host(rest):
+                        self.send_json({"ok": False, "error": "Invalid Origin header."}, status=403)
+                        return False
+            return True
+
+        @staticmethod
+        def is_valid_local_host(host_header: str) -> bool:
+            if not host_header:
+                return False
+
+            if any(c.isspace() for c in host_header):
+                return False
+
+            if "@" in host_header:
+                return False
+
+            if "/" in host_header or "\\" in host_header or "?" in host_header or "#" in host_header:
+                return False
+
+            if host_header.startswith("["):
+                idx = host_header.find("]")
+                if idx == -1:
+                    return False
+                host_part = host_header[:idx + 1]
+                port_part = host_header[idx + 1:]
+                if port_part:
+                    if not port_part.startswith(":"):
+                        return False
+                    port_val = port_part[1:]
+                    if not port_val or not port_val.isdigit():
+                        return False
+                    try:
+                        p = int(port_val)
+                        if not (1 <= p <= 65535):
+                            return False
+                    except ValueError:
+                        return False
+            else:
+                if ":" in host_header:
+                    parts = host_header.split(":")
+                    if len(parts) != 2:
+                        return False
+                    host_part = parts[0]
+                    port_val = parts[1]
+                    if not port_val or not port_val.isdigit():
+                        return False
+                    try:
+                        p = int(port_val)
+                        if not (1 <= p <= 65535):
+                            return False
+                    except ValueError:
+                        return False
+                else:
+                    host_part = host_header
+
+            allowed_hosts = {"localhost", "127.0.0.1", "[::1]"}
+            return host_part.lower() in allowed_hosts
+
         def send_error_response(self, error: Exception, default_status: int = 500) -> None:
             if isinstance(error, BillingPartyNotFoundError):
                 status = 404
