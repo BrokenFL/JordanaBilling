@@ -12,66 +12,107 @@ from pathlib import Path
 # Operational database identity
 # ---------------------------------------------------------------------------
 
-# Filenames that are considered the live operational database.
-# Any CLI command that would destructively modify data (e.g. import-csv)
-# must refuse to proceed when the resolved path matches one of these names
-# *unless* an explicit bypass flag is provided by the caller.
-_OPERATIONAL_DB_FILENAMES: frozenset[str] = frozenset({"jordana_invoice.sqlite3"})
+# The CLI default database path.  When JORDANA_DATABASE_PATH is not set in
+# the environment, this relative path (resolved against the current working
+# directory) is the authoritative operational database location.
+_DEFAULT_DB_PATH = "data/jordana_invoice.sqlite3"
 
-# Directory-name tokens that unmistakably identify temporary / test paths.
-# If the resolved parent directory contains any of these tokens the path is
-# treated as a test path, not an operational one.
-_TEMP_DIR_TOKENS: frozenset[str] = frozenset({
-    "tmp",
-    "temp",
-    "tmpdir",
-    "tempdir",
-    "temporary",
-    "temporarydirectory",
-    "pytest",
-    "test_",
-    "_test",
-    "demo",
-})
+
+class OperationalDatabaseError(Exception):
+    """Raised when a destructive operation targets the operational database
+    without explicit authorization."""
+
+
+def get_configured_operational_db_path() -> Path:
+    """Return the one authoritative configured operational database path.
+
+    The path is determined from (in priority order):
+
+    1.  ``JORDANA_DATABASE_PATH`` environment variable (typically set by
+        ``.env`` / ``bootstrap.sh``).
+    2.  The CLI default ``data/jordana_invoice.sqlite3`` resolved against
+        the current working directory.
+
+    The returned path is **not** resolved — callers should ``.resolve()``
+    it when comparing against a candidate path so that symlinks and
+    relative paths are normalised consistently.
+    """
+    env_path = os.environ.get("JORDANA_DATABASE_PATH")
+    if env_path:
+        return Path(os.path.expanduser(env_path))
+    return Path(_DEFAULT_DB_PATH)
 
 
 def is_operational_db_path(path: str | Path) -> bool:
     """Return True when *path* resolves to the configured operational database.
 
-    The check uses two signals:
+    Both the candidate path and the configured operational path are
+    canonicalised with ``Path.resolve()`` (which follows symlinks and
+    normalises relative paths) before comparison.  This means:
 
-    1.  **Filename**: The resolved basename must be in
-        ``_OPERATIONAL_DB_FILENAMES``.  Relative paths, ``./`` prefixes, and
-        symlinks are all normalised via ``Path.resolve()`` before comparison.
+    - Relative paths are resolved against the current working directory.
+    - Symlinks are followed to their real target.
+    - ``./`` prefixes and ``../`` traversal are normalised.
 
-    2.  **Parent directory**: If any token in ``_TEMP_DIR_TOKENS`` appears
-        (case-insensitively) in the resolved parent's full string
-        representation, the path is treated as a temporary / test path and
-        this function returns ``False``.  This lets tests safely create a
-        temp-directory copy of the same filename without triggering the guard.
-
-    Examples::
-
-        is_operational_db_path("data/jordana_invoice.sqlite3")          # True
-        is_operational_db_path("/abs/data/jordana_invoice.sqlite3")     # True
-        is_operational_db_path("/tmp/xyz/jordana_invoice.sqlite3")      # False
-        is_operational_db_path("/tmp/xyz/test_billing.sqlite3")         # False
+    The function returns ``True`` only when the canonical paths are equal.
     """
     try:
-        resolved = Path(path).resolve()
+        candidate = Path(path).expanduser().resolve()
+        configured = get_configured_operational_db_path().expanduser().resolve()
     except (TypeError, ValueError, OSError):
         return False
+    return candidate == configured
 
-    if resolved.name not in _OPERATIONAL_DB_FILENAMES:
-        return False
 
-    # Check parent path components for temp-dir tokens.
-    parent_lower = str(resolved.parent).lower()
-    for token in _TEMP_DIR_TOKENS:
-        if token in parent_lower:
-            return False
+def _get_db_path_from_conn(conn: sqlite3.Connection) -> Path | None:
+    """Extract the main database file path from a live connection."""
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+        for row in rows:
+            if row[1] == "main" and row[2]:
+                return Path(row[2])
+    except (sqlite3.Error, IndexError, TypeError):
+        pass
+    return None
 
-    return True
+
+def assert_csv_import_safe(
+    conn: sqlite3.Connection,
+    allow_operational: bool = False,
+) -> Path | None:
+    """Safety guard for CSV imports into the operational database.
+
+    If the connection's database resolves to the configured operational path
+    and *allow_operational* is ``False``, raise ``OperationalDatabaseError``.
+
+    If *allow_operational* is ``True`` and the connection is operational,
+    create and verify a timestamped SQLite backup before returning.
+
+    Returns the backup path (or ``None`` if no backup was needed).
+    """
+    db_path = _get_db_path_from_conn(conn)
+    if db_path is None:
+        return None
+    if not is_operational_db_path(db_path):
+        return None
+    if not allow_operational:
+        configured = get_configured_operational_db_path().resolve()
+        raise OperationalDatabaseError(
+            f"Refused: the database at {db_path} is the configured "
+            f"operational database ({configured}). "
+            f"CSV imports can overwrite manual review decisions and "
+            f"approved sessions. "
+            f"Use scripts/run_acceptance_test.sh for acceptance testing. "
+            f"If you genuinely need to import into the live database, "
+            f"pass allow_operational_db=True and a verified backup "
+            f"will be created automatically."
+        )
+    # Authorized operational import — create and verify backup first.
+    if not db_path.exists():
+        return None
+    backup_path = _create_backup(db_path)
+    _verify_backup(backup_path)
+    return backup_path
 
 
 SCHEMA = """

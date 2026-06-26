@@ -4,9 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from .db import connect, is_operational_db_path, migrate_database
+from .db import OperationalDatabaseError, connect, is_operational_db_path, migrate_database
 from .backfill import backfill_phase2
-from .google_sync import SyncError, cli_sync_status, load_config, sync_now
+from .google_sync import SyncError, cli_sync_status, load_config, load_env_file, sync_now
 from .importer import import_csv
 from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
@@ -159,9 +159,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "import-csv":
+        # Load .env so JORDANA_DATABASE_PATH is available for the guard.
+        load_env_file()
         if is_operational_db_path(args.db) and not args.allow_operational_db:
             print(
-                f"REFUSED: '{args.db}' appears to be the operational database.\n"
+                f"REFUSED: '{args.db}' is the configured operational database.\n"
                 "Running import-csv against the live database can overwrite or "
                 "corrupt manual review decisions and approved sessions.\n"
                 "\n"
@@ -169,13 +171,23 @@ def main(argv: list[str] | None = None) -> int:
                 "  scripts/run_acceptance_test.sh\n"
                 "\n"
                 "If you genuinely need to import into the live database, add:\n"
-                "  --allow-operational-db",
+                "  --allow-operational-db\n"
+                "A verified backup will be created automatically before proceeding.",
                 file=__import__('sys').stderr,
             )
             return 1
         migrate_database(args.db)
         conn = connect(args.db)
-        import_run_id = import_csv(conn, args.csv_path, args.source_name)
+        try:
+            import_run_id = import_csv(
+                conn,
+                args.csv_path,
+                args.source_name,
+                allow_operational_db=args.allow_operational_db,
+            )
+        except OperationalDatabaseError as error:
+            print(f"REFUSED: {error}", file=__import__('sys').stderr)
+            return 1
         report = acceptance_report(conn, import_run_id)
         if args.report:
             report_path = Path(args.report)
