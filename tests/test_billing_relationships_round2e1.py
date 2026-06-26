@@ -364,8 +364,8 @@ class TestRound2E1Api(unittest.TestCase):
         csv_path = Path("data/samples/sanitized_demo_calendar_snapshots.csv")
         if csv_path.exists():
             import_csv(self.conn, csv_path)
-        handler_cls = make_handler(str(self.db_path))
-        self.server = HTTPServer(("127.0.0.1", 0), handler_cls)
+        self.handler_cls = make_handler(str(self.db_path), write_token="test-write-token")
+        self.server = HTTPServer(("127.0.0.1", 0), self.handler_cls)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -379,6 +379,7 @@ class TestRound2E1Api(unittest.TestCase):
         data = json.dumps(body).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, method="POST")
         req.add_header("Content-Type", "application/json")
+        req.add_header(self.handler_cls.write_token_header, self.handler_cls.write_token)
         try:
             with urllib.request.urlopen(req) as resp:
                 return resp.status, json.loads(resp.read())
