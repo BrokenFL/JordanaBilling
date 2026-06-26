@@ -9,7 +9,15 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 DB_PATH="${1:-$PROJECT_DIR/data/jordana_invoice.sqlite3}"
-BACKUP_DIR="$PROJECT_DIR/data/backups"
+
+# Default backup directory: use JORDANA_BACKUP_DIR if set, otherwise ~/.jordana_invoice/backups
+BACKUP_DIR="${JORDANA_BACKUP_DIR:-~/.jordana_invoice/backups}"
+
+# Expand ~ if present at the beginning of the path
+if [[ "$BACKUP_DIR" == "~"* ]]; then
+  BACKUP_DIR="${BACKUP_DIR/#\~/$HOME}"
+fi
+
 mkdir -p "$BACKUP_DIR"
 
 if [[ ! -f "$DB_PATH" ]]; then

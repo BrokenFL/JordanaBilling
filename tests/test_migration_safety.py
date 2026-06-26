@@ -65,8 +65,14 @@ class MigrationSafetyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.old_backup_dir = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
 
     def tearDown(self):
+        if self.old_backup_dir is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self.old_backup_dir
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     # --- normal request connections do not alter schema or seed data ---
@@ -309,8 +315,14 @@ class BackupScriptTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.old_backup_dir = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
 
     def tearDown(self):
+        if self.old_backup_dir is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self.old_backup_dir
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     def test_backup_script_captures_committed_wal_rows(self):
@@ -352,6 +364,84 @@ class BackupScriptTests(unittest.TestCase):
             backup_conn.close()
 
         self.assertEqual(row[0], "wal row")
+
+    def test_get_backup_dir_default_and_tilde_expansion(self):
+        # Save current JORDANA_BACKUP_DIR and remove it to test default path
+        old_val = os.environ.get("JORDANA_BACKUP_DIR")
+        if "JORDANA_BACKUP_DIR" in os.environ:
+            del os.environ["JORDANA_BACKUP_DIR"]
+        try:
+            expected = Path.home() / ".jordana_invoice" / "backups"
+            self.assertEqual(db_module.get_backup_dir(), expected)
+        finally:
+            if old_val is not None:
+                os.environ["JORDANA_BACKUP_DIR"] = old_val
+
+    def test_get_backup_dir_override_and_tilde_expansion(self):
+        old_val = os.environ.get("JORDANA_BACKUP_DIR")
+        # Test override with tilde
+        os.environ["JORDANA_BACKUP_DIR"] = "~/custom_backup_test_dir"
+        try:
+            expected = Path.home() / "custom_backup_test_dir"
+            self.assertEqual(db_module.get_backup_dir(), expected)
+        finally:
+            if old_val is not None:
+                os.environ["JORDANA_BACKUP_DIR"] = old_val
+
+    def test_create_backup_creates_directory_automatically(self):
+        custom_dir = self.root / "sub" / "folder" / "backups"
+        self.assertFalse(custom_dir.exists())
+
+        old_val = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(custom_dir)
+        try:
+            db_path = self.root / "test_auto.sqlite3"
+            _make_old_db(db_path)
+            
+            backup_path = db_module._create_backup(db_path)
+            self.assertTrue(custom_dir.exists())
+            self.assertTrue(backup_path.exists())
+            self.assertEqual(backup_path.parent, custom_dir)
+        finally:
+            if old_val is not None:
+                os.environ["JORDANA_BACKUP_DIR"] = old_val
+
+    def test_backup_script_respects_env_override_and_tilde(self):
+        db_path = self.root / "script_override.sqlite3"
+        writer = sqlite3.connect(str(db_path), timeout=5.0)
+        try:
+            writer.execute("CREATE TABLE evidence (id INTEGER PRIMARY KEY)")
+            writer.commit()
+        finally:
+            writer.close()
+
+        custom_backup_dir_path = Path.home() / "jordana_test_script_backups"
+        if custom_backup_dir_path.exists():
+            import shutil
+            shutil.rmtree(custom_backup_dir_path, ignore_errors=True)
+
+        env = os.environ.copy()
+        env["JORDANA_BACKUP_DIR"] = "~/jordana_test_script_backups"
+
+        try:
+            result = subprocess.run(
+                ["bash", str(PROJECT_DIR / "scripts" / "backup_db.sh"), str(db_path)],
+                cwd=str(PROJECT_DIR),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(custom_backup_dir_path.exists())
+            
+            backups = list(custom_backup_dir_path.glob("script_override.backup-*.sqlite3"))
+            self.assertEqual(len(backups), 1)
+        finally:
+            if custom_backup_dir_path.exists():
+                import shutil
+                shutil.rmtree(custom_backup_dir_path, ignore_errors=True)
 
 
 if __name__ == "__main__":

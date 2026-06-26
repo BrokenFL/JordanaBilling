@@ -748,9 +748,18 @@ def _backup_sqlite_database(source_path: Path, destination_path: Path) -> None:
         source_conn.close()
 
 
+def get_backup_dir() -> Path:
+    env_dir = os.environ.get("JORDANA_BACKUP_DIR")
+    if env_dir:
+        return Path(os.path.expanduser(env_dir))
+    return Path(os.path.expanduser("~/.jordana_invoice/backups"))
+
+
 def _create_backup(db_path: Path) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_path = db_path.parent / f"{db_path.stem}.backup-migrate-{timestamp}{db_path.suffix}"
+    backup_dir = get_backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{db_path.stem}.backup-migrate-{timestamp}{db_path.suffix}"
     _backup_sqlite_database(db_path, backup_path)
     return backup_path
 
