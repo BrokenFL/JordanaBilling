@@ -828,5 +828,134 @@ class ReviewServerHeaderValidationTests(unittest.TestCase):
         self.assertNotIn("status", captured)
 
 
+class SecurityHeaderTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self):
+        handler = object.__new__(self.handler_cls)
+        handler.path = "/review"
+        handler.headers = {}
+        handler.rfile = io.BytesIO()
+        handler.wfile = io.BytesIO()
+        handler.finish = lambda: None
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {"headers": {}, "header_counts": {}}
+        handler.send_response = lambda status: captured.setdefault("status", status)
+
+        def _send_header(key, value):
+            captured["headers"][key] = value
+            captured["header_counts"][key] = captured["header_counts"].get(key, 0) + 1
+
+        handler.send_header = _send_header
+        handler.end_headers = lambda: None
+        return handler, captured
+
+    def _assert_common_security_headers(self, headers):
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("Referrer-Policy"), "no-referrer")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertIn("Content-Security-Policy", headers)
+
+    def _assert_headers_appear_once(self, header_counts):
+        for key in ("X-Content-Type-Options", "Referrer-Policy",
+                     "X-Frame-Options", "Content-Security-Policy"):
+            self.assertEqual(header_counts.get(key, 0), 1,
+                             f"{key} should appear exactly once, got {header_counts.get(key, 0)}")
+
+    def test_review_page_has_security_headers(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+        self._assert_common_security_headers(captured["headers"])
+        self._assert_headers_appear_once(captured["header_counts"])
+        self.assertEqual(captured["status"], 200)
+
+    def test_review_page_csp_has_nonce_matching_script_tag(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+        csp = captured["headers"].get("Content-Security-Policy", "")
+        self.assertIn("nonce-", csp)
+        self.assertNotIn("'unsafe-inline'", csp.split("style-src")[0])
+
+        html = handler.wfile.getvalue().decode("utf-8")
+        nonce_start = html.find('nonce="')
+        self.assertNotEqual(nonce_start, -1, "bootstrap script must have nonce attribute")
+        nonce_end = html.find('"', nonce_start + len('nonce="'))
+        nonce = html[nonce_start + len('nonce="'):nonce_end]
+        self.assertTrue(nonce, "nonce value must not be empty")
+        self.assertIn(f"'nonce-{nonce}'", csp)
+
+    def test_review_page_nonce_differs_per_response(self):
+        handler1, captured1 = self._handler()
+        handler1.send_static("review.html")
+        csp1 = captured1["headers"].get("Content-Security-Policy", "")
+
+        handler2, captured2 = self._handler()
+        handler2.send_static("review.html")
+        csp2 = captured2["headers"].get("Content-Security-Policy", "")
+
+        nonce1 = csp1.split("'nonce-")[1].split("'")[0]
+        nonce2 = csp2.split("'nonce-")[1].split("'")[0]
+        self.assertNotEqual(nonce1, nonce2)
+
+    def test_review_page_preserves_no_store_cache_control(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+        self.assertEqual(captured["headers"].get("Cache-Control"), "no-store")
+
+    def test_review_page_csp_preserves_style_src_unsafe_inline(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+        csp = captured["headers"].get("Content-Security-Policy", "")
+        self.assertIn("style-src 'self' 'unsafe-inline'", csp)
+
+    def test_static_js_has_security_headers_no_unsafe_inline(self):
+        handler, captured = self._handler()
+        handler.send_static("review.js")
+        self._assert_common_security_headers(captured["headers"])
+        self._assert_headers_appear_once(captured["header_counts"])
+        csp = captured["headers"].get("Content-Security-Policy", "")
+        self.assertIn("script-src 'self'", csp)
+        self.assertNotIn("'unsafe-inline'", csp.split("style-src")[0])
+
+    def test_static_css_has_security_headers(self):
+        handler, captured = self._handler()
+        handler.send_static("review.css")
+        self._assert_common_security_headers(captured["headers"])
+        self._assert_headers_appear_once(captured["header_counts"])
+
+    def test_json_api_response_has_security_headers(self):
+        handler, captured = self._handler()
+        handler.send_json({"ok": True})
+        self._assert_common_security_headers(captured["headers"])
+        self._assert_headers_appear_once(captured["header_counts"])
+        self.assertEqual(captured["headers"].get("Content-Type"), "application/json; charset=utf-8")
+        csp = captured["headers"].get("Content-Security-Policy", "")
+        self.assertIn("script-src 'self'", csp)
+        self.assertNotIn("'unsafe-inline'", csp.split("style-src")[0])
+
+    def test_json_error_response_has_security_headers(self):
+        handler, captured = self._handler()
+        handler.send_json({"ok": False, "error": "bad"}, status=400)
+        self._assert_common_security_headers(captured["headers"])
+        self._assert_headers_appear_once(captured["header_counts"])
+
+    def test_csv_download_response_has_security_headers(self):
+        handler, captured = self._handler()
+        handler.send_csv("col1,col2\nval1,val2\n", "report_2025.csv")
+        self._assert_common_security_headers(captured["headers"])
+        self._assert_headers_appear_once(captured["header_counts"])
+        self.assertEqual(captured["headers"].get("Content-Type"), "text/csv; charset=utf-8")
+        self.assertIn("attachment", captured["headers"].get("Content-Disposition", ""))
+        csp = captured["headers"].get("Content-Security-Policy", "")
+        self.assertIn("script-src 'self'", csp)
+        self.assertNotIn("'unsafe-inline'", csp.split("style-src")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

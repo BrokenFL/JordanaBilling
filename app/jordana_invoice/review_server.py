@@ -98,6 +98,11 @@ REVIEW_SYNC_TRANSPORT = default_transport
 
 MAX_REQUEST_BODY_BYTES = 1_048_576  # 1 MiB
 WRITE_TOKEN_HEADER = "X-Jordana-Write-Token"
+_SECURITY_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+)
 
 
 def review_sync_config(database_path: str):
@@ -196,11 +201,13 @@ def make_handler(database_path: str, write_token: str | None = None):
     class ReviewHandler(BaseHTTPRequestHandler):
         write_token = launch_write_token
         write_token_header = WRITE_TOKEN_HEADER
+        _security_headers_applied = False
 
         def log_message(self, format: str, *args: object) -> None:
             return
 
         def parse_request(self) -> bool:
+            self._security_headers_applied = False
             if not super().parse_request():
                 return False
             if not self.validate_host_and_origin():
@@ -771,11 +778,37 @@ def make_handler(database_path: str, write_token: str | None = None):
                 return False
             return hmac.compare_digest(supplied_token, launch_write_token)
 
+        def _build_csp(self, nonce: str | None = None) -> str:
+            script_src = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
+            return (
+                f"default-src 'self'; "
+                f"script-src {script_src}; "
+                f"style-src 'self' 'unsafe-inline'; "
+                f"img-src 'self' data:; "
+                f"connect-src 'self'; "
+                f"frame-ancestors 'none'; "
+                f"base-uri 'self'; "
+                f"form-action 'self'"
+            )
+
+        def _apply_security_headers(self, nonce: str | None = None) -> None:
+            if self._security_headers_applied:
+                return
+            for key, value in _SECURITY_HEADERS:
+                self.send_header(key, value)
+            self.send_header("Content-Security-Policy", self._build_csp(nonce))
+            self._security_headers_applied = True
+
+        def end_headers(self) -> None:
+            self._apply_security_headers()
+            super().end_headers()
+
         def send_json(self, payload: object, status: int = 200) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self._apply_security_headers()
             self.end_headers()
             self.wfile.write(body)
 
@@ -787,8 +820,10 @@ def make_handler(database_path: str, write_token: str | None = None):
             if not path.exists() or path.is_dir():
                 self.send_error(404)
                 return
+            nonce = None
             if path.name == "review.html":
-                body = self.render_review_html(path).encode("utf-8")
+                nonce = secrets.token_urlsafe(16)
+                body = self.render_review_html(path, nonce).encode("utf-8")
             else:
                 body = path.read_bytes()
             self.send_response(200)
@@ -796,14 +831,15 @@ def make_handler(database_path: str, write_token: str | None = None):
             if path.name == "review.html":
                 self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
+            self._apply_security_headers(nonce=nonce)
             self.end_headers()
             self.wfile.write(body)
 
-        def render_review_html(self, path: Path) -> str:
+        def render_review_html(self, path: Path, nonce: str) -> str:
             html = path.read_text(encoding="utf-8")
             bootstrap = json.dumps({"writeToken": launch_write_token}, ensure_ascii=False)
             bootstrap = bootstrap.replace("</", "<\\/")
-            bootstrap_script = f"<script>window.__JORDANA_BOOTSTRAP__={bootstrap};</script>"
+            bootstrap_script = f'<script nonce="{nonce}">window.__JORDANA_BOOTSTRAP__={bootstrap};</script>'
             marker = '<script src="/static/review.js"></script>'
             if marker in html:
                 return html.replace(marker, f"{bootstrap_script}\n    {marker}", 1)
@@ -815,6 +851,7 @@ def make_handler(database_path: str, write_token: str | None = None):
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(body)))
+            self._apply_security_headers()
             self.end_headers()
             self.wfile.write(body)
 
