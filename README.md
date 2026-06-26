@@ -6,7 +6,7 @@ Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot r
 
 Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
 
-Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement payment allocation or delivery.
+Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. While backend payment and allocation foundations exist, a complete payment UI, reconciliation, reversal/void workflows, and month-close workflow remain unfinished.
 
 ## Current Scope
 
@@ -67,6 +67,8 @@ JORDANA_INGEST_API_KEY=
 JORDANA_DATABASE_PATH=/Users/brookesnader/Documents/Jordana Billing/data/jordana_invoice.sqlite3
 JORDANA_REPORTS_DIR=/Users/brookesnader/Documents/Jordana Billing/Reports
 JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work
+# Optional backup directory. Defaults to ~/.jordana_invoice/backups if unset.
+JORDANA_BACKUP_DIR=
 ```
 
 Then run:
@@ -158,7 +160,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - SQLite is the local application database.
 - Ambiguous rows stay reviewable and reversible.
 - Calendar import and review commands do not generate invoices automatically.
-- No PDF invoices are generated in Phase 2.
+- Phase 2 includes local PDF invoice generation and immutable finalization snapshots (invoice delivery and payment tracking UI are deferred).
 - No polished production dashboard is built yet.
 - Do not store clinical notes beyond the raw calendar evidence already imported.
 - Do not rewrite historical finalized invoice values when rates change later.

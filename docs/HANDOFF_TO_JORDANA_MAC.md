@@ -17,13 +17,14 @@ Continue the local-first invoice system without relying on prior chat history.
 scripts/setup_jordana_mac.sh
 ```
 
-The setup script creates `.venv`, required folders, initializes or migrates SQLite without overwriting an existing live database, creates a timestamped backup when a database already exists, verifies the backup, and runs verification. Schema migrations run only during explicit startup/init/migrate flows — normal API/web requests never run migrations or seed data.
+The setup script creates `.venv`, required folders, initializes or migrates SQLite without overwriting an existing live database, creates a WAL-safe timestamped backup (using the SQLite backup API) when a database already exists, verifies the backup, and runs verification (current full suite is 1490 tests passing, 11 skipped, 0 failures). Schema migrations run only during explicit startup/init/migrate flows — normal API/web requests never run migrations or seed data.
 
 ## Configure Automated Sync
 
 1. Copy `.env.example` to `.env`.
 2. Fill in the Apps Script web app URL, ingest API key, database path, and reports directory.
-3. Do not commit or paste the real `.env` into docs or chat.
+3. Optionally configure `JORDANA_BACKUP_DIR` to override the default backup location (`~/.jordana_invoice/backups`).
+4. Do not commit or paste the real `.env` into docs or chat.
 
 Run a manual sync:
 
@@ -157,7 +158,7 @@ See `docs/CLIENTS_AND_ACCOUNTS.md` for full documentation of all rounds.
 - Developer commands for rate seeding, rate policy, and review decisions
 - Phase 2 CSV exports
 
-The next product round should add payment tracking, invoice delivery workflow, and dashboard integration without weakening snapshot immutability.
+The next product round should add a complete payment UI, reconciliation, reversal/void workflows, and month-close workflow (backend payment and allocation foundations exist but these workflows remain unfinished), as well as an invoice delivery workflow and dashboard integration.
 
 ## Start Review UI
 
@@ -178,7 +179,7 @@ scripts/git_safety_check.sh
 scripts/privacy_check.sh
 ```
 
-Live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, and credentials should remain ignored locally.
+Live databases, reports, logs, screenshots with client names, local backups (stored outside the repository in `~/.jordana_invoice/backups` by default), `.env`, and credentials should remain ignored locally.
 ## Calendar Intake Note
 
 Do not change the live Shortcut or Apps Script for this calendar-classification round. The Shortcut should continue to send all non-all-day calendars through the existing Google Sheet headers, including the existing `calendar` field.
@@ -202,8 +203,12 @@ Never import demo rows into a live database.
 
 ## Recent Commits
 
-The following commits completed the review promotion and appointment-status rate round:
+The following commits completed the backup relocation, test repair, and review/appointment status rounds:
 
+- `b0377d5` — WAL-safe SQLite backups
+- `db69a3e` — external backup directory
+- `434bc70` — backup path expansion and test isolation
+- `6f57d8a` — demo invoice creation-order fix
 - `c728226` — appointment status rate dimension and cancelled/no-show service labels
 - `d57df55` — reparse unapproved candidates and `for <reference>` title evidence
 - `5571ce5` — candidate-only send-to-review promotion route
