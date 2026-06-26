@@ -203,10 +203,12 @@ Records money received from a Bill To party.
 - `received_from_name`: Records the payer when payment is received from someone other than the Bill To party. Does not change who owes the invoice.
 - `administrative_note`: Free-text administrative note.
 - `status`: `'posted'` (active) or `'void'` (cancelled). CHECK constraint enforces valid values. No `refunded` status in this round — refunds are a separate future model.
+- `source_type`: `'manual'` (user-created) or `'paid_at_session_backfill'` (created by future backfill). CHECK constraint enforces valid values. Default `'manual'`. Provenance is stored directly on the payment, not in notes or reference numbers.
+- `source_session_id`: The session that triggered a backfill payment. NULL for manual payments. References `sessions`. This is the idempotency anchor for paid-at-session backfill — a unique partial index prevents a second backfill payment for the same session across all payment statuses (posted or void).
 - `voided_at`: Timestamp when voided.
 - `created_at`, `updated_at`: Standard timestamps.
 
-Indexes: `idx_payments_billing_party` (billing_party_id, received_at), `idx_payments_status` (status).
+Indexes: `idx_payments_billing_party` (billing_party_id, received_at), `idx_payments_status` (status), `idx_payments_paid_at_session_source` (unique on source_session_id WHERE source_type = 'paid_at_session_backfill' AND source_session_id IS NOT NULL).
 
 ### `payment_allocations`
 
@@ -292,8 +294,9 @@ The module `payment_services.py` provides backend functions for the payment ledg
 
 ### Still Not Implemented
 
-- No paid-at-session backfill.
+- No dry-run backfill command or apply command for paid-at-session sessions.
+- No historical payment records have been created — provenance schema and service validation exist but the backfill has not been run.
 - No paid-at-session eligibility transition.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
-- No UI, API routes, or PDF changes.
+- No UI, API routes, reports, or PDF changes.
 - Paid-at-session sessions remain excluded from invoicing.

@@ -590,6 +590,10 @@ CREATE TABLE IF NOT EXISTS payments (
   administrative_note TEXT,
   status TEXT NOT NULL DEFAULT 'posted'
     CHECK (status IN ('posted', 'void')),
+  source_type TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source_type IN ('manual', 'paid_at_session_backfill')),
+  source_session_id TEXT
+    REFERENCES sessions(id),
   voided_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -600,6 +604,11 @@ CREATE INDEX IF NOT EXISTS idx_payments_billing_party
 
 CREATE INDEX IF NOT EXISTS idx_payments_status
   ON payments(status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_paid_at_session_source
+  ON payments(source_session_id)
+  WHERE source_type = 'paid_at_session_backfill'
+    AND source_session_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS payment_allocations (
   allocation_id TEXT PRIMARY KEY,
@@ -831,10 +840,27 @@ def _apply_migration_003(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
 
 
+MIGRATION_004_PAYMENT_PROVENANCE = "004_payment_provenance"
+
+
+def _apply_migration_004(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "payments", {
+        "source_type": "TEXT NOT NULL DEFAULT 'manual' CHECK (source_type IN ('manual', 'paid_at_session_backfill'))",
+        "source_session_id": "TEXT REFERENCES sessions(id)",
+    })
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_paid_at_session_source"
+        " ON payments(source_session_id)"
+        " WHERE source_type = 'paid_at_session_backfill'"
+        " AND source_session_id IS NOT NULL"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
     (MIGRATION_003_PAYMENT_LEDGER_FOUNDATION, _apply_migration_003),
+    (MIGRATION_004_PAYMENT_PROVENANCE, _apply_migration_004),
 ]
 
 

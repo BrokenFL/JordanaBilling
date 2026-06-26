@@ -134,7 +134,7 @@ The client workspace displays a read-only invoice history table for all invoices
 
 ## Payment Ledger Foundation
 
-Migration `003_payment_ledger_foundation` adds two additive tables — `payments` and `payment_allocations` — as the schema foundation. Backend payment services are now implemented in `payment_services.py`.
+Migration `003_payment_ledger_foundation` adds two additive tables — `payments` and `payment_allocations` — as the schema foundation. Migration `004_payment_provenance` adds provenance columns to `payments`. Backend payment services are implemented in `payment_services.py`.
 
 ### Key Design Decisions
 
@@ -145,12 +145,13 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - **Unapplied money** is the payment amount minus the sum of active allocation amounts. This is computed dynamically by `payment_services.py`, not stored as a column.
 - **Finalized invoice charges remain immutable.** Payment records and allocations are a separate audited ledger and may be created, allocated, reversed, or voided after invoice finalization.
 - **Payment settlement may change after invoice finalization.** No constraint or documentation claims that payments cannot be applied to finalized invoices.
+- **Provenance is stored directly on the payment** via `source_type` and `source_session_id` columns (migration 004). `source_type = 'manual'` for user-created payments; `source_type = 'paid_at_session_backfill'` for future backfill payments. `source_session_id` is the idempotency anchor — a unique partial index prevents a second backfill payment for the same session across all payment statuses (posted or void). Uniqueness applies even after voiding or allocation reversal. Manual payments remain distinct and do not occupy the backfill provenance slot.
 
 ### Backend Services
 
 `payment_services.py` provides:
 
-- `create_payment` — Creates a posted payment. Validates Bill To party exists, positive cents, required received_at.
+- `create_payment` — Creates a posted payment. Validates Bill To party exists, positive cents, required received_at. Accepts internal-only `source_type` and `source_session_id` parameters for provenance. Validates that manual payments have no source session, backfill payments have a valid matching session, and unsupported source types are rejected.
 - `allocate_payment_to_session` — Allocates to a session charge using `BEGIN IMMEDIATE`. Enforces Bill To matching, payment limit, session charge limit, and invoice line consistency.
 - `link_session_allocations_to_invoice_line` — Links pre-staging allocations to a later invoice line. Idempotent. Does not recreate rows.
 - `reverse_allocation` — Sets status to `reversed`, preserves the row. Rejects double reversal.
@@ -161,7 +162,8 @@ All calculation helpers count only allocations where `payment.status = 'posted'`
 
 ### What Is Not Implemented
 
-- No paid-at-session backfill.
+- No dry-run backfill command or apply command for paid-at-session sessions.
+- No historical payment records have been created — provenance schema and service validation exist but the backfill has not been run.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
 - No API routes, UI, reports, or PDF changes.

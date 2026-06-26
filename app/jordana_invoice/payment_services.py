@@ -101,6 +101,8 @@ def create_payment(
     reference_number: str | None = None,
     received_from_name: str | None = None,
     administrative_note: str | None = None,
+    source_type: str = "manual",
+    source_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a posted payment record.
 
@@ -121,17 +123,37 @@ def create_payment(
     from_name = text(received_from_name) if received_from_name is not None else None
     note = text(administrative_note) if administrative_note is not None else None
 
+    # Provenance validation
+    if source_type not in ("manual", "paid_at_session_backfill"):
+        raise ValueError("Unsupported source_type.")
+    if source_type == "manual" and source_session_id is not None:
+        raise ValueError("Manual payments must not have a source_session_id.")
+    if source_type == "paid_at_session_backfill":
+        if source_session_id is None:
+            raise ValueError("paid_at_session_backfill requires a source_session_id.")
+        src_session = conn.execute(
+            "SELECT billing_party_id FROM sessions WHERE id = ?", (source_session_id,)
+        ).fetchone()
+        if src_session is None:
+            raise ValueError("Source session was not found.")
+        if src_session["billing_party_id"] != billing_party_id:
+            raise ValueError("Payment Bill To party does not match the source session billing party.")
+
     payment_id = new_id()
     now = now_iso()
     conn.execute(
         """INSERT INTO payments
            (payment_id, billing_party_id, amount_cents, received_at, method,
             reference_number, received_from_name, administrative_note,
-            status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?)""",
-        (payment_id, billing_party_id, amount_cents, received, method_val, ref, from_name, note, now, now),
+            status, source_type, source_session_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?, ?)""",
+        (payment_id, billing_party_id, amount_cents, received, method_val,
+         ref, from_name, note, source_type, source_session_id, now, now),
     )
-    _audit(conn, "payment", payment_id, "payment_created", {"amount_cents": amount_cents})
+    _audit(conn, "payment", payment_id, "payment_created", {
+        "amount_cents": amount_cents,
+        "source_type": source_type,
+    })
     conn.commit()
     row = conn.execute("SELECT * FROM payments WHERE payment_id = ?", (payment_id,)).fetchone()
     return dict(row)
