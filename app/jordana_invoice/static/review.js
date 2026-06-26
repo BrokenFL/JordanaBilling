@@ -1,5 +1,6 @@
 let overlayReturnFocus = null;
 let approvalInProgress = false;
+let duplicateInProgress = false;
 
 const state = {
   items: [],
@@ -320,7 +321,7 @@ function renderInspector(data) {
       ${!isSession ? '<button class="approve" id="sendToReviewBtn">Send to Review</button>' : ""}
       <button id="saveNextBtn" class="save">Save and next</button>
       <button id="personalBtn">Mark Personal/Admin</button>
-      <button id="duplicateBtn">Mark Duplicate</button>
+      <button id="duplicateBtn">Confirm Duplicate & Next</button>
       <button class="danger" id="excludeBtn">Exclude</button>
     </div>
   `;
@@ -340,7 +341,7 @@ function wireInspector() {
   if ($("saveSessionBtn")) $("saveSessionBtn").onclick = saveSessionSection;
   if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipEditor;
   if ($("personalBtn")) $("personalBtn").onclick = () => mark("personal");
-  if ($("duplicateBtn")) $("duplicateBtn").onclick = () => mark("duplicate");
+  if ($("duplicateBtn")) $("duplicateBtn").onclick = confirmDuplicateAndNext;
   if ($("excludeBtn")) $("excludeBtn").onclick = () => mark("nonbillable");
   if ($("sendToReviewBtn")) $("sendToReviewBtn").onclick = sendToReview;
   if ($("prevSessionBtn")) $("prevSessionBtn").onclick = goToPreviousSession;
@@ -882,6 +883,37 @@ async function resolveTypedSelections() {
 async function mark(classification) {
   await api(`/api/review/candidates/${state.selected}/mark`, { method: "POST", body: JSON.stringify({ classification, reason: classification }) });
   await loadList();
+}
+
+async function confirmDuplicateAndNext() {
+  if (duplicateInProgress) return;
+  duplicateInProgress = true;
+  const dupBtn = $("duplicateBtn");
+  if (dupBtn) dupBtn.disabled = true;
+  try {
+    await api(`/api/review/candidates/${state.selected}/mark`, {
+      method: "POST",
+      body: JSON.stringify({ classification: "duplicate", reason: "duplicate" })
+    });
+    state.dirty.clear();
+    await loadList();
+    closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });
+    const items = state.items;
+    if (items.length) {
+      selectCandidate(items[0].candidate_id);
+    } else {
+      const firstReviewBtn = document.querySelector("#candidateRows .review-btn");
+      if (firstReviewBtn) firstReviewBtn.focus();
+      else $("searchBox")?.focus();
+    }
+    showReviewSuccess("Duplicate resolved");
+    duplicateInProgress = false;
+  } catch (error) {
+    duplicateInProgress = false;
+    const btn = $("duplicateBtn");
+    if (btn && document.body.contains(btn)) btn.disabled = false;
+    alert(error.message || "Could not mark as duplicate. Please try again.");
+  }
 }
 
 async function sendToReview() {
@@ -3707,16 +3739,6 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     } catch (_) { /* inactive or missing — no suggestion */ }
   }
 
-  function preselectParticipants() {
-    if (!fromReview) return;
-    const confirmed = ctxParticipants.filter(p => p.person_id);
-    for (const p of confirmed) {
-      if (!coveredClients.some(c => c.person_id === p.person_id)) {
-        coveredClients.push({ person_id: p.person_id, display_name: p.display_name || "" });
-      }
-    }
-  }
-
   const hasChanges = () => payerType || payerPerson || payerOrg || coveredClients.length > 0;
 
   function doCancel() {
@@ -3840,11 +3862,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       if (type !== "organization") payerOrg = null;
       if (oldType === "client" && type === "person") payerPerson = null;
       if (oldType === "person" && type === "client") payerPerson = null;
-      if (type === "client" && payerPerson) {
-        if (!coveredClients.some(c => c.person_id === payerPerson.person_id)) {
-          coveredClients.unshift({ person_id: payerPerson.person_id, display_name: payerPerson.display_name });
-        }
-      }
+      coveredClients = [];
     }
     renderStep1();
   }
@@ -3939,11 +3957,6 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       const person = rows.find(r => r.person_id === id);
       if (!person) return;
       payerPerson = person;
-      if (payerType === "client") {
-        if (!coveredClients.some(c => c.person_id === person.person_id)) {
-          coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
-        }
-      }
       showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, payerType);
     } else {
       const org = rows.find(r => r.billing_party_id === id);
@@ -4009,23 +4022,18 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
   }
 
   function renderCoveredResults(container, rows, selectedIds) {
-    if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>'; return; }
-    container.innerHTML = rows.map(row => {
-      const isSelected = selectedIds.has(row.person_id);
-      return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
+    const available = rows.filter(row => !selectedIds.has(row.person_id));
+    if (!available.length) { container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>'; return; }
+    container.innerHTML = available.map(row => {
+      return `<div class="modal-result-row" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
         <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
-        ${isSelected ? '<span class="help already-included-label">Click to remove</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+        ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
       </div>`;
     }).join("");
     container.querySelectorAll(".modal-result-row").forEach(el => {
       const pid = el.dataset.personId;
-      if (selectedIds.has(pid)) {
-        el.addEventListener("click", () => removeCoveredClient(pid));
-        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
-      } else {
-        el.addEventListener("click", () => addCoveredClient(pid, rows));
-        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
-      }
+      el.addEventListener("click", () => addCoveredClient(pid, available));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
     });
   }
 
@@ -4207,9 +4215,6 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     } else {
       if (formPayerType === "client" && payerType === "client") {
         payerPerson = person;
-        if (!coveredClients.some(c => c.person_id === person.person_id)) {
-          coveredClients.unshift({ person_id: person.person_id, display_name: person.display_name });
-        }
         renderStep1();
         showPayerSearch();
         showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "client");
@@ -4221,9 +4226,6 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
         showPayerSelected(document.getElementById("wizardPayerSelected"), person.display_name, "person");
         updateContinueDisabled();
       } else {
-        if (!coveredClients.some(c => c.person_id === person.person_id)) {
-          coveredClients.push({ person_id: person.person_id, display_name: person.display_name });
-        }
         renderStep1();
         showPayerSearch();
         if (payerPerson) {
@@ -4590,7 +4592,6 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
 
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) doCancel(); });
   document.addEventListener("keydown", billingModalTrapKeydown);
-  preselectParticipants();
   (async () => {
     await suggestPayerFromContext();
     renderStep();

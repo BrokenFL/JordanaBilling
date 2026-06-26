@@ -336,12 +336,13 @@ class TestRound3BWizardBugFix(unittest.TestCase):
         self.assertIn("else", func)
         self.assertIn("coveredClients.push", func)
 
-    def test_step2_covered_results_are_clickable_to_remove(self):
+    def test_step2_covered_results_omit_selected(self):
         start = self.js.index("function renderCoveredResults")
         end = self.js.index("function addCoveredClient", start)
         func = self.js[start:end]
-        self.assertIn("removeCoveredClient", func)
-        self.assertIn("Click to remove", func)
+        self.assertIn("!selectedIds.has(row.person_id)", func)
+        self.assertNotIn("Click to remove", func)
+        self.assertNotIn("removeCoveredClient", func)
         self.assertNotIn('tabindex="-1"', func)
 
     def test_wizard_no_alert_in_handlePersonCreated(self):

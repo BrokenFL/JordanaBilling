@@ -72,15 +72,14 @@ class TestRound2E1StaticJs(unittest.TestCase):
         self.assertIn("fromReview", self.js)
         self.assertIn("validReturnContext(returnContext)", self.js)
 
-    def test_participant_preselection(self):
-        """2. Confirmed participant IDs are preselected under Pays for."""
-        self.assertIn("preselectParticipants", self.js)
+    def test_no_participant_preselection(self):
+        """2. Confirmed participant IDs are NOT auto-preselected under Pays for."""
+        self.assertNotIn("preselectParticipants", self.js)
         self.assertIn("ctxParticipants", self.js)
-        self.assertIn("coveredClients.push", self.js)
 
     def test_unresolved_names_not_converted(self):
         """3. Unresolved participant names are not silently converted into people."""
-        self.assertIn("ctxParticipants.filter(p => p.person_id)", self.js)
+        self.assertNotIn("ctxParticipants.filter(p => p.person_id)", self.js)
 
     def test_payer_suggestion_client_for_participant(self):
         """4. Person billing party suggests A client when that person participates."""

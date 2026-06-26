@@ -166,6 +166,10 @@ The review list is full-width with columns: Status, Date, Time, Clients, Calenda
 
 When Jordana clicks **Approve Session**, the overlay closes automatically on success. The candidate is removed from the review list, focus returns to the next review button (or the search box), and a success banner appears briefly. The approve button is disabled during the API request to prevent double-submission. If approval fails, the button is re-enabled and a sanitized error message is shown. Invoice staging warnings (if any) are included in the success banner.
 
+### Overlay Behavior on Duplicate Resolution
+
+When Jordana clicks **Confirm Duplicate & Next**, the overlay closes automatically on success. The candidate is marked as `duplicate` and removed from the review list. The next unresolved candidate opens in the overlay, or if none remain, focus returns to the first review button (or the search box). A "Duplicate resolved" success banner appears briefly. The button is disabled during the API request to prevent double-submission. If the request fails, the overlay stays open, the button is re-enabled, and a sanitized error message is shown. No partial state mutation occurs on failure.
+
 ### Overlay Behavior on Billing Relationship Navigation
 
 When Jordana clicks **Change payer or shared billing** or opens a billing relationship record from the overlay, the review overlay closes before navigation. If there are unsaved changes, Jordana is prompted to confirm closing. The return context (candidate ID, session ID, account ID, billing party ID) is preserved so Jordana can return to the same review candidate after editing the billing relationship.

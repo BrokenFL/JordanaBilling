@@ -87,9 +87,9 @@ class TestWizardStaticJs(unittest.TestCase):
         """5. Organization search uses /api/organization-billing-parties."""
         self.assertIn("/api/organization-billing-parties?q=", self.js)
 
-    def test_client_payer_preselected(self):
-        """6. Client payer is preselected under Pays for."""
-        self.assertIn('coveredClients.unshift({ person_id: person.person_id', self.js)
+    def test_client_payer_not_auto_added_to_covered(self):
+        """6. Client payer is NOT automatically added to covered clients."""
+        self.assertNotIn('coveredClients.unshift({ person_id: person.person_id', self.js)
 
     def test_person_payer_not_auto_selected(self):
         """7. Person payer does not auto-select under Pays for."""

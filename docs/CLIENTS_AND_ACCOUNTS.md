@@ -369,13 +369,12 @@ All active people appear in client/person search because the current schema does
 
 **Step 2 — Who are they paying for?**
 
-Searchable multi-select of existing active people via `/api/people`. Selected clients appear as removable chips. At least one selection is required.
+Searchable multi-select of existing active people via `/api/people`. Selected clients appear as removable chips. At least one selection is required. Selected clients are omitted from search results (not shown as actionable rows); removing a chip restores that client to search.
 
 Defaults:
-- Client payer → client is preselected under Pays for
-- Person payer → no automatic preselection
-- Organization payer → no automatic preselection
-- If return context contains confirmed Session Review participants, those participants are preselected
+- No automatic preselection for any payer type (client, person, or organization)
+- Session Review participants are not auto-preselected; they remain selectable via search
+- Changing payer type clears all covered-client selections to prevent stale state
 - Navigating Back and Forward preserves existing selections
 
 **Step 3 — Review and save**
@@ -483,7 +482,7 @@ After successful creation or explicit selection of an existing duplicate:
 - Enables Continue
 
 For "A client":
-- The newly created client is preselected under Pays for when Step 2 is reached
+- The newly created client is NOT automatically added under Pays for; the user must explicitly select covered clients in Step 2
 
 For "Another person":
 - The newly created person is NOT automatically added under Pays for
@@ -612,7 +611,7 @@ Organizations are stored as `billing_parties` rows with `billing_party_type = "o
 
 ### Round 2E1: Session Review Integration
 
-The billing relationship wizard now integrates with Session Review. When launched from a review candidate, the wizard preselects participants, suggests the current payer, creates or reuses the billing relationship, attaches it to the session, and returns to the same candidate — all without approving the session.
+The billing relationship wizard now integrates with Session Review. When launched from a review candidate, the wizard suggests the current payer, creates or reuses the billing relationship, attaches it to the session, and returns to the same candidate — all without approving the session.
 
 #### Launching from Session Review
 
@@ -645,16 +644,16 @@ When launched from Session Review, the wizard suggests the current effective inv
 
 The suggestion is shown as selected, but Jordana can change it. No new payer record is created from a suggestion. If the referenced record is inactive or missing, no suggestion is shown.
 
-#### Step 2: Participant Preselection
+#### Step 2: Covered Client Selection
 
 When the return context contains confirmed session participants:
 
-- All confirmed participant person IDs are preselected under Pays for
+- No participants are auto-preselected under Pays for
+- Session participants remain selectable via the search input
 - Unresolved participant names are not silently converted into people
-- Selected participants are preserved when moving Back and Forward
-- Jordana can add or remove covered clients
-
-If a client payer is selected, the client payer is preselected under Pays for (existing rule), but other session participants are not erased.
+- Jordana must explicitly select which clients the payer covers
+- Changing payer type clears all covered-client selections to prevent stale state
+- Selected clients are omitted from search results; removing a chip restores the client to search
 
 #### Saving and Attaching
 

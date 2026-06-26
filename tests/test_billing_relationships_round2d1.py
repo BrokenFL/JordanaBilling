@@ -91,9 +91,9 @@ class TestCreatePersonStaticJs(unittest.TestCase):
         self.assertIn("handlePersonCreated", self.js)
         self.assertIn("payerPerson = person", self.js)
 
-    def test_client_preselected_under_pays_for(self):
-        """9. Newly created client is preselected under Pays for."""
-        self.assertIn('coveredClients.unshift({ person_id: person.person_id', self.js)
+    def test_client_not_auto_added_under_pays_for(self):
+        """9. Newly created client payer is NOT automatically added under Pays for."""
+        self.assertNotIn('coveredClients.unshift({ person_id: person.person_id', self.js)
 
     def test_person_not_auto_added_to_pays_for(self):
         """11. Another-person payer is not automatically added under Pays for."""

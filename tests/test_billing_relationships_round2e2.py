@@ -145,19 +145,17 @@ class TestRound2E2Behavior(unittest.TestCase):
         self.assertIn('type !== "organization"', select_type)
         self.assertIn('payerOrg = null', select_type)
 
-    # 9. Confirmed participants remain preselected
-    def test_preselect_participants_filters_person_id(self):
-        """preselectParticipants only adds participants with person_id."""
+    # 9. Confirmed participants are NOT auto-preselected
+    def test_no_preselect_participants(self):
+        """preselectParticipants function has been removed."""
         preselect = self._extract_function("preselectParticipants")
-        self.assertIsNotNone(preselect)
-        self.assertIn("p.person_id", preselect)
-        self.assertIn("filter", preselect)
+        self.assertIsNone(preselect)
 
     # 10. Unresolved names are excluded
     def test_unresolved_names_excluded(self):
-        """preselectParticipants filters on person_id, excluding unresolved names."""
+        """No preselectParticipants function exists to filter on person_id."""
         preselect = self._extract_function("preselectParticipants")
-        self.assertIn("filter(p => p.person_id)", preselect)
+        self.assertIsNone(preselect)
 
     # 11. Child forms preserve parent state
     def test_child_forms_preserve_state(self):
@@ -279,26 +277,27 @@ class TestRound2E2Behavior(unittest.TestCase):
         self.assertIn("Selected client", show_selected)
         self.assertIn("Selected organization", show_selected)
 
-    # Additional: selectPayerType doesn't erase coveredClients
-    def test_select_payer_type_preserves_covered(self):
-        """selectPayerType doesn't set coveredClients = [] for any type."""
+    # Additional: selectPayerType clears coveredClients on type change
+    def test_select_payer_type_clears_covered(self):
+        """selectPayerType clears coveredClients when payer type changes."""
         select_type = self._extract_function("selectPayerType")
-        self.assertNotIn("coveredClients = []", select_type)
+        self.assertIn("coveredClients = []", select_type)
 
-    # Additional: selectPayer doesn't replace coveredClients
-    def test_select_payer_adds_not_replaces(self):
-        """selectPayer adds to coveredClients instead of replacing."""
+    # Additional: selectPayer does not add to coveredClients
+    def test_select_payer_does_not_add_covered(self):
+        """selectPayer does not add to coveredClients."""
         select_payer = self._extract_function("selectPayer")
         self.assertIsNotNone(select_payer)
         self.assertNotIn("coveredClients = [{", select_payer)
-        self.assertIn("coveredClients.unshift", select_payer)
+        self.assertNotIn("coveredClients.unshift", select_payer)
+        self.assertNotIn("coveredClients.push", select_payer)
 
-    # Additional: handlePersonCreated adds to coveredClients
-    def test_handle_person_created_adds_not_replaces(self):
-        """handlePersonCreated adds to coveredClients instead of replacing."""
+    # Additional: handlePersonCreated does not auto-add for step1
+    def test_handle_person_created_no_auto_add_step1(self):
+        """handlePersonCreated does not add to coveredClients for step1 (non-isStep2)."""
         handle_person = self._extract_function("handlePersonCreated")
         self.assertNotIn("coveredClients = [{", handle_person)
-        self.assertIn("coveredClients.unshift", handle_person)
+        self.assertNotIn("coveredClients.unshift", handle_person)
 
     # Additional: suggestPayerFromContext handles inactive payer gracefully
     def test_suggest_payer_inactive_handling(self):
