@@ -191,7 +191,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 
 ## Acceptance Test
 
-> **Never run `rm -f data/jordana_invoice.sqlite3` before this step.**
+> **Never delete or overwrite the operational database before this step.**
 > Use `scripts/run_acceptance_test.sh` which operates on a temporary database
 > and never touches the live operational database.
 

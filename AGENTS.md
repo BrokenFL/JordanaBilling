@@ -40,8 +40,8 @@ even during demo development.  Destroying them requires manual re-entry.
 
 **These actions are permanently prohibited without explicit human confirmation:**
 
-- `rm -f data/jordana_invoice.sqlite3` or any variant
-- `import-csv --db data/jordana_invoice.sqlite3` without `--allow-operational-db`
+- Deleting, overwriting, truncating, or recreating the operational database file by any means
+- `import-csv` against the operational database without `--allow-operational-db`
 - Any script or CLI invocation that deletes, truncates, recreates, or replaces the file
 - Any migration that is not additive (drop-column, drop-table, truncate) on the live path
 
@@ -57,6 +57,7 @@ database is never touched.
 
 If you ever need to import into the live database (e.g. initial population on a
 fresh install), pass `--allow-operational-db` explicitly and document why.
+A verified SQLite backup is created automatically before any mutation.
 
 ## Start Here
 

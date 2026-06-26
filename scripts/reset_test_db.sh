@@ -2,22 +2,47 @@
 #
 # TEST-ONLY database reset.
 # Requires explicit confirmation, backs up first, and refuses to
-# touch probable production data.
+# touch the operational database.
 #
 # Usage:
-#   scripts/reset_test_db.sh                    # resets data/jordana_invoice.sqlite3
 #   scripts/reset_test_db.sh /path/to/test.db   # resets a specific test database
+#
+# This script REFUSES to operate on the configured operational database.
+# Use scripts/backup_db.sh and manual SQL for operational database maintenance.
 #
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-DB_PATH="${1:-$PROJECT_DIR/data/jordana_invoice.sqlite3}"
+if [[ $# -lt 1 ]]; then
+  echo "Usage: scripts/reset_test_db.sh /path/to/test.db" >&2
+  echo "This script requires an explicit database path and refuses to" >&2
+  echo "operate on the configured operational database." >&2
+  exit 1
+fi
 
-# --- Refuse probable production data ---
-# Production databases typically have approved sessions, invoices, or people.
-# A truly empty or test-only database is safe to reset.
+DB_PATH="$1"
+
+# --- Refuse the operational database ---
+OPERATIONAL_DB="$(PYTHONPATH=app python3 -c "
+import os, sys
+sys.path.insert(0, 'app')
+from jordana_invoice.db import get_configured_operational_db_path
+print(get_configured_operational_db_path().resolve())
+" 2>/dev/null || echo "")"
+
+if [[ -n "$OPERATIONAL_DB" ]]; then
+  CANDIDATE="$(python3 -c "
+from pathlib import Path
+print(Path('$DB_PATH').resolve())
+" 2>/dev/null || echo "")"
+  if [[ "$CANDIDATE" == "$OPERATIONAL_DB" ]]; then
+    echo "REFUSED: '$DB_PATH' is the configured operational database." >&2
+    echo "This script is test-only and will not reset the operational database." >&2
+    exit 1
+  fi
+fi
 
 if [[ ! -f "$DB_PATH" ]]; then
   echo "Database does not exist: $DB_PATH"
