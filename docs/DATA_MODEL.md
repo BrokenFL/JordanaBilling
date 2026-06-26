@@ -292,10 +292,24 @@ The module `payment_services.py` provides backend functions for the payment ledg
 
 **Finalized-invoice payment behavior**: Payments may be applied to finalized invoice lines. The allocation does not alter the invoice line, invoice totals, snapshots, or PDF. Payment settlement may change after invoice finalization.
 
+### Dry-Run Backfill Analyzer (Read-Only)
+
+`dry_run_paid_at_session_backfill(conn)` analyzes sessions marked `paid_at_session` and returns a sanitized aggregate report. The function performs **no writes** — no INSERT, UPDATE, DELETE, commit, audit, or migration. It classifies every `paid_at_session` session into exactly one category using this decision order:
+
+1. **already_backfilled** — a payment with `source_type = 'paid_at_session_backfill'` exists for the session (regardless of payment or allocation status)
+2. **not_approved** — `review_status != 'approved'`
+3. **missing_billing_party** — `billing_party_id` is NULL
+4. **missing_or_invalid_amount** — neither `rate_cents_snapshot` nor `approved_rate_cents` is a positive integer
+5. **missing_or_invalid_date** — neither `session_date` nor `start_at` can be parsed
+6. **existing_manual_allocation_conflict** — an active allocation from a manual payment exists for the session
+7. **eligible** — passes all checks
+
+Amount priority: `rate_cents_snapshot` (if positive) preferred over `approved_rate_cents`. Rate disagreements are counted separately. Date priority: `session_date` preferred over `start_at`. Manual allocation conflicts are not modified — the analyzer only reports them. The report contains only aggregate counts and totals — no session IDs, payment IDs, names, or private text.
+
 ### Still Not Implemented
 
-- No dry-run backfill command or apply command for paid-at-session sessions.
-- No historical payment records have been created — provenance schema and service validation exist but the backfill has not been run.
+- No apply mode or CLI command for the backfill — only the read-only dry-run analyzer exists.
+- No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
 - No UI, API routes, reports, or PDF changes.

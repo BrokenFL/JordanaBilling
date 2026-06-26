@@ -16,7 +16,7 @@ import sqlite3
 from typing import Any
 
 from .db import DatabaseBusyError
-from .util import json_dumps, new_id, now_iso, text
+from .util import json_dumps, new_id, normalize_payment_status, now_iso, text
 
 
 # ---------------------------------------------------------------------------
@@ -420,4 +420,123 @@ def get_payment_detail(conn: sqlite3.Connection, payment_id: str) -> dict[str, A
         "allocations": [dict(a) for a in allocations],
         "allocated_cents": allocated,
         "unapplied_cents": payment["amount_cents"] - allocated if payment["status"] == "posted" else 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dry-run backfill analyzer (read-only)
+# ---------------------------------------------------------------------------
+
+def dry_run_paid_at_session_backfill(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Analyze paid_at_session sessions and return a sanitized aggregate report.
+
+    This function is strictly read-only.  It performs no INSERT, UPDATE,
+    DELETE, commit, audit, or migration.  It classifies every
+    ``paid_at_session`` session into exactly one category and returns
+    aggregate counts and a total proposed amount.
+    """
+    sessions = conn.execute(
+        "SELECT id, billing_party_id, review_status, rate_cents_snapshot, "
+        "approved_rate_cents, session_date, start_at "
+        "FROM sessions WHERE payment_status = 'paid_at_session'"
+    ).fetchall()
+
+    sessions_considered = len(sessions)
+    eligible = 0
+    already_backfilled = 0
+    not_approved = 0
+    missing_billing_party = 0
+    missing_or_invalid_amount = 0
+    missing_or_invalid_date = 0
+    existing_manual_allocation_conflict = 0
+    total_amount_proposed_cents = 0
+    rate_disagreement_count = 0
+    existing_reversed_manual_allocation_count = 0
+
+    for s in sessions:
+        # 1. already backfilled
+        backfill_payment = conn.execute(
+            "SELECT 1 FROM payments WHERE source_type = 'paid_at_session_backfill' "
+            "AND source_session_id = ?",
+            (s["id"],),
+        ).fetchone()
+        if backfill_payment is not None:
+            already_backfilled += 1
+            continue
+
+        # 2. not approved
+        if s["review_status"] != "approved":
+            not_approved += 1
+            continue
+
+        # 3. missing Bill To party
+        if not s["billing_party_id"]:
+            missing_billing_party += 1
+            continue
+
+        # 4. missing or invalid amount
+        snapshot = s["rate_cents_snapshot"]
+        approved = s["approved_rate_cents"]
+        snapshot_valid = snapshot is not None and isinstance(snapshot, int) and snapshot > 0
+        approved_valid = approved is not None and isinstance(approved, int) and approved > 0
+        if not snapshot_valid and not approved_valid:
+            missing_or_invalid_amount += 1
+            continue
+        if snapshot_valid and approved_valid and snapshot != approved:
+            rate_disagreement_count += 1
+        amount = snapshot if snapshot_valid else approved
+
+        # 5. missing or invalid date
+        session_date = s["session_date"]
+        start_at = s["start_at"]
+        date_valid = False
+        if session_date and text(session_date):
+            date_valid = True
+        elif start_at and text(start_at):
+            date_valid = True
+        if not date_valid:
+            missing_or_invalid_date += 1
+            continue
+
+        # 6. existing manual allocation conflict
+        active_manual = conn.execute(
+            "SELECT 1 FROM payment_allocations pa "
+            "JOIN payments p ON p.payment_id = pa.payment_id "
+            "WHERE pa.session_id = ? AND pa.status = 'active' "
+            "AND p.source_type = 'manual'",
+            (s["id"],),
+        ).fetchone()
+        if active_manual is not None:
+            existing_manual_allocation_conflict += 1
+            continue
+
+        # Check for reversed manual allocations (informational only)
+        reversed_manual = conn.execute(
+            "SELECT 1 FROM payment_allocations pa "
+            "JOIN payments p ON p.payment_id = pa.payment_id "
+            "WHERE pa.session_id = ? AND pa.status = 'reversed' "
+            "AND p.source_type = 'manual'",
+            (s["id"],),
+        ).fetchone()
+        if reversed_manual is not None:
+            existing_reversed_manual_allocation_count += 1
+
+        # 7. eligible
+        eligible += 1
+        total_amount_proposed_cents += amount
+
+    return {
+        "sessions_considered": sessions_considered,
+        "sessions_eligible": eligible,
+        "sessions_already_backfilled": already_backfilled,
+        "sessions_skipped": {
+            "not_approved": not_approved,
+            "missing_billing_party": missing_billing_party,
+            "missing_or_invalid_amount": missing_or_invalid_amount,
+            "missing_or_invalid_date": missing_or_invalid_date,
+            "existing_manual_allocation_conflict": existing_manual_allocation_conflict,
+        },
+        "total_amount_proposed_cents": total_amount_proposed_cents,
+        "rate_disagreement_count": rate_disagreement_count,
+        "existing_reversed_manual_allocation_count": existing_reversed_manual_allocation_count,
     }

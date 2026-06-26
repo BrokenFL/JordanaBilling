@@ -157,13 +157,14 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `reverse_allocation` — Sets status to `reversed`, preserves the row. Rejects double reversal.
 - `void_payment` — Requires all allocations reversed first. Sets status to `void`. Rejects double void.
 - Read helpers: `payment_allocated_amount`, `payment_unapplied_amount`, `session_paid_amount`, `invoice_line_paid_amount`, `get_payment_detail`.
+- `dry_run_paid_at_session_backfill` — Read-only analyzer that classifies `paid_at_session` sessions into eligibility categories and returns a sanitized aggregate report. Performs no writes. Classification order: already backfilled, not approved, missing Bill To, missing/invalid amount, missing/invalid date, existing manual allocation conflict, eligible. Amount priority: `rate_cents_snapshot` then `approved_rate_cents`. Date priority: `session_date` then `start_at`.
 
 All calculation helpers count only allocations where `payment.status = 'posted'` and `payment_allocation.status = 'active'`.
 
 ### What Is Not Implemented
 
-- No dry-run backfill command or apply command for paid-at-session sessions.
-- No historical payment records have been created — provenance schema and service validation exist but the backfill has not been run.
+- No apply mode or CLI command for the backfill — only the read-only dry-run analyzer exists.
+- No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
 - No API routes, UI, reports, or PDF changes.
