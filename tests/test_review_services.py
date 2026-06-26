@@ -1060,6 +1060,92 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
         self.assertEqual(setup[0]["billing_address_line_1"], "123 Main St")
         self.assertEqual(setup[0]["preferred_delivery_method"], "email")
 
+    def test_update_billing_relationship_propagates_to_non_approved_sessions(self):
+        from jordana_invoice.review_services import update_billing_relationship
+
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        account = create_account(self.conn, "Fred Household", "household")
+        old_payer = create_billing_party(self.conn, {"billing_name": "Old Payer", "billing_party_type": "person", "person_id": fred["person_id"]})
+        new_payer = create_billing_party(self.conn, {"billing_name": "New Payer", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+
+        save_interpretation(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [
+                    {"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True},
+                    {"person_id": bobsey["person_id"], "display_name": "Bobsey Smith"},
+                ],
+                "account_id": account["account_id"],
+                "billing_party_id": old_payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "unpaid",
+            },
+        )
+
+        candidate = get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(candidate["billing_party"]["billing_name"], "Old Payer")
+
+        update_billing_relationship(
+            self.conn,
+            account["account_id"],
+            {
+                "payer_kind": "person",
+                "payer_person_id": bobsey["person_id"],
+                "covered_client_ids": [fred["person_id"], bobsey["person_id"]],
+                "billing_delivery": {"billing_name": "New Payer"},
+            },
+        )
+
+        candidate = get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(candidate["billing_party"]["billing_name"], "New Payer")
+
+    def test_update_billing_relationship_does_not_modify_approved_sessions(self):
+        from jordana_invoice.review_services import update_billing_relationship
+
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        account = create_account(self.conn, "Fred Household", "household")
+        old_payer = create_billing_party(self.conn, {"billing_name": "Old Payer", "billing_party_type": "person", "person_id": fred["person_id"]})
+        new_payer = create_billing_party(self.conn, {"billing_name": "New Payer", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+
+        approve_candidate(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [
+                    {"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True},
+                    {"person_id": bobsey["person_id"], "display_name": "Bobsey Smith"},
+                ],
+                "account_id": account["account_id"],
+                "billing_party_id": old_payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "paid",
+            },
+        )
+
+        update_billing_relationship(
+            self.conn,
+            account["account_id"],
+            {
+                "payer_kind": "person",
+                "payer_person_id": bobsey["person_id"],
+                "covered_client_ids": [fred["person_id"], bobsey["person_id"]],
+                "billing_delivery": {"billing_name": "New Payer"},
+            },
+        )
+
+        candidate = get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(candidate["session"]["review_status"], "approved")
+        self.assertEqual(candidate["billing_party"]["billing_name"], "Old Payer")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -162,6 +162,18 @@ The routine inspector is now guided in this order, presented in a focused review
 
 The review list is full-width with columns: Status, Date, Time, Clients, Calendar, Duration, Rate, and a Review button. The side inspector has been replaced by the overlay, which supports keyboard navigation (Escape to close, Previous/Save and next/Approve), focus trap, and collapsed Source details.
 
+### Overlay Behavior on Approval
+
+When Jordana clicks **Approve Session**, the overlay closes automatically on success. The candidate is removed from the review list, focus returns to the next review button (or the search box), and a success banner appears briefly. The approve button is disabled during the API request to prevent double-submission. If approval fails, the button is re-enabled and a sanitized error message is shown. Invoice staging warnings (if any) are included in the success banner.
+
+### Overlay Behavior on Billing Relationship Navigation
+
+When Jordana clicks **Change payer or shared billing** or opens a billing relationship record from the overlay, the review overlay closes before navigation. If there are unsaved changes, Jordana is prompted to confirm closing. The return context (candidate ID, session ID, account ID, billing party ID) is preserved so Jordana can return to the same review candidate after editing the billing relationship.
+
+### Billing Relationship Updates and Session Propagation
+
+When a billing relationship's payer or covered clients are updated through the account record editor, the new default billing party is propagated to all non-approved sessions belonging to that account. Approved sessions are never modified — their billing party is frozen at approval time. When Jordana returns to the review candidate after saving a billing relationship, the candidate is refreshed server-side so the new billing party and rate suggestions are immediately available.
+
 Later steps stay locked until the earlier step is established. When the backend can already confirm a step from saved clients, saved payer setup, or an exact matching rate rule, the UI collapses that step into a compact confirmed summary until Jordana chooses Change.
 
 Confirm Client(s), Save Bill To, and Save Session remain independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, review status, and the separate review-authority score used for guided review.

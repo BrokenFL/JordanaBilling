@@ -383,7 +383,7 @@ class ReviewUiStaticTests(unittest.TestCase):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn("function openReviewOverlay()", js)
-        self.assertIn("function closeReviewOverlay()", js)
+        self.assertIn("function closeReviewOverlay(", js)
         self.assertIn("function overlayKeydownHandler", js)
         self.assertIn("function goToPreviousSession()", js)
         self.assertIn("function saveAndNext()", js)
@@ -1447,6 +1447,113 @@ class OrganizationPanelUiTests(unittest.TestCase):
         self.assertIn("data-open-person", org_js)
         self.assertIn("data-open-account", org_js)
         self.assertIn("openAccountRecord", org_js)
+
+
+class ReviewOverlayCloseTests(unittest.TestCase):
+    """Bug 1: closeReviewOverlay must return boolean and accept options."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+
+    def test_closeReviewOverlay_returns_boolean(self):
+        self.assertIn("function closeReviewOverlay({ clearCandidate = false, skipDirtyCheck = false } = {}) {", self.js)
+        self.assertIn("return true;", self.js)
+        self.assertIn("return false;", self.js)
+
+    def test_closeReviewOverlay_clearCandidate_option_clears_state(self):
+        self.assertIn("if (clearCandidate) {", self.js)
+        self.assertIn("state.selected = null;", self.js)
+        self.assertIn("state.detail = null;", self.js)
+        self.assertIn("state.participants = [];", self.js)
+        self.assertIn("state.account = null;", self.js)
+        self.assertIn("state.billingParty = null;", self.js)
+
+    def test_closeReviewOverlay_skipDirtyCheck_option_bypasses_prompt(self):
+        self.assertIn("if (!skipDirtyCheck && state.dirty.size > 0)", self.js)
+
+    def test_openBillingRelationshipEditor_closes_overlay_before_navigation(self):
+        start = self.js.index("function openBillingRelationshipEditor()")
+        end = self.js.index("function collectPayload", start)
+        section = self.js[start:end]
+        self.assertIn("closeReviewOverlay()", section)
+        self.assertIn("if (!closeReviewOverlay()) return;", section)
+
+    def test_openBillingRelationshipEditor_persists_return_context_after_close(self):
+        start = self.js.index("function openBillingRelationshipEditor()")
+        end = self.js.index("function collectPayload", start)
+        section = self.js[start:end]
+        close_idx = section.index("closeReviewOverlay()")
+        persist_idx = section.index("persistReturnContext")
+        self.assertLess(close_idx, persist_idx)
+
+
+class ReviewApprovalTests(unittest.TestCase):
+    """Bug 2: Approval must be single-submit, close overlay, restore focus, show success."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = self.js.index("async function save(approve)")
+        end = self.js.index("function collectSessionDraftValues", start)
+        self.save_fn = self.js[start:end]
+
+    def test_approval_has_single_submit_guard(self):
+        self.assertIn("approvalInProgress", self.js)
+        self.assertIn("if (approve && approvalInProgress) return;", self.save_fn)
+
+    def test_approval_disables_button_during_request(self):
+        self.assertIn("approvalInProgress = true;", self.save_fn)
+        self.assertIn('const approveBtn = $("approveBtn");', self.save_fn)
+        self.assertIn("approveBtn.disabled = true;", self.save_fn)
+
+    def test_approval_closes_overlay_on_success(self):
+        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
+
+    def test_approval_clears_candidate_state_on_success(self):
+        self.assertIn("clearCandidate: true", self.save_fn)
+
+    def test_approval_restores_focus_on_success(self):
+        self.assertIn('document.querySelector("#candidateRows .review-btn")', self.save_fn)
+        self.assertIn("firstReviewBtn.focus()", self.save_fn)
+        self.assertIn('$("searchBox")?.focus()', self.save_fn)
+
+    def test_approval_shows_success_banner(self):
+        self.assertIn("showReviewSuccess", self.save_fn)
+        self.assertIn("Session approved.", self.save_fn)
+
+    def test_approval_handles_staging_warnings(self):
+        self.assertIn("staging.status === \"warning\"", self.save_fn)
+        self.assertIn("staging.status === \"unavailable\"", self.save_fn)
+        self.assertIn("staging.status === \"error\"", self.save_fn)
+        self.assertIn("Invoice staging", self.save_fn)
+
+    def test_approval_reenables_button_on_error(self):
+        self.assertIn("approvalInProgress = false;", self.save_fn)
+        self.assertIn("approveBtn.disabled = false;", self.save_fn)
+
+    def test_approval_sanitizes_error_messages(self):
+        self.assertIn('msg.startsWith("Cannot approve")', self.save_fn)
+        self.assertIn("Could not approve session. Please check required fields and try again.", self.save_fn)
+
+    def test_success_banner_css_exists(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".review-success-banner", css)
+
+
+class ReviewBillingRelationshipReturnTests(unittest.TestCase):
+    """Bug 3: saveBillingRelationship must refresh candidate before returning to review."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = self.js.index("async function saveBillingRelationship(")
+        end = self.js.index("async function loadPeople()", start)
+        self.fn = self.js[start:end]
+
+    def test_saveBillingRelationship_calls_refresh_before_return(self):
+        self.assertIn("/api/review/candidates/", self.fn)
+        self.assertIn("/refresh", self.fn)
+        refresh_idx = self.fn.index("/refresh")
+        select_idx = self.fn.index("selectCandidate")
+        self.assertLess(refresh_idx, select_idx)
 
 
 if __name__ == "__main__":

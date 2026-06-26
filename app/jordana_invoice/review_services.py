@@ -2205,6 +2205,15 @@ def update_billing_relationship(
             (billing_party_id, now, account_id),
         )
 
+        conn.execute(
+            """
+            UPDATE sessions
+            SET billing_party_id = ?, updated_at = ?
+            WHERE account_id = ? AND review_status != 'approved'
+            """,
+            (billing_party_id, now, account_id),
+        )
+
         billing_delivery = payload.get("billing_delivery") or {}
         if billing_delivery:
             bp_update = {}

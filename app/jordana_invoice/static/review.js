@@ -1,4 +1,5 @@
 let overlayReturnFocus = null;
+let approvalInProgress = false;
 
 const state = {
   items: [],
@@ -683,6 +684,7 @@ function renderRelationshipEditor(data) {
 }
 
 function openBillingRelationshipEditor() {
+  if (!closeReviewOverlay()) return;
   const returnContext = persistReturnContext(buildReturnContext());
   if (!returnContext) {
     location.hash = "clients";
@@ -759,6 +761,12 @@ async function saveSessionSection() {
 }
 
 async function save(approve) {
+  if (approve && approvalInProgress) return;
+  if (approve) {
+    approvalInProgress = true;
+    const approveBtn = $("approveBtn");
+    if (approveBtn) approveBtn.disabled = true;
+  }
   await resolveTypedSelections();
   try {
     const updated = await api(`/api/review/candidates/${state.selected}/${approve ? "approve" : "save"}`, {
@@ -767,11 +775,39 @@ async function save(approve) {
     });
     state.detail = updated;
     state.editSteps = { clients: false, session: false };
-    if (approve) state.selected = null;
+    state.dirty.clear();
     await loadList();
-    if (!approve) renderInspector(updated);
+    if (approve) {
+      const staging = updated.invoice_staging;
+      closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });
+      const firstReviewBtn = document.querySelector("#candidateRows .review-btn");
+      if (firstReviewBtn) firstReviewBtn.focus();
+      else $("searchBox")?.focus();
+      let successMsg = "Session approved.";
+      if (staging) {
+        if (staging.status === "warning") successMsg = "Session approved. Invoice staging has warnings — review invoices when ready.";
+        else if (staging.status === "unavailable") successMsg = "Session approved. Invoice staging unavailable — sessions will stage later.";
+        else if (staging.status === "error") successMsg = "Session approved. Invoice staging encountered an error — sessions will stage later.";
+      }
+      showReviewSuccess(successMsg);
+      approvalInProgress = false;
+    } else {
+      renderInspector(updated);
+    }
   } catch (error) {
-    alert(error.message);
+    if (approve) {
+      approvalInProgress = false;
+      const approveBtn = $("approveBtn");
+      if (approveBtn && document.body.contains(approveBtn)) approveBtn.disabled = false;
+      const msg = error.message || "";
+      if (msg.startsWith("Cannot approve")) {
+        alert(msg);
+      } else {
+        alert("Could not approve session. Please check required fields and try again.");
+      }
+    } else {
+      alert(error.message);
+    }
   }
 }
 
@@ -1063,19 +1099,39 @@ function openReviewOverlay() {
   });
 }
 
-function closeReviewOverlay() {
+function closeReviewOverlay({ clearCandidate = false, skipDirtyCheck = false } = {}) {
   const overlay = $("reviewOverlay");
-  if (!overlay) return;
-  if (state.dirty.size > 0) {
-    if (!confirm("You have unsaved changes. Close anyway?")) return;
+  if (!overlay) return true;
+  if (!skipDirtyCheck && state.dirty.size > 0) {
+    if (!confirm("You have unsaved changes. Close anyway?")) return false;
     state.dirty.clear();
   }
   overlay.hidden = true;
   document.removeEventListener("keydown", overlayKeydownHandler);
+  if (clearCandidate) {
+    state.selected = null;
+    state.detail = null;
+    state.participants = [];
+    state.account = null;
+    state.billingParty = null;
+    state.editSteps = { clients: false, session: false };
+  }
   if (overlayReturnFocus && document.body.contains(overlayReturnFocus)) {
     overlayReturnFocus.focus();
     overlayReturnFocus = null;
   }
+  return true;
+}
+
+function showReviewSuccess(message) {
+  const workbench = $("reviewWorkbench");
+  if (!workbench) return;
+  const banner = document.createElement("div");
+  banner.className = "review-success-banner";
+  banner.textContent = message;
+  banner.setAttribute("role", "status");
+  workbench.prepend(banner);
+  setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 5000);
 }
 
 function overlayKeydownHandler(e) {
@@ -2955,6 +3011,9 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
     if (validReturnContext(returnContext)) {
       clearReturnContext();
       location.hash = "";
+      try {
+        await api(`/api/review/candidates/${returnContext.candidateId}/refresh`, { method: "POST", body: "{}" });
+      } catch (_) {}
       await loadList();
       await showReviewWorkbench();
       await selectCandidate(returnContext.candidateId);
