@@ -354,11 +354,8 @@ def make_handler(database_path: str):
                 self.send_error_response(error, default_status=500)
 
         def do_POST(self) -> None:
-            parsed = urlparse(self.path)
-            try:
-                data = self.read_json()
-            except (json.JSONDecodeError, ValueError):
-                self.send_json({"ok": False, "error": "Malformed JSON in request body."}, status=400)
+            parsed, data = self.read_mutation_json_request()
+            if parsed is None:
                 return
             try:
                 if parsed.path == "/api/people":
@@ -604,6 +601,21 @@ def make_handler(database_path: str):
             except Exception as error:
                 self.send_error_response(error, default_status=400)
 
+        def do_PUT(self) -> None:
+            self.handle_unsupported_mutation_method()
+
+        def do_PATCH(self) -> None:
+            self.handle_unsupported_mutation_method()
+
+        def do_DELETE(self) -> None:
+            self.handle_unsupported_mutation_method()
+
+        def handle_unsupported_mutation_method(self) -> None:
+            parsed, _data = self.read_mutation_json_request()
+            if parsed is None:
+                return
+            self.send_error(404)
+
         def conn(self):
             if not hasattr(self, "_database_connection"):
                 self._database_connection = connect(database_path)
@@ -622,6 +634,28 @@ def make_handler(database_path: str):
             if not length:
                 return {}
             return json.loads(self.rfile.read(length).decode("utf-8"))
+
+        def read_mutation_json_request(self) -> tuple[object | None, dict]:
+            parsed = urlparse(self.path)
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 0 and not self.has_json_content_type():
+                self.send_json(
+                    {"ok": False, "error": "Content-Type must be application/json."},
+                    status=415,
+                )
+                return None, {}
+            try:
+                return parsed, self.read_json()
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                self.send_json({"ok": False, "error": "Malformed JSON in request body."}, status=400)
+                return None, {}
+
+        def has_json_content_type(self) -> bool:
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type:
+                return False
+            media_type = content_type.split(";", 1)[0].strip().lower()
+            return media_type == "application/json"
 
         def send_json(self, payload: object, status: int = 200) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

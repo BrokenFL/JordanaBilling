@@ -20,7 +20,10 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
     def _handler(self, path, body=b"{}"):
         handler = object.__new__(self.handler_cls)
         handler.path = path
-        handler.headers = {"Content-Length": str(len(body))}
+        handler.headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/json",
+        }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
         handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
@@ -80,7 +83,10 @@ class ReviewServerSanitizationTests(unittest.TestCase):
     def _handler(self, path, body=b"{}"):
         handler = object.__new__(self.handler_cls)
         handler.path = path
-        handler.headers = {"Content-Length": str(len(body))}
+        handler.headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/json",
+        }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
         handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
@@ -194,6 +200,134 @@ class ReviewServerSanitizationTests(unittest.TestCase):
         
         self.assertEqual(captured.get("status"), 503)
         self.assertEqual(captured.get("payload"), {"ok": False, "error": "Database is busy, please try again."})
+
+
+class ReviewServerJsonRequestParsingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path, body=b"{}", content_type="application/json"):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        headers = {"Content-Length": str(len(body))}
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {}
+
+        def mock_send_json(payload, status=200):
+            captured["payload"] = payload
+            captured["status"] = status
+
+        handler.send_json = mock_send_json
+        handler.finish = lambda: None
+        return handler, captured
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_valid_json_content_type_is_accepted(self, mock_create_person):
+        mock_create_person.return_value = {"ok": True, "person_id": "p1"}
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True, "person_id": "p1"})
+        self.assertEqual(mock_create_person.call_args.args[1]["display_name"], "Test")
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_json_content_type_with_charset_is_accepted(self, mock_create_person):
+        mock_create_person.return_value = {"ok": True, "person_id": "p1"}
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            content_type="application/json; charset=utf-8",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True, "person_id": "p1"})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_json_content_type_is_case_insensitive(self, mock_create_person):
+        mock_create_person.return_value = {"ok": True, "person_id": "p1"}
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            content_type="Application/Json",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True, "person_id": "p1"})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_missing_content_type_returns_415(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            content_type=None,
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 415)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Content-Type must be application/json."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_unsupported_content_type_returns_415(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            content_type="text/plain",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 415)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Content-Type must be application/json."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_lookalike_json_media_type_returns_415(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            content_type="application/json-patch+json",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 415)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Content-Type must be application/json."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_malformed_json_returns_400(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=b"{not valid json",
+            content_type="application/json",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Malformed JSON in request body."})
+        mock_create_person.assert_not_called()
 
 
 

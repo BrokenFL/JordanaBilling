@@ -54,7 +54,10 @@ class StagingApiTests(unittest.TestCase):
     def _handler(self, path, body=b"{}"):
         handler = object.__new__(self.handler_cls)
         handler.path = path
-        handler.headers = {"Content-Length": str(len(body))}
+        handler.headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/json",
+        }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
         handler._database_connection = self.conn
