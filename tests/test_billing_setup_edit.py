@@ -488,7 +488,7 @@ class BillingSetupAPITests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = str(Path(self.temp.name) / "api.sqlite3")
-        self.handler_cls = make_handler(self.db_path)
+        self.handler_cls = make_handler(self.db_path, write_token="test-write-token")
         self.conn = connect(Path(self.temp.name) / "api.sqlite3")
         init_db(self.conn)
 
@@ -499,7 +499,11 @@ class BillingSetupAPITests(unittest.TestCase):
     def _post_handler(self, path, body):
         handler = object.__new__(self.handler_cls)
         handler.path = path
-        handler.headers = {"Content-Length": str(len(body))}
+        handler.headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/json",
+            self.handler_cls.write_token_header: self.handler_cls.write_token,
+        }
         handler.rfile = io.BytesIO(body.encode("utf-8"))
         handler.wfile = io.BytesIO()
         handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
