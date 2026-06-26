@@ -8,6 +8,8 @@ from pathlib import Path
 from jordana_invoice.db import (
     CURRENT_SCHEMA_VERSION,
     MIGRATION_002_MONTHLY_INVOICE_IDENTITY,
+    MIGRATION_003_PAYMENT_LEDGER_FOUNDATION,
+    MIGRATION_004_PAYMENT_PROVENANCE,
     MigrationError,
     connect,
     init_db,
@@ -115,11 +117,17 @@ class MigrationSafetyTests(unittest.TestCase):
         result = migrate_database(db_path)
         self.assertTrue(result["migrated"])
         conn = connect(db_path)
-        row = conn.execute(
-            "SELECT migration_id FROM schema_migrations WHERE migration_id = ?",
-            (CURRENT_SCHEMA_VERSION,),
-        ).fetchone()
-        self.assertIsNotNone(row)
+        for migration_id in [
+            CURRENT_SCHEMA_VERSION,
+            MIGRATION_002_MONTHLY_INVOICE_IDENTITY,
+            MIGRATION_003_PAYMENT_LEDGER_FOUNDATION,
+            MIGRATION_004_PAYMENT_PROVENANCE,
+        ]:
+            row = conn.execute(
+                "SELECT migration_id FROM schema_migrations WHERE migration_id = ?",
+                (migration_id,),
+            ).fetchone()
+            self.assertIsNotNone(row, f"Migration {migration_id} was not applied")
         conn.close()
 
     # --- a backup is created before migration ---
@@ -186,11 +194,17 @@ class MigrationSafetyTests(unittest.TestCase):
         self.assertFalse(r3["migrated"])
 
         conn = connect(db_path)
-        rows = conn.execute(
-            "SELECT migration_id FROM schema_migrations WHERE migration_id = ?",
-            (CURRENT_SCHEMA_VERSION,),
-        ).fetchall()
-        self.assertEqual(len(rows), 1)
+        for migration_id in [
+            CURRENT_SCHEMA_VERSION,
+            MIGRATION_002_MONTHLY_INVOICE_IDENTITY,
+            MIGRATION_003_PAYMENT_LEDGER_FOUNDATION,
+            MIGRATION_004_PAYMENT_PROVENANCE,
+        ]:
+            rows = conn.execute(
+                "SELECT migration_id FROM schema_migrations WHERE migration_id = ?",
+                (migration_id,),
+            ).fetchall()
+            self.assertEqual(len(rows), 1, f"Migration {migration_id} does not have exactly 1 record")
         conn.close()
 
     # --- app refuses to start when migration fails ---
