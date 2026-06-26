@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fcntl
 import os
-import shutil
 import sqlite3
 import time
 from datetime import datetime
@@ -728,10 +727,31 @@ def _get_applied_migrations(conn: sqlite3.Connection) -> set[str]:
         return set()
 
 
+def _backup_sqlite_database(source_path: Path, destination_path: Path) -> None:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+
+    source_conn = sqlite3.connect(
+        str(source_path),
+        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
+    )
+    destination_conn = sqlite3.connect(
+        str(destination_path),
+        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
+    )
+    try:
+        source_conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
+        destination_conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
+        source_conn.backup(destination_conn)
+        destination_conn.commit()
+    finally:
+        destination_conn.close()
+        source_conn.close()
+
+
 def _create_backup(db_path: Path) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_path = db_path.parent / f"{db_path.stem}.backup-migrate-{timestamp}{db_path.suffix}"
-    shutil.copy2(db_path, backup_path)
+    _backup_sqlite_database(db_path, backup_path)
     return backup_path
 
 
@@ -921,7 +941,7 @@ def migrate_database(db_path: str | Path) -> dict:
             conn.rollback()
             conn.close()
             if backup_path:
-                shutil.copy2(backup_path, db_path)
+                _backup_sqlite_database(backup_path, db_path)
             raise MigrationError(
                 f"Migration failed: {error}",
                 backup_path=str(backup_path) if backup_path else None,
