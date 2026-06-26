@@ -99,10 +99,116 @@ def review_sync_config(database_path: str):
     return load_sync_config_for_database(database_path)
 
 
+def is_safe_validation_error(error: Exception) -> bool:
+    if isinstance(error, (BillingPartyNotFoundError, BillingPartyTypeError, DatabaseBusyError)):
+        return True
+    if isinstance(error, ValueError):
+        msg = str(error)
+        safe_messages = {
+            # Accounts / Members
+            "Account not found.",
+            "A billing relationship already exists for this client.",
+            "This client is already included in this billing relationship.",
+            "This client is not a member of this billing relationship.",
+            "payer_kind must be one of: client, person, organization.",
+            "At least one covered client is required for an active relationship.",
+            "Covered client IDs must be non-empty strings.",
+            "Duplicate covered client IDs are not allowed.",
+            "payer_person_id is required for client or person payer kind.",
+            "Payer person does not exist or is not active.",
+            "organization_billing_party_id is required for organization payer kind.",
+            "Organization billing party does not exist, is not active, or is not an organization.",
+            "This billing relationship already exists.",
+            "Cannot edit an inactive billing relationship. Reactivate it first.",
+            # Review Candidates / Sessions
+            "Review candidate not found.",
+            "No session found for this candidate; only session-backed candidates can be restored.",
+            "A session already exists for this candidate.",
+            "Raw snapshot not found for candidate.",
+            "Session not found for candidate.",
+            "Select which participant should receive this future rate.",
+            "session_ids must be a list.",
+            "Each session_id must be a non-empty string.",
+            "Explicit finalization confirmation is required.",
+            # People / Aliases / Merge
+            "Person not found.",
+            "Display name is required.",
+            "Cannot merge a person into itself.",
+            "Both people must exist before merging.",
+            "First and last name are required before assigning a person code.",
+            # Business Profile
+            "Business name is required.",
+            # Invoices / Drafts / Finalization
+            "Invoice was not found.",
+            "Select an active bill-to party.",
+            "billing_month must be in YYYY-MM format.",
+            "A valid billing period is required.",
+            "Invalid delivery method.",
+            "Session is already included in this draft.",
+            "Source session was not found.",
+            "All invoice sessions must use the selected bill-to party.",
+            "Session is outside the invoice billing period.",
+            "Invoice line was not found.",
+            "A void reason is required.",
+            "Only a finalized invoice can be voided.",
+            "Only a draft invoice can be changed.",
+            "supplement_sequence cannot be negative.",
+            # Billing parties
+            "Billing name is required.",
+            "Invalid preferred delivery method.",
+            "Invalid billing party type.",
+            "Referenced person does not exist or is not active.",
+            "Bill-to client must be a confirmed active person.",
+            "Billing party not found.",
+            "billing_name must not be blank.",
+            "Cannot reassign billing party to a different person through this operation.",
+            # Reports
+            "Invalid year",
+            "Year out of range",
+            "Year must be an integer",
+        }
+        if msg in safe_messages:
+            return True
+        # Check dynamic prefixes
+        safe_prefixes = (
+            "Cannot approve until required fields are complete:",
+            "No active billing party found for ",
+            "Session is not invoice eligible: ",
+            "Invalid year:",
+            "Unsupported date range:",
+            "Year must be an integer, got ",
+            "Year out of range: ",
+            "Invalid report header for ",
+        )
+        if any(msg.startswith(prefix) for prefix in safe_prefixes):
+            return True
+    return False
+
+
 def make_handler(database_path: str):
     class ReviewHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
             return
+
+        def send_error_response(self, error: Exception, default_status: int = 500) -> None:
+            if isinstance(error, BillingPartyNotFoundError):
+                status = 404
+                msg = str(error)
+            elif isinstance(error, BillingPartyTypeError):
+                status = 400
+                msg = str(error)
+            elif isinstance(error, DatabaseBusyError):
+                status = 503
+                msg = "Database is busy, please try again."
+            elif is_safe_validation_error(error):
+                status = 400
+                msg = str(error)
+                if msg == "Account not found.":
+                    status = 404
+            else:
+                status = default_status
+                msg = "An unexpected error occurred."
+            self.send_json({"ok": False, "error": msg}, status=status)
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
@@ -186,12 +292,7 @@ def make_handler(database_path: str):
                     return
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
-                    try:
-                        self.send_json(get_organization_billing_record(self.conn(), billing_party_id))
-                    except BillingPartyNotFoundError as error:
-                        self.send_json({"ok": False, "error": str(error)}, status=404)
-                    except BillingPartyTypeError as error:
-                        self.send_json({"ok": False, "error": str(error)}, status=400)
+                    self.send_json(get_organization_billing_record(self.conn(), billing_party_id))
                     return
                 if parsed.path == "/api/rate-rules":
                     self.send_json(list_rate_rules(self.conn()))
@@ -250,7 +351,7 @@ def make_handler(database_path: str):
                     return
                 self.send_error(404)
             except Exception as error:
-                self.send_json({"ok": False, "error": str(error)}, status=500)
+                self.send_error_response(error, default_status=500)
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
@@ -310,29 +411,17 @@ def make_handler(database_path: str):
                     account_id = parts[2]
                     action = parts[3] if len(parts) > 3 else ""
                     if action == "deactivate":
-                        try:
-                            self.send_json(deactivate_account(self.conn(), account_id))
-                        except ValueError:
-                            self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        self.send_json(deactivate_account(self.conn(), account_id))
                         return
                     if action == "reactivate":
-                        try:
-                            self.send_json(reactivate_account(self.conn(), account_id))
-                        except ValueError:
-                            self.send_json({"ok": False, "error": "Account not found."}, status=404)
+                        self.send_json(reactivate_account(self.conn(), account_id))
                         return
                     if action == "update-billing-relationship":
-                        try:
-                            self.send_json(update_billing_relationship(self.conn(), account_id, data))
-                        except ValueError as e:
-                            self.send_json({"ok": False, "error": str(e)}, status=400)
+                        self.send_json(update_billing_relationship(self.conn(), account_id, data))
                         return
                     if action == "remove-member":
-                        try:
-                            remove_account_member(self.conn(), account_id, data["person_id"])
-                            self.send_json({"ok": True})
-                        except ValueError as e:
-                            self.send_json({"ok": False, "error": str(e)}, status=400)
+                        remove_account_member(self.conn(), account_id, data["person_id"])
+                        self.send_json({"ok": True})
                         return
                     self.send_json(update_account(self.conn(), account_id, data))
                     return
@@ -512,10 +601,8 @@ def make_handler(database_path: str):
                     self.send_json(setup_billing_relationship(self.conn(), data))
                     return
                 self.send_error(404)
-            except DatabaseBusyError as error:
-                self.send_json({"ok": False, "error": str(error)}, status=503)
             except Exception as error:
-                self.send_json({"ok": False, "error": str(error)}, status=400)
+                self.send_error_response(error, default_status=400)
 
         def conn(self):
             if not hasattr(self, "_database_connection"):

@@ -68,6 +68,134 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["rows_fetched"], 4)
         self.assertEqual(captured["payload"]["rows_imported"], 2)
 
+class ReviewServerSanitizationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path, body=b"{}"):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {}
+        def mock_send_json(payload, status=200):
+            captured["payload"] = payload
+            captured["status"] = status
+        handler.send_json = mock_send_json
+        handler.finish = lambda: None
+        return handler, captured
+
+    @patch("jordana_invoice.review_server.dashboard_status")
+    def test_unexpected_get_exception_is_sanitized(self, mock_dashboard_status):
+        mock_dashboard_status.side_effect = RuntimeError("database disk image is malformed")
+        handler, captured = self._handler("/api/status")
+        handler.conn = lambda: None
+        handler.do_GET()
+        
+        self.assertEqual(captured.get("status"), 500)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "An unexpected error occurred."})
+
+    @patch("jordana_invoice.review_server.dashboard_status")
+    def test_safe_get_validation_error_is_preserved(self, mock_dashboard_status):
+        mock_dashboard_status.side_effect = ValueError("Year out of range")
+        handler, captured = self._handler("/api/status")
+        handler.conn = lambda: None
+        handler.do_GET()
+        
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Year out of range"})
+
+    @patch("jordana_invoice.review_server.dashboard_status")
+    def test_unknown_get_value_error_is_sanitized(self, mock_dashboard_status):
+        mock_dashboard_status.side_effect = ValueError("Internal SQL detail: SELECT * FROM sessions /path/to/db")
+        handler, captured = self._handler("/api/status")
+        handler.conn = lambda: None
+        handler.do_GET()
+        
+        self.assertEqual(captured.get("status"), 500)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "An unexpected error occurred."})
+
+    @patch("jordana_invoice.review_server.get_organization_billing_record")
+    def test_billing_party_not_found_returns_404(self, mock_get_record):
+        from jordana_invoice.review_services import BillingPartyNotFoundError
+        mock_get_record.side_effect = BillingPartyNotFoundError("Billing party not found.")
+        handler, captured = self._handler("/api/billing-parties/123")
+        handler.conn = lambda: None
+        handler.do_GET()
+        
+        self.assertEqual(captured.get("status"), 404)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Billing party not found."})
+
+    @patch("jordana_invoice.review_server.get_organization_billing_record")
+    def test_billing_party_type_error_returns_400(self, mock_get_record):
+        from jordana_invoice.review_services import BillingPartyTypeError
+        mock_get_record.side_effect = BillingPartyTypeError("Billing party is not an organization.")
+        handler, captured = self._handler("/api/billing-parties/123")
+        handler.conn = lambda: None
+        handler.do_GET()
+        
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Billing party is not an organization."})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_unexpected_post_exception_is_sanitized(self, mock_create_person):
+        mock_create_person.side_effect = RuntimeError("disk I/O error")
+        handler, captured = self._handler("/api/people", body=json.dumps({"name": "Test"}).encode("utf-8"))
+        handler.conn = lambda: None
+        handler.do_POST()
+        
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "An unexpected error occurred."})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_unknown_post_value_error_is_sanitized(self, mock_create_person):
+        mock_create_person.side_effect = ValueError("Internal SQL detail: SELECT * FROM sessions /path/to/db")
+        handler, captured = self._handler("/api/people", body=json.dumps({"name": "Test"}).encode("utf-8"))
+        handler.conn = lambda: None
+        handler.do_POST()
+        
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "An unexpected error occurred."})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_safe_post_validation_error_is_preserved(self, mock_create_person):
+        mock_create_person.side_effect = ValueError("Display name is required.")
+        handler, captured = self._handler("/api/people", body=json.dumps({"name": ""}).encode("utf-8"))
+        handler.conn = lambda: None
+        handler.do_POST()
+        
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Display name is required."})
+
+    @patch("jordana_invoice.review_server.deactivate_account")
+    def test_post_account_not_found_returns_404(self, mock_deactivate):
+        mock_deactivate.side_effect = ValueError("Account not found.")
+        handler, captured = self._handler("/api/accounts/123/deactivate", body=json.dumps({}).encode("utf-8"))
+        handler.conn = lambda: None
+        handler.do_POST()
+        
+        self.assertEqual(captured.get("status"), 404)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Account not found."})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_database_busy_error_returns_503(self, mock_create_person):
+        from jordana_invoice.db import DatabaseBusyError
+        mock_create_person.side_effect = DatabaseBusyError("Database is currently locked.")
+        handler, captured = self._handler("/api/people", body=json.dumps({"name": "Test"}).encode("utf-8"))
+        handler.conn = lambda: None
+        handler.do_POST()
+        
+        self.assertEqual(captured.get("status"), 503)
+        self.assertEqual(captured.get("payload"), {"ok": False, "error": "Database is busy, please try again."})
+
+
 
 if __name__ == "__main__":
     unittest.main()
