@@ -94,6 +94,8 @@ from .service_catalog import list_services, set_service_active
 STATIC_DIR = Path(__file__).parent / "static"
 REVIEW_SYNC_TRANSPORT = default_transport
 
+MAX_REQUEST_BODY_BYTES = 1_048_576  # 1 MiB
+
 
 def review_sync_config(database_path: str):
     return load_sync_config_for_database(database_path)
@@ -629,15 +631,29 @@ def make_handler(database_path: str):
                 if connection is not None:
                     connection.close()
 
-        def read_json(self) -> dict:
-            length = int(self.headers.get("Content-Length", "0"))
-            if not length:
-                return {}
-            return json.loads(self.rfile.read(length).decode("utf-8"))
+        def read_json(self, declared_length: int) -> dict:
+            raw = self.rfile.read(declared_length)
+            if len(raw) < declared_length:
+                raise ValueError("Request body shorter than declared Content-Length.")
+            return json.loads(raw.decode("utf-8"))
 
         def read_mutation_json_request(self) -> tuple[object | None, dict]:
             parsed = urlparse(self.path)
-            length = int(self.headers.get("Content-Length", "0"))
+            raw_length = self.headers.get("Content-Length")
+            if raw_length is None:
+                self.send_json({"ok": False, "error": "Content-Length header is required."}, status=411)
+                return None, {}
+            try:
+                length = int(raw_length)
+            except (ValueError, TypeError):
+                self.send_json({"ok": False, "error": "Invalid Content-Length header."}, status=400)
+                return None, {}
+            if length < 0:
+                self.send_json({"ok": False, "error": "Invalid Content-Length header."}, status=400)
+                return None, {}
+            if length > MAX_REQUEST_BODY_BYTES:
+                self.send_json({"ok": False, "error": "Request body too large."}, status=413)
+                return None, {}
             if length > 0 and not self.has_json_content_type():
                 self.send_json(
                     {"ok": False, "error": "Content-Type must be application/json."},
@@ -645,7 +661,7 @@ def make_handler(database_path: str):
                 )
                 return None, {}
             try:
-                return parsed, self.read_json()
+                return parsed, self.read_json(length)
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 self.send_json({"ok": False, "error": "Malformed JSON in request body."}, status=400)
                 return None, {}

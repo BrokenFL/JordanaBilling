@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jordana_invoice.review_server import make_handler
+from jordana_invoice.review_server import MAX_REQUEST_BODY_BYTES, make_handler
 
 
 class ReviewServerSyncConnectionTests(unittest.TestCase):
@@ -329,6 +329,163 @@ class ReviewServerJsonRequestParsingTests(unittest.TestCase):
         self.assertEqual(captured["payload"], {"ok": False, "error": "Malformed JSON in request body."})
         mock_create_person.assert_not_called()
 
+
+class ReviewServerRequestBodyLimitTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path, body=b"{}", content_type="application/json",
+                 content_length="auto"):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        headers = {}
+        if content_length == "auto":
+            headers["Content-Length"] = str(len(body))
+        elif content_length != "omit":
+            headers["Content-Length"] = content_length
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {}
+
+        def mock_send_json(payload, status=200):
+            captured["payload"] = payload
+            captured["status"] = status
+
+        handler.send_json = mock_send_json
+        handler.finish = lambda: None
+        return handler, captured
+
+    @staticmethod
+    def _body_of_size(size):
+        padding = size - 12  # '{"data": "' (10) + '"}' (2)
+        return json.dumps({"data": "a" * padding}).encode("utf-8")
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_body_below_limit_accepted(self, mock_create_person):
+        mock_create_person.return_value = {"ok": True}
+        body = self._body_of_size(MAX_REQUEST_BODY_BYTES - 100)
+        handler, captured = self._handler("/api/people", body=body)
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True})
+        mock_create_person.assert_called_once()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_body_at_limit_accepted(self, mock_create_person):
+        mock_create_person.return_value = {"ok": True}
+        body = self._body_of_size(MAX_REQUEST_BODY_BYTES)
+        handler, captured = self._handler("/api/people", body=body)
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True})
+        mock_create_person.assert_called_once()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_body_above_limit_rejected_413_without_reading_body(self, mock_create_person):
+        body = self._body_of_size(MAX_REQUEST_BODY_BYTES + 100)
+        handler, captured = self._handler("/api/people", body=body)
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 413)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Request body too large."})
+        mock_create_person.assert_not_called()
+        self.assertEqual(handler.rfile.tell(), 0)
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_missing_content_length_returns_411(self, mock_create_person):
+        body = json.dumps({"data": "test"}).encode("utf-8")
+        handler, captured = self._handler("/api/people", body=body, content_length="omit")
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 411)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Content-Length header is required."})
+        mock_create_person.assert_not_called()
+        self.assertEqual(handler.rfile.tell(), 0)
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_invalid_content_length_returns_400(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"data": "test"}).encode("utf-8"),
+            content_length="not-a-number",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Invalid Content-Length header."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_negative_content_length_returns_400(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"data": "test"}).encode("utf-8"),
+            content_length="-1",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Invalid Content-Length header."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_short_body_returns_400(self, mock_create_person):
+        body = json.dumps({"data": "test"}).encode("utf-8")
+        handler, captured = self._handler(
+            "/api/people",
+            body=body,
+            content_length=str(len(body) + 50),
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Malformed JSON in request body."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_error_messages_do_not_echo_request_data(self, mock_create_person):
+        unique_marker = "UNIQUE_SENSITIVE_DATA_12345"
+        body = json.dumps({"data": unique_marker}).encode("utf-8")
+
+        handler, captured = self._handler(
+            "/api/people",
+            body=body,
+            content_length=str(len(body) + MAX_REQUEST_BODY_BYTES),
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 413)
+        self.assertNotIn(unique_marker, json.dumps(captured["payload"]))
+
+        handler2, captured2 = self._handler(
+            "/api/people",
+            body=body,
+            content_length="invalid",
+        )
+        handler2.conn = lambda: None
+        handler2.do_POST()
+
+        self.assertEqual(captured2["status"], 400)
+        self.assertNotIn(unique_marker, json.dumps(captured2["payload"]))
 
 
 if __name__ == "__main__":
