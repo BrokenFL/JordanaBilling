@@ -4694,7 +4694,10 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     try {
       const res = await fetch("/api/billing-relationships/setup", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Jordana-Write-Token": WRITE_TOKEN,
+        },
         body: JSON.stringify(payload),
       });
       const json = await res.json();
