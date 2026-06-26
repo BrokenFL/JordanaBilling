@@ -1741,28 +1741,240 @@ async function renderInvoiceEditor(data) {
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td><input class="line-description" value="${escapeHtml(line.description_snapshot)}"></td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
+    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
+
+  document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
+    const row = button.closest("tr");
+    const lineId = row.dataset.line;
+    const line = data.lines.find(l => l.invoice_line_item_id === lineId);
+    openLineEditModal(line, data);
+  });
+
   document.querySelectorAll(".remove-line").forEach(button => button.onclick = async () => {
     const lineId = button.closest("tr").dataset.line;
     const updated = await api(`/api/invoices/${i.invoice_id}/remove-line`, {method:"POST", body:JSON.stringify({invoice_line_item_id:lineId})});
     await renderInvoiceEditor(updated); await loadInvoices();
   });
+
   $("saveDraftChanges").onclick = async () => {
-    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.querySelector(".line-description").value, sort_order:index}));
+    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
     const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines})});
     await renderInvoiceEditor(updated); await loadInvoices();
   };
+
   $("addDraftSessions").onclick = () => showAddSessionsToDraft(data);
+
   $("reviewFinalizeBtn").onclick = async () => {
-    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.querySelector(".line-description").value, sort_order:index}));
+    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
     const draftData = {invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines};
     const preview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
     renderFinalizationPreview(preview);
   };
 }
+
+
+function openLineEditModal(line, invoiceData) {
+  const originatingBtn = document.activeElement;
+  closeLineEditorModal();
+
+  const overlay = document.createElement("div");
+  overlay.id = "lineEditorModalOverlay";
+  overlay.className = "billing-modal-overlay";
+
+  const hasSession = !!line.source_session_id;
+
+  overlay.innerHTML = `
+    <div class="billing-modal line-editor-modal" id="lineEditorModal" role="dialog" aria-modal="true" aria-labelledby="lineEditorModalTitle">
+      <h3 id="lineEditorModalTitle">Edit Invoice Line</h3>
+      <p class="modal-instruction">Modify the description or amount for this draft invoice line.</p>
+      
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+        <div class="modal-error" id="lineEditorError" role="alert" style="color: var(--red); font-size: 13px; display: none;"></div>
+        
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-size: 12px; color: var(--muted); font-weight: bold;">Description</label>
+          <input type="text" id="lineEditDescription" style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px;" required />
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-size: 12px; color: var(--muted); font-weight: bold;">Amount ($)</label>
+          <input type="text" id="lineEditAmount" style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px;" required />
+        </div>
+        
+        <div id="lineEditScopeSection" style="display: ${hasSession ? 'block' : 'none'}; flex-direction: column; gap: 4px;">
+          <label style="font-size: 12px; color: var(--muted); font-weight: bold;">Correction Scope</label>
+          <div style="display: flex; gap: 16px; font-size: 13px; margin-top: 4px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="radio" name="lineEditScope" value="invoice_line_only" checked /> Invoice line only
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="radio" name="lineEditScope" value="invoice_line_and_session" /> Invoice line and approved session
+            </label>
+          </div>
+        </div>
+        
+        <div id="lineEditReasonSection" style="display: none; flex-direction: column; gap: 4px;">
+          <label for="lineEditReason" style="font-size: 12px; color: var(--muted); font-weight: bold;">Correction Reason (required)</label>
+          <textarea id="lineEditReason" placeholder="Enter reason for changing the amount..." style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; min-height: 60px; resize: vertical;"></textarea>
+        </div>
+      </div>
+      
+      <div class="modal-actions" style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+        <button type="button" class="save" id="lineEditorSave">Save Changes</button>
+        <button type="button" class="modal-cancel" id="lineEditorCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+
+  const descInput = document.getElementById("lineEditDescription");
+  const amountInput = document.getElementById("lineEditAmount");
+  const reasonTextarea = document.getElementById("lineEditReason");
+  const reasonSection = document.getElementById("lineEditReasonSection");
+  const errorDisplay = document.getElementById("lineEditorError");
+  const saveBtn = document.getElementById("lineEditorSave");
+  const cancelBtn = document.getElementById("lineEditorCancel");
+
+  descInput.value = line.description_snapshot;
+  amountInput.value = centString(line.line_amount_cents);
+
+  const originalCents = line.line_amount_cents;
+
+  const checkAmountChange = () => {
+    const amountStr = amountInput.value.trim().replace(/[$,]/g, "");
+    const isValidAmount = /^\d+(\.\d{1,2})?$/.test(amountStr);
+    if (!isValidAmount) {
+      reasonSection.style.display = "none";
+      return;
+    }
+    const newCents = Math.round(parseFloat(amountStr) * 100);
+    if (newCents !== originalCents) {
+      reasonSection.style.display = "flex";
+    } else {
+      reasonSection.style.display = "none";
+    }
+  };
+
+  amountInput.addEventListener("input", checkAmountChange);
+
+  const closeAndRestore = () => {
+    closeLineEditorModal();
+    if (originatingBtn) originatingBtn.focus();
+  };
+
+  cancelBtn.onclick = closeAndRestore;
+
+  saveBtn.onclick = async () => {
+    errorDisplay.style.display = "none";
+    errorDisplay.textContent = "";
+
+    const desc = descInput.value.trim();
+    if (!desc) {
+      showError("Description must be non-empty.");
+      return;
+    }
+
+    const amountStr = amountInput.value.trim().replace(/[$,]/g, "");
+    if (!/^\d+(\.\d{1,2})?$/.test(amountStr)) {
+      showError("Amount must be a non-negative number with at most 2 decimal places.");
+      return;
+    }
+
+    const newCents = Math.round(parseFloat(amountStr) * 100);
+    const amountChanged = (newCents !== originalCents);
+
+    let reason = "";
+    let scope = "invoice_line_only";
+
+    if (amountChanged) {
+      reason = reasonTextarea.value.trim();
+      if (!reason) {
+        showError("A correction reason is required when the amount changes.");
+        return;
+      }
+
+      if (hasSession) {
+        const selectedScope = document.querySelector('input[name="lineEditScope"]:checked');
+        scope = selectedScope ? selectedScope.value : "invoice_line_only";
+      }
+    }
+
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    descInput.disabled = true;
+    amountInput.disabled = true;
+    reasonTextarea.disabled = true;
+    document.querySelectorAll('input[name="lineEditScope"]').forEach(r => r.disabled = true);
+
+    try {
+      const payload = {
+        invoice_line_item_id: line.invoice_line_item_id,
+        description: desc,
+        amount_cents: newCents,
+        amount_scope: scope,
+        reason: reason,
+        expected_revision: invoiceData.invoice.revision
+      };
+
+      const updated = await api(`/api/invoices/${invoiceData.invoice.invoice_id}/update-line`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      closeLineEditorModal();
+      showReviewSuccess("Invoice line updated successfully.");
+
+      await loadInvoices();
+      await renderInvoiceEditor(updated);
+
+      const editBtn = document.querySelector(`#invoiceWorkspace tr[data-line="${escapeAttr(line.invoice_line_item_id)}"] .edit-line`);
+      if (editBtn) editBtn.focus();
+      else if (originatingBtn) originatingBtn.focus();
+
+    } catch (err) {
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+      descInput.disabled = false;
+      amountInput.disabled = false;
+      reasonTextarea.disabled = false;
+      document.querySelectorAll('input[name="lineEditScope"]').forEach(r => r.disabled = false);
+
+      showError(err.message || "An unexpected error occurred.");
+    }
+  };
+
+  function showError(msg) {
+    errorDisplay.textContent = msg;
+    errorDisplay.style.display = "block";
+  }
+
+  descInput.focus();
+  document.addEventListener("keydown", lineEditorModalTrapKeydown);
+}
+
+function closeLineEditorModal() {
+  const overlay = document.getElementById("lineEditorModalOverlay");
+  if (overlay) {
+    overlay.remove();
+  }
+  document.body.style.overflow = "";
+  document.removeEventListener("keydown", lineEditorModalTrapKeydown);
+}
+
+function lineEditorModalTrapKeydown(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    const cancelBtn = document.getElementById("lineEditorCancel");
+    if (cancelBtn) cancelBtn.click();
+  }
+}
+
 
 async function showAddSessionsToDraft(data) {
   const i = data.invoice;

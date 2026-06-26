@@ -965,3 +965,113 @@ def _address(row: sqlite3.Row, prefix: str = "", include_name: str | None = None
 
 def _audit(conn: sqlite3.Connection, entity_type: str, entity_id: str, action: str, details: dict[str, Any]) -> None:
     conn.execute("INSERT INTO audit_log (id, entity_type, entity_id, action, details, created_at) VALUES (?, ?, ?, ?, ?, ?)", (new_id(), entity_type, entity_id, action, json_dumps(details), now_iso()))
+
+
+def update_invoice_line_item(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    *,
+    line_id: str,
+    description: str,
+    amount_cents: int,
+    amount_scope: str,
+    reason: str,
+    expected_revision: int,
+) -> dict[str, Any]:
+    _draft(conn, invoice_id)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if not invoice:
+            raise ValueError("Invoice was not found.")
+        if invoice["status"] != "draft":
+            raise ValueError("Only a draft invoice can be changed.")
+        if invoice["revision"] != expected_revision:
+            raise ValueError("Invoice has changed. Please reload and try again.")
+
+        line = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_line_item_id = ?", (line_id,)).fetchone()
+        if not line:
+            raise ValueError("Invoice line was not found.")
+        if line["invoice_id"] != invoice_id:
+            raise ValueError("Line item does not belong to this invoice.")
+
+        description = (description or "").strip()
+        if not description:
+            raise ValueError("Description must be non-empty.")
+
+        if not isinstance(amount_cents, int) or amount_cents < 0:
+            raise ValueError("Amount must be non-negative.")
+
+        old_description = line["description_snapshot"]
+        old_amount_cents = line["line_amount_cents"]
+        amount_changed = (amount_cents != old_amount_cents)
+
+        if amount_changed:
+            if not reason or not reason.strip():
+                raise ValueError("A correction reason is required when the amount changes.")
+            if amount_scope not in ("invoice_line_only", "invoice_line_and_session"):
+                raise ValueError("Invalid amount scope.")
+
+        session_id = line["source_session_id"]
+        if amount_changed and amount_scope == "invoice_line_and_session":
+            if not session_id:
+                raise ValueError("Session-update scope is only available for lines linked to a session.")
+
+        now = now_iso()
+        # Update the line item
+        conn.execute(
+            """UPDATE invoice_line_items
+               SET description_snapshot = ?, unit_amount_cents = ?, line_amount_cents = ?, updated_at = ?
+               WHERE invoice_line_item_id = ? AND invoice_id = ?""",
+            (description, amount_cents, amount_cents, now, line_id, invoice_id)
+        )
+
+        # Update backing session if applicable
+        if amount_changed and amount_scope == "invoice_line_and_session" and session_id:
+            conn.execute(
+                """UPDATE sessions
+                   SET approved_rate_cents = ?, rate_cents_snapshot = ?
+                   WHERE id = ?""",
+                (amount_cents, amount_cents, session_id)
+            )
+
+        # Recalculate totals
+        _recalculate(conn, invoice_id)
+
+        # Increment revision
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+            (now, invoice_id)
+        )
+
+        # Log correction record
+        if amount_changed:
+            correction_id = new_id()
+            conn.execute(
+                """INSERT INTO invoice_line_item_corrections (
+                    correction_id, invoice_id, invoice_line_item_id, source_session_id,
+                    old_description, new_description, old_amount_cents, new_amount_cents,
+                    correction_scope, reason, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (correction_id, invoice_id, line_id, session_id,
+                 old_description, description, old_amount_cents, amount_cents,
+                 amount_scope, reason or "", now)
+            )
+
+        # Audit
+        _audit(conn, "invoice_line_item", line_id, "line_item_corrected", {
+            "invoice_id": invoice_id,
+            "old_description": old_description,
+            "new_description": description,
+            "old_amount_cents": old_amount_cents,
+            "new_amount_cents": amount_cents,
+            "correction_scope": amount_scope,
+            "reason": reason
+        })
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return get_invoice(conn, invoice_id)
+

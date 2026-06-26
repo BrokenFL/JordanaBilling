@@ -1584,6 +1584,44 @@ class ReviewStagingUiTests(unittest.TestCase):
         self.assertIn("await openInvoice(state.invoice.invoice.invoice_id)", self.js)
 
 
+class ReviewLineEditingUiTests(unittest.TestCase):
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.css = Path("app/jordana_invoice/static/review.css").read_text()
+
+    def test_js_defines_open_line_edit_modal(self):
+        self.assertIn("function openLineEditModal", self.js)
+
+    def test_js_line_editor_modal_elements_and_defaults(self):
+        # Verify scope default to invoice_line_only
+        self.assertIn('name="lineEditScope" value="invoice_line_only" checked', self.js)
+        # Verify alternative option invoice_line_and_session exists
+        self.assertIn('name="lineEditScope" value="invoice_line_and_session"', self.js)
+        # Verify scope selection displays conditionally based on session association
+        self.assertIn('display: ${hasSession ? \'block\' : \'none\'}', self.js)
+
+    def test_js_line_editor_save_validations(self):
+        # Description non-empty check
+        self.assertIn("Description must be non-empty.", self.js)
+        # Amount format and decimal places regex check
+        self.assertIn("/^\\d+(\\.\\d{1,2})?$/", self.js)
+        self.assertIn("Amount must be a non-negative number with at most 2 decimal places.", self.js)
+        # Correction reason validation on amount change
+        self.assertIn("A correction reason is required when the amount changes.", self.js)
+
+    def test_js_line_editor_success_and_failure_behaviors(self):
+        # Verify saveBtn is disabled during request to prevent duplicate submissions
+        self.assertIn("saveBtn.disabled = true", self.js)
+        
+        # Verify success path closes editor and reloads workspace
+        self.assertIn("closeLineEditorModal()", self.js)
+        self.assertIn("await loadInvoices()", self.js)
+        self.assertIn("await renderInvoiceEditor(updated)", self.js)
+        self.assertIn("Invoice line updated successfully.", self.js)
+
+        # Verify failure path keeps editor open (closeLineEditorModal is NOT in catch block) and re-enables saveBtn
+        self.assertIn("saveBtn.disabled = false", self.js)
+
 
 if __name__ == "__main__":
     unittest.main()

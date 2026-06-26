@@ -81,6 +81,7 @@ from .invoice_services import (
     save_business_profile,
     stage_approved_sessions_to_monthly_drafts,
     update_invoice_draft,
+    update_invoice_line_item,
     void_invoice,
 )
 from .csv_reports import (
@@ -163,6 +164,13 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Only a finalized invoice can be voided.",
             "Only a draft invoice can be changed.",
             "supplement_sequence cannot be negative.",
+            "Description must be non-empty.",
+            "Amount must be non-negative.",
+            "A correction reason is required when the amount changes.",
+            "Invalid amount scope.",
+            "Session-update scope is only available for lines linked to a session.",
+            "Line item does not belong to this invoice.",
+            "Invoice has changed. Please reload and try again.",
             # Billing parties
             "Billing name is required.",
             "Invalid preferred delivery method.",
@@ -590,6 +598,20 @@ def make_handler(database_path: str, write_token: str | None = None):
                     parts = parsed.path.strip("/").split("/")
                     invoice_id = parts[2]
                     action = parts[3] if len(parts) > 3 else "update"
+                    if action == "update-line":
+                        self.send_json(
+                            update_invoice_line_item(
+                                self.conn(),
+                                invoice_id,
+                                line_id=data["invoice_line_item_id"],
+                                description=data["description"],
+                                amount_cents=data["amount_cents"],
+                                amount_scope=data["amount_scope"],
+                                reason=data["reason"],
+                                expected_revision=data["expected_revision"],
+                            )
+                        )
+                        return
                     if action == "add-sessions":
                         self.send_json(add_sessions_to_draft(self.conn(), invoice_id, data.get("session_ids") or []))
                         return

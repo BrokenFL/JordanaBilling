@@ -885,12 +885,43 @@ def _apply_migration_004(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT = "005_invoice_line_corrections_audit"
+
+
+def _apply_migration_005(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS invoice_line_item_corrections (
+          correction_id TEXT PRIMARY KEY,
+          invoice_id TEXT NOT NULL REFERENCES invoices(invoice_id),
+          invoice_line_item_id TEXT NOT NULL REFERENCES invoice_line_items(invoice_line_item_id),
+          source_session_id TEXT REFERENCES sessions(id),
+          old_description TEXT NOT NULL,
+          new_description TEXT NOT NULL,
+          old_amount_cents INTEGER NOT NULL,
+          new_amount_cents INTEGER NOT NULL,
+          correction_scope TEXT NOT NULL CHECK (correction_scope IN ('invoice_line_only', 'invoice_line_and_session')),
+          reason TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoice_line_item_corrections_invoice"
+        " ON invoice_line_item_corrections(invoice_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoice_line_item_corrections_line"
+        " ON invoice_line_item_corrections(invoice_line_item_id)"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
     (MIGRATION_003_PAYMENT_LEDGER_FOUNDATION, _apply_migration_003),
     (MIGRATION_004_PAYMENT_PROVENANCE, _apply_migration_004),
+    (MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT, _apply_migration_005),
 ]
+
 
 
 def migrate_database(db_path: str | Path) -> dict:

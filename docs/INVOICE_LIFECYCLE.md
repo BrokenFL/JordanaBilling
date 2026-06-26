@@ -6,7 +6,19 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 ## Draft
 
-Drafts can add/remove eligible sessions, reorder lines, edit invoice-only descriptions, override delivery, and change dates. Totals use integer cents. Source sessions are not edited.
+Drafts can add/remove eligible sessions, reorder lines, override delivery, and change dates. Totals use integer cents.
+
+### Line Item Editing
+
+Users can edit the description and line amount of draft invoices before finalization:
+- **Description Editing**: Editing a line description updates only that draft invoice line's description snapshot and does not affect the backing session description.
+- **Amount/Rate Editing**: When changing a line amount, two correction scopes are available:
+  1. **Invoice line only** (default): Updates only the line item's amount on this draft invoice. The backing session rate remains unmodified.
+  2. **Invoice line and approved session**: Updates the line item's amount on this draft invoice, and also propagates the update to the backing session's approved rate and rate snapshot. (Only available for lines linked to an approved session).
+- **Validation**: Rejects empty descriptions, negative amounts, or values with more than two decimal places (fractional cents). A non-empty reason is required when the amount is modified.
+- **Revision and Concurrency**: A successful edit increments the invoice revision number exactly once and recalculates totals. The update API requires `expected_revision` and rejects stale writes to prevent duplicate submission or overwrite conflicts.
+- **Audit Logging**: All edits write to the general `audit_log`. Edits that modify the line amount also write detailed correction records to `invoice_line_item_corrections`, storing the old/new values, the correction scope, and the user's correction reason.
+- **Immutability of Finalized/Voided Invoices**: Finalized and voided invoices cannot be edited. Attempts to modify them fail safely.
 
 ### Monthly Invoice Identity
 
