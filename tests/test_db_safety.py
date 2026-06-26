@@ -1,6 +1,7 @@
 """
-Tests for the operational-database safety helper ``is_operational_db_path``
-and the ``import-csv`` CLI guard.
+Tests for the operational-database safety helpers:
+``is_operational_db_path``, ``get_configured_operational_db_path``,
+``assert_csv_import_safe``, and the ``import-csv`` CLI guard.
 
 All tests use tempfile paths; none touch the real operational database.
 """
@@ -8,13 +9,21 @@ All tests use tempfile paths; none touch the real operational database.
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from jordana_invoice.db import is_operational_db_path
+from jordana_invoice.db import (
+    OperationalDatabaseError,
+    assert_csv_import_safe,
+    connect,
+    get_configured_operational_db_path,
+    is_operational_db_path,
+    migrate_database,
+)
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = PROJECT_DIR / "app"
@@ -34,7 +43,18 @@ def _run_cli(*args: str, env: dict | None = None) -> subprocess.CompletedProcess
 
 
 class IsOperationalDbPathTests(unittest.TestCase):
-    """Unit tests for ``is_operational_db_path``."""
+    """Unit tests for ``is_operational_db_path`` using canonical-path comparison."""
+
+    def setUp(self):
+        # Save and unset JORDANA_DATABASE_PATH so tests are deterministic.
+        self._old_op = os.environ.get("JORDANA_DATABASE_PATH")
+        os.environ.pop("JORDANA_DATABASE_PATH", None)
+
+    def tearDown(self):
+        if self._old_op is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self._old_op
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
 
     # --- should be True ---
 
@@ -60,7 +80,7 @@ class IsOperationalDbPathTests(unittest.TestCase):
             self.assertFalse(is_operational_db_path(p))
 
     def test_mkdtemp_path_with_matching_filename_is_not_operational(self):
-        """``tempfile.mkdtemp`` paths contain 'tmp' and are always excluded."""
+        """``tempfile.mkdtemp`` paths are not the configured operational path."""
         tmpdir = tempfile.mkdtemp(prefix="jordana_test_")
         try:
             p = Path(tmpdir) / "jordana_invoice.sqlite3"
@@ -92,6 +112,215 @@ class IsOperationalDbPathTests(unittest.TestCase):
         """Accepts a Path object in addition to a string."""
         self.assertTrue(is_operational_db_path(Path("data") / "jordana_invoice.sqlite3"))
 
+    # --- canonical path comparison with env var ---
+
+    def test_env_var_sets_operational_path(self):
+        """When JORDANA_DATABASE_PATH is set, only that exact path is operational."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            op_path = str(Path(tmpdir) / "my_op_db.sqlite3")
+            os.environ["JORDANA_DATABASE_PATH"] = op_path
+            self.assertTrue(is_operational_db_path(op_path))
+            # A different path is not operational even with same filename.
+            self.assertFalse(is_operational_db_path(str(Path(tmpdir) / "other.sqlite3")))
+            # The default path is not operational when env var is set differently.
+            self.assertFalse(is_operational_db_path("data/jordana_invoice.sqlite3"))
+
+    def test_env_var_with_tilde_expansion(self):
+        """Tilde in JORDANA_DATABASE_PATH is expanded."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            op_path = str(Path(tmpdir) / "op.sqlite3")
+            os.environ["JORDANA_DATABASE_PATH"] = op_path
+            self.assertTrue(is_operational_db_path(op_path))
+
+    # --- symlink handling ---
+
+    def test_symlink_to_operational_db_is_detected(self):
+        """A symlink pointing to the operational DB is detected as operational."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real_db = Path(tmpdir) / "real_op.sqlite3"
+            os.environ["JORDANA_DATABASE_PATH"] = str(real_db)
+            # Create the real file so resolve() works.
+            real_db.touch()
+            link_path = Path(tmpdir) / "link_to_op.sqlite3"
+            link_path.symlink_to(real_db)
+            self.assertTrue(is_operational_db_path(link_path))
+
+    def test_symlink_to_non_operational_is_not_operational(self):
+        """A symlink pointing to a non-operational DB is not operational."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            other_db = Path(tmpdir) / "other.sqlite3"
+            other_db.touch()
+            link_path = Path(tmpdir) / "link.sqlite3"
+            link_path.symlink_to(other_db)
+            self.assertFalse(is_operational_db_path(link_path))
+
+    # --- get_configured_operational_db_path ---
+
+    def test_get_configured_path_uses_env_var(self):
+        """get_configured_operational_db_path returns the env var path when set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            op_path = str(Path(tmpdir) / "env_op.sqlite3")
+            os.environ["JORDANA_DATABASE_PATH"] = op_path
+            result = get_configured_operational_db_path()
+            self.assertEqual(str(result), op_path)
+
+    def test_get_configured_path_defaults_without_env_var(self):
+        """get_configured_operational_db_path returns the default when env var is unset."""
+        result = get_configured_operational_db_path()
+        self.assertEqual(str(result), "data/jordana_invoice.sqlite3")
+
+
+class AssertCsvImportSafeTests(unittest.TestCase):
+    """Tests for the service-layer guard ``assert_csv_import_safe``."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self._old_op = os.environ.get("JORDANA_DATABASE_PATH")
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+
+    def tearDown(self):
+        if self._old_op is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self._old_op
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        self.temp.cleanup()
+
+    def _make_db(self, name: str = "test.sqlite3") -> Path:
+        db_path = self.root / name
+        migrate_database(db_path)
+        return db_path
+
+    def test_non_operational_db_passes_without_flag(self):
+        """assert_csv_import_safe does not raise for a non-operational DB."""
+        db_path = self._make_db()
+        conn = connect(db_path)
+        try:
+            result = assert_csv_import_safe(conn, allow_operational=False)
+            self.assertIsNone(result)
+        finally:
+            conn.close()
+
+    def test_operational_db_raises_without_flag(self):
+        """assert_csv_import_safe raises for the operational DB without authorization."""
+        db_path = self._make_db("jordana_invoice.sqlite3")
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            with self.assertRaises(OperationalDatabaseError) as ctx:
+                assert_csv_import_safe(conn, allow_operational=False)
+            self.assertIn("Refused", str(ctx.exception))
+            self.assertIn("run_acceptance_test.sh", str(ctx.exception))
+        finally:
+            conn.close()
+
+    def test_operational_db_with_flag_creates_backup(self):
+        """assert_csv_import_safe creates a verified backup when authorized."""
+        db_path = self._make_db("jordana_invoice.sqlite3")
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        # Insert a row so the backup has content.
+        conn = connect(db_path)
+        conn.execute(
+            "INSERT INTO import_runs (id, source_name, source_path, imported_at, "
+            "source_row_count, completed_run_count, status, notes) "
+            "VALUES ('test-1', 'test', 'test.csv', '2026-01-01T00:00:00Z', 1, 0, 'imported', 'test')"
+        )
+        conn.commit()
+        backup_path = assert_csv_import_safe(conn, allow_operational=True)
+        try:
+            self.assertIsNotNone(backup_path)
+            self.assertTrue(backup_path.exists())
+            # Verify backup contains the row.
+            backup_conn = sqlite3.connect(str(backup_path))
+            try:
+                count = backup_conn.execute("SELECT COUNT(*) FROM import_runs").fetchone()[0]
+                self.assertEqual(count, 1)
+            finally:
+                backup_conn.close()
+        finally:
+            conn.close()
+
+    def test_non_operational_db_with_flag_does_not_create_backup(self):
+        """assert_csv_import_safe does not create a backup for non-operational DBs."""
+        db_path = self._make_db()
+        conn = connect(db_path)
+        try:
+            result = assert_csv_import_safe(conn, allow_operational=True)
+            self.assertIsNone(result)
+        finally:
+            conn.close()
+
+
+class ImportCsvServiceLayerGuardTests(unittest.TestCase):
+    """Tests that import_csv (the service-layer function) enforces the guard."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self._old_op = os.environ.get("JORDANA_DATABASE_PATH")
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+
+    def tearDown(self):
+        if self._old_op is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self._old_op
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        self.temp.cleanup()
+
+    def test_import_csv_raises_on_operational_db_without_flag(self):
+        """import_csv raises OperationalDatabaseError for the operational DB."""
+        from jordana_invoice.importer import import_csv
+
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            with self.assertRaises(OperationalDatabaseError):
+                import_csv(conn, str(SAMPLE_CSV))
+        finally:
+            conn.close()
+
+    def test_import_csv_succeeds_on_temp_db_without_flag(self):
+        """import_csv succeeds for a non-operational DB without the flag."""
+        from jordana_invoice.importer import import_csv
+
+        db_path = self.root / "test.sqlite3"
+        migrate_database(db_path)
+        conn = connect(db_path)
+        try:
+            import_csv(conn, str(SAMPLE_CSV))
+            count = conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0]
+            self.assertGreater(count, 0)
+        finally:
+            conn.close()
+
+    def test_import_csv_with_flag_creates_backup_on_operational(self):
+        """import_csv with allow_operational_db=True creates a backup."""
+        from jordana_invoice.importer import import_csv
+
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            import_csv(conn, str(SAMPLE_CSV), allow_operational_db=True)
+            # Backup should exist in the backup dir.
+            backups = list(self.root.glob("*backup-migrate-*"))
+            self.assertEqual(len(backups), 1)
+        finally:
+            conn.close()
+
 
 class CliImportCsvGuardTests(unittest.TestCase):
     """Tests for the CLI import-csv safety guard."""
@@ -103,12 +332,20 @@ class CliImportCsvGuardTests(unittest.TestCase):
         # Point backups to the temp dir so no real backup dirs are created.
         self.old_backup_dir = os.environ.get("JORDANA_BACKUP_DIR")
         os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+        # Save and unset JORDANA_DATABASE_PATH so tests are deterministic.
+        # The CLI will load .env naturally, which may set it.
+        self.old_op_path = os.environ.get("JORDANA_DATABASE_PATH")
+        os.environ.pop("JORDANA_DATABASE_PATH", None)
 
     def tearDown(self):
         if self.old_backup_dir is not None:
             os.environ["JORDANA_BACKUP_DIR"] = self.old_backup_dir
         else:
             os.environ.pop("JORDANA_BACKUP_DIR", None)
+        if self.old_op_path is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self.old_op_path
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
         self.temp.cleanup()
 
     def test_import_csv_against_operational_db_is_refused(self):
