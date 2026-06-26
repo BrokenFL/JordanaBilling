@@ -306,9 +306,26 @@ The module `payment_services.py` provides backend functions for the payment ledg
 
 Amount priority: `rate_cents_snapshot` (if positive) preferred over `approved_rate_cents`. Rate disagreements are counted separately. Date priority: `session_date` preferred over `start_at`. Manual allocation conflicts are not modified — the analyzer only reports them. The report contains only aggregate counts and totals — no session IDs, payment IDs, names, or private text.
 
+### Dry-Run CLI
+
+A local command-line interface is available in `app/jordana_invoice/payment_backfill_cli.py`:
+
+```
+python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.sqlite
+```
+
+- An explicit `--db` database path is mandatory. No default operational database is used.
+- The database is opened in strict read-only mode (`file:...?mode=ro`). No WAL, SHM, or journal files are created.
+- Migrations are not run. If the database lacks migration `004_payment_provenance`, the command fails with exit code 3 and a sanitized message.
+- No `--apply` mode exists.
+- Output is formatted JSON containing only the aggregate report, followed by a read-only safety statement.
+- Exit codes: 0 = success, 2 = invalid arguments or path, 3 = schema/open failure, 1 = other failure.
+- Operators should first make and verify a private database backup before any later apply operation.
+- Do not run this against the live operational database during this development round.
+
 ### Still Not Implemented
 
-- No apply mode or CLI command for the backfill — only the read-only dry-run analyzer exists.
+- No apply mode exists — only the read-only dry-run analyzer and its CLI are available.
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).

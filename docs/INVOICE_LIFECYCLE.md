@@ -159,11 +159,28 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - Read helpers: `payment_allocated_amount`, `payment_unapplied_amount`, `session_paid_amount`, `invoice_line_paid_amount`, `get_payment_detail`.
 - `dry_run_paid_at_session_backfill` — Read-only analyzer that classifies `paid_at_session` sessions into eligibility categories and returns a sanitized aggregate report. Performs no writes. Classification order: already backfilled, not approved, missing Bill To, missing/invalid amount, missing/invalid date, existing manual allocation conflict, eligible. Amount priority: `rate_cents_snapshot` then `approved_rate_cents`. Date priority: `session_date` then `start_at`.
 
+### Dry-Run CLI
+
+A local CLI command is available for running the dry-run analyzer against a specified database:
+
+```
+python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.sqlite
+```
+
+- An explicit `--db` path is mandatory. No default database is used.
+- The connection is read-only (`file:...?mode=ro`). No WAL, SHM, or journal files are created.
+- Migrations are not run. The database must already have migration `004_payment_provenance` applied.
+- No `--apply` mode exists.
+- Output is aggregate JSON only, followed by a read-only safety statement.
+- Operators should first make and verify a private database backup before any later apply operation.
+- Do not run this against the live operational database during this development round.
+- Paid-at-session invoice eligibility remains unchanged.
+
 All calculation helpers count only allocations where `payment.status = 'posted'` and `payment_allocation.status = 'active'`.
 
 ### What Is Not Implemented
 
-- No apply mode or CLI command for the backfill — only the read-only dry-run analyzer exists.
+- No apply mode exists — only the read-only dry-run analyzer and its CLI are available.
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
