@@ -195,6 +195,13 @@ def is_safe_validation_error(error: Exception) -> bool:
     return False
 
 
+def sanitize_staging_error_message(msg: str) -> str:
+    if is_safe_validation_error(ValueError(msg)):
+        return msg
+    return "An unexpected error occurred during invoice staging."
+
+
+
 def make_handler(database_path: str, write_token: str | None = None):
     launch_write_token = write_token or secrets.token_urlsafe(32)
 
@@ -646,6 +653,9 @@ def make_handler(database_path: str, write_token: str | None = None):
                                 staging = stage_approved_sessions_to_monthly_drafts(
                                     self.conn(), session_ids=[approved_session_id],
                                 )
+                                if staging.get("errors"):
+                                    for err in staging["errors"]:
+                                        err["error"] = sanitize_staging_error_message(err.get("error", ""))
                                 result["invoice_staging"] = {
                                     "status": "success" if not staging.get("errors") else "warning",
                                     "summary": staging,

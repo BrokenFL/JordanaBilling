@@ -94,7 +94,11 @@ Session approval now triggers monthly invoice staging automatically. When a cand
 
 **Idempotency**: Repeated staging for the same approved session creates no duplicate draft and no duplicate invoice line. Repeated approval calls still produce existing approval-side audit, usage, review-item, alias-update, and report side effects; those are not altered in this round.
 
-**Frontend**: The existing review UI ignores the additive `invoice_staging` field. No frontend change is required. No UI notifications exist yet.
+**Frontend**: The review UI (`review.js`) processes the additive `invoice_staging` field returned by candidate approval:
+- On successful staging (`status == "success"`), the success banner states `"Session approved and added to monthly draft."`
+- On staging warning (`status == "warning"`), database busy (`status == "unavailable"`), or unexpected error (`status == "error"`), approval remains successful, and a persistent amber warning banner is displayed at the top of the workbench via `showReviewWarning(message)`.
+- If the Invoices view is visible, the UI automatically invalidates/refreshes the active invoices list via `loadInvoices()` and reopens the active invoice via `openInvoice(...)` to reflect the newly staged session without requiring a manual reload.
+
 
 Paid-at-session sessions remain excluded from staging temporarily. Payment behavior will change in a later dedicated round.
 

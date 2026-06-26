@@ -775,3 +775,10 @@ tr.empty-row:hover { background: transparent; }
   .review-overlay-content { padding: 14px; max-height: calc(100vh - 120px); }
   .review-overlay-content .field-grid { grid-template-columns: 1fr; }
 }
+
+.review-warning-banner {
+  background: #fff8e8; border: 1px solid #f4a024; border-radius: 8px;
+  padding: 10px 16px; margin-bottom: 12px; color: #6a4600;
+  font-size: 14px; font-weight: 500;
+}
+

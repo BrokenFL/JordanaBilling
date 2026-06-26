@@ -790,13 +790,32 @@ async function save(approve) {
       const firstReviewBtn = document.querySelector("#candidateRows .review-btn");
       if (firstReviewBtn) firstReviewBtn.focus();
       else $("searchBox")?.focus();
+      
       let successMsg = "Session approved.";
+      let warningMsg = null;
       if (staging) {
-        if (staging.status === "warning") successMsg = "Session approved. Invoice staging has warnings — review invoices when ready.";
-        else if (staging.status === "unavailable") successMsg = "Session approved. Invoice staging unavailable — sessions will stage later.";
-        else if (staging.status === "error") successMsg = "Session approved. Invoice staging encountered an error — sessions will stage later.";
+        if (staging.status === "success") {
+          successMsg = "Session approved and added to monthly draft.";
+        } else if (staging.status === "warning") {
+          warningMsg = "Invoice staging warning: staging completed with errors — review invoices when ready.";
+        } else if (staging.status === "unavailable") {
+          warningMsg = "Invoice staging warning: database busy, session will stage later.";
+        } else if (staging.status === "error") {
+          warningMsg = "Invoice staging warning: unexpected error occurred, session will stage later.";
+        }
       }
       showReviewSuccess(successMsg);
+      if (warningMsg) {
+        showReviewWarning(warningMsg);
+      }
+      
+      if (!document.getElementById("invoicesView").hidden) {
+        await loadInvoices();
+        if (state.invoice && state.invoice.invoice && state.invoice.invoice.invoice_id) {
+          await openInvoice(state.invoice.invoice.invoice_id);
+        }
+      }
+      
       approvalInProgress = false;
     } else {
       renderInspector(updated);
@@ -1170,6 +1189,17 @@ function showReviewSuccess(message) {
   banner.setAttribute("role", "status");
   workbench.prepend(banner);
   setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 5000);
+}
+
+function showReviewWarning(message) {
+  const workbench = $("reviewWorkbench");
+  if (!workbench) return;
+  const banner = document.createElement("div");
+  banner.className = "review-warning-banner";
+  banner.textContent = message;
+  banner.setAttribute("role", "status");
+  workbench.prepend(banner);
+  setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 8000);
 }
 
 function overlayKeydownHandler(e) {

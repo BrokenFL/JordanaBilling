@@ -164,7 +164,7 @@ The review list is full-width with columns: Status, Date, Time, Clients, Calenda
 
 ### Overlay Behavior on Approval
 
-When Jordana clicks **Approve Session**, the overlay closes automatically on success. The candidate is removed from the review list, focus returns to the next review button (or the search box), and a success banner appears briefly. The approve button is disabled during the API request to prevent double-submission. If approval fails, the button is re-enabled and a sanitized error message is shown. Invoice staging warnings (if any) are included in the success banner.
+When Jordana clicks **Approve Session**, the overlay closes automatically on success. The candidate is removed from the review list, focus returns to the next review button (or the search box), and a success banner appears briefly. The approve button is disabled during the API request to prevent double-submission. If approval fails, the button is re-enabled and a sanitized error message is shown. If the session is successfully staged, the success banner indicates this. If staging generates warnings, database-busy, or unexpected errors, approval remains successful, and a persistent warning banner is displayed at the top of the workbench page via `showReviewWarning(message)`.
 
 ### Overlay Behavior on Duplicate Resolution
 
@@ -246,4 +246,4 @@ Hidden records are recoverable through the intentional hidden-calendar filter.
 
 ## Invoice Eligibility Boundary
 
-Approval does not create an invoice. The invoice builder revalidates approval, clients in the session, bill-to, actual charged amount, appointment status, billing treatment, billable classification, raw evidence, and duplicate attachment. Cancelled/no-show sessions require explicit `billable` treatment.
+Approval automatically stages the session into the corresponding monthly draft invoice, creating the draft if it does not yet exist. The invoice builder revalidates approval, clients in the session, bill-to, actual charged amount, appointment status, billing treatment, billable classification, raw evidence, and duplicate attachment. Cancelled/no-show sessions require explicit `billable` treatment.

@@ -1556,5 +1556,35 @@ class ReviewBillingRelationshipReturnTests(unittest.TestCase):
         self.assertLess(refresh_idx, select_idx)
 
 
+class ReviewStagingUiTests(unittest.TestCase):
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.css = Path("app/jordana_invoice/static/review.css").read_text()
+
+    def test_css_defines_warning_banner_style(self):
+        self.assertIn(".review-warning-banner", self.css)
+        self.assertIn("background: #fff8e8", self.css)
+        self.assertIn("border: 1px solid #f4a024", self.css)
+
+    def test_js_defines_show_review_warning(self):
+        self.assertIn("function showReviewWarning(message)", self.js)
+        self.assertIn('banner.className = "review-warning-banner"', self.js)
+
+    def test_js_save_handles_staging_result_and_refreshes_invoices(self):
+        # Verify the success and warning banner messages are present in save()
+        self.assertIn('Session approved and added to monthly draft.', self.js)
+        self.assertIn('Invoice staging warning: staging completed with errors', self.js)
+        self.assertIn('Invoice staging warning: database busy, session will stage later.', self.js)
+        self.assertIn('Invoice staging warning: unexpected error occurred, session will stage later.', self.js)
+        self.assertIn("showReviewWarning(warningMsg)", self.js)
+        
+        # Verify the active invoices list and editor refresh on approval
+        self.assertIn('!document.getElementById("invoicesView").hidden', self.js)
+        self.assertIn("await loadInvoices()", self.js)
+        self.assertIn("await openInvoice(state.invoice.invoice.invoice_id)", self.js)
+
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -128,12 +128,26 @@ class ApprovalStagingTests(unittest.TestCase):
                 "drafts_created": 0, "drafts_reused": 0, "sessions_staged": 0,
                 "sessions_already_staged": 0, "sessions_moved": 0,
                 "sessions_removed_ineligible": 0, "sessions_skipped": [],
-                "errors": [{"billing_party_id": "test", "billing_month": "2026-05", "error": "test error"}],
+                "errors": [{"billing_party_id": "test", "billing_month": "2026-05", "error": "Session is already included in this draft."}],
             }
             captured = self._approve_via_http()
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["invoice_staging"]["status"], "warning")
-        self.assertEqual(captured["payload"]["invoice_staging"]["summary"]["errors"][0]["error"], "test error")
+        self.assertEqual(captured["payload"]["invoice_staging"]["summary"]["errors"][0]["error"], "Session is already included in this draft.")
+
+    def test_unexpected_inner_staging_error_is_sanitized(self):
+        with patch("jordana_invoice.review_server.stage_approved_sessions_to_monthly_drafts") as mock_stage:
+            mock_stage.return_value = {
+                "drafts_created": 0, "drafts_reused": 0, "sessions_staged": 0,
+                "sessions_already_staged": 0, "sessions_moved": 0,
+                "sessions_removed_ineligible": 0, "sessions_skipped": [],
+                "errors": [{"billing_party_id": "test", "billing_month": "2026-05", "error": "OperationalError: table sessions has no column name /path/to/db"}],
+            }
+            captured = self._approve_via_http()
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["invoice_staging"]["status"], "warning")
+        self.assertEqual(captured["payload"]["invoice_staging"]["summary"]["errors"][0]["error"], "An unexpected error occurred during invoice staging.")
+
 
     # 4. Database-busy staging produces status = "unavailable" and HTTP 200
     def test_database_busy_staging_unavailable(self):
