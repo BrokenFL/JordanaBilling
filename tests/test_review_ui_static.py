@@ -1612,7 +1612,7 @@ class ReviewLineEditingUiTests(unittest.TestCase):
     def test_js_line_editor_success_and_failure_behaviors(self):
         # Verify saveBtn is disabled during request to prevent duplicate submissions
         self.assertIn("saveBtn.disabled = true", self.js)
-        
+
         # Verify success path closes editor and reloads workspace
         self.assertIn("closeLineEditorModal()", self.js)
         self.assertIn("await loadInvoices()", self.js)
@@ -1621,6 +1621,206 @@ class ReviewLineEditingUiTests(unittest.TestCase):
 
         # Verify failure path keeps editor open (closeLineEditorModal is NOT in catch block) and re-enables saveBtn
         self.assertIn("saveBtn.disabled = false", self.js)
+
+
+class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
+    """Change 1: Edit and Delete controls must be in a horizontal flex container on the same row."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.css = Path("app/jordana_invoice/static/review.css").read_text()
+
+    def test_edit_and_delete_wrapped_in_line_item_actions_div(self):
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        section = self.js[start:end]
+        self.assertIn("line-item-actions", section)
+        self.assertIn("edit-line", section)
+        self.assertIn("remove-line", section)
+
+    def test_edit_button_comes_before_delete_in_container(self):
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        section = self.js[start:end]
+        edit_idx = section.index("edit-line")
+        remove_idx = section.index("remove-line")
+        self.assertLess(edit_idx, remove_idx)
+
+    def test_both_buttons_have_type_button(self):
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        section = self.js[start:end]
+        self.assertIn('class="edit-line secondary" type="button"', section)
+        self.assertIn('class="remove-line danger" type="button"', section)
+
+    def test_css_defines_line_item_actions_as_flex(self):
+        self.assertIn(".line-item-actions", self.css)
+        css_idx = self.css.index(".line-item-actions")
+        css_block = self.css[css_idx:css_idx + 200]
+        self.assertIn("display: flex", css_block)
+        self.assertIn("gap:", css_block)
+        self.assertIn("white-space: nowrap", css_block)
+
+    def test_css_line_item_actions_button_styles(self):
+        self.assertIn(".line-item-actions button", self.css)
+
+    def test_edit_and_delete_handlers_preserved(self):
+        self.assertIn('document.querySelectorAll(".edit-line").forEach', self.js)
+        self.assertIn('document.querySelectorAll(".remove-line").forEach', self.js)
+
+    def test_buttons_are_inside_line_item_actions_div(self):
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        section = self.js[start:end]
+        container_start = section.index("line-item-actions")
+        container_end = section.index("</div>", container_start)
+        container_block = section[container_start:container_end]
+        self.assertIn("edit-line", container_block)
+        self.assertIn("remove-line", container_block)
+
+
+class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
+    """Change 2: Review and Finalize must open a real preview step before finalization."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.css = Path("app/jordana_invoice/static/review.css").read_text()
+        start = self.js.index("function renderFinalizationPreview(")
+        end = self.js.index("function renderInvoicePreview(", start)
+        self.fn = self.js[start:end]
+
+    def test_preview_titled_invoice_preview_not_finalization_preview(self):
+        self.assertIn("Invoice Preview", self.fn)
+        self.assertNotIn("Finalization Preview", self.fn)
+
+    def test_preview_shows_draft_status_pill(self):
+        self.assertIn('<span class="status-pill">Draft</span>', self.fn)
+
+    def test_preview_shows_business_name_and_provider(self):
+        self.assertIn("business_name", self.fn)
+        self.assertIn("provider_display_name", self.fn)
+        self.assertIn("credentials_display", self.fn)
+
+    def test_preview_shows_invoice_date_and_billing_period(self):
+        self.assertIn("invoice_date", self.fn)
+        self.assertIn("billing_period_start", self.fn)
+        self.assertIn("billing_period_end", self.fn)
+
+    def test_preview_shows_delivery_method_label(self):
+        self.assertIn("deliveryLabel", self.fn)
+        self.assertIn("Email", self.fn)
+        self.assertIn("Mail", self.fn)
+
+    def test_preview_shows_bill_to_with_email_and_phone(self):
+        self.assertIn("billing_email", self.fn)
+        self.assertIn("billing_phone", self.fn)
+        self.assertIn("billing_address_line_1", self.fn)
+
+    def test_preview_shows_line_items_table(self):
+        self.assertIn("invoice-preview-table", self.fn)
+        self.assertIn("service_date", self.fn)
+        self.assertIn("participants_snapshot", self.fn)
+        self.assertIn("description_snapshot", self.fn)
+        self.assertIn("duration_minutes", self.fn)
+        self.assertIn("line_amount_cents", self.fn)
+
+    def test_preview_shows_total(self):
+        self.assertIn("invoice-total", self.fn)
+        self.assertIn("total_cents", self.fn)
+        self.assertIn("invoice_total_label", self.fn)
+
+    def test_preview_shows_payment_instructions(self):
+        self.assertIn("Please make all checks payable to:", self.fn)
+        self.assertIn("Please send payment to:", self.fn)
+        self.assertIn("payee_name", self.fn)
+        self.assertIn("payment_address", self.fn)
+
+    def test_preview_shows_notes_if_present(self):
+        self.assertIn("notesHtml", self.fn)
+        self.assertIn("i.notes", self.fn)
+
+    def test_preview_has_finalize_and_back_buttons(self):
+        self.assertIn('id="confirmFinalizeBtn"', self.fn)
+        self.assertIn('id="backToDraftBtn"', self.fn)
+        self.assertIn("Finalize Invoice", self.fn)
+        self.assertIn("Back to Draft", self.fn)
+
+    def test_preview_does_not_use_old_button_labels(self):
+        self.assertNotIn("Finalize This Exact Invoice", self.fn)
+        self.assertNotIn("Return to Draft", self.fn)
+        self.assertNotIn('id="cancelFinalizeBtn"', self.fn)
+
+    def test_preview_back_button_returns_to_draft_editor(self):
+        self.assertIn("backToDraftBtn", self.fn)
+        self.assertIn("renderInvoiceEditor(preview)", self.fn)
+
+    def test_preview_finalize_prevents_duplicate_submission(self):
+        self.assertIn("finalizeInProgress", self.fn)
+        self.assertIn("if (state.finalizeInProgress) return;", self.fn)
+        self.assertIn("state.finalizeInProgress = true;", self.fn)
+
+    def test_preview_finalize_disables_buttons_during_request(self):
+        self.assertIn("finalizeBtn.disabled = true", self.fn)
+        self.assertIn("backBtn.disabled = true", self.fn)
+
+    def test_preview_finalize_keeps_buttons_disabled_on_success(self):
+        self.assertIn("finalizeBtn.disabled = true;", self.fn)
+
+    def test_preview_finalize_reenables_buttons_on_error(self):
+        self.assertIn("finalizeBtn.disabled = false", self.fn)
+        self.assertIn("backBtn.disabled = false", self.fn)
+
+    def test_preview_finalize_shows_error_in_place_on_failure(self):
+        self.assertIn("finalizeError", self.fn)
+        self.assertIn("errorDiv.style.display = \"block\"", self.fn)
+
+    def test_preview_finalize_does_not_throw_unhandled(self):
+        self.assertIn("try {", self.fn)
+        self.assertIn("} catch (err) {", self.fn)
+
+    def test_preview_finalize_success_refreshes_invoice_list(self):
+        self.assertIn("await loadInvoices()", self.fn)
+
+    def test_preview_finalize_success_renders_final_preview(self):
+        self.assertIn("renderInvoicePreview(final)", self.fn)
+
+    def test_preview_finalize_success_shows_confirmation(self):
+        self.assertIn("showInvoiceSuccess", self.fn)
+        self.assertIn("Invoice finalized successfully.", self.fn)
+
+    def test_preview_finalize_success_sets_state_invoice(self):
+        self.assertIn("state.invoice = final", self.fn)
+
+    def test_preview_finalize_resets_in_progress_on_success(self):
+        self.assertIn("state.finalizeInProgress = false;", self.fn)
+
+    def test_preview_finalize_resets_in_progress_on_error(self):
+        catch_idx = self.fn.index("} catch (err) {")
+        catch_block = self.fn[catch_idx:]
+        self.assertIn("state.finalizeInProgress = false;", catch_block)
+
+    def test_preview_does_not_assign_invoice_number_before_finalize(self):
+        self.assertNotIn("invoice_number", self.fn)
+
+    def test_state_has_finalize_in_progress_flag(self):
+        self.assertIn("finalizeInProgress: false", self.js)
+
+    def test_show_invoice_success_function_exists(self):
+        self.assertIn("function showInvoiceSuccess", self.js)
+
+    def test_show_invoice_success_uses_invoices_view(self):
+        start = self.js.index("function showInvoiceSuccess")
+        end = self.js.index("function overlayKeydownHandler", start)
+        fn = self.js[start:end]
+        self.assertIn('$("invoicesView")', fn)
+        self.assertIn("review-success-banner", fn)
+
+    def test_review_and_finalize_button_calls_preview_finalize_api(self):
+        start = self.js.index('$("reviewFinalizeBtn").onclick')
+        end = self.js.index("function renderFinalizationPreview", start)
+        handler = self.js[start:end]
+        self.assertIn("preview-finalize", handler)
+        self.assertIn("renderFinalizationPreview", handler)
 
 
 if __name__ == "__main__":

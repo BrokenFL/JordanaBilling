@@ -391,6 +391,8 @@ tr.empty-row:hover { background: transparent; }
 .invoice-editor-lines { width: 100%; border-collapse: collapse; }
 .invoice-editor-lines th, .invoice-editor-lines td { border-bottom: 1px solid var(--line); padding: 7px 5px; font-size: 12px; vertical-align: top; }
 .invoice-editor-lines input { width: 100%; min-height: 32px; }
+.line-item-actions { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.line-item-actions button { min-height: 28px; font-size: 12px; padding: 0 8px; }
 .invoice-preview { border: 1px solid #b8c5d4; background: white; padding: 28px 30px; min-height: 620px; box-shadow: 0 2px 8px rgba(16, 42, 67, 0.08); color: #102a43; }
 .invoice-preview-header { display: grid; grid-template-columns: 1fr 220px; gap: 24px; align-items: start; }
 .invoice-preview-brand { font-weight: 800; font-size: 18px; line-height: 1.35; }

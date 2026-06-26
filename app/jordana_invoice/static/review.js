@@ -31,7 +31,8 @@ const state = {
   },
   currentPersonId: null,
   personShowAllSessions: false,
-  billingSetupSaving: false
+  billingSetupSaving: false,
+  finalizeInProgress: false
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
@@ -1202,6 +1203,17 @@ function showReviewWarning(message) {
   setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 8000);
 }
 
+function showInvoiceSuccess(message) {
+  const view = $("invoicesView");
+  if (!view) return;
+  const banner = document.createElement("div");
+  banner.className = "review-success-banner";
+  banner.textContent = message;
+  banner.setAttribute("role", "status");
+  view.prepend(banner);
+  setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 5000);
+}
+
 function overlayKeydownHandler(e) {
   if (e.key === "Escape") {
     e.preventDefault();
@@ -1741,7 +1753,7 @@ async function renderInvoiceEditor(data) {
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger">×</button></td></tr>`).join("")}</tbody></table>
+    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
@@ -2001,28 +2013,70 @@ function renderFinalizationPreview(preview) {
   const business = profile.business_name || "Business profile not configured";
   const provider = profile.provider_display_name || "";
   const credentials = profile.credentials_display || "";
-  const billto = [party.billing_name, [party.billing_address_line_1, party.billing_address_line_2].filter(Boolean).join(" "), [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : "")].filter(Boolean).join("\n");
+  const billtoLines = [
+    party.billing_name,
+    party.billing_address_line_1,
+    party.billing_address_line_2,
+    [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : ""),
+    party.billing_email,
+    party.billing_phone
+  ].filter(Boolean);
+  const billto = billtoLines.join("\n");
   const revision = preview.preview_revision;
   const readiness = preview.readiness || {ready: true, errors: []};
   const ready = readiness.ready;
   const readinessHtml = ready
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
     : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
-  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Finalization Preview</h3><span class="status-pill">Draft</span></div>
-    <div class="help">Review the invoice below carefully. Click <strong>Finalize This Exact Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
+  const deliveryLabel = {email: "Email", mail: "Mail", both: "Email & Mail", unresolved: "Not specified"}[i.delivery_method] || escapeHtml(i.delivery_method);
+  const paymentAddress = [
+    profile.payee_name,
+    profile.payment_address_line_1,
+    profile.payment_address_line_2,
+    [profile.payment_city, profile.payment_state].filter(Boolean).join(", ") + (profile.payment_postal_code ? ` ${profile.payment_postal_code}` : "")
+  ].filter(Boolean).join("\n");
+  const notesHtml = i.notes ? `<div class="invoice-payment"><b>Notes:</b> ${escapeHtml(i.notes)}</div>` : "";
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
+    <div class="help">Review the invoice below carefully. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
+    <div id="finalizeError" class="reports-error" style="display:none;"></div>
     <article class="invoice-preview">
-      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${fmt(i.delivery_method)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
+      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${deliveryLabel}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
       <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${fmt(line.duration_minutes)} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${escapeHtml(profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
+      <div class="invoice-payment"><b>Please make all checks payable to:</b> ${fmt(profile.payee_name)}\n<b>Please send payment to:</b> ${fmt(paymentAddress)}</div>
+      ${notesHtml}
     </article>
-    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize This Exact Invoice</button><button id="cancelFinalizeBtn">Return to Draft</button></div>
+    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="backToDraftBtn">Back to Draft</button></div>
   </div>`;
-  $("cancelFinalizeBtn").onclick = () => renderInvoiceEditor(preview);
-  $("confirmFinalizeBtn").onclick = async () => {
-    const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision})});
-    await loadInvoices(); renderInvoicePreview(final);
+  const finalizeBtn = $("confirmFinalizeBtn");
+  const backBtn = $("backToDraftBtn");
+  const errorDiv = $("finalizeError");
+  backBtn.onclick = () => { state.finalizeInProgress = false; renderInvoiceEditor(preview); };
+  finalizeBtn.onclick = async () => {
+    if (state.finalizeInProgress) return;
+    state.finalizeInProgress = true;
+    finalizeBtn.disabled = true;
+    backBtn.disabled = true;
+    errorDiv.style.display = "none";
+    errorDiv.textContent = "";
+    try {
+      const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision})});
+      state.finalizeInProgress = false;
+      state.invoice = final;
+      finalizeBtn.disabled = true;
+      backBtn.disabled = true;
+      await loadInvoices();
+      renderInvoicePreview(final);
+      showInvoiceSuccess("Invoice finalized successfully.");
+    } catch (err) {
+      state.finalizeInProgress = false;
+      finalizeBtn.disabled = false;
+      backBtn.disabled = false;
+      errorDiv.textContent = err.message || "An unexpected error occurred during finalization.";
+      errorDiv.style.display = "block";
+    }
   };
 }
 
