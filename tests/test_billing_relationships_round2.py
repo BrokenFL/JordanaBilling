@@ -554,8 +554,8 @@ class TestApiEndpoint(Round2TestBase):
 
     def setUp(self):
         super().setUp()
-        handler_cls = make_handler(str(self.db_path))
-        self.server = HTTPServer(("127.0.0.1", 0), handler_cls)
+        self.handler_cls = make_handler(str(self.db_path), write_token="test-write-token")
+        self.server = HTTPServer(("127.0.0.1", 0), self.handler_cls)
         self.port = self.server.server_address[1]
         import threading
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -570,6 +570,7 @@ class TestApiEndpoint(Round2TestBase):
         data = json.dumps(body).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, method="POST")
         req.add_header("Content-Type", "application/json")
+        req.add_header(self.handler_cls.write_token_header, self.handler_cls.write_token)
         try:
             with urllib.request.urlopen(req) as resp:
                 return resp.status, json.loads(resp.read())
