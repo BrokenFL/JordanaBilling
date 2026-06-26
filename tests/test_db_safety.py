@@ -18,7 +18,9 @@ from pathlib import Path
 
 from jordana_invoice.db import (
     OperationalDatabaseError,
+    OperationalImportAuthorization,
     assert_csv_import_safe,
+    authorize_operational_import,
     connect,
     get_configured_operational_db_path,
     is_operational_db_path,
@@ -219,29 +221,22 @@ class AssertCsvImportSafeTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_operational_db_with_flag_creates_backup(self):
-        """assert_csv_import_safe creates a verified backup when authorized."""
+    def test_operational_db_with_authorization_object_no_duplicate_backup(self):
+        """assert_csv_import_safe with authorization object does not create a second backup."""
         db_path = self._make_db("jordana_invoice.sqlite3")
         os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
-        # Insert a row so the backup has content.
         conn = connect(db_path)
-        conn.execute(
-            "INSERT INTO import_runs (id, source_name, source_path, imported_at, "
-            "source_row_count, completed_run_count, status, notes) "
-            "VALUES ('test-1', 'test', 'test.csv', '2026-01-01T00:00:00Z', 1, 0, 'imported', 'test')"
-        )
-        conn.commit()
-        backup_path = assert_csv_import_safe(conn, allow_operational=True)
         try:
-            self.assertIsNotNone(backup_path)
-            self.assertTrue(backup_path.exists())
-            # Verify backup contains the row.
-            backup_conn = sqlite3.connect(str(backup_path))
-            try:
-                count = backup_conn.execute("SELECT COUNT(*) FROM import_runs").fetchone()[0]
-                self.assertEqual(count, 1)
-            finally:
-                backup_conn.close()
+            # Create authorization with backup first.
+            auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
+            self.assertIsNotNone(auth.backup_path)
+            self.assertTrue(auth.backup_path.exists())
+            # Pass to assert_csv_import_safe — should NOT create another backup.
+            result = assert_csv_import_safe(conn, allow_operational=auth)
+            self.assertEqual(result, auth.backup_path)
+            # Only one backup file should exist.
+            backups = list(self.root.glob("*backup-migrate-*"))
+            self.assertEqual(len(backups), 1)
         finally:
             conn.close()
 
@@ -305,17 +300,19 @@ class ImportCsvServiceLayerGuardTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_import_csv_with_flag_creates_backup_on_operational(self):
-        """import_csv with allow_operational_db=True creates a backup."""
+    def test_import_csv_with_authorization_creates_backup_on_operational(self):
+        """import_csv with OperationalImportAuthorization creates exactly one backup."""
         from jordana_invoice.importer import import_csv
 
         db_path = self.root / "jordana_invoice.sqlite3"
         migrate_database(db_path)
         os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        # Authorize first (creates backup).
+        auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
         conn = connect(db_path)
         try:
-            import_csv(conn, str(SAMPLE_CSV), allow_operational_db=True)
-            # Backup should exist in the backup dir.
+            import_csv(conn, str(SAMPLE_CSV), allow_operational_db=auth)
+            # Exactly one backup should exist (from authorize, not from assert).
             backups = list(self.root.glob("*backup-migrate-*"))
             self.assertEqual(len(backups), 1)
         finally:
@@ -425,6 +422,304 @@ class CliImportCsvGuardTests(unittest.TestCase):
                 mtime_before,
                 "Operational database was modified despite safety refusal.",
             )
+
+
+class AuthorizeOperationalImportTests(unittest.TestCase):
+    """Tests for authorize_operational_import — the pre-migration authorization."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self._old_op = os.environ.get("JORDANA_DATABASE_PATH")
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+
+    def tearDown(self):
+        if self._old_op is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self._old_op
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        self.temp.cleanup()
+
+    def _make_op_db(self) -> Path:
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        return db_path
+
+    def test_authorize_with_correct_confirmation_returns_authorization(self):
+        """authorize_operational_import with correct path returns authorization with backup."""
+        db_path = self._make_op_db()
+        auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
+        self.assertIsInstance(auth, OperationalImportAuthorization)
+        self.assertEqual(auth.confirmed_path, db_path.resolve())
+        self.assertIsNotNone(auth.backup_path)
+        self.assertTrue(auth.backup_path.exists())
+
+    def test_authorize_without_confirmation_raises(self):
+        """authorize_operational_import without confirmed_path raises."""
+        db_path = self._make_op_db()
+        with self.assertRaises(OperationalDatabaseError) as ctx:
+            authorize_operational_import(db_path, confirmed_path=None)
+        self.assertIn("confirmation", str(ctx.exception).lower())
+
+    def test_authorize_with_wrong_confirmation_raises(self):
+        """authorize_operational_import with wrong path raises."""
+        db_path = self._make_op_db()
+        with self.assertRaises(OperationalDatabaseError) as ctx:
+            authorize_operational_import(db_path, confirmed_path="/wrong/path/db.sqlite3")
+        self.assertIn("does not match", str(ctx.exception))
+
+    def test_authorize_with_symlink_confirmation_resolves(self):
+        """authorize_operational_import resolves symlinks in confirmation path."""
+        db_path = self._make_op_db()
+        link_path = self.root / "link_to_op.sqlite3"
+        link_path.symlink_to(db_path)
+        auth = authorize_operational_import(db_path, confirmed_path=str(link_path))
+        self.assertEqual(auth.confirmed_path, db_path.resolve())
+
+    def test_authorize_creates_backup_before_any_mutation(self):
+        """authorize_operational_import creates backup before migration could run."""
+        db_path = self._make_op_db()
+        # Insert data to verify backup captures it.
+        conn = connect(db_path)
+        conn.execute(
+            "INSERT INTO import_runs (id, source_name, source_path, imported_at, "
+            "source_row_count, completed_run_count, status, notes) "
+            "VALUES ('pre-mig-1', 'test', 'test.csv', '2026-01-01T00:00:00Z', 1, 0, 'imported', 'test')"
+        )
+        conn.commit()
+        conn.close()
+
+        auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
+        self.assertTrue(auth.backup_path.exists())
+        # Verify backup has the data.
+        backup_conn = sqlite3.connect(str(auth.backup_path))
+        try:
+            count = backup_conn.execute("SELECT COUNT(*) FROM import_runs").fetchone()[0]
+            self.assertEqual(count, 1)
+        finally:
+            backup_conn.close()
+
+    def test_authorize_non_operational_raises(self):
+        """authorize_operational_import raises for non-operational DB."""
+        db_path = self.root / "test.sqlite3"
+        migrate_database(db_path)
+        with self.assertRaises(OperationalDatabaseError):
+            authorize_operational_import(db_path, confirmed_path=str(db_path))
+
+
+class CliConfirmationTests(unittest.TestCase):
+    """Tests for the CLI --confirm-operational-db-path flag."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.temp_db = str(self.root / "acceptance_test.sqlite3")
+        self.old_backup_dir = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+        self.old_op_path = os.environ.get("JORDANA_DATABASE_PATH")
+        os.environ.pop("JORDANA_DATABASE_PATH", None)
+
+    def tearDown(self):
+        if self.old_backup_dir is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self.old_backup_dir
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        if self.old_op_path is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self.old_op_path
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+        self.temp.cleanup()
+
+    def test_allow_without_confirm_path_refused(self):
+        """--allow-operational-db without --confirm-operational-db-path is refused."""
+        result = _run_cli(
+            "--db", "data/jordana_invoice.sqlite3",
+            "import-csv", str(SAMPLE_CSV),
+            "--allow-operational-db",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("REFUSED", result.stderr)
+        self.assertIn("confirmation", result.stderr.lower())
+
+    def test_allow_with_wrong_confirm_path_refused(self):
+        """--allow-operational-db with wrong --confirm-operational-db-path is refused."""
+        result = _run_cli(
+            "--db", "data/jordana_invoice.sqlite3",
+            "import-csv", str(SAMPLE_CSV),
+            "--allow-operational-db",
+            "--confirm-operational-db-path", "/wrong/path.sqlite3",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("REFUSED", result.stderr)
+        self.assertIn("does not match", result.stderr)
+
+    def test_refusal_mentions_confirm_flag(self):
+        """The refusal message mentions --confirm-operational-db-path."""
+        result = _run_cli(
+            "--db", "data/jordana_invoice.sqlite3",
+            "import-csv", str(SAMPLE_CSV),
+        )
+        self.assertIn("--confirm-operational-db-path", result.stderr)
+
+    def test_non_operational_does_not_require_confirm(self):
+        """Non-operational temp DB does not require confirmation flags."""
+        result = _run_cli(
+            "--db", self.temp_db,
+            "import-csv", str(SAMPLE_CSV),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("REFUSED", result.stderr)
+
+    def test_non_operational_ignores_confirm_flag(self):
+        """--confirm-operational-db-path is ignored for non-operational DBs."""
+        result = _run_cli(
+            "--db", self.temp_db,
+            "import-csv", str(SAMPLE_CSV),
+            "--allow-operational-db",
+            "--confirm-operational-db-path", str(self.temp_db),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class ImportRowsNoBypassTests(unittest.TestCase):
+    """Verify that import_rows (lower-level) cannot bypass the safety boundary.
+
+    import_rows is intentionally unguarded because it's used by both
+    import_csv (guarded) and google_sync (legitimate production sync).
+    This test documents that import_rows itself does NOT check, and that
+    the guard is on import_csv only.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self._old_op = os.environ.get("JORDANA_DATABASE_PATH")
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+
+    def tearDown(self):
+        if self._old_op is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self._old_op
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        self.temp.cleanup()
+
+    def test_import_rows_does_not_guard(self):
+        """import_rows is intentionally unguarded (used by sync). import_csv is the guard point."""
+        from jordana_invoice.importer import import_csv, import_rows
+
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+        conn = connect(db_path)
+        try:
+            # import_rows directly should work (it's the low-level function).
+            # This is by design — google_sync uses it for routine production sync.
+            raw_row = {
+                "calendar_event_id": "test-1",
+                "event_title": "Test Client 60",
+                "start_at": "2026-06-23T17:00:00-04:00",
+                "end_at": "2026-06-23T18:00:00-04:00",
+                "duration_minutes": "60",
+                "calendar": "Jordana Work",
+                "payload_version": "2",
+                "raw_json": "{}",
+            }
+            import_rows(conn, [raw_row], "test")
+            count = conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0]
+            self.assertGreater(count, 0)
+
+            # But import_csv on the same operational DB must raise.
+            with self.assertRaises(OperationalDatabaseError):
+                import_csv(conn, str(SAMPLE_CSV))
+        finally:
+            conn.close()
+
+
+class BackupBeforeMigrationTests(unittest.TestCase):
+    """Verify that backup is created before migration in the CLI flow."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self._old_op = os.environ.get("JORDANA_DATABASE_PATH")
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
+
+    def tearDown(self):
+        if self._old_op is not None:
+            os.environ["JORDANA_DATABASE_PATH"] = self._old_op
+        else:
+            os.environ.pop("JORDANA_DATABASE_PATH", None)
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        self.temp.cleanup()
+
+    def test_backup_exists_before_migration(self):
+        """authorize_operational_import creates backup before migrate_database runs."""
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+
+        # Insert data and checkpoint WAL so backup captures it.
+        conn = connect(db_path)
+        conn.execute(
+            "INSERT INTO import_runs (id, source_name, source_path, imported_at, "
+            "source_row_count, completed_run_count, status, notes) "
+            "VALUES ('pre-backup-1', 'test', 'test.csv', '2026-01-01T00:00:00Z', 1, 0, 'imported', 'test')"
+        )
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+
+        # Authorize — this creates the backup.
+        auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
+        self.assertTrue(auth.backup_path.exists())
+
+        # Now run migration (should be no-op since already current).
+        result = migrate_database(db_path)
+        self.assertFalse(result["migrated"])
+
+        # Backup should still exist and contain the data.
+        backup_conn = sqlite3.connect(str(auth.backup_path))
+        try:
+            count = backup_conn.execute("SELECT COUNT(*) FROM import_runs").fetchone()[0]
+            self.assertEqual(count, 1)
+        finally:
+            backup_conn.close()
+
+    def test_no_duplicate_backup_during_one_authorized_import(self):
+        """One authorized import creates exactly one backup, not two."""
+        db_path = self.root / "jordana_invoice.sqlite3"
+        migrate_database(db_path)
+        os.environ["JORDANA_DATABASE_PATH"] = str(db_path)
+
+        # Authorize (creates backup #1).
+        auth = authorize_operational_import(db_path, confirmed_path=str(db_path))
+
+        # Pass to assert_csv_import_safe (should NOT create backup #2).
+        conn = connect(db_path)
+        try:
+            result = assert_csv_import_safe(conn, allow_operational=auth)
+            self.assertEqual(result, auth.backup_path)
+        finally:
+            conn.close()
+
+        # Only one backup.
+        backups = list(self.root.glob("*backup-migrate-*"))
+        self.assertEqual(len(backups), 1)
 
 
 if __name__ == "__main__":
