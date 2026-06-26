@@ -78,6 +78,7 @@ class ApprovalStagingTests(unittest.TestCase):
         handler.headers = {
             "Content-Length": str(len(body)),
             "Content-Type": "application/json",
+            self.handler_cls.write_token_header: self.handler_cls.write_token,
         }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()

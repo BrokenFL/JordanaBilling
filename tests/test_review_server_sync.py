@@ -1,12 +1,15 @@
 import json
 import os
+import re
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
@@ -92,14 +95,26 @@ class ReviewServerSyncTests(unittest.TestCase):
             httpd.server_close()
 
     def fetch_json(self, url: str, method: str = "GET") -> dict:
+        headers = {"Content-Type": "application/json"}
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            parts = urlsplit(url)
+            base_url = f"{parts.scheme}://{parts.netloc}"
+            headers["X-Jordana-Write-Token"] = self.fetch_write_token(base_url)
         request = urllib.request.Request(
             url,
             data=b"{}" if method == "POST" else None,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method=method,
         )
         with urllib.request.urlopen(request) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def fetch_write_token(self, base_url: str) -> str:
+        with urllib.request.urlopen(f"{base_url}/review") as response:
+            html = response.read().decode("utf-8")
+        match = re.search(r'window\.__JORDANA_BOOTSTRAP__=\{"writeToken":\s*"([^"]+)"\};', html)
+        self.assertIsNotNone(match, "Review page bootstrap token was not found")
+        return match.group(1)
 
     def test_sync_status_and_run_use_active_review_server_database(self):
         review_server.REVIEW_SYNC_TRANSPORT = FakeTransport(
@@ -129,6 +144,57 @@ class ReviewServerSyncTests(unittest.TestCase):
         ).fetchone()["count"]
         self.assertEqual(active_count, 2)
         self.assertEqual(env_count, 0)
+
+    def test_get_requests_do_not_require_write_token(self):
+        with self.server() as base_url:
+            status = self.fetch_json(f"{base_url}/api/status")
+        self.assertIn("needs_review", status)
+
+    def test_missing_write_token_returns_403(self):
+        with self.server() as base_url:
+            request = urllib.request.Request(
+                f"{base_url}/api/sync/run",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(request)
+        err = ctx.exception
+        self.assertEqual(err.code, 403)
+        self.assertEqual(
+            json.loads(err.read().decode("utf-8")),
+            {"ok": False, "error": "Forbidden."},
+        )
+        err.close()
+
+    def test_incorrect_write_token_returns_403(self):
+        with self.server() as base_url:
+            request = urllib.request.Request(
+                f"{base_url}/api/sync/run",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Jordana-Write-Token": "wrong-token",
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(request)
+        err = ctx.exception
+        self.assertEqual(err.code, 403)
+        self.assertEqual(
+            json.loads(err.read().decode("utf-8")),
+            {"ok": False, "error": "Forbidden."},
+        )
+        err.close()
+
+    def test_write_token_changes_between_server_launches(self):
+        with self.server() as first_base_url:
+            first_token = self.fetch_write_token(first_base_url)
+        with self.server() as second_base_url:
+            second_token = self.fetch_write_token(second_base_url)
+        self.assertNotEqual(first_token, second_token)
 
 
 if __name__ == "__main__":

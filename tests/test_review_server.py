@@ -23,6 +23,7 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         handler.headers = {
             "Content-Length": str(len(body)),
             "Content-Type": "application/json",
+            self.handler_cls.write_token_header: self.handler_cls.write_token,
         }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
@@ -86,6 +87,7 @@ class ReviewServerSanitizationTests(unittest.TestCase):
         handler.headers = {
             "Content-Length": str(len(body)),
             "Content-Type": "application/json",
+            self.handler_cls.write_token_header: self.handler_cls.write_token,
         }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
@@ -217,6 +219,7 @@ class ReviewServerJsonRequestParsingTests(unittest.TestCase):
         headers = {"Content-Length": str(len(body))}
         if content_type is not None:
             headers["Content-Type"] = content_type
+        headers[self.handler_cls.write_token_header] = self.handler_cls.write_token
         handler.headers = headers
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
@@ -330,6 +333,171 @@ class ReviewServerJsonRequestParsingTests(unittest.TestCase):
         mock_create_person.assert_not_called()
 
 
+class ReviewServerWriteTokenTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path, body=b"{}", method="POST", token="auto"):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        handler.command = method
+        headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/json",
+        }
+        if token == "auto":
+            headers[self.handler_cls.write_token_header] = self.handler_cls.write_token
+        elif token is not None:
+            headers[self.handler_cls.write_token_header] = token
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {}
+
+        def mock_send_json(payload, status=200):
+            captured["payload"] = payload
+            captured["status"] = status
+
+        handler.send_json = mock_send_json
+        handler.finish = lambda: None
+        return handler, captured
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_valid_write_token_is_accepted(self, mock_create_person):
+        mock_create_person.return_value = {"ok": True, "person_id": "p1"}
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True, "person_id": "p1"})
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_missing_write_token_returns_403(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            token=None,
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 403)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_incorrect_write_token_returns_403(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            token="wrong-token",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 403)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        mock_create_person.assert_not_called()
+
+    def test_get_requests_do_not_require_write_token(self):
+        handler, captured = self._handler("/api/status", body=b"", method="GET", token=None)
+        handler.conn = lambda: object()
+        with patch("jordana_invoice.review_server.dashboard_status", return_value={"ok": True}):
+            handler.do_GET()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"], {"ok": True})
+
+    def test_write_token_regenerates_between_handler_launches(self):
+        other_handler_cls = make_handler(self.db_path)
+        self.assertNotEqual(self.handler_cls.write_token, other_handler_cls.write_token)
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_missing_write_token_blocks_before_service_call_for_patch(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            method="PATCH",
+            token=None,
+        )
+        handler.conn = lambda: None
+        handler.do_PATCH()
+
+        self.assertEqual(captured["status"], 403)
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        mock_create_person.assert_not_called()
+
+    @patch("jordana_invoice.review_server.create_person")
+    def test_incorrect_write_token_error_does_not_echo_real_token(self, mock_create_person):
+        handler, captured = self._handler(
+            "/api/people",
+            body=json.dumps({"display_name": "Test"}).encode("utf-8"),
+            token="wrong-token",
+        )
+        handler.conn = lambda: None
+        handler.do_POST()
+
+        payload_text = json.dumps(captured["payload"])
+        self.assertEqual(captured["status"], 403)
+        self.assertNotIn(self.handler_cls.write_token, payload_text)
+        mock_create_person.assert_not_called()
+
+
+class ReviewServerReviewPageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.handler_cls = make_handler(self.db_path, write_token='token"</script>&value')
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path="/review"):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        handler.headers = {}
+        handler.rfile = io.BytesIO()
+        handler.wfile = io.BytesIO()
+        handler.finish = lambda: None
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {"headers": {}}
+
+        handler.send_response = lambda status: captured.setdefault("status", status)
+        handler.send_header = lambda key, value: captured["headers"].__setitem__(key, value)
+        handler.end_headers = lambda: None
+        return handler, captured
+
+    def test_review_page_has_no_store_cache_control(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["headers"].get("Cache-Control"), "no-store")
+
+    def test_review_page_bootstrap_serializes_token_safely(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+
+        html = handler.wfile.getvalue().decode("utf-8")
+        self.assertIn('window.__JORDANA_BOOTSTRAP__={"writeToken": "token\\"<\\/script>&value"};', html)
+        self.assertNotIn("<!--", html)
+
+    def test_static_review_js_does_not_embed_runtime_token(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text(encoding="utf-8")
+        self.assertIn("window.__JORDANA_BOOTSTRAP__", js)
+        self.assertNotIn(self.handler_cls.write_token, js)
+
+
 class ReviewServerRequestBodyLimitTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -350,6 +518,7 @@ class ReviewServerRequestBodyLimitTests(unittest.TestCase):
             headers["Content-Length"] = content_length
         if content_type is not None:
             headers["Content-Type"] = content_type
+        headers[self.handler_cls.write_token_header] = self.handler_cls.write_token
         handler.headers = headers
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()

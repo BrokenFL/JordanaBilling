@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import mimetypes
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -95,6 +97,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 REVIEW_SYNC_TRANSPORT = default_transport
 
 MAX_REQUEST_BODY_BYTES = 1_048_576  # 1 MiB
+WRITE_TOKEN_HEADER = "X-Jordana-Write-Token"
 
 
 def review_sync_config(database_path: str):
@@ -187,8 +190,13 @@ def is_safe_validation_error(error: Exception) -> bool:
     return False
 
 
-def make_handler(database_path: str):
+def make_handler(database_path: str, write_token: str | None = None):
+    launch_write_token = write_token or secrets.token_urlsafe(32)
+
     class ReviewHandler(BaseHTTPRequestHandler):
+        write_token = launch_write_token
+        write_token_header = WRITE_TOKEN_HEADER
+
         def log_message(self, format: str, *args: object) -> None:
             return
 
@@ -741,6 +749,9 @@ def make_handler(database_path: str):
                     status=415,
                 )
                 return None, {}
+            if not self.has_valid_write_token():
+                self.send_json({"ok": False, "error": "Forbidden."}, status=403)
+                return None, {}
             try:
                 return parsed, self.read_json(length)
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -753,6 +764,12 @@ def make_handler(database_path: str):
                 return False
             media_type = content_type.split(";", 1)[0].strip().lower()
             return media_type == "application/json"
+
+        def has_valid_write_token(self) -> bool:
+            supplied_token = self.headers.get(WRITE_TOKEN_HEADER)
+            if supplied_token is None:
+                return False
+            return hmac.compare_digest(supplied_token, launch_write_token)
 
         def send_json(self, payload: object, status: int = 200) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -770,12 +787,27 @@ def make_handler(database_path: str):
             if not path.exists() or path.is_dir():
                 self.send_error(404)
                 return
-            body = path.read_bytes()
+            if path.name == "review.html":
+                body = self.render_review_html(path).encode("utf-8")
+            else:
+                body = path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+            if path.name == "review.html":
+                self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def render_review_html(self, path: Path) -> str:
+            html = path.read_text(encoding="utf-8")
+            bootstrap = json.dumps({"writeToken": launch_write_token}, ensure_ascii=False)
+            bootstrap = bootstrap.replace("</", "<\\/")
+            bootstrap_script = f"<script>window.__JORDANA_BOOTSTRAP__={bootstrap};</script>"
+            marker = '<script src="/static/review.js"></script>'
+            if marker in html:
+                return html.replace(marker, f"{bootstrap_script}\n    {marker}", 1)
+            return f"{html}\n{bootstrap_script}\n"
 
         def send_csv(self, csv_text: str, filename: str) -> None:
             body = csv_text.encode("utf-8")

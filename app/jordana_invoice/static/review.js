@@ -1,6 +1,7 @@
 let overlayReturnFocus = null;
 let approvalInProgress = false;
 let duplicateInProgress = false;
+const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
 
 const state = {
   items: [],
@@ -104,7 +105,12 @@ const participantState = (p) => ({
 });
 
 async function api(path, options = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  const method = (options.method || "GET").toUpperCase();
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    headers["X-Jordana-Write-Token"] = WRITE_TOKEN;
+  }
+  const res = await fetch(path, { ...options, method, headers });
   const json = await res.json();
   if (!res.ok || json.ok === false) throw new Error(json.error || "Request failed");
   return json;
