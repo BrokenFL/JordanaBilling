@@ -53,9 +53,9 @@ def import_csv(
     conn: sqlite3.Connection,
     csv_path: str | Path,
     source_name: str | None = None,
-    allow_operational_db: bool | OperationalImportAuthorization = False,
+    operational_authorization: OperationalImportAuthorization | None = None,
 ) -> str:
-    assert_csv_import_safe(conn, allow_operational=allow_operational_db)
+    assert_csv_import_safe(conn, authorization=operational_authorization)
     path = Path(csv_path)
     rows = list(read_csv_rows(path))
     return import_rows(

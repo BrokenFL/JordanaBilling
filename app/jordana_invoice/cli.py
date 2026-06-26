@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         # Load .env so JORDANA_DATABASE_PATH is available for the guard.
         load_env_file()
         is_op = is_operational_db_path(args.db)
-        authorization: OperationalImportAuthorization | bool = False
+        authorization: OperationalImportAuthorization | None = None
 
         if is_op:
             if not args.allow_operational_db:
@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 conn,
                 args.csv_path,
                 args.source_name,
-                allow_operational_db=authorization if authorization else False,
+                operational_authorization=authorization,
             )
         except OperationalDatabaseError as error:
             print(f"REFUSED: {error}", file=__import__('sys').stderr)

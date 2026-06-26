@@ -32,7 +32,7 @@ class OperationalImportAuthorization:
     the caller has confirmed the exact canonical operational path and that
     a verified backup has been created.
 
-    Pass this to :func:`import_csv` (via ``allow_operational_db=``) or to
+    Pass this to :func:`import_csv` (via ``operational_authorization=``) or to
     :func:`assert_csv_import_safe` to prove the import is intentional.
     """
     confirmed_path: Path
@@ -158,20 +158,22 @@ def authorize_operational_import(
 
 def assert_csv_import_safe(
     conn: sqlite3.Connection,
-    allow_operational: bool | OperationalImportAuthorization = False,
+    authorization: OperationalImportAuthorization | None = None,
 ) -> Path | None:
     """Safety guard for CSV imports into the operational database.
 
-    If the connection's database resolves to the configured operational path
-    and *allow_operational* is ``False``, raise ``OperationalDatabaseError``.
+    If the connection's database resolves to the configured operational path:
 
-    If *allow_operational* is an :class:`OperationalImportAuthorization`,
-    the backup has already been created by :func:`authorize_operational_import`
-    — no duplicate backup is created here.
+    - **No authorization** → raise ``OperationalDatabaseError``.
+    - **Boolean or other non-authorization type** → raise
+      ``OperationalDatabaseError`` (a plain ``True`` is no longer accepted).
+    - **Valid authorization** with ``confirmed_path`` matching the
+      connection's database → allow (backup already created by
+      :func:`authorize_operational_import`, no duplicate).
+    - **Authorization with mismatched confirmed_path** → raise
+      ``OperationalDatabaseError``.
 
-    If *allow_operational* is ``True`` (legacy boolean), create and verify
-    a backup before returning.  This path is kept for backward compatibility
-    but new callers should use the authorization object.
+    For non-operational databases, always returns ``None`` (no guard).
 
     Returns the backup path (or ``None`` if no backup was needed).
     """
@@ -180,11 +182,10 @@ def assert_csv_import_safe(
         return None
     if not is_operational_db_path(db_path):
         return None
-    if isinstance(allow_operational, OperationalImportAuthorization):
-        # Backup already created by authorize_operational_import.
-        return allow_operational.backup_path
-    if not allow_operational:
-        configured = get_configured_operational_db_path().resolve()
+
+    configured = get_configured_operational_db_path().resolve()
+
+    if not isinstance(authorization, OperationalImportAuthorization):
         raise OperationalDatabaseError(
             f"Refused: the database at {db_path} is the configured "
             f"operational database ({configured}). "
@@ -192,15 +193,26 @@ def assert_csv_import_safe(
             f"approved sessions. "
             f"Use scripts/run_acceptance_test.sh for acceptance testing. "
             f"If you genuinely need to import into the live database, "
-            f"pass an OperationalImportAuthorization from "
+            f"obtain an OperationalImportAuthorization from "
             f"authorize_operational_import()."
         )
-    # Legacy boolean True — create and verify backup.
-    if not db_path.exists():
-        return None
-    backup_path = _create_backup(db_path)
-    _verify_backup(backup_path)
-    return backup_path
+
+    # Validate that the authorization's confirmed path matches the
+    # actual connection database path (not just the configured path).
+    try:
+        conn_resolved = db_path.expanduser().resolve()
+    except (TypeError, ValueError, OSError):
+        conn_resolved = db_path
+
+    if authorization.confirmed_path != conn_resolved:
+        raise OperationalDatabaseError(
+            f"Refused: authorization confirmed_path "
+            f"({authorization.confirmed_path}) does not match the "
+            f"actual database path ({conn_resolved})."
+        )
+
+    # Valid authorization — backup already created. No duplicate.
+    return authorization.backup_path
 
 
 SCHEMA = """
