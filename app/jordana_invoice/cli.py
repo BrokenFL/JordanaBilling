@@ -4,7 +4,14 @@ import argparse
 import json
 from pathlib import Path
 
-from .db import OperationalDatabaseError, connect, is_operational_db_path, migrate_database
+from .db import (
+    OperationalDatabaseError,
+    OperationalImportAuthorization,
+    authorize_operational_import,
+    connect,
+    is_operational_db_path,
+    migrate_database,
+)
 from .backfill import backfill_phase2
 from .google_sync import SyncError, cli_sync_status, load_config, load_env_file, sync_now
 from .importer import import_csv
@@ -51,6 +58,15 @@ def main(argv: list[str] | None = None) -> int:
             "(e.g. data/jordana_invoice.sqlite3).  "
             "Do NOT use for routine acceptance testing — use "
             "scripts/run_acceptance_test.sh instead."
+        ),
+    )
+    import_parser.add_argument(
+        "--confirm-operational-db-path",
+        default=None,
+        help=(
+            "Explicit confirmation of the operational database canonical path. "
+            "Required when --allow-operational-db is set. "
+            "Must resolve exactly to the configured operational database path."
         ),
     )
 
@@ -161,21 +177,38 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "import-csv":
         # Load .env so JORDANA_DATABASE_PATH is available for the guard.
         load_env_file()
-        if is_operational_db_path(args.db) and not args.allow_operational_db:
-            print(
-                f"REFUSED: '{args.db}' is the configured operational database.\n"
-                "Running import-csv against the live database can overwrite or "
-                "corrupt manual review decisions and approved sessions.\n"
-                "\n"
-                "To run acceptance tests safely, use:\n"
-                "  scripts/run_acceptance_test.sh\n"
-                "\n"
-                "If you genuinely need to import into the live database, add:\n"
-                "  --allow-operational-db\n"
-                "A verified backup will be created automatically before proceeding.",
-                file=__import__('sys').stderr,
-            )
-            return 1
+        is_op = is_operational_db_path(args.db)
+        authorization: OperationalImportAuthorization | bool = False
+
+        if is_op:
+            if not args.allow_operational_db:
+                print(
+                    f"REFUSED: '{args.db}' is the configured operational database.\n"
+                    "Running import-csv against the live database can overwrite or "
+                    "corrupt manual review decisions and approved sessions.\n"
+                    "\n"
+                    "To run acceptance tests safely, use:\n"
+                    "  scripts/run_acceptance_test.sh\n"
+                    "\n"
+                    "If you genuinely need to import into the live database, add:\n"
+                    "  --allow-operational-db --confirm-operational-db-path /canonical/path\n"
+                    "A verified backup will be created automatically before proceeding.",
+                    file=__import__('sys').stderr,
+                )
+                return 1
+            # Validate authorization and create backup BEFORE migration.
+            try:
+                authorization = authorize_operational_import(
+                    args.db,
+                    confirmed_path=args.confirm_operational_db_path,
+                )
+            except OperationalDatabaseError as error:
+                print(f"REFUSED: {error}", file=__import__('sys').stderr)
+                return 1
+            if authorization.backup_path:
+                print(f"Backup created: {authorization.backup_path}")
+
+        # Migration runs after backup is verified (or immediately for non-operational).
         migrate_database(args.db)
         conn = connect(args.db)
         try:
@@ -183,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 conn,
                 args.csv_path,
                 args.source_name,
-                allow_operational_db=args.allow_operational_db,
+                allow_operational_db=authorization if authorization else False,
             )
         except OperationalDatabaseError as error:
             print(f"REFUSED: {error}", file=__import__('sys').stderr)
