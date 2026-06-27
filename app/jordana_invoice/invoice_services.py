@@ -763,13 +763,13 @@ def validate_invoice_readiness(
             if not _present_text(party["billing_email"]):
                 errors.append({
                     "field": "delivery_email",
-                    "message": f"Billing party email is required for {delivery} delivery.",
+                    "message": f"Add a billing email to the active billing setup for this payer. Email is required for {delivery} delivery.",
                 })
         if delivery in ("mail", "both"):
             if not _billing_address_complete(party):
                 errors.append({
                     "field": "delivery_address",
-                    "message": f"Billing party mailing address must include street, city, state, and ZIP for {delivery} delivery.",
+                    "message": f"Add a mailing address to the active billing setup for this payer. Street, city, state, and ZIP are required for {delivery} delivery.",
                 })
 
     # 7. Required business / payee / payment-address details used on the invoice
