@@ -189,6 +189,46 @@ class SafeFinalizationTests(unittest.TestCase):
         self.assertGreater(len(preview["lines"]), 0)
         self.assertIsNotNone(preview["business_profile"])
         self.assertIsNotNone(preview["billing_party"])
+        self.assertIn("render_model", preview)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_render_model_uses_long_dates_month_period_and_pending_number(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("render1")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        render = preview["render_model"]
+        self.assertEqual(render["invoice_date_display"], "May 31, 2026")
+        self.assertEqual(render["billing_period_display"], "May 2026")
+        self.assertEqual(render["invoice_number_display"], "Assigned when finalized")
+        self.assertEqual(render["lines"][0]["service_date_display"], "May 17, 2026")
+        self.assertEqual(render["sender_lines"][0], "Sample Provider")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_render_model_uses_compact_multimonth_period(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("render2")
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session["id"]],
+        })
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(preview["render_model"]["billing_period_display"], "May 2026 - June 2026")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_blank_logo_path_uses_bundled_default_logo(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        self.conn.execute("UPDATE business_profile SET logo_path = NULL WHERE active = 1")
+        self.conn.commit()
+        session = self._approved_session("render3")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        render = preview["render_model"]
+        self.assertTrue(render["logo_path"].endswith("app/jordana_invoice/static/assets/jordana-logo.png"))
+        self.assertTrue(render["logo_data_uri"].startswith("data:image/png;base64,"))
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_preview_with_data_updates_draft(self, fake_pdf):
@@ -216,6 +256,7 @@ class SafeFinalizationTests(unittest.TestCase):
         )
         self.assertEqual(final["invoice"]["status"], "finalized")
         self.assertEqual(final["invoice"]["invoice_number"], "2026-0001")
+        self.assertEqual(final["render_model"]["invoice_number_display"], "2026-0001")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_finalize_with_stale_revision_rejected(self, fake_pdf):
@@ -296,6 +337,30 @@ class SafeFinalizationTests(unittest.TestCase):
         # Invoice should still be a draft
         result = get_invoice(self.conn, draft["invoice"]["invoice_id"])
         self.assertEqual(result["invoice"]["status"], "draft")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_failed_finalization_does_not_consume_invoice_number(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("valfail2")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.conn.execute("UPDATE sessions SET review_status = 'needs_review' WHERE id = ?", (session["id"],))
+        self.conn.commit()
+        with self.assertRaises(ValueError):
+            finalize_invoice(
+                self.conn, draft["invoice"]["invoice_id"],
+                expected_revision=preview["preview_revision"],
+                pdf_root=self.root / "Invoices",
+            )
+        self.conn.execute("UPDATE sessions SET review_status = 'approved' WHERE id = ?", (session["id"],))
+        self.conn.commit()
+        second_preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        final = finalize_invoice(
+            self.conn, draft["invoice"]["invoice_id"],
+            expected_revision=second_preview["preview_revision"],
+            pdf_root=self.root / "Invoices",
+        )
+        self.assertEqual(final["invoice"]["invoice_number"], "2026-0001")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_void_after_finalize_prevents_reedit(self, fake_pdf):

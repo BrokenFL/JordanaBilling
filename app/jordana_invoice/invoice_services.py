@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from .invoice_rendering import build_invoice_render_model, resolve_logo_path
 from .invoice_pdf import generate_invoice_pdf
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
@@ -88,14 +88,24 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     if not row:
         raise ValueError("Invoice was not found.")
     lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order, created_at", (invoice_id,)).fetchall()
-    profile = None
-    party = None
-    if row["status"] == "draft":
-        current_profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
-        current_party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (row["bill_to_party_id"],)).fetchone()
-        profile = dict(current_profile) if current_profile else None
-        party = dict(current_party) if current_party else None
-    return {"invoice": dict(row), "lines": [dict(line) for line in lines], "business_profile": profile, "billing_party": party}
+    current_profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
+    current_party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (row["bill_to_party_id"],)).fetchone()
+    profile = dict(current_profile) if current_profile and row["status"] == "draft" else None
+    party = dict(current_party) if current_party else None
+    invoice = dict(row)
+    line_dicts = [dict(line) for line in lines]
+    return {
+        "invoice": invoice,
+        "lines": line_dicts,
+        "business_profile": profile,
+        "billing_party": party,
+        "render_model": build_invoice_render_model(
+            invoice,
+            line_dicts,
+            business_profile=dict(current_profile) if current_profile else None,
+            billing_party=party,
+        ),
+    }
 
 
 def eligible_sessions(
@@ -819,6 +829,12 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
         "lines": [dict(line) for line in lines],
         "business_profile": dict(profile) if profile else None,
         "billing_party": dict(party) if party else None,
+        "render_model": build_invoice_render_model(
+            dict(invoice),
+            [dict(line) for line in lines],
+            business_profile=dict(profile) if profile else None,
+            billing_party=dict(party) if party else None,
+        ),
         "preview_revision": invoice["revision"],
         "readiness": readiness,
     }
@@ -860,7 +876,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "business_email_snapshot": profile["email"],
             "payee_name_snapshot": profile["payee_name"],
             "payment_address_snapshot": _address(profile, "payment_", include_name=profile["payee_name"]),
-            "logo_reference_snapshot": profile["logo_path"],
+            "logo_reference_snapshot": resolve_logo_path(profile["logo_path"]),
             "logo_contains_business_details_snapshot": profile["logo_contains_business_details"],
             "show_email_below_logo_snapshot": profile["show_email_below_logo"],
             "total_label_snapshot": profile["invoice_total_label"],
@@ -872,7 +888,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         frozen = get_invoice(conn, invoice_id)
         root = Path(pdf_root or os.getenv("JORDANA_INVOICES_DIR", "Invoices"))
         pdf_path = root / str(invoice["invoice_date"])[:4] / f"Invoice_{number}.pdf"
-        checksum = generate_invoice_pdf(frozen["invoice"], frozen["lines"], pdf_path)
+        checksum = generate_invoice_pdf(frozen["invoice"], frozen["lines"], pdf_path, render_model=frozen["render_model"])
         conn.execute("UPDATE invoices SET pdf_path = ?, pdf_sha256 = ?, updated_at = ? WHERE invoice_id = ?", (str(pdf_path), checksum, now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "finalized", {"invoice_number": number, "pdf_sha256": checksum})
         conn.commit()
@@ -1074,4 +1090,3 @@ def update_invoice_line_item(
         conn.rollback()
         raise
     return get_invoice(conn, invoice_id)
-

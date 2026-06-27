@@ -2008,44 +2008,40 @@ async function showAddSessionsToDraft(data) {
 
 function renderFinalizationPreview(preview) {
   const i = preview.invoice;
-  const profile = preview.business_profile || {};
-  const party = preview.billing_party || {};
-  const business = profile.business_name || "Business profile not configured";
-  const provider = profile.provider_display_name || "";
-  const credentials = profile.credentials_display || "";
-  const billtoLines = [
-    party.billing_name,
-    party.billing_address_line_1,
-    party.billing_address_line_2,
-    [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : ""),
-    party.billing_email,
-    party.billing_phone
-  ].filter(Boolean);
-  const billto = billtoLines.join("\n");
+  const render = preview.render_model || {};
+  const logoHtml = render.logo_data_uri
+    ? `<div class="invoice-preview-logo"><img src="${escapeAttr(render.logo_data_uri)}" alt="Jordana invoice logo"></div>`
+    : "";
+  const senderHtml = (render.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
+  const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
   const revision = preview.preview_revision;
   const readiness = preview.readiness || {ready: true, errors: []};
   const ready = readiness.ready;
   const readinessHtml = ready
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
     : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
-  const deliveryLabel = {email: "Email", mail: "Mail", both: "Email & Mail", unresolved: "Not specified"}[i.delivery_method] || escapeHtml(i.delivery_method);
-  const paymentAddress = [
-    profile.payee_name,
-    profile.payment_address_line_1,
-    profile.payment_address_line_2,
-    [profile.payment_city, profile.payment_state].filter(Boolean).join(", ") + (profile.payment_postal_code ? ` ${profile.payment_postal_code}` : "")
-  ].filter(Boolean).join("\n");
-  const notesHtml = i.notes ? `<div class="invoice-payment"><b>Notes:</b> ${escapeHtml(i.notes)}</div>` : "";
+  const notesHtml = render.notes ? `<div class="invoice-notes"><b>Notes:</b> ${escapeHtml(render.notes)}</div>` : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
     <div class="help">Review the invoice below carefully. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
     <article class="invoice-preview">
-      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Delivery method:</strong> ${deliveryLabel}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
-      <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${preview.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${fmt(line.duration_minutes)} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
-      <div class="invoice-total"><span>${escapeHtml(profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
-      <div class="invoice-payment"><b>Please make all checks payable to:</b> ${fmt(profile.payee_name)}\n<b>Please send payment to:</b> ${fmt(paymentAddress)}</div>
+      <header class="invoice-preview-header">
+        <div class="invoice-preview-left">
+          ${logoHtml}
+          <div class="invoice-preview-sender">${senderHtml}</div>
+          <div class="invoice-billto"><strong>BILL TO</strong>${billToHtml}</div>
+        </div>
+        <div class="invoice-preview-title">
+          <h3>INVOICE</h3>
+          <div><strong>Invoice Date:</strong> ${fmt(render.invoice_date_display)}</div>
+          <div><strong>Billing Period:</strong> ${fmt(render.billing_period_display)}</div>
+          <div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div>
+        </div>
+      </header>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
+      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
       ${notesHtml}
     </article>
     <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="backToDraftBtn">Back to Draft</button></div>
@@ -2082,20 +2078,25 @@ function renderFinalizationPreview(preview) {
 
 function renderInvoicePreview(data) {
   const i = data.invoice;
-  const profile = data.business_profile || {};
-  const party = data.billing_party || {};
-  const business = i.business_name_snapshot || profile.business_name || "Business profile not configured";
-  const provider = i.provider_name_snapshot || profile.provider_display_name || "";
-  const credentials = i.credentials_snapshot || profile.credentials_display || "";
-  const currentAddress = [party.billing_address_line_1, party.billing_address_line_2, [party.billing_city, party.billing_state].filter(Boolean).join(", ") + (party.billing_postal_code ? ` ${party.billing_postal_code}` : "")].filter(Boolean).join("\n");
-  const billto = [i.bill_to_name_snapshot || party.billing_name, i.bill_to_address_snapshot || currentAddress, i.bill_to_email_snapshot || party.billing_email].filter(Boolean).join("\n");
+  const render = data.render_model || {};
+  const logoHtml = render.logo_data_uri
+    ? `<div class="invoice-preview-logo"><img src="${escapeAttr(render.logo_data_uri)}" alt="Jordana invoice logo"></div>`
+    : "";
+  const senderHtml = (render.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
+  const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     <article class="invoice-preview">
-      <header class="invoice-preview-header"><div class="invoice-preview-brand">${fmt(business)}<small class="secondary">${fmt(provider)} ${fmt(credentials)}</small></div><div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice number:</strong> ${fmt(i.invoice_number || "Draft")}</div><div><strong>Invoice date:</strong> ${fmt(i.invoice_date)}</div><div><strong>Billing period:</strong> ${fmt(i.billing_period_start)} - ${fmt(i.billing_period_end)}</div></div></header>
-      <div class="invoice-billto"><strong>BILL TO</strong>${fmt(billto)}</div>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${data.lines.map(line => `<tr><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${fmt(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${fmt(line.duration_minutes)} min`}</td><td>${money(centString(line.line_amount_cents))}</td></tr>`).join("")}</tbody></table>
-      <div class="invoice-total"><span>${escapeHtml(i.total_label_snapshot || profile.invoice_total_label || "TOTAL DUE")}</span><span>${money(centString(i.total_cents))}</span></div>
-      <div class="invoice-payment"><b>Please make all checks payable to:</b> ${fmt(i.payee_name_snapshot || profile.payee_name)}\n<b>Please send payment to:</b> ${fmt(i.payment_address_snapshot || [profile.payee_name, profile.payment_address_line_1, [profile.payment_city, profile.payment_state].filter(Boolean).join(", ") + (profile.payment_postal_code ? ` ${profile.payment_postal_code}` : "")].filter(Boolean).join("\n"))}</div>
+      <header class="invoice-preview-header">
+        <div class="invoice-preview-left">
+          ${logoHtml}
+          <div class="invoice-preview-sender">${senderHtml}</div>
+          <div class="invoice-billto"><strong>BILL TO</strong>${billToHtml}</div>
+        </div>
+        <div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice Date:</strong> ${fmt(render.invoice_date_display)}</div><div><strong>Billing Period:</strong> ${fmt(render.billing_period_display)}</div><div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div></div>
+      </header>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
+      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
     </article>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}</div></div>`;
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);

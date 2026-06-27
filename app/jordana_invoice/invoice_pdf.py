@@ -8,8 +8,16 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .invoice_rendering import build_invoice_render_model, money as format_money
 
-def generate_invoice_pdf(invoice: dict[str, Any], lines: list[dict[str, Any]], output_path: str | Path) -> str:
+
+def generate_invoice_pdf(
+    invoice: dict[str, Any],
+    lines: list[dict[str, Any]],
+    output_path: str | Path,
+    *,
+    render_model: dict[str, Any] | None = None,
+) -> str:
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_RIGHT
@@ -58,42 +66,42 @@ def generate_invoice_pdf(invoice: dict[str, Any], lines: list[dict[str, Any]], o
         str(temp_path), pagesize=letter, rightMargin=0.55 * inch, leftMargin=0.55 * inch,
         topMargin=0.55 * inch, bottomMargin=0.68 * inch, title=f"Invoice {invoice.get('invoice_number') or 'Draft'}",
     )
+    render = render_model or build_invoice_render_model(invoice, lines)
     story = []
-    logo_flowable = _logo_flowable(invoice.get("logo_reference_snapshot"), 3.15 * inch, 1.35 * inch)
+    logo_flowable = _logo_flowable(render.get("logo_path"), 3.15 * inch, 1.35 * inch)
     if logo_flowable is None:
         fallback = [para(invoice.get("business_name_snapshot") or "Business", styles["Heading2"])]
-        provider = " ".join(filter(None, [invoice.get("provider_name_snapshot"), invoice.get("credentials_snapshot")]))
-        for value in (provider, invoice.get("business_address_snapshot"), invoice.get("business_phone_snapshot"), invoice.get("business_email_snapshot")):
+        for value in render.get("sender_lines") or []:
             if value:
                 fallback.append(para(value, small))
         logo_cell = fallback
     else:
         logo_cell = [logo_flowable]
-        if invoice.get("show_email_below_logo_snapshot") and invoice.get("business_email_snapshot"):
-            logo_cell.append(para(invoice["business_email_snapshot"], small))
+        for value in render.get("sender_lines") or []:
+            logo_cell.append(para(value, small))
     meta = [para("INVOICE", title)]
     for key, value in (
-        ("Invoice number", invoice.get("invoice_number") or "Draft"),
-        ("Invoice date", _date(invoice.get("invoice_date"))),
-        ("Billing period", f"{_date(invoice.get('billing_period_start'))} - {_date(invoice.get('billing_period_end'))}"),
+        ("Invoice Number", render.get("invoice_number_display") or ""),
+        ("Invoice Date", render.get("invoice_date_display") or ""),
+        ("Billing Period", render.get("billing_period_display") or ""),
     ):
         meta.append(Paragraph(f"<b>{_escape(key)}:</b> {_escape(value)}", small))
     header = Table([[logo_cell, meta]], colWidths=[4.25 * inch, 2.15 * inch], hAlign="LEFT")
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     story.extend([header, Spacer(1, 0.28 * inch), para("BILL TO", label)])
-    for value in (invoice.get("bill_to_name_snapshot"), invoice.get("bill_to_address_snapshot"), invoice.get("bill_to_email_snapshot")):
+    for value in render.get("bill_to_lines") or []:
         if value:
             story.append(para(value))
     story.append(Spacer(1, 0.26 * inch))
 
     data = [[para("Date", small), para("Participants", small), para("Service", small), para("Duration", small), para("Amount", small)]]
-    for line in lines:
+    for line in render.get("lines") or []:
         data.append([
-            para(_date(line.get("service_date"))),
-            para(line.get("participants_snapshot")),
-            para(line.get("description_snapshot") or line.get("service_name_snapshot")),
-            para(f"{line['duration_minutes']} min" if line.get("duration_minutes") is not None else "-"),
-            para(_money(line.get("line_amount_cents"))),
+            para(line.get("service_date_display")),
+            para(line.get("participants_display")),
+            para(line.get("description_display")),
+            para(line.get("duration_display")),
+            para(line.get("amount_display")),
         ])
     table = LongTable(data, colWidths=[0.78 * inch, 2.05 * inch, 2.15 * inch, 0.72 * inch, 0.72 * inch], repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
@@ -112,11 +120,11 @@ def generate_invoice_pdf(invoice: dict[str, Any], lines: list[dict[str, Any]], o
     total = invoice.get("total_cents", 0)
     footer = [
         Spacer(1, 0.22 * inch),
-        Table([[para(invoice.get("total_label_snapshot") or "TOTAL DUE", total_style), para(_money(total), total_style)]], colWidths=[5.45 * inch, 0.95 * inch], style=TableStyle([("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")), ("TOPPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])),
+        Table([[para(render.get("total_label") or "TOTAL DUE", total_style), para(render.get("total_display") or format_money(total), total_style)]], colWidths=[5.45 * inch, 0.95 * inch], style=TableStyle([("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")), ("TOPPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])),
         Spacer(1, 0.28 * inch),
-        Paragraph(f"<b>Please make all checks payable to:</b> {_escape(invoice.get('payee_name_snapshot') or '')}", body),
-        Spacer(1, 0.08 * inch),
-        Paragraph(f"<b>Please send payment to:</b> {_escape(invoice.get('payment_address_snapshot') or '')}", body),
+        Paragraph(f"<b>{_escape(render.get('payment_title') or 'Please make all checks payable to:')}</b>", body),
+        Paragraph(_escape(render.get("payment_name") or ""), body),
+        *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],
     ]
     story.append(KeepTogether(footer))
     try:
@@ -165,18 +173,5 @@ def _logo_flowable(raw_path: str | None, max_width: float, max_height: float):
         return image
     except Exception:
         return None
-
-
-def _money(cents: Any) -> str:
-    return f"${int(cents or 0) / 100:,.2f}"
-
-
-def _date(value: Any) -> str:
-    text = str(value or "")
-    if len(text) >= 10 and text[4] == "-":
-        return f"{text[5:7]}/{text[8:10]}/{text[:4]}"
-    return text
-
-
 def _escape(value: Any) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")

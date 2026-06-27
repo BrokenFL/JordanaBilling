@@ -1697,47 +1697,44 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn('<span class="status-pill">Draft</span>', self.fn)
 
     def test_preview_shows_business_name_and_provider(self):
-        self.assertIn("business_name", self.fn)
-        self.assertIn("provider_display_name", self.fn)
-        self.assertIn("credentials_display", self.fn)
+        self.assertIn("render_model", self.fn)
+        self.assertIn("sender_lines", self.fn)
+        self.assertIn("logo_data_uri", self.fn)
 
     def test_preview_shows_invoice_date_and_billing_period(self):
-        self.assertIn("invoice_date", self.fn)
-        self.assertIn("billing_period_start", self.fn)
-        self.assertIn("billing_period_end", self.fn)
+        self.assertIn("invoice_date_display", self.fn)
+        self.assertIn("billing_period_display", self.fn)
 
-    def test_preview_shows_delivery_method_label(self):
-        self.assertIn("deliveryLabel", self.fn)
-        self.assertIn("Email", self.fn)
-        self.assertIn("Mail", self.fn)
+    def test_preview_hides_delivery_method(self):
+        self.assertNotIn("Delivery method", self.fn)
+        self.assertNotIn("deliveryLabel", self.fn)
 
-    def test_preview_shows_bill_to_with_email_and_phone(self):
-        self.assertIn("billing_email", self.fn)
-        self.assertIn("billing_phone", self.fn)
-        self.assertIn("billing_address_line_1", self.fn)
+    def test_preview_shows_bill_to_address_block(self):
+        self.assertIn("bill_to_lines", self.fn)
+        self.assertNotIn("billing_email", self.fn)
+        self.assertNotIn("billing_phone", self.fn)
 
     def test_preview_shows_line_items_table(self):
         self.assertIn("invoice-preview-table", self.fn)
-        self.assertIn("service_date", self.fn)
-        self.assertIn("participants_snapshot", self.fn)
-        self.assertIn("description_snapshot", self.fn)
-        self.assertIn("duration_minutes", self.fn)
-        self.assertIn("line_amount_cents", self.fn)
+        self.assertIn("service_date_display", self.fn)
+        self.assertIn("participants_display", self.fn)
+        self.assertIn("description_display", self.fn)
+        self.assertIn("duration_display", self.fn)
+        self.assertIn("amount_display", self.fn)
 
     def test_preview_shows_total(self):
         self.assertIn("invoice-total", self.fn)
-        self.assertIn("total_cents", self.fn)
-        self.assertIn("invoice_total_label", self.fn)
+        self.assertIn("total_display", self.fn)
+        self.assertIn("total_label", self.fn)
 
-    def test_preview_shows_payment_instructions(self):
-        self.assertIn("Please make all checks payable to:", self.fn)
-        self.assertIn("Please send payment to:", self.fn)
-        self.assertIn("payee_name", self.fn)
-        self.assertIn("payment_address", self.fn)
+    def test_preview_shows_single_payment_block(self):
+        self.assertIn("payment_title", self.fn)
+        self.assertNotIn("Please send payment to:", self.fn)
+        self.assertIn("payment_lines", self.fn)
 
     def test_preview_shows_notes_if_present(self):
         self.assertIn("notesHtml", self.fn)
-        self.assertIn("i.notes", self.fn)
+        self.assertIn("render.notes", self.fn)
 
     def test_preview_has_finalize_and_back_buttons(self):
         self.assertIn('id="confirmFinalizeBtn"', self.fn)
@@ -1800,7 +1797,8 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("state.finalizeInProgress = false;", catch_block)
 
     def test_preview_does_not_assign_invoice_number_before_finalize(self):
-        self.assertNotIn("invoice_number", self.fn)
+        self.assertNotIn("i.invoice_number", self.fn)
+        self.assertIn("invoice_number_display", self.fn)
 
     def test_state_has_finalize_in_progress_flag(self):
         self.assertIn("finalizeInProgress: false", self.js)
@@ -1825,4 +1823,3 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
