@@ -12,6 +12,7 @@ from jordana_invoice.invoice_services import (
     get_invoice,
     preview_finalization,
     save_business_profile,
+    synchronize_draft_delivery_method,
     update_invoice_draft,
     validate_invoice_readiness,
     void_invoice,
@@ -209,7 +210,7 @@ class InvoiceReadinessTests(unittest.TestCase):
             finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_unresolved_delivery_blocks_finalization(self, fake_pdf):
+    def test_unresolved_delivery_syncs_from_active_setup_on_finalize(self, fake_pdf):
         fake_pdf.return_value = "a" * 64
         session = self._approved_session("unresolved1")
         draft = self._draft([session])
@@ -218,8 +219,9 @@ class InvoiceReadinessTests(unittest.TestCase):
         self.assertFalse(readiness["ready"])
         fields = {e["field"] for e in readiness["errors"]}
         self.assertIn("delivery_method", fields)
-        with self.assertRaises(ValueError):
-            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertEqual(final["invoice"]["status"], "finalized")
+        self.assertEqual(final["invoice"]["delivery_method"], "both")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_blank_zelle_blocks_finalization(self, fake_pdf):
@@ -456,6 +458,225 @@ class InvoiceReadinessTests(unittest.TestCase):
         email_errors = [e for e in readiness["errors"] if e["field"] == "delivery_email"]
         self.assertTrue(email_errors)
         self.assertIn("active billing setup", email_errors[0]["message"])
+
+
+class StaleDraftDeliverySyncTests(unittest.TestCase):
+    """Tests for synchronize_draft_delivery_method resolving stale unresolved delivery on drafts."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.conn = connect(self.root / "sync.sqlite3")
+        init_db(self.conn)
+        self.person = create_person(self.conn, {"first_name": "Sync", "last_name": "Test", "display_name": "Sync Test"})
+        self.party = create_billing_party(self.conn, {
+            "billing_name": "Sync Test", "person_id": self.person["person_id"],
+            "billing_email": "sync@example.test",
+            "billing_address_line_1": "12 Sync St",
+            "billing_city": "Syncville", "billing_state": "FL", "billing_postal_code": "00000",
+            "preferred_delivery_method": "unresolved",
+        })
+        save_business_profile(self.conn, {
+            "business_name": "Sync Practice", "provider_display_name": "Sync Provider",
+            "address_line_1": "200 Sync Ave", "city": "Syncville", "state": "FL", "postal_code": "00000",
+            "phone": "555-0300", "email": "billing@sync", "payee_name": "Sync Payee",
+            "payment_address_line_1": "200 Sync Ave", "payment_city": "Syncville", "payment_state": "FL",
+            "payment_postal_code": "00000", "zelle_recipient": "sync@example.test",
+        })
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _approved_session(self, key):
+        import_rows(self.conn, [raw_row(key, f"Sync Test | 60 | Office", f"2026-05-10T10:00:00-04:00")], "test")
+        candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash(f"calendar_event_id:event-{key}"),),
+        ).fetchone()[0]
+        approve_candidate(self.conn, candidate_id, {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Sync Test"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60, "service_mode": "office",
+            "time_category": "standard", "approved_rate": "150.00",
+            "payment_status": "unpaid", "billing_treatment": "billable",
+        })
+        return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (
+            self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()["id"],
+        )).fetchone()
+
+    def _draft(self, sessions):
+        return create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [s["id"] for s in sessions],
+        })
+
+    def _count_audit(self, invoice_id, action):
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = ?",
+            (invoice_id, action),
+        ).fetchone()[0]
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_unresolved_draft_syncs_to_email(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync1")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(changed)
+        row = self.conn.execute("SELECT delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(row["delivery_method"], "email")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_unresolved_draft_syncs_to_mail(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync2")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "mail"})
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(changed)
+        row = self.conn.execute("SELECT delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(row["delivery_method"], "mail")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_unresolved_draft_syncs_to_both(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync3")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "both"})
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(changed)
+        row = self.conn.execute("SELECT delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(row["delivery_method"], "both")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_shows_via_email_after_sync(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync4")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(preview["invoice"]["delivery_method"], "email")
+        render = preview["render_model"]
+        bill_to_text = " ".join(render.get("bill_to_lines", []))
+        self.assertIn("Via Email:", bill_to_text)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_revision_increments_exactly_once(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync5")
+        draft = self._draft([session])
+        rev_before = draft["invoice"]["revision"]
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        row = self.conn.execute("SELECT revision FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(row["revision"], rev_before + 1)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_audit_entry_written_exactly_once(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync6")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(self._count_audit(draft["invoice"]["invoice_id"], "delivery_method_synced"), 1)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_repeated_preview_is_idempotent(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync7")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        rev_after_first = self.conn.execute("SELECT revision FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()["revision"]
+        audit_after_first = self._count_audit(draft["invoice"]["invoice_id"], "delivery_method_synced")
+        preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        rev_after_second = self.conn.execute("SELECT revision FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()["revision"]
+        audit_after_second = self._count_audit(draft["invoice"]["invoice_id"], "delivery_method_synced")
+        self.assertEqual(rev_after_second, rev_after_first)
+        self.assertEqual(audit_after_second, audit_after_first)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_valid_existing_mail_not_overwritten_by_email(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync8")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "mail"})
+        synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(changed)
+        row = self.conn.execute("SELECT delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(row["delivery_method"], "mail")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_invoice_unchanged(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync9")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        rev_before = self.conn.execute("SELECT revision, delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(changed)
+        rev_after = self.conn.execute("SELECT revision, delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(rev_after["revision"], rev_before["revision"])
+        self.assertEqual(rev_after["delivery_method"], rev_before["delivery_method"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_void_invoice_unchanged(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync10")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        void_invoice(self.conn, draft["invoice"]["invoice_id"], reason="test void")
+        rev_before = self.conn.execute("SELECT revision, delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(changed)
+        rev_after = self.conn.execute("SELECT revision, delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(rev_after["revision"], rev_before["revision"])
+        self.assertEqual(rev_after["delivery_method"], rev_before["delivery_method"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_inactive_billing_setup_ignored(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync11")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email", "active": False})
+        changed = synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(changed)
+        row = self.conn.execute("SELECT delivery_method FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],)).fetchone()
+        self.assertEqual(row["delivery_method"], "unresolved")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_missing_email_still_blocks_readiness(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync12")
+        draft = self._draft([session])
+        update_billing_party(self.conn, self.party["billing_party_id"], {
+            "preferred_delivery_method": "email",
+            "billing_email": "",
+        })
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(preview["readiness"]["ready"])
+        fields = {e["field"] for e in preview["readiness"]["errors"]}
+        self.assertIn("delivery_email", fields)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_unresolved_active_preference_still_blocks(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("sync13")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(preview["readiness"]["ready"])
+        fields = {e["field"] for e in preview["readiness"]["errors"]}
+        self.assertIn("delivery_method", fields)
 
 
 if __name__ == "__main__":
