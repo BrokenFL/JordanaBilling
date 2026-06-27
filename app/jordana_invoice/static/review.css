@@ -473,6 +473,18 @@ tr.empty-row:hover { background: transparent; }
 .billing-card-details div { margin-bottom: 2px; }
 .billing-card-actions { display: flex; gap: 6px; margin-top: 8px; }
 .billing-card.inactive { opacity: 0.65; background: #f5f5f5; }
+.billing-card-warning { margin-top: 8px; padding: 8px 10px; border-radius: 5px; background: #fff8e1; border: 1px solid #ffe082; font-size: 12px; color: #8a5a00; }
+.billing-card-warning-compact { padding: 4px 8px; font-size: 11px; }
+.billing-card-warning-title { margin-bottom: 6px; font-weight: 600; }
+.billing-setup-status-banner { padding: 8px 12px; border-radius: 5px; margin-bottom: 10px; font-size: 12px; }
+.billing-setup-status-banner.active { background: #e3f2e3; border: 1px solid #c8e6c9; color: #2e7d32; }
+.billing-setup-status-banner.inactive { background: #fff3e0; border: 1px solid #ffcc80; color: #e65100; }
+.copy-contact-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.copy-contact-source, .copy-contact-target { font-size: 12px; margin-bottom: 4px; }
+.copy-contact-note { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.copy-contact-field-list { list-style: none; padding: 0; margin: 0 0 10px 0; }
+.copy-contact-field-list li { font-size: 12px; padding: 3px 0; }
+.copy-contact-field-list label { display: flex; align-items: center; gap: 6px; }
 .org-summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
 .org-section { margin: 16px 0; }
 .org-section h4 { margin: 0 0 8px; font-size: 13px; }

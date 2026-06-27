@@ -3689,6 +3689,8 @@ async function openPersonRecord(personId, options = {}) {
   const personName = fmt(data.person.display_name);
 
   const deliveryLabels = { email: "Email", mail: "Mail", both: "Email and mail", unresolved: "Unresolved" };
+  const activeSetups = billingSetup.filter(b => b.active);
+  const inactiveSetups = billingSetup.filter(b => !b.active);
   const billingSetupHtml = billingSetup.length
     ? billingSetup.map(b => {
         const addr = billingAddressSummary(b);
@@ -3698,6 +3700,25 @@ async function openPersonRecord(personId, options = {}) {
         const statusBadge = b.active
           ? `<span class="status-pill active">Active</span>`
           : `<span class="status-pill inactive">Inactive</span>`;
+
+        let dupWarning = "";
+        if (b.active) {
+          const samePayerInactive = inactiveSetups.filter(i => i.billing_name === b.billing_name);
+          if (samePayerInactive.length) {
+            const activeMissingEmail = !b.billing_email;
+            const activeMissingAddress = !b.billing_address_line_1 || !b.billing_city || !b.billing_state || !b.billing_postal_code;
+            const inactiveHasInfo = samePayerInactive.some(i => i.billing_email || i.billing_address_line_1);
+            if ((activeMissingEmail || activeMissingAddress) && inactiveHasInfo) {
+              dupWarning = `<div class="billing-card-warning">
+                <div class="billing-card-warning-title">The active billing setup is missing required delivery details. An inactive setup for this payer contains contact information.</div>
+                ${samePayerInactive.map(i => `<button class="mini" data-copy-contact-source="${escapeAttr(i.billing_party_id)}" data-copy-contact-target="${escapeAttr(b.billing_party_id)}">Review Inactive Details</button>`).join("")}
+              </div>`;
+            } else {
+              dupWarning = `<div class="billing-card-warning billing-card-warning-compact">Another inactive billing setup exists for this payer.</div>`;
+            }
+          }
+        }
+
         const actionBtn = b.active
           ? `<button class="mini danger" data-deactivate-billing="${escapeAttr(b.billing_party_id)}">Deactivate</button>`
           : `<button class="mini" data-reactivate-billing="${escapeAttr(b.billing_party_id)}">Reactivate</button>`;
@@ -3711,6 +3732,7 @@ async function openPersonRecord(personId, options = {}) {
             <div>Delivery: ${delivery}</div>
             <div>${statusBadge}</div>
           </div>
+          ${dupWarning}
           <div class="billing-card-actions">
             <button class="mini" data-edit-billing="${escapeAttr(b.billing_party_id)}">Edit</button>
             ${actionBtn}
@@ -3990,6 +4012,87 @@ async function openPersonRecord(personId, options = {}) {
       }
     };
   });
+  document.querySelectorAll("[data-copy-contact-source]").forEach(button => {
+    button.onclick = async () => {
+      const sourceId = button.dataset.copyContactSource;
+      const targetId = button.dataset.copyContactTarget;
+      const existing = document.getElementById("copyContactConfirm");
+      if (existing) existing.remove();
+      const box = document.createElement("div");
+      box.id = "copyContactConfirm";
+      box.className = "lifecycle-confirm-box";
+      box.style.display = "block";
+      box.innerHTML = `<p>Loading contact details from inactive setup…</p>`;
+      button.closest(".billing-card")?.prepend(box);
+      try {
+        const preview = await api(`/api/billing-parties/${targetId}/copy-contact-preview?source_billing_party_id=${encodeURIComponent(sourceId)}`);
+        const fields = preview.fields_to_copy || [];
+        const deliveryToCopy = preview.delivery_method_to_copy;
+        if (!fields.length && !deliveryToCopy) {
+          box.innerHTML = `<p>No copyable contact details found. The inactive setup may not have additional information, or the active setup already has all fields populated.</p>
+            <div class="wizard-confirm-actions"><button type="button" class="modal-cancel" id="copyContactClose">Close</button></div>`;
+          document.getElementById("copyContactClose").onclick = () => { box.remove(); button.focus(); };
+          return;
+        }
+        const fieldLabels = {
+          billing_email: "Billing email",
+          billing_address_line_1: "Address line 1",
+          billing_address_line_2: "Address line 2",
+          billing_city: "City",
+          billing_state: "State",
+          billing_postal_code: "Postal code",
+        };
+        const fieldListHtml = fields.map(f => `<li><label><input type="checkbox" class="copy-field-checkbox" data-field="${escapeAttr(f.field)}" checked> ${escapeHtml(fieldLabels[f.field] || f.field)}: ${escapeHtml(f.value)}</label></li>`).join("");
+        const deliveryHtml = deliveryToCopy
+          ? `<li><label><input type="checkbox" id="copyDeliveryCheckbox" checked> Preferred delivery method: ${escapeHtml(deliveryToCopy)}</label></li>`
+          : "";
+        box.innerHTML = `
+          <p class="copy-contact-title">Copy Contact Details to Active Setup</p>
+          <p class="copy-contact-source">From inactive setup: <strong>${escapeHtml(preview.source_billing_name || "")}</strong></p>
+          <p class="copy-contact-target">To active setup: <strong>${escapeHtml(preview.target_billing_name || "")}</strong></p>
+          <p class="copy-contact-note">Only empty fields on the active setup will be filled. Existing active values will not be overwritten.</p>
+          <ul class="copy-contact-field-list">${fieldListHtml}${deliveryHtml}</ul>
+          <div class="wizard-confirm-actions">
+            <button type="button" class="modal-cancel" id="copyContactCancel">Cancel</button>
+            <button type="button" class="modal-submit" id="copyContactConfirmBtn">Copy Selected Details</button>
+          </div>`;
+        document.getElementById("copyContactCancel").onclick = () => { box.remove(); button.focus(); };
+        document.getElementById("copyContactConfirmBtn").onclick = async () => {
+          const confirmedFields = Array.from(box.querySelectorAll(".copy-field-checkbox:checked")).map(cb => cb.dataset.field);
+          const copyDelivery = !!box.querySelector("#copyDeliveryCheckbox:checked");
+          if (!confirmedFields.length && !copyDelivery) {
+            showBillingSetupMessage("Select at least one field to copy.", "error");
+            return;
+          }
+          const confirmBtn = document.getElementById("copyContactConfirmBtn");
+          const cancelBtn = document.getElementById("copyContactCancel");
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          try {
+            await api(`/api/billing-parties/${targetId}/copy-contact`, {
+              method: "POST",
+              body: JSON.stringify({
+                source_billing_party_id: sourceId,
+                confirmed_fields: confirmedFields,
+                copy_delivery_method: copyDelivery,
+              })
+            });
+            box.remove();
+            await openPersonRecord(personId, { showAllSessions });
+            showBillingSetupMessage("Contact details copied to active setup.", "success");
+          } catch (err) {
+            showBillingSetupMessage(err.message || "Failed to copy contact details.", "error");
+            confirmBtn.disabled = false;
+            cancelBtn.disabled = false;
+          }
+        };
+      } catch (err) {
+        box.innerHTML = `<p class="error">${escapeHtml(err.message || "Failed to load contact details.")}</p>
+          <div class="wizard-confirm-actions"><button type="button" class="modal-cancel" id="copyContactErrClose">Close</button></div>`;
+        document.getElementById("copyContactErrClose").onclick = () => { box.remove(); button.focus(); };
+      }
+    };
+  });
 }
 
 function showBillingSetupMessage(message, type) {
@@ -4005,9 +4108,17 @@ function showBillingSetupForm(existing, defaultName) {
   const b = existing || {};
   const container = $("billingSetupFormContainer");
   if (!container) return;
+
+  const statusBanner = isEdit
+    ? b.active
+      ? `<div class="billing-setup-status-banner active">Editing the <strong>Active</strong> billing setup for ${escapeHtml(b.billing_name || defaultName || "")}. Changes will apply to new invoices.</div>`
+      : `<div class="billing-setup-status-banner inactive">This billing setup is <strong>Inactive</strong> and will not be used for new invoices. Editing this record does not update the active setup.</div>`
+    : "";
+
   container.innerHTML = `
     <div class="billing-setup-form">
       <h4>${isEdit ? "Edit Billing Setup" : "Add Billing Setup"}</h4>
+      ${statusBanner}
       <div class="field-grid">
         <label class="field wide">Billing Name <input id="bsfBillingName" value="${escapeAttr(b.billing_name || defaultName || "")}"></label>
         <label class="field">Billing Email <input id="bsfBillingEmail" value="${escapeAttr(b.billing_email || "")}"></label>
