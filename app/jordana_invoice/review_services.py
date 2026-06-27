@@ -2521,6 +2521,128 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     return dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
 
 
+_COPYABLE_CONTACT_FIELDS = [
+    "billing_email",
+    "billing_address_line_1",
+    "billing_address_line_2",
+    "billing_city",
+    "billing_state",
+    "billing_postal_code",
+]
+
+
+def preview_copy_contact_details(
+    conn: sqlite3.Connection,
+    target_billing_party_id: str,
+    source_billing_party_id: str,
+) -> dict[str, Any]:
+    """Preview which contact fields would be copied from an inactive billing setup to an active one.
+
+    Only fields that are empty on the target and populated on the source are included.
+    Does not modify any data.
+    """
+    init_db(conn)
+    target = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ?", (target_billing_party_id,)
+    ).fetchone()
+    if not target:
+        raise ValueError("Target billing party not found.")
+    if not target["active"]:
+        raise ValueError("Target billing party must be active.")
+
+    source = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ?", (source_billing_party_id,)
+    ).fetchone()
+    if not source:
+        raise ValueError("Source billing party not found.")
+    if source["active"]:
+        raise ValueError("Source billing party must be inactive.")
+
+    if target["person_id"] != source["person_id"]:
+        raise ValueError("Source and target billing parties must belong to the same person.")
+
+    fields_to_copy: list[dict[str, str]] = []
+    for field in _COPYABLE_CONTACT_FIELDS:
+        source_val = _normalize_optional_text(source[field])
+        target_val = _normalize_optional_text(target[field])
+        if source_val and not target_val:
+            fields_to_copy.append({"field": field, "value": source_val})
+
+    delivery_method = None
+    source_delivery = str(source["preferred_delivery_method"] or "unresolved").strip()
+    target_delivery = str(target["preferred_delivery_method"] or "unresolved").strip()
+    if source_delivery in ("email", "mail", "both") and target_delivery == "unresolved":
+        delivery_method = source_delivery
+
+    return {
+        "target_billing_party_id": target_billing_party_id,
+        "source_billing_party_id": source_billing_party_id,
+        "fields_to_copy": fields_to_copy,
+        "delivery_method_to_copy": delivery_method,
+        "target_billing_name": target["billing_name"],
+        "source_billing_name": source["billing_name"],
+    }
+
+
+def apply_copy_contact_details(
+    conn: sqlite3.Connection,
+    target_billing_party_id: str,
+    source_billing_party_id: str,
+    *,
+    confirmed_fields: list[str] | None = None,
+    copy_delivery_method: bool = False,
+) -> dict[str, Any]:
+    """Copy contact details from an inactive billing setup to an active one.
+
+    Only copies fields that are empty on the target and populated on the source.
+    Does not overwrite existing active values.
+    Does not reactivate the inactive setup.
+    Does not modify approved sessions or finalized invoices.
+    """
+    init_db(conn)
+    preview = preview_copy_contact_details(conn, target_billing_party_id, source_billing_party_id)
+
+    allowed = set(confirmed_fields) if confirmed_fields is not None else {f["field"] for f in preview["fields_to_copy"]}
+    update_data: dict[str, Any] = {}
+    copied_fields: list[str] = []
+    for item in preview["fields_to_copy"]:
+        if item["field"] in allowed:
+            update_data[item["field"]] = item["value"]
+            copied_fields.append(item["field"])
+
+    if copy_delivery_method and preview["delivery_method_to_copy"]:
+        update_data["preferred_delivery_method"] = preview["delivery_method_to_copy"]
+        copied_fields.append("preferred_delivery_method")
+
+    if not update_data:
+        return {
+            "target_billing_party_id": target_billing_party_id,
+            "copied_fields": [],
+            "message": "No fields were copied.",
+        }
+
+    result = update_billing_party(conn, target_billing_party_id, update_data)
+
+    record_audit(
+        conn,
+        "billing_party",
+        target_billing_party_id,
+        "copied_contact_from_inactive",
+        {
+            "source_billing_party_id": source_billing_party_id,
+            "copied_fields": copied_fields,
+        },
+    )
+    conn.commit()
+
+    return {
+        "target_billing_party_id": target_billing_party_id,
+        "copied_fields": copied_fields,
+        "billing_party": result,
+        "message": f"Copied {', '.join(copied_fields)} from inactive setup to active setup.",
+    }
+
+
 def add_account_member(
     conn: sqlite3.Connection,
     account_id: str,

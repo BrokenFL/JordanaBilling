@@ -67,6 +67,8 @@ from .review_services import (
     update_billing_party,
     update_billing_relationship,
     update_person,
+    preview_copy_contact_details,
+    apply_copy_contact_details,
 )
 from .invoice_services import (
     add_sessions_to_draft,
@@ -419,6 +421,12 @@ def make_handler(database_path: str, write_token: str | None = None):
                 if parsed.path == "/api/organization-billing-parties":
                     self.send_json(search_organization_billing_parties(self.conn(), first(parse_qs(parsed.query), "q")))
                     return
+                if parsed.path.startswith("/api/billing-parties/") and parsed.path.endswith("/copy-contact-preview"):
+                    parts = parsed.path.strip("/").split("/")
+                    target_id = parts[2]
+                    source_id = first(parse_qs(parsed.query), "source_billing_party_id") or ""
+                    self.send_json(preview_copy_contact_details(self.conn(), target_id, source_id))
+                    return
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
                     self.send_json(get_organization_billing_record(self.conn(), billing_party_id))
@@ -560,6 +568,18 @@ def make_handler(database_path: str, write_token: str | None = None):
                     return
                 if parsed.path == "/api/billing-parties":
                     self.send_json(create_billing_party(self.conn(), data))
+                    return
+                if parsed.path.startswith("/api/billing-parties/") and parsed.path.endswith("/copy-contact"):
+                    parts = parsed.path.strip("/").split("/")
+                    target_id = parts[2]
+                    source_id = data.get("source_billing_party_id") or ""
+                    confirmed_fields = data.get("confirmed_fields")
+                    copy_delivery = bool(data.get("copy_delivery_method", False))
+                    self.send_json(apply_copy_contact_details(
+                        self.conn(), target_id, source_id,
+                        confirmed_fields=confirmed_fields,
+                        copy_delivery_method=copy_delivery,
+                    ))
                     return
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
