@@ -56,7 +56,7 @@ class ApprovalStagingTests(unittest.TestCase):
             "address_line_1": "100 Example Avenue", "city": "Example", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "billing@example.test", "payee_name": "Demo Payee",
             "payment_address_line_1": "100 Example Avenue", "payment_city": "Example", "payment_state": "FL",
-            "payment_postal_code": "00000", "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test", "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
         })
         self.handler_cls = make_handler(self.db_path)
         self.candidate_id = self._import_candidate("s1", "Avery Stone | 60 | Office", "2026-05-10T10:00:00-04:00")

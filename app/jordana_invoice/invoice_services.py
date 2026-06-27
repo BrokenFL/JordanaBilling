@@ -23,6 +23,19 @@ DELIVERY_METHODS = {"email", "mail", "both", "unresolved"}
 INVOICE_STATUSES = {"draft", "finalized", "void"}
 
 
+def _present_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _billing_address_complete(party: sqlite3.Row | dict[str, Any] | None) -> bool:
+    if not party:
+        return False
+    return all(
+        _present_text(party.get(field) if isinstance(party, dict) else party[field])
+        for field in ("billing_address_line_1", "billing_city", "billing_state", "billing_postal_code")
+    )
+
+
 def get_business_profile(conn: sqlite3.Connection) -> dict[str, Any] | None:
     init_db(conn)
     row = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
@@ -37,7 +50,7 @@ def save_business_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dic
     fields = (
         "business_name", "provider_display_name", "credentials_display", "address_line_1", "address_line_2",
         "city", "state", "postal_code", "phone", "email", "payee_name", "payment_address_line_1",
-        "payment_address_line_2", "payment_city", "payment_state", "payment_postal_code", "logo_path",
+        "payment_address_line_2", "payment_city", "payment_state", "payment_postal_code", "zelle_recipient", "logo_path",
         "logo_contains_business_details", "show_email_below_logo", "invoice_total_label", "invoice_number_format",
     )
     values = {field: data.get(field, existing[field] if existing else None) for field in fields}
@@ -741,27 +754,34 @@ def validate_invoice_readiness(
     # 6. Required bill-to contact details for the selected delivery method
     delivery = invoice.get("delivery_method") or "unresolved"
     if party:
+        if delivery == "unresolved":
+            errors.append({
+                "field": "delivery_method",
+                "message": "Choose whether this invoice should be delivered by email, mail, or both before finalizing.",
+            })
         if delivery in ("email", "both"):
-            if not (party["billing_email"] or "").strip():
+            if not _present_text(party["billing_email"]):
                 errors.append({
                     "field": "delivery_email",
                     "message": f"Billing party email is required for {delivery} delivery.",
                 })
         if delivery in ("mail", "both"):
-            if not (party["billing_address_line_1"] or "").strip():
+            if not _billing_address_complete(party):
                 errors.append({
                     "field": "delivery_address",
-                    "message": f"Billing party mailing address is required for {delivery} delivery.",
+                    "message": f"Billing party mailing address must include street, city, state, and ZIP for {delivery} delivery.",
                 })
 
     # 7. Required business / payee / payment-address details used on the invoice
     if profile:
-        if not (profile["business_name"] or "").strip():
+        if not _present_text(profile["business_name"]):
             errors.append({"field": "business_name", "message": "Business name is required on the invoice."})
-        if not (profile["payee_name"] or "").strip():
+        if not _present_text(profile["payee_name"]):
             errors.append({"field": "payee_name", "message": "Payee name is required on the invoice."})
-        if not (profile["payment_address_line_1"] or "").strip():
+        if not _present_text(profile["payment_address_line_1"]):
             errors.append({"field": "payment_address", "message": "Payment address is required on the invoice."})
+        if not _present_text(profile["zelle_recipient"]):
+            errors.append({"field": "zelle_recipient", "message": "Invoice Settings must include a Zelle email or mobile number before finalizing."})
 
     # 8. Valid, unique invoice number generation
     if profile and inv_date:
@@ -876,6 +896,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "business_email_snapshot": profile["email"],
             "payee_name_snapshot": profile["payee_name"],
             "payment_address_snapshot": _address(profile, "payment_", include_name=profile["payee_name"]),
+            "zelle_recipient_snapshot": _present_text(profile["zelle_recipient"]),
             "logo_reference_snapshot": resolve_logo_path(profile["logo_path"]),
             "logo_contains_business_details_snapshot": profile["logo_contains_business_details"],
             "show_email_below_logo_snapshot": profile["show_email_below_logo"],

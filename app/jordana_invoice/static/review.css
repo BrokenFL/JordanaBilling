@@ -464,7 +464,8 @@ tr.empty-row:hover { background: transparent; }
 .invoice-preview-table th:nth-child(4) { width: 17%; }
 .invoice-preview-table th:nth-child(5) { width: 16%; }
 .invoice-total { border-top: 1px solid #102a43; display: flex; justify-content: flex-end; gap: 28px; margin-top: 18px; padding-top: 10px; font-weight: 850; }
-.invoice-payment { margin-top: 30px; font-size: 11px; line-height: 1.6; text-align: center; }
+.invoice-payment { margin-top: 24px; font-size: 11px; line-height: 1.5; text-align: center; }
+.invoice-payment > div { overflow-wrap: anywhere; }
 .invoice-notes { margin-top: 18px; font-size: 11px; line-height: 1.55; }
 @media (max-width: 880px) {
   .invoice-preview-header { grid-template-columns: 1fr; }

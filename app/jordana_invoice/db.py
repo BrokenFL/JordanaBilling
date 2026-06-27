@@ -444,6 +444,7 @@ CREATE TABLE IF NOT EXISTS business_profile (
   payment_city TEXT,
   payment_state TEXT,
   payment_postal_code TEXT,
+  zelle_recipient TEXT,
   logo_path TEXT,
   logo_contains_business_details INTEGER NOT NULL DEFAULT 0,
   show_email_below_logo INTEGER NOT NULL DEFAULT 0,
@@ -707,6 +708,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   business_email_snapshot TEXT,
   payee_name_snapshot TEXT,
   payment_address_snapshot TEXT,
+  zelle_recipient_snapshot TEXT,
   logo_reference_snapshot TEXT,
   logo_contains_business_details_snapshot INTEGER NOT NULL DEFAULT 0,
   show_email_below_logo_snapshot INTEGER NOT NULL DEFAULT 0,
@@ -1126,12 +1128,33 @@ def _apply_migration_005(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY = "006_invoice_zelle_and_delivery"
+
+
+def _apply_migration_006(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "business_profile",
+        {
+            "zelle_recipient": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "invoices",
+        {
+            "zelle_recipient_snapshot": "TEXT",
+        },
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
     (MIGRATION_003_PAYMENT_LEDGER_FOUNDATION, _apply_migration_003),
     (MIGRATION_004_PAYMENT_PROVENANCE, _apply_migration_004),
     (MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT, _apply_migration_005),
+    (MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY, _apply_migration_006),
 ]
 
 

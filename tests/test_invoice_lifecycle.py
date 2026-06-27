@@ -55,7 +55,8 @@ class InvoiceLifecycleTests(unittest.TestCase):
             "address_line_1": "100 Example Avenue", "city": "Example", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "billing@example.test", "payee_name": "Demo Payee",
             "payment_address_line_1": "100 Example Avenue", "payment_city": "Example", "payment_state": "FL",
-            "payment_postal_code": "00000", "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
+            "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
         })
 
     def tearDown(self):
@@ -96,8 +97,12 @@ class InvoiceLifecycleTests(unittest.TestCase):
         migrate_database(legacy_path)
         legacy = connect(legacy_path)
         billing_columns = {row[1] for row in legacy.execute("PRAGMA table_info(billing_parties)")}
+        business_profile_columns = {row[1] for row in legacy.execute("PRAGMA table_info(business_profile)")}
+        invoice_columns = {row[1] for row in legacy.execute("PRAGMA table_info(invoices)")}
         account_columns = {row[1] for row in legacy.execute("PRAGMA table_info(client_accounts)")}
         self.assertIn("preferred_delivery_method", billing_columns)
+        self.assertIn("zelle_recipient", business_profile_columns)
+        self.assertIn("zelle_recipient_snapshot", invoice_columns)
         self.assertNotIn("preferred_delivery_method", account_columns)
         legacy.close()
 
@@ -213,8 +218,9 @@ class InvoiceLifecycleTests(unittest.TestCase):
             "invoice_number": "2026-0042", "invoice_date": "2026-06-01", "billing_period_start": "2026-05-01",
             "billing_period_end": "2026-05-31", "business_name_snapshot": "Demo Practice", "provider_name_snapshot": "Demo Provider",
             "bill_to_name_snapshot": "Avery Stone", "bill_to_address_snapshot": "10 Sample Street\nExample, FL 00000",
-            "bill_to_email_snapshot": "avery@example.test", "total_cents": 600000, "total_label_snapshot": "TOTAL DUE",
+            "bill_to_email_snapshot": "avery@example.test", "delivery_method": "both", "total_cents": 600000, "total_label_snapshot": "TOTAL DUE",
             "payee_name_snapshot": "Demo Payee", "payment_address_snapshot": "Demo Payee\n100 Example Avenue\nExample, FL 00000",
+            "business_phone_snapshot": "555-0100", "zelle_recipient_snapshot": "demo-zelle@example.test",
             "logo_reference_snapshot": str(logo), "show_email_below_logo_snapshot": 0,
         }
         lines = [{"service_date": f"2026-05-{1 + (i % 28):02d}", "participants_snapshot": "Avery Stone & Taylor Reed", "description_snapshot": "Correspondence - Weekend Evening", "duration_minutes": 60, "line_amount_cents": 15000} for i in range(40)]
@@ -227,6 +233,7 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertNotIn("TOTAL DUE", "\n".join(texts[:-1]))
         self.assertIn("TOTAL DUE", texts[-1])
         self.assertIn("Please make all checks payable to:", texts[-1])
+        self.assertIn("Or send payment via Zelle to: demo-zelle@example.test", texts[-1])
         self.assertNotIn("Please send payment to:", texts[-1])
         self.assertNotIn(str(logo), "\n".join(texts))
 

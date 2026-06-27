@@ -119,6 +119,27 @@ def split_snapshot_lines(value: Any) -> list[str]:
     return [line.strip() for line in str(value or "").splitlines() if line.strip()]
 
 
+def _payment_compact_line(
+    address_line_1: Any,
+    address_line_2: Any,
+    city: Any,
+    state: Any,
+    postal_code: Any,
+    phone: Any,
+) -> str:
+    address_parts = compact_address_lines(address_line_1, address_line_2, city, state, postal_code)
+    compact_parts: list[str] = []
+    if len(address_parts) >= 3:
+        compact_parts.append(" ".join(address_parts[:2]).strip())
+        compact_parts.append(address_parts[2])
+    else:
+        compact_parts.extend(address_parts)
+    phone_text = str(phone or "").strip()
+    if phone_text:
+        compact_parts.append(phone_text)
+    return " · ".join(part for part in compact_parts if part)
+
+
 def display_invoice_number(invoice_number: Any, status: Any) -> str:
     if str(invoice_number or "").strip():
         return str(invoice_number).strip()
@@ -153,6 +174,8 @@ def build_invoice_render_model(
         party.get("billing_state"),
         party.get("billing_postal_code"),
     )
+    delivery_method = str(invoice.get("delivery_method") or party.get("preferred_delivery_method") or "unresolved")
+    bill_to_email = str(invoice.get("bill_to_email_snapshot") or party.get("billing_email") or "").strip()
 
     sender_lines = [
         value for value in [
@@ -166,26 +189,36 @@ def build_invoice_render_model(
         if value
     ]
 
-    bill_to_lines = [
-        value for value in [
-            str(invoice.get("bill_to_name_snapshot") or party.get("billing_name") or "").strip(),
-            *bill_to_address_lines,
-        ]
-        if value
-    ]
+    bill_to_lines = [str(invoice.get("bill_to_name_snapshot") or party.get("billing_name") or "").strip()]
+    if delivery_method in {"mail", "both"}:
+        bill_to_lines.extend(bill_to_address_lines)
+    if delivery_method in {"email", "both"} and bill_to_email:
+        bill_to_lines.append(f"Via Email: {bill_to_email}")
+    bill_to_lines = [value for value in bill_to_lines if value]
 
     payee_name = str(invoice.get("payee_name_snapshot") or profile.get("payee_name") or "").strip()
-    payment_lines = split_snapshot_lines(invoice.get("payment_address_snapshot"))
-    if not payment_lines:
-        payment_lines = compact_address_lines(
+    payment_snapshot_lines = split_snapshot_lines(invoice.get("payment_address_snapshot"))
+    if payment_snapshot_lines and payee_name and payment_snapshot_lines[0] == payee_name:
+        payment_snapshot_lines = payment_snapshot_lines[1:]
+    if payment_snapshot_lines:
+        payment_compact_parts = list(payment_snapshot_lines)
+        phone_text = str(invoice.get("business_phone_snapshot") or profile.get("phone") or "").strip()
+        if phone_text:
+            payment_compact_parts.append(phone_text)
+        payment_compact_line = " · ".join(part for part in payment_compact_parts if part)
+    else:
+        payment_compact_line = _payment_compact_line(
             profile.get("payment_address_line_1"),
             profile.get("payment_address_line_2"),
             profile.get("payment_city"),
             profile.get("payment_state"),
             profile.get("payment_postal_code"),
+            invoice.get("business_phone_snapshot") or profile.get("phone"),
         )
-    if payment_lines and payee_name and payment_lines[0] == payee_name:
-        payment_lines = payment_lines[1:]
+    zelle_snapshot = str(invoice.get("zelle_recipient_snapshot") or "").strip()
+    zelle_recipient = zelle_snapshot
+    if not zelle_recipient and str(invoice.get("status") or "") == "draft":
+        zelle_recipient = str(profile.get("zelle_recipient") or "").strip()
 
     rendered_lines = []
     for line in lines:
@@ -216,7 +249,12 @@ def build_invoice_render_model(
         "lines": rendered_lines,
         "payment_title": "Please make all checks payable to:",
         "payment_name": payee_name,
-        "payment_lines": payment_lines,
+        "payment_lines": [value for value in [payment_compact_line] if value],
+        "payment_zelle_line": (
+            f"Or send payment via Zelle to: {zelle_recipient}"
+            if zelle_recipient
+            else ("Or send payment via Zelle to: Not configured" if str(invoice.get("status") or "") == "draft" else "")
+        ),
         "notes": str(invoice.get("notes") or "").strip(),
         "total_label": str(invoice.get("total_label_snapshot") or profile.get("invoice_total_label") or "TOTAL DUE"),
         "total_display": money(invoice.get("total_cents")),

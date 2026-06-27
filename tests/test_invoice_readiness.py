@@ -49,7 +49,7 @@ class InvoiceReadinessTests(unittest.TestCase):
             "address_line_1": "200 Ready Ave", "city": "Readyville", "state": "FL", "postal_code": "00000",
             "phone": "555-0300", "email": "billing@ready", "payee_name": "Ready Payee",
             "payment_address_line_1": "200 Ready Ave", "payment_city": "Readyville", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "ready@example.test",
         })
 
     def tearDown(self):
@@ -205,6 +205,33 @@ class InvoiceReadinessTests(unittest.TestCase):
         self.assertFalse(readiness["ready"])
         fields = {e["field"] for e in readiness["errors"]}
         self.assertIn("delivery_address", fields)
+        with self.assertRaises(ValueError):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_unresolved_delivery_blocks_finalization(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("unresolved1")
+        draft = self._draft([session])
+        update_invoice_draft(self.conn, draft["invoice"]["invoice_id"], {"delivery_method": "unresolved"})
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("delivery_method", fields)
+        with self.assertRaises(ValueError):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_blank_zelle_blocks_finalization(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("zelle1")
+        draft = self._draft([session])
+        self.conn.execute("UPDATE business_profile SET zelle_recipient = '   ' WHERE active = 1")
+        self.conn.commit()
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("zelle_recipient", fields)
         with self.assertRaises(ValueError):
             finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
 

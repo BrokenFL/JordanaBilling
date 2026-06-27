@@ -15,7 +15,8 @@ def seed_demo_invoice_data(conn: sqlite3.Connection, pdf_root: str | Path) -> di
         "address_line_1": "100 Example Avenue", "city": "Example", "state": "FL", "postal_code": "00000",
         "phone": "555-0100", "email": "billing@example.test", "payee_name": "Demo Payee",
         "payment_address_line_1": "100 Example Avenue", "payment_city": "Example", "payment_state": "FL",
-        "payment_postal_code": "00000", "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
+        "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
+        "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
         "logo_path": "", "logo_contains_business_details": False, "show_email_below_logo": True,
     })
     avery = create_person(conn, {"first_name": "Avery", "last_name": "Stone", "display_name": "Avery Stone"})

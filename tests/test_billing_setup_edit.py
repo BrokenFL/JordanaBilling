@@ -10,6 +10,7 @@ from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_services import (
     create_invoice_draft,
     finalize_invoice,
+    get_business_profile,
     save_business_profile,
 )
 from jordana_invoice.review_server import make_handler
@@ -141,6 +142,46 @@ class BillingSetupCreateTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(entry["entity_type"], "billing_party")
         self.assertEqual(entry["action"], "created_inline")
+
+
+class InvoiceSettingsBusinessProfileTests(unittest.TestCase):
+    """Tests for invoice settings persistence, including Zelle."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.conn = connect(Path(self.temp.name) / "settings.sqlite3")
+        init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def test_zelle_recipient_persists_in_business_profile(self):
+        save_business_profile(self.conn, {
+            "business_name": "Demo Practice",
+            "payee_name": "Demo Payee",
+            "payment_address_line_1": "100 Example Ave",
+            "payment_city": "Example",
+            "payment_state": "FL",
+            "payment_postal_code": "00000",
+            "zelle_recipient": "demo-zelle@example.test",
+        })
+        profile = get_business_profile(self.conn)
+        self.assertEqual(profile["zelle_recipient"], "demo-zelle@example.test")
+
+    def test_zelle_recipient_updates_without_creating_new_profile(self):
+        first = save_business_profile(self.conn, {
+            "business_name": "Demo Practice",
+            "payee_name": "Demo Payee",
+            "payment_address_line_1": "100 Example Ave",
+            "payment_city": "Example",
+            "payment_state": "FL",
+            "payment_postal_code": "00000",
+            "zelle_recipient": "demo-zelle@example.test",
+        })
+        second = save_business_profile(self.conn, {"zelle_recipient": "15551234567"})
+        self.assertEqual(first["business_profile_id"], second["business_profile_id"])
+        self.assertEqual(second["zelle_recipient"], "15551234567")
 
 
 class BillingSetupUpdateTests(unittest.TestCase):
@@ -277,7 +318,7 @@ class BillingSetupDeactivationTests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "test@example.test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "test-zelle@example.test",
         })
         self.conn.commit()
         import_rows(self.conn, [raw_row("snap-d1")], "test")
@@ -287,6 +328,12 @@ class BillingSetupDeactivationTests(unittest.TestCase):
             "billing_name": "Robin Rivers",
             "billing_party_type": "person",
             "person_id": self.person["person_id"],
+            "billing_email": "robin@example.test",
+            "billing_address_line_1": "123 Main St",
+            "billing_city": "Anytown",
+            "billing_state": "CA",
+            "billing_postal_code": "90210",
+            "preferred_delivery_method": "email",
         })
 
     def tearDown(self):
@@ -353,7 +400,7 @@ class BillingSetupInvoiceSnapshotTests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "test@example.test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "test-zelle@example.test",
         })
         self.conn.commit()
         import_rows(self.conn, [raw_row("snap-inv")], "test")
@@ -849,7 +896,7 @@ class BillingSetupHistoryPreservationTests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "test@example.test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "test-zelle@example.test",
         })
         self.conn.commit()
         import_rows(self.conn, [raw_row("snap-hist")], "test")

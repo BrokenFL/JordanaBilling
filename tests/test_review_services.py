@@ -70,7 +70,7 @@ class ReviewServiceTests(unittest.TestCase):
         fred = create_person(self.conn, "Fred Smith")
         bobsey = create_person(self.conn, "Bobsey Smith")
         account = create_account(self.conn, "Fred Household", "household")
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         saved = save_interpretation(
             self.conn,
             self.candidate_id,
@@ -318,7 +318,7 @@ class ReviewServiceTests(unittest.TestCase):
     def test_person_record_returns_enriched_session_history(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
         bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         save_interpretation(
             self.conn,
             self.candidate_id,
@@ -787,7 +787,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "test@example.test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
         })
         self.conn.commit()
         import_rows(self.conn, [raw_row("snap-a")], "test")
@@ -814,7 +814,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
 
     def test_self_pay_appears_in_payers_for_client(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
 
         record = get_person_record(self.conn, fred["person_id"])
@@ -828,7 +828,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
     def test_third_party_payer_appears_for_participant(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
         bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"], "preferred_delivery_method": "email", "billing_email": "bobsey@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
 
         record = get_person_record(self.conn, fred["person_id"])
@@ -841,7 +841,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
     def test_payer_record_lists_people_they_pay_for(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
         bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"], "preferred_delivery_method": "email", "billing_email": "bobsey@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
 
         record = get_person_record(self.conn, bobsey["person_id"])
@@ -854,7 +854,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
     def test_payer_pays_for_self_and_other(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
         bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Bobsey Smith", "billing_party_type": "person", "person_id": bobsey["person_id"], "preferred_delivery_method": "email", "billing_email": "bobsey@example.test"})
         self._approve_session([fred["person_id"], bobsey["person_id"]], payer["billing_party_id"])
 
         record = get_person_record(self.conn, bobsey["person_id"])
@@ -864,7 +864,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
 
     def test_duplicate_sessions_do_not_create_duplicate_payer_rows(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
         import_rows(self.conn, [raw_row("snap-b", title="Fred 6", start="2026-06-18T18:00:00-04:00")], "test")
         cid2 = list_review_candidates(self.conn)["items"][0]["candidate_id"]
@@ -877,7 +877,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
 
     def test_invoice_totals_and_balances_returned_correctly(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
         session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
         draft = create_invoice_draft(self.conn, {
@@ -900,7 +900,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
 
     def test_finalized_invoice_has_finalized_at(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
         session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
         draft = create_invoice_draft(self.conn, {
@@ -921,7 +921,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
 
     def test_void_invoice_has_zero_balance(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
         session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
         draft = create_invoice_draft(self.conn, {
@@ -943,8 +943,8 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
     def test_invoices_for_unrelated_billing_parties_excluded(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
         other = create_person(self.conn, {"first_name": "Other", "last_name": "Person", "display_name": "Other Person"})
-        fred_payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
-        other_payer = create_billing_party(self.conn, {"billing_name": "Other Person", "billing_party_type": "person", "person_id": other["person_id"]})
+        fred_payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
+        other_payer = create_billing_party(self.conn, {"billing_name": "Other Person", "billing_party_type": "person", "person_id": other["person_id"], "preferred_delivery_method": "email", "billing_email": "other@example.test"})
         self._approve_session([fred["person_id"]], fred_payer["billing_party_id"])
         session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
         create_invoice_draft(self.conn, {
@@ -973,7 +973,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
 
     def test_inactive_billing_parties_handled_consistently(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
-        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
         self._approve_session([fred["person_id"]], payer["billing_party_id"])
         self.conn.execute("UPDATE billing_parties SET active = 0 WHERE billing_party_id = ?", (payer["billing_party_id"],))
         self.conn.commit()

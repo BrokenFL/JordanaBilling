@@ -1731,6 +1731,18 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("payment_title", self.fn)
         self.assertNotIn("Please send payment to:", self.fn)
         self.assertIn("payment_lines", self.fn)
+        self.assertIn("payment_zelle_line", self.fn)
+
+    def test_preview_uses_shared_bill_to_lines_for_delivery_details(self):
+        self.assertIn("bill_to_lines", self.fn)
+        self.assertNotIn("Via Mail", self.fn)
+
+    def test_invoice_settings_include_zelle_field(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="zelleRecipientInput"', html)
+        self.assertIn("zelle_recipient", js)
 
     def test_preview_shows_notes_if_present(self):
         self.assertIn("notesHtml", self.fn)

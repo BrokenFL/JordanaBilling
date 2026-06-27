@@ -37,7 +37,7 @@ def _setup_party_and_profile(conn: sqlite3.Connection) -> str:
         "address_line_1": "100 Example Avenue", "city": "Example", "state": "FL", "postal_code": "00000",
         "phone": "555-0100", "email": "billing@example.test", "payee_name": "Demo Payee",
         "payment_address_line_1": "100 Example Avenue", "payment_city": "Example", "payment_state": "FL",
-        "payment_postal_code": "00000", "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
+        "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test", "invoice_total_label": "TOTAL DUE", "invoice_number_format": "YYYY-NNNN",
     })
     conn.commit()
     return party["billing_party_id"]

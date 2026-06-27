@@ -56,7 +56,7 @@ class LogoResolutionTests(unittest.TestCase):
             "address_line_1": "100 Logo Ave", "city": "Logo", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "billing@logo", "payee_name": "Logo Payee",
             "payment_address_line_1": "100 Logo Ave", "payment_city": "Logo", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
         })
         self.custom_logo = self.root / "custom-logo.png"
         self._make_png(self.custom_logo, 80, 40)

@@ -11,3 +11,5 @@ Place private branding at `data/private/branding/jordana-logo.svg` and set `logo
 If `logo_path` is blank, invoices may fall back to the bundled approved default logo at `app/jordana_invoice/static/assets/jordana-logo.png`. That default does not overwrite or replace a deliberately configured custom local logo path.
 
 The review UI now exposes this as `Settings -> Invoice Settings`, backed by the existing `GET /api/business-profile` and `POST /api/business-profile` endpoints. Only one active profile is supported. Changes are audited and finalized invoices retain the frozen snapshot values captured at finalization time, even after the active profile changes. Committed tests/screenshots use placeholders such as `Demo Practice`, `100 Example Avenue`, `555-0100`, `billing@example.test`, and `Demo Payee`.
+
+Invoice Settings now also includes `zelle_recipient` ("Zelle email or mobile number"). It is required for invoice readiness and is frozen into finalized invoices as `zelle_recipient_snapshot`. Use sanitized placeholder values such as `demo-zelle@example.test` or `15551234567` in tests and documentation; do not commit a real private Zelle identifier.

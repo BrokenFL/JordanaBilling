@@ -57,7 +57,7 @@ class PaymentBackfillCLITests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "billing@test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
         })
         import_rows(conn, [raw_row("s1", "Pat Client | 60 | Office", "2026-05-10T10:00:00-04:00")], "test")
         candidate_id = conn.execute(

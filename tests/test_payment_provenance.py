@@ -59,7 +59,7 @@ class PaymentProvenanceTests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "billing@test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
         })
         self.session_id = self._approved_session("s1")["id"]
 

@@ -125,6 +125,7 @@ def generate_invoice_pdf(
         Paragraph(f"<b>{_escape(render.get('payment_title') or 'Please make all checks payable to:')}</b>", body),
         Paragraph(_escape(render.get("payment_name") or ""), body),
         *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],
+        *([Paragraph(_escape(render.get("payment_zelle_line")), body)] if render.get("payment_zelle_line") else []),
     ]
     story.append(KeepTogether(footer))
     try:

@@ -131,7 +131,9 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 - Valid invoice date
 - Active business profile
 - Required bill-to contact details for the selected delivery method (email for email/both, mailing address for mail/both)
+- Delivery method cannot remain unresolved
 - Required business/payee/payment-address details used on the invoice
+- Required `zelle_recipient` in Invoice Settings
 - Valid, unique invoice number generation
 - All included sessions remain invoice-eligible
 - Preview revision is not stale (when `expected_revision` is provided)
@@ -139,6 +141,14 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
 Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
+
+Bill To rendering is delivery-aware:
+
+- `email` => name, then `Via Email: ...`
+- `mail` => name, then mailing address only
+- `both` => name, mailing address, then `Via Email: ...`
+
+The payment block remains one centered block and now always includes both the check instructions and a Zelle line. Draft previews show `Not configured` when Zelle is missing so readiness errors are clear; finalized invoices use the frozen `zelle_recipient_snapshot`.
 
 ## Void And Reissue
 

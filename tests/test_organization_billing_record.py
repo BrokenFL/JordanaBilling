@@ -119,7 +119,7 @@ class OrganizationBillingRecordTests(unittest.TestCase):
             "payment_address_line_1": "100 Example Ave",
             "payment_city": "Example",
             "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
             "invoice_total_label": "TOTAL DUE",
             "invoice_number_format": "YYYY-NNNN",
         })

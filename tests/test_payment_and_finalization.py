@@ -51,7 +51,7 @@ class PaymentStatusTests(unittest.TestCase):
             "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
             "phone": "555-0100", "email": "billing@test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "test-zelle@example.test",
         })
 
     def tearDown(self):
@@ -146,7 +146,7 @@ class SafeFinalizationTests(unittest.TestCase):
             "address_line_1": "200 Sample Ave", "city": "Sample", "state": "FL", "postal_code": "00000",
             "phone": "555-0200", "email": "billing@sample", "payee_name": "Sample Payee",
             "payment_address_line_1": "200 Sample Ave", "payment_city": "Sample", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "sample-zelle@example.test",
         })
 
     def tearDown(self):
@@ -217,6 +217,49 @@ class SafeFinalizationTests(unittest.TestCase):
         })
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         self.assertEqual(preview["render_model"]["billing_period_display"], "May 2026 - June 2026")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_render_model_shows_email_delivery_under_bill_to(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("emailbill")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        render = preview["render_model"]
+        self.assertEqual(render["bill_to_lines"], ["Robin Test", "Via Email: robin@example.test"])
+        self.assertIn("Or send payment via Zelle to: sample-zelle@example.test", render["payment_zelle_line"])
+        self.assertEqual(render["payment_lines"], ["200 Sample Ave · Sample, FL 00000 · 555-0200"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_render_model_shows_both_delivery_values(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        self.conn.execute(
+            "UPDATE billing_parties SET preferred_delivery_method = ?, billing_address_line_2 = ? WHERE billing_party_id = ?",
+            ("both", "", self.party["billing_party_id"]),
+        )
+        self.conn.commit()
+        session = self._approved_session("bothbill")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(
+            preview["render_model"]["bill_to_lines"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+        )
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_render_model_shows_postal_delivery_without_email(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        self.conn.execute(
+            "UPDATE billing_parties SET preferred_delivery_method = ?, billing_address_line_2 = ? WHERE billing_party_id = ?",
+            ("mail", "", self.party["billing_party_id"]),
+        )
+        self.conn.commit()
+        session = self._approved_session("mailbill")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(
+            preview["render_model"]["bill_to_lines"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000"],
+        )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_blank_logo_path_uses_bundled_default_logo(self, fake_pdf):
@@ -312,11 +355,62 @@ class SafeFinalizationTests(unittest.TestCase):
         # Snapshots should match preview values
         self.assertEqual(final["invoice"]["bill_to_name_snapshot"], "Robin Test")
         self.assertEqual(final["invoice"]["business_name_snapshot"], "Sample Practice")
+        self.assertEqual(final["invoice"]["zelle_recipient_snapshot"], "sample-zelle@example.test")
         self.assertEqual(final["invoice"]["total_cents"], preview["invoice"]["total_cents"])
         self.assertEqual(len(final["lines"]), len(preview["lines"]))
         for f_line, p_line in zip(final["lines"], preview["lines"]):
             self.assertEqual(f_line["line_amount_cents"], p_line["line_amount_cents"])
             self.assertEqual(f_line["description_snapshot"], p_line["description_snapshot"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_zelle_snapshot_does_not_change_after_settings_update(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("zellesnap")
+        draft = self._draft([session])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        save_business_profile(self.conn, {"zelle_recipient": "changed@example.test"})
+        reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
+        self.assertEqual(reopened["invoice"]["zelle_recipient_snapshot"], "sample-zelle@example.test")
+        self.assertIn("sample-zelle@example.test", reopened["render_model"]["payment_zelle_line"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_delivery_snapshot_does_not_change_after_billing_party_update(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        self.conn.execute(
+            "UPDATE billing_parties SET preferred_delivery_method = ? WHERE billing_party_id = ?",
+            ("both", self.party["billing_party_id"]),
+        )
+        self.conn.commit()
+        session = self._approved_session("deliverysnap")
+        draft = self._draft([session])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.conn.execute(
+            """UPDATE billing_parties
+               SET billing_email = ?, billing_address_line_1 = ?, billing_city = ?, billing_state = ?, billing_postal_code = ?
+               WHERE billing_party_id = ?""",
+            ("new@example.test", "999 Changed Rd", "Elsewhere", "NY", "11111", self.party["billing_party_id"]),
+        )
+        self.conn.commit()
+        reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
+        self.assertEqual(
+            reopened["render_model"]["bill_to_lines"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+        )
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_legacy_finalized_invoice_without_zelle_snapshot_is_not_rewritten(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("legacyzelle")
+        draft = self._draft([session])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.conn.execute(
+            "UPDATE invoices SET zelle_recipient_snapshot = NULL WHERE invoice_id = ?",
+            (final["invoice"]["invoice_id"],),
+        )
+        self.conn.commit()
+        save_business_profile(self.conn, {"zelle_recipient": "rewritten@example.test"})
+        reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
+        self.assertEqual(reopened["render_model"]["payment_zelle_line"], "")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_validation_failure_leaves_draft_unchanged(self, fake_pdf):

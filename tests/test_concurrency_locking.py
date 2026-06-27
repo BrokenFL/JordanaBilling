@@ -330,7 +330,7 @@ class InvoiceFinalizationContentionTests(unittest.TestCase):
             "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave",
             "payment_city": "Test", "payment_state": "FL",
-            "payment_postal_code": "00000",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
         })
 
     def tearDown(self):

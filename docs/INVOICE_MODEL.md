@@ -6,6 +6,10 @@ All IDs are UUIDs and all money is integer cents. Drafts have no permanent numbe
 
 `invoice_sequences` stores the last number used per year. The configurable default is `YYYY-NNNN`; numbers are assigned inside finalization and never reused.
 
+`billing_parties.preferred_delivery_method` plus the current billing email/address determine the customer-facing Bill To destination for draft previews. Finalized invoices freeze the chosen delivery method together with `bill_to_email_snapshot` and `bill_to_address_snapshot`, so later billing-party edits do not rewrite historical invoices.
+
+`business_profile.zelle_recipient` stores the required Zelle destination for new invoices. Finalization freezes it into `invoices.zelle_recipient_snapshot`. Draft previews may show current settings, but finalized invoices always render the frozen snapshot.
+
 `sessions.service_mode` remains historical text while `service_catalog_id` is additive. Legacy client/rate tables remain untouched.
 
 ## Monthly Invoice Identity

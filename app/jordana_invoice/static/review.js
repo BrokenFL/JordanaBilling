@@ -52,6 +52,7 @@ const BUSINESS_PROFILE_DEFAULTS = {
   payment_city: "",
   payment_state: "",
   payment_postal_code: "",
+  zelle_recipient: "",
   logo_path: "",
   logo_contains_business_details: false,
   show_email_below_logo: false,
@@ -1572,6 +1573,7 @@ function renderBusinessProfileReadiness() {
   if (!businessProfileFieldValue("businessNameInput")) missing.push("business name");
   if (!businessProfileFieldValue("payeeNameInput")) missing.push("payee name");
   if (!paymentAddressReady()) missing.push("payment address");
+  if (!businessProfileFieldValue("zelleRecipientInput")) missing.push("Zelle recipient");
   const notice = $("settingsReadiness");
   if (!missing.length) {
     notice.textContent = "Invoice settings are ready for future finalized invoices.";
@@ -1612,6 +1614,7 @@ function populateBusinessProfileForm(profile) {
   $("paymentCityInput").value = next.payment_city;
   $("paymentStateInput").value = next.payment_state;
   $("paymentPostalCodeInput").value = next.payment_postal_code;
+  $("zelleRecipientInput").value = next.zelle_recipient;
   $("logoPathInput").value = next.logo_path;
   $("logoContainsBusinessDetailsInput").checked = next.logo_contains_business_details;
   $("showEmailBelowLogoInput").checked = next.show_email_below_logo;
@@ -1638,6 +1641,7 @@ function collectBusinessProfilePayload() {
     payment_city: $("paymentCityInput").value.trim(),
     payment_state: $("paymentStateInput").value.trim(),
     payment_postal_code: $("paymentPostalCodeInput").value.trim(),
+    zelle_recipient: $("zelleRecipientInput").value.trim(),
     logo_path: $("logoPathInput").value.trim(),
     logo_contains_business_details: $("logoContainsBusinessDetailsInput").checked,
     show_email_below_logo: $("showEmailBelowLogoInput").checked,
@@ -2041,7 +2045,7 @@ function renderFinalizationPreview(preview) {
       </header>
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
-      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
       ${notesHtml}
     </article>
     <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="backToDraftBtn">Back to Draft</button></div>
@@ -2096,7 +2100,7 @@ function renderInvoicePreview(data) {
       </header>
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
-      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
     </article>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}</div></div>`;
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
@@ -3861,6 +3865,7 @@ document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
   "paymentCityInput",
   "paymentStateInput",
   "paymentPostalCodeInput",
+  "zelleRecipientInput",
   "logoPathInput",
   "logoContainsBusinessDetailsInput",
   "showEmailBelowLogoInput",
