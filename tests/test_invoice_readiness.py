@@ -16,7 +16,7 @@ from jordana_invoice.invoice_services import (
     validate_invoice_readiness,
     void_invoice,
 )
-from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
+from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person, update_billing_party
 from jordana_invoice.util import stable_hash
 
 
@@ -358,6 +358,104 @@ class InvoiceReadinessTests(unittest.TestCase):
         self.assertTrue(preview["readiness"]["ready"])
         self.assertEqual(preview["readiness"]["errors"], [])
         self.assertEqual(preview["readiness"]["preview_revision"], preview["preview_revision"])
+
+    # 13. Active setup email satisfies invoice readiness
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_active_setup_email_satisfies_readiness(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("actemail1")
+        party = create_billing_party(self.conn, {
+            "billing_name": "Active Email Party", "person_id": self.person["person_id"],
+            "billing_email": "active@example.test",
+            "preferred_delivery_method": "email",
+        })
+        self.conn.execute("UPDATE sessions SET billing_party_id = ? WHERE id = ?", (party["billing_party_id"], session["id"]))
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session["id"]],
+        })
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(readiness["ready"])
+
+    # 14. Inactive setup email does not satisfy readiness
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_inactive_setup_email_does_not_satisfy_readiness(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("inact1")
+        party = create_billing_party(self.conn, {
+            "billing_name": "Will Be Inactive", "person_id": self.person["person_id"],
+            "billing_email": "inactive@example.test",
+            "preferred_delivery_method": "email",
+        })
+        self.conn.execute("UPDATE sessions SET billing_party_id = ? WHERE id = ?", (party["billing_party_id"], session["id"]))
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session["id"]],
+        })
+        update_billing_party(self.conn, party["billing_party_id"], {"active": False})
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("bill_to", fields)
+
+    # 15. Active blank plus inactive populated still blocks finalization
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_active_blank_plus_inactive_populated_still_blocks(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("dup1")
+        active_party = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "person_id": self.person["person_id"],
+            "billing_email": None,
+            "preferred_delivery_method": "email",
+        })
+        inactive_party = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "person_id": self.person["person_id"],
+            "billing_email": "fred@example.test",
+            "preferred_delivery_method": "email",
+        })
+        update_billing_party(self.conn, inactive_party["billing_party_id"], {"active": False})
+        self.conn.execute("UPDATE sessions SET billing_party_id = ? WHERE id = ?", (active_party["billing_party_id"], session["id"]))
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": active_party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session["id"]],
+        })
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("delivery_email", fields)
+        messages = " ".join(e["message"] for e in readiness["errors"])
+        self.assertIn("active billing setup", messages)
+
+    # 16. Readiness message references active billing setup
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_readiness_message_references_active_billing_setup(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("msg1")
+        party_no_email = create_billing_party(self.conn, {
+            "billing_name": "No Email", "person_id": self.person["person_id"],
+            "billing_email": None,
+            "preferred_delivery_method": "email",
+        })
+        self.conn.execute("UPDATE sessions SET billing_party_id = ? WHERE id = ?", (party_no_email["billing_party_id"], session["id"]))
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": party_no_email["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session["id"]],
+        })
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        email_errors = [e for e in readiness["errors"] if e["field"] == "delivery_email"]
+        self.assertTrue(email_errors)
+        self.assertIn("active billing setup", email_errors[0]["message"])
 
 
 if __name__ == "__main__":

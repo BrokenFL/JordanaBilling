@@ -20,6 +20,8 @@ from jordana_invoice.review_services import (
     create_person,
     get_person_record,
     list_review_candidates,
+    preview_copy_contact_details,
+    apply_copy_contact_details,
     update_billing_party,
 )
 
@@ -989,6 +991,169 @@ class BillingSetupHistoryPreservationTests(unittest.TestCase):
         self.assertEqual(inv_after["bill_to_name_snapshot"], inv_before["bill_to_name_snapshot"])
         self.assertEqual(inv_after["bill_to_email_snapshot"], inv_before["bill_to_email_snapshot"])
         self.assertEqual(inv_after["total_cents"], inv_before["total_cents"])
+
+
+class CopyContactDetailsTests(unittest.TestCase):
+    """Tests for copying contact details from inactive to active billing setup."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.conn = connect(self.root / "copy.sqlite3")
+        init_db(self.conn)
+        save_business_profile(self.conn, {
+            "business_name": "Test Practice", "provider_display_name": "Test Provider",
+            "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
+            "phone": "555-0100", "email": "test@example.test", "payee_name": "Test Payee",
+            "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
+            "payment_postal_code": "00000", "zelle_recipient": "test-zelle@example.test",
+        })
+        self.conn.commit()
+        self.person = create_person(self.conn, {"display_name": "Fred Colin", "first_name": "Fred", "last_name": "Colin"})
+        self.active_bp = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "billing_party_type": "person",
+            "person_id": self.person["person_id"],
+            "preferred_delivery_method": "email",
+        })
+        self.inactive_bp = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "billing_party_type": "person",
+            "person_id": self.person["person_id"],
+            "billing_email": "fred@example.test",
+            "billing_address_line_1": "123 Main St",
+            "billing_city": "Anytown",
+            "billing_state": "CA",
+            "billing_postal_code": "90210",
+            "preferred_delivery_method": "email",
+        })
+        update_billing_party(self.conn, self.inactive_bp["billing_party_id"], {"active": False})
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def test_preview_shows_fields_to_copy(self):
+        preview = preview_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        fields = {f["field"] for f in preview["fields_to_copy"]}
+        self.assertIn("billing_email", fields)
+        self.assertIn("billing_address_line_1", fields)
+        self.assertIn("billing_city", fields)
+        self.assertIn("billing_state", fields)
+        self.assertIn("billing_postal_code", fields)
+
+    def test_preview_does_not_modify_data(self):
+        before = self.conn.execute("SELECT billing_email FROM billing_parties WHERE billing_party_id = ?", (self.active_bp["billing_party_id"],)).fetchone()
+        preview_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        after = self.conn.execute("SELECT billing_email FROM billing_parties WHERE billing_party_id = ?", (self.active_bp["billing_party_id"],)).fetchone()
+        self.assertEqual(after["billing_email"], before["billing_email"])
+
+    def test_apply_copies_empty_fields_to_active(self):
+        result = apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        self.assertIn("billing_email", result["copied_fields"])
+        row = self.conn.execute("SELECT billing_email, billing_address_line_1, billing_city FROM billing_parties WHERE billing_party_id = ?", (self.active_bp["billing_party_id"],)).fetchone()
+        self.assertEqual(row["billing_email"], "fred@example.test")
+        self.assertEqual(row["billing_address_line_1"], "123 Main St")
+        self.assertEqual(row["billing_city"], "Anytown")
+
+    def test_apply_does_not_reactivate_inactive(self):
+        apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        row = self.conn.execute("SELECT active FROM billing_parties WHERE billing_party_id = ?", (self.inactive_bp["billing_party_id"],)).fetchone()
+        self.assertEqual(row["active"], 0)
+
+    def test_apply_does_not_overwrite_existing_active_values(self):
+        update_billing_party(self.conn, self.active_bp["billing_party_id"], {"billing_email": "existing@example.test"})
+        result = apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        self.assertNotIn("billing_email", result["copied_fields"])
+        row = self.conn.execute("SELECT billing_email FROM billing_parties WHERE billing_party_id = ?", (self.active_bp["billing_party_id"],)).fetchone()
+        self.assertEqual(row["billing_email"], "existing@example.test")
+
+    def test_apply_with_confirmed_fields_only_copies_selected(self):
+        result = apply_copy_contact_details(
+            self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"],
+            confirmed_fields=["billing_email"],
+        )
+        self.assertEqual(result["copied_fields"], ["billing_email"])
+        row = self.conn.execute("SELECT billing_email, billing_address_line_1 FROM billing_parties WHERE billing_party_id = ?", (self.active_bp["billing_party_id"],)).fetchone()
+        self.assertEqual(row["billing_email"], "fred@example.test")
+        self.assertIsNone(row["billing_address_line_1"])
+
+    def test_apply_records_audit(self):
+        before = count(self.conn, "audit_log")
+        apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        after = count(self.conn, "audit_log")
+        self.assertEqual(after, before + 2)
+        entry = self.conn.execute(
+            "SELECT * FROM audit_log WHERE entity_id = ? AND action = 'copied_contact_from_inactive' ORDER BY created_at DESC LIMIT 1",
+            (self.active_bp["billing_party_id"],),
+        ).fetchone()
+        self.assertEqual(entry["entity_type"], "billing_party")
+
+    def test_preview_rejects_active_source(self):
+        with self.assertRaises(ValueError):
+            preview_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.active_bp["billing_party_id"])
+
+    def test_preview_rejects_inactive_target(self):
+        with self.assertRaises(ValueError):
+            preview_copy_contact_details(self.conn, self.inactive_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+
+    def test_preview_rejects_different_persons(self):
+        person2 = create_person(self.conn, {"display_name": "Other Person"})
+        bp_other = create_billing_party(self.conn, {
+            "billing_name": "Other", "person_id": person2["person_id"],
+            "billing_email": "other@example.test",
+        })
+        update_billing_party(self.conn, bp_other["billing_party_id"], {"active": False})
+        with self.assertRaises(ValueError):
+            preview_copy_contact_details(self.conn, self.active_bp["billing_party_id"], bp_other["billing_party_id"])
+
+    def test_apply_does_not_change_finalized_invoice_snapshots(self):
+        import_rows(self.conn, [raw_row("snap-copy")], "test")
+        candidate_id = list_review_candidates(self.conn)["items"][0]["candidate_id"]
+        approve_candidate(self.conn, candidate_id, {
+            "participants": [
+                {"person_id": self.person["person_id"], "display_name": "Fred Colin", "is_primary": True},
+            ],
+            "billing_party_id": self.active_bp["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "200.00",
+            "payment_status": "unpaid",
+        })
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        update_billing_party(self.conn, self.active_bp["billing_party_id"], {"billing_email": "temp@example.test"})
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.active_bp["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session["id"]],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf", return_value="a" * 64):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        inv_before = self.conn.execute(
+            "SELECT bill_to_email_snapshot, bill_to_name_snapshot FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        inv_after = self.conn.execute(
+            "SELECT bill_to_email_snapshot, bill_to_name_snapshot FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(inv_after["bill_to_email_snapshot"], inv_before["bill_to_email_snapshot"])
+        self.assertEqual(inv_after["bill_to_name_snapshot"], inv_before["bill_to_name_snapshot"])
+
+    def test_apply_with_no_copyable_fields_returns_empty(self):
+        update_billing_party(self.conn, self.active_bp["billing_party_id"], {
+            "billing_email": "already@set.test",
+            "billing_address_line_1": "456 Oak Ave",
+            "billing_city": "Newtown",
+            "billing_state": "NY",
+            "billing_postal_code": "10001",
+        })
+        result = apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
+        self.assertEqual(result["copied_fields"], [])
 
 
 if __name__ == "__main__":

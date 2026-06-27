@@ -1873,6 +1873,85 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("preview-finalize", handler)
         self.assertIn("renderFinalizationPreview", handler)
 
+    def test_billing_setup_edit_form_shows_active_status_banner(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function showBillingSetupForm")
+        fn = js[start:start+3000]
+        self.assertIn("billing-setup-status-banner", fn)
+        self.assertIn("Active", fn)
+        self.assertIn("Inactive", fn)
+        self.assertIn("will not be used for new invoices", fn)
+
+    def test_billing_setup_edit_form_inactive_warning_exists(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function showBillingSetupForm")
+        fn = js[start:start+3000]
+        self.assertIn("Editing this record does not update the active setup", fn)
+
+    def test_billing_card_duplicate_warning_exists(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+        self.assertIn("billing-card-warning", person_record)
+        self.assertIn("Another inactive billing setup exists for this payer", person_record)
+        self.assertIn("missing required delivery details", person_record)
+
+    def test_copy_contact_button_exists_on_active_card(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+        self.assertIn("data-copy-contact-source", person_record)
+        self.assertIn("data-copy-contact-target", person_record)
+        self.assertIn("Review Inactive Details", person_record)
+
+    def test_copy_contact_handler_calls_preview_api(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("copy-contact-preview", js)
+        self.assertIn("copy-contact", js)
+        self.assertIn("Copy Contact Details to Active Setup", js)
+
+    def test_copy_contact_requires_confirmation(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("copyContactConfirm", js)
+        self.assertIn("Copy Selected Details", js)
+        self.assertIn("copyContactCancel", js)
+
+    def test_copy_contact_does_not_auto_copy(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index('document.querySelectorAll("[data-copy-contact-source]")')
+        end = js.index("}\n\nfunction showBillingSetupMessage", start)
+        handler = js[start:end]
+        self.assertIn("copyContactConfirmBtn", handler)
+        self.assertIn("confirmed_fields", handler)
+
+    def test_billing_setup_save_prevents_duplicate_submission(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function showBillingSetupForm")
+        fn = js[start:start+6000]
+        self.assertIn("state.billingSetupSaving", fn)
+        self.assertIn('bsfSaveBtn").disabled = true', fn)
+
+    def test_billing_setup_save_refreshes_person_record(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function showBillingSetupForm")
+        fn = js[start:start+6000]
+        self.assertIn("openPersonRecord", fn)
+        self.assertIn("Billing setup updated.", fn)
+
+    def test_billing_setup_warning_css_exists(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".billing-card-warning", css)
+        self.assertIn(".billing-setup-status-banner", css)
+        self.assertIn(".billing-setup-status-banner.active", css)
+        self.assertIn(".billing-setup-status-banner.inactive", css)
+
+    def test_copy_contact_css_exists(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+        self.assertIn(".copy-contact-title", css)
+        self.assertIn(".copy-contact-field-list", css)
+
 
 if __name__ == "__main__":
     unittest.main()
