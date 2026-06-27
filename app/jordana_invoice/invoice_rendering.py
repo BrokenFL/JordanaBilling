@@ -11,20 +11,23 @@ STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_LOGO_PATH = STATIC_DIR / "assets" / "jordana-logo.png"
 
 
-def resolve_logo_path(raw_path: str | None) -> str | None:
-    configured = str(raw_path or "").strip()
-    if configured:
-        return configured
+def resolve_logo_path(*raw_paths: str | None) -> str | None:
+    for raw_path in raw_paths:
+        configured = str(raw_path or "").strip()
+        if configured:
+            path = Path(configured).expanduser()
+            if path.is_file():
+                return str(path)
     if DEFAULT_LOGO_PATH.is_file():
         return str(DEFAULT_LOGO_PATH)
     return None
 
 
-def logo_data_uri(raw_path: str | None) -> str | None:
-    resolved = resolve_logo_path(raw_path)
+def logo_data_uri(*raw_paths: str | None) -> str | None:
+    resolved = resolve_logo_path(*raw_paths)
     if not resolved:
         return None
-    path = Path(resolved).expanduser()
+    path = Path(resolved)
     if not path.is_file():
         return None
     mime_type, _ = mimetypes.guess_type(path.name)
@@ -134,8 +137,8 @@ def build_invoice_render_model(
     profile = business_profile or {}
     party = billing_party or {}
 
-    logo_path = resolve_logo_path(invoice.get("logo_reference_snapshot") or profile.get("logo_path"))
-    logo_uri = logo_data_uri(invoice.get("logo_reference_snapshot") or profile.get("logo_path"))
+    logo_path = resolve_logo_path(invoice.get("logo_reference_snapshot"), profile.get("logo_path"))
+    logo_uri = logo_data_uri(invoice.get("logo_reference_snapshot"), profile.get("logo_path"))
     business_address_lines = split_snapshot_lines(invoice.get("business_address_snapshot")) or compact_address_lines(
         profile.get("address_line_1"),
         profile.get("address_line_2"),
