@@ -13,6 +13,7 @@ from jordana_invoice.invoice_services import (
     invoice_ineligibility_reasons,
     preview_finalization,
     save_business_profile,
+    void_invoice,
 )
 from jordana_invoice.payment_services import (
     allocate_payment_to_session,
@@ -20,8 +21,11 @@ from jordana_invoice.payment_services import (
     get_payment_detail,
     invoice_line_paid_amount,
     link_session_allocations_to_invoice_line,
+    list_invoice_payment_history,
+    list_outstanding_invoices,
     payment_allocated_amount,
     payment_unapplied_amount,
+    record_invoice_payment,
     reverse_allocation,
     session_paid_amount,
     void_payment,
@@ -77,8 +81,11 @@ class PaymentServicesTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _approved_session(self, key, party_id=None, amount="150.00"):
+        return self._approved_session_at(key, "2026-05-10T10:00:00-04:00", party_id=party_id, amount=amount)
+
+    def _approved_session_at(self, key, start_at, party_id=None, amount="150.00"):
         pid = party_id or self.party["billing_party_id"]
-        import_rows(self.conn, [raw_row(key, "Pat Client | 60 | Office", f"2026-05-10T10:00:00-04:00")], "test")
+        import_rows(self.conn, [raw_row(key, "Pat Client | 60 | Office", start_at)], "test")
         candidate_id = self.conn.execute(
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
             (stable_hash(f"calendar_event_id:event-{key}"),),
@@ -373,6 +380,290 @@ class PaymentServicesTests(unittest.TestCase):
         self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
         unpaid_reasons = invoice_ineligibility_reasons(self.conn, self.session)
         self.assertEqual(unpaid_reasons, [])
+
+    def test_outstanding_invoices_include_unpaid_and_partial_only(self):
+        unpaid_session = self._approved_session_at("ou1", "2026-05-11T10:00:00-04:00", amount="200.00")
+        partial_session = self._approved_session_at("ou2", "2026-05-12T10:00:00-04:00", amount="300.00")
+        paid_session = self._approved_session_at("ou3", "2026-05-13T10:00:00-04:00", amount="250.00")
+        void_session = self._approved_session_at("ou4", "2026-05-14T10:00:00-04:00", amount="180.00")
+
+        unpaid_invoice = self._draft_and_finalize(unpaid_session["id"])["invoice"]["invoice_id"]
+        partial_invoice = self._draft_and_finalize(partial_session["id"])["invoice"]["invoice_id"]
+        paid_invoice = self._draft_and_finalize(paid_session["id"])["invoice"]["invoice_id"]
+        void_invoice_id = self._draft_and_finalize(void_session["id"])["invoice"]["invoice_id"]
+        void_invoice(self.conn, void_invoice_id, "void test")
+
+        p_partial = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=10000, received_at="2026-05-20", method="check")
+        allocate_payment_to_session(
+            self.conn,
+            payment_id=p_partial["payment_id"],
+            session_id=partial_session["id"],
+            amount_cents=10000,
+            invoice_line_item_id=self._get_invoice_line_id(partial_session["id"]),
+        )
+
+        p_paid = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=25000, received_at="2026-05-21", method="ach")
+        paid_allocation = allocate_payment_to_session(
+            self.conn,
+            payment_id=p_paid["payment_id"],
+            session_id=paid_session["id"],
+            amount_cents=25000,
+            invoice_line_item_id=self._get_invoice_line_id(paid_session["id"]),
+        )
+        reverse_allocation(self.conn, paid_allocation["allocation_id"])
+        p_void = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=25000, received_at="2026-05-21", method="ach")
+        allocate_payment_to_session(
+            self.conn,
+            payment_id=p_void["payment_id"],
+            session_id=paid_session["id"],
+            amount_cents=25000,
+            invoice_line_item_id=self._get_invoice_line_id(paid_session["id"]),
+        )
+        paid_active = self.conn.execute(
+            "SELECT allocation_id FROM payment_allocations WHERE payment_id = ?",
+            (p_void["payment_id"],),
+        ).fetchone()["allocation_id"]
+        reverse_allocation(self.conn, paid_active)
+        void_payment(self.conn, p_void["payment_id"])
+        p_paid_active = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=25000, received_at="2026-05-22", method="card")
+        allocate_payment_to_session(
+            self.conn,
+            payment_id=p_paid_active["payment_id"],
+            session_id=paid_session["id"],
+            amount_cents=25000,
+            invoice_line_item_id=self._get_invoice_line_id(paid_session["id"]),
+        )
+
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01",
+            "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31",
+            "session_ids": [self.session_id],
+        })
+        self.assertEqual(draft["invoice"]["status"], "draft")
+
+        outstanding = list_outstanding_invoices(self.conn)
+        ids = {row["invoice_id"] for row in outstanding}
+        self.assertIn(unpaid_invoice, ids)
+        self.assertIn(partial_invoice, ids)
+        self.assertNotIn(paid_invoice, ids)
+        self.assertNotIn(void_invoice_id, ids)
+        partial_row = next(row for row in outstanding if row["invoice_id"] == partial_invoice)
+        self.assertEqual(partial_row["paid_cents"], 10000)
+        self.assertEqual(partial_row["balance_cents"], 20000)
+        self.assertEqual(partial_row["payment_status"], "partially_paid")
+
+    def test_record_invoice_payment_full_payment_succeeds(self):
+        final = self._draft_and_finalize(self.session_id)
+        result = record_invoice_payment(
+            self.conn,
+            invoice_id=final["invoice"]["invoice_id"],
+            payment_date="2026-05-25",
+            amount_cents=15000,
+            payment_method="zelle",
+            received_from_name="Pat Client",
+        )
+        self.assertFalse(result["duplicate_submission_ignored"])
+        self.assertEqual(result["invoice"]["balance_cents"], 0)
+        self.assertEqual(result["invoice"]["payment_status"], "paid")
+        self.assertEqual(len(result["allocations"]), 1)
+
+    def test_record_invoice_payment_partial_allocates_oldest_service_date_first(self):
+        newer = self._approved_session_at("rp-new", "2026-05-12T10:00:00-04:00", amount="300.00")
+        older = self._approved_session_at("rp-old", "2026-05-09T10:00:00-04:00", amount="200.00")
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01",
+            "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31",
+            "session_ids": [newer["id"], older["id"]],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
+            fake_pdf.return_value = "x" * 64
+            preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+            final = finalize_invoice(
+                self.conn,
+                draft["invoice"]["invoice_id"],
+                expected_revision=preview["preview_revision"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        result = record_invoice_payment(
+            self.conn,
+            invoice_id=final["invoice"]["invoice_id"],
+            payment_date="2026-05-26",
+            amount_cents=25000,
+            payment_method="check",
+        )
+        allocated = {
+            alloc["session_id"]: alloc["amount_cents"]
+            for alloc in result["allocations"]
+        }
+        self.assertEqual(allocated[older["id"]], 20000)
+        self.assertEqual(allocated[newer["id"]], 5000)
+        self.assertEqual(result["invoice"]["paid_cents"], 25000)
+        self.assertEqual(result["invoice"]["balance_cents"], 25000)
+
+    def test_record_invoice_payment_rejects_invalid_states(self):
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01",
+            "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31",
+            "session_ids": [self.session_id],
+        })
+        with self.assertRaisesRegex(ValueError, "draft invoice"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=draft["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=100,
+                payment_method="cash",
+            )
+        self.conn.execute("DELETE FROM invoice_line_items WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],))
+        self.conn.execute("DELETE FROM invoices WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],))
+        self.conn.commit()
+
+        final_session = self._approved_session_at("reject-final", "2026-05-18T10:00:00-04:00", amount="150.00")
+        final = self._draft_and_finalize(final_session["id"])
+        with self.assertRaisesRegex(ValueError, "Payment amount must be greater than zero"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=final["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=0,
+                payment_method="cash",
+            )
+        with self.assertRaisesRegex(ValueError, "Payment method is required"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=final["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=100,
+                payment_method="",
+            )
+        with self.assertRaisesRegex(ValueError, "Payment Bill To party does not match"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=final["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=100,
+                payment_method="cash",
+                billing_party_id=self.party2["billing_party_id"],
+            )
+        with self.assertRaisesRegex(ValueError, "cannot exceed the current invoice balance"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=final["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=20000,
+                payment_method="cash",
+            )
+        record_invoice_payment(
+            self.conn,
+            invoice_id=final["invoice"]["invoice_id"],
+            payment_date="2026-05-25",
+            amount_cents=15000,
+            payment_method="cash",
+        )
+        with self.assertRaisesRegex(ValueError, "already fully paid"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=final["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=100,
+                payment_method="cash",
+            )
+        voided_invoice = self._draft_and_finalize(self._approved_session_at("voidable", "2026-05-19T10:00:00-04:00")["id"])
+        void_invoice(self.conn, voided_invoice["invoice"]["invoice_id"], "void")
+        with self.assertRaisesRegex(ValueError, "void invoice"):
+            record_invoice_payment(
+                self.conn,
+                invoice_id=voided_invoice["invoice"]["invoice_id"],
+                payment_date="2026-05-25",
+                amount_cents=100,
+                payment_method="cash",
+            )
+
+    def test_record_invoice_payment_rolls_back_payment_and_allocations_on_failure(self):
+        final = self._draft_and_finalize(self.session_id)
+        payment_count_before = self.conn.execute("SELECT COUNT(*) FROM payments").fetchone()[0]
+        allocation_count_before = self.conn.execute("SELECT COUNT(*) FROM payment_allocations").fetchone()[0]
+        with patch("jordana_invoice.payment_services._allocate_payment_to_session_locked", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                record_invoice_payment(
+                    self.conn,
+                    invoice_id=final["invoice"]["invoice_id"],
+                    payment_date="2026-05-25",
+                    amount_cents=15000,
+                    payment_method="cash",
+                )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM payments").fetchone()[0], payment_count_before)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM payment_allocations").fetchone()[0], allocation_count_before)
+
+    def test_record_invoice_payment_ignores_duplicate_submission(self):
+        final = self._draft_and_finalize(self.session_id)
+        first = record_invoice_payment(
+            self.conn,
+            invoice_id=final["invoice"]["invoice_id"],
+            payment_date="2026-05-27",
+            amount_cents=5000,
+            payment_method="ach",
+            reference_number="ACH-1",
+            received_from_name="Pat Client",
+            administrative_note="Front desk payment",
+        )
+        second = record_invoice_payment(
+            self.conn,
+            invoice_id=final["invoice"]["invoice_id"],
+            payment_date="2026-05-27",
+            amount_cents=5000,
+            payment_method="ach",
+            reference_number="ACH-1",
+            received_from_name="Pat Client",
+            administrative_note="Front desk payment",
+        )
+        self.assertFalse(first["duplicate_submission_ignored"])
+        self.assertTrue(second["duplicate_submission_ignored"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM payments").fetchone()[0], 1)
+        self.assertEqual(second["invoice"]["paid_cents"], 5000)
+        self.assertEqual(second["invoice"]["balance_cents"], 10000)
+
+    def test_list_invoice_payment_history_marks_void_and_reversed(self):
+        final = self._draft_and_finalize(self.session_id)
+        posted = record_invoice_payment(
+            self.conn,
+            invoice_id=final["invoice"]["invoice_id"],
+            payment_date="2026-05-28",
+            amount_cents=5000,
+            payment_method="card",
+        )
+        reversed_payment = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=2500, received_at="2026-05-28", method="card")
+        reversed_allocation = allocate_payment_to_session(
+            self.conn,
+            payment_id=reversed_payment["payment_id"],
+            session_id=self.session_id,
+            amount_cents=2500,
+            invoice_line_item_id=self._get_invoice_line_id(self.session_id),
+        )
+        reverse_allocation(self.conn, reversed_allocation["allocation_id"])
+        voided_payment = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=2500, received_at="2026-05-28", method="check")
+        voided_allocation = allocate_payment_to_session(
+            self.conn,
+            payment_id=voided_payment["payment_id"],
+            session_id=self.session_id,
+            amount_cents=2500,
+            invoice_line_item_id=self._get_invoice_line_id(self.session_id),
+        )
+        reverse_allocation(self.conn, voided_allocation["allocation_id"])
+        void_payment(self.conn, voided_payment["payment_id"])
+
+        history = list_invoice_payment_history(self.conn, final["invoice"]["invoice_id"])
+        statuses = {row["payment_id"]: row["payment_status"] for row in history["payments"]}
+        self.assertEqual(statuses[posted["payment"]["payment_id"]], "posted")
+        self.assertEqual(statuses[reversed_payment["payment_id"]], "reversed")
+        self.assertEqual(statuses[voided_payment["payment_id"]], "void")
 
 
 if __name__ == "__main__":

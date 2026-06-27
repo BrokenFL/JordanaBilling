@@ -1,4 +1,5 @@
 let overlayReturnFocus = null;
+let paymentOverlayReturnFocus = null;
 let approvalInProgress = false;
 let duplicateInProgress = false;
 const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
@@ -32,7 +33,13 @@ const state = {
   currentPersonId: null,
   personShowAllSessions: false,
   billingSetupSaving: false,
-  finalizeInProgress: false
+  finalizeInProgress: false,
+  unpaid: {
+    items: [],
+    selectedInvoiceId: null,
+    paymentHistory: [],
+    submitting: false
+  }
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
@@ -1072,6 +1079,40 @@ function houseCallSuggestion(s) {
   return `<div class="suggestion-note"><strong>Location suggests House Call:</strong> ${escapeHtml(s.location_text || "Location field present")}. Please confirm the session type.</div>`;
 }
 function centString(cents) { return cents ? (Number(cents) / 100).toFixed(2) : ""; }
+function parseMoneyToCents(value) {
+  const raw = String(value || "").trim().replace(/[$,]/g, "");
+  if (!raw) return null;
+  if (!/^-?\d+(\.\d{1,2})?$/.test(raw)) return null;
+  return Math.round(Number(raw) * 100);
+}
+function paymentMethodLabel(method) {
+  return ({
+    zelle: "Zelle",
+    check: "Check",
+    cash: "Cash",
+    ach: "ACH",
+    card: "Card",
+    other: "Other"
+  }[method] || escapeHtml(method) || "Other");
+}
+function paymentStatusLabel(status) {
+  return ({
+    unpaid: "Unpaid",
+    partially_paid: "Partially Paid",
+    paid: "Paid",
+    posted: "Posted",
+    reversed: "Reversed",
+    void: "Void"
+  }[status] || escapeHtml(status) || "Unknown");
+}
+function sanitizeUiErrorMessage(message, fallback = "An unexpected error occurred.") {
+  const raw = String(message || "").trim();
+  if (!raw) return fallback;
+  if (raw.includes("/") || raw.toLowerCase().includes("traceback") || raw.toLowerCase().includes("select ")) {
+    return fallback;
+  }
+  return raw;
+}
 function safeList(raw) { try { return Array.isArray(raw) ? raw : JSON.parse(raw || "[]"); } catch { return []; } }
 function startRange(s) {
   const formatter = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
@@ -1119,6 +1160,11 @@ document.getElementById("reportsNav").onclick = (event) => {
   history.pushState({}, "", "/reports");
   showReports();
 };
+document.getElementById("unpaidNav").onclick = (event) => {
+  event.preventDefault();
+  history.pushState({}, "", "/unpaid");
+  showUnpaid();
+};
 document.getElementById("settingsNav").onclick = (event) => {
   event.preventDefault();
   location.hash = "settings";
@@ -1130,8 +1176,8 @@ document.getElementById("reviewNav").onclick = () => {
 };
 
 function hideViews() {
-  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","unpaidView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","unpaidNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -1213,6 +1259,201 @@ function showInvoiceSuccess(message) {
   banner.setAttribute("role", "status");
   view.prepend(banner);
   setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 5000);
+}
+
+function showUnpaidSuccess(message) {
+  const view = $("unpaidView");
+  if (!view) return;
+  const banner = document.createElement("div");
+  banner.className = "review-success-banner";
+  banner.textContent = message;
+  banner.setAttribute("role", "status");
+  view.prepend(banner);
+  setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 5000);
+}
+
+async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selectedInvoiceId) {
+  const data = await api("/api/payments/outstanding-invoices");
+  state.unpaid.items = data.items || [];
+  renderOutstandingInvoices(state.unpaid.items);
+  if (!state.unpaid.items.length) {
+    state.unpaid.selectedInvoiceId = null;
+    $("unpaidWorkspace").innerHTML = `<div class="empty-state">No outstanding finalized invoices.</div>`;
+    return;
+  }
+  const nextId = state.unpaid.items.some(item => item.invoice_id === selectedInvoiceId)
+    ? selectedInvoiceId
+    : state.unpaid.items[0].invoice_id;
+  await openOutstandingInvoice(nextId, { preserveFocus: true });
+}
+
+function renderOutstandingInvoices(items) {
+  const tbody = $("unpaidRows");
+  tbody.innerHTML = items.length
+    ? items.map(item => `
+      <tr data-invoice-id="${escapeAttr(item.invoice_id)}" class="${state.unpaid.selectedInvoiceId === item.invoice_id ? "selected" : ""}">
+        <td><span class="status-pill ${escapeAttr(item.payment_status)}">${escapeHtml(paymentStatusLabel(item.payment_status))}</span></td>
+        <td>${fmt(item.invoice_number)}</td>
+        <td>${fmt(item.bill_to_display_name)}</td>
+        <td>${fmt(item.invoice_date)}</td>
+        <td>${money(centString(item.total_cents))}</td>
+        <td>${money(centString(item.paid_cents))}</td>
+        <td>${money(centString(item.balance_cents))}</td>
+        <td><button class="review-btn record-payment-btn" data-record-payment="${escapeAttr(item.invoice_id)}">Record Payment</button></td>
+      </tr>
+    `).join("")
+    : '<tr class="empty-row"><td colspan="8">No outstanding finalized invoices.</td></tr>';
+
+  document.querySelectorAll("#unpaidRows tr[data-invoice-id]").forEach(row => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openOutstandingInvoice(row.dataset.invoiceId);
+    });
+  });
+  document.querySelectorAll(".record-payment-btn").forEach(button => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openPaymentOverlay(button.dataset.recordPayment, button);
+    });
+  });
+}
+
+async function openOutstandingInvoice(invoiceId, { preserveFocus = false } = {}) {
+  state.unpaid.selectedInvoiceId = invoiceId;
+  document.querySelectorAll("#unpaidRows tr[data-invoice-id]").forEach(row => {
+    row.classList.toggle("selected", row.dataset.invoiceId === invoiceId);
+  });
+  const data = await api(`/api/invoices/${invoiceId}/payments`);
+  state.unpaid.paymentHistory = data.payments || [];
+  renderOutstandingInvoiceWorkspace(data);
+  if (!preserveFocus) {
+    const row = document.querySelector(`#unpaidRows tr[data-invoice-id="${CSS.escape(invoiceId)}"]`);
+    if (row) row.focus?.();
+  }
+}
+
+function renderOutstandingInvoiceWorkspace(data) {
+  const invoice = data.invoice;
+  $("unpaidWorkspace").innerHTML = `
+    <div class="payment-panel">
+      <div class="payment-panel-header">
+        <div>
+          <h3>${fmt(invoice.invoice_number)}</h3>
+          <div class="help">${fmt(invoice.bill_to_display_name)} • Invoice date ${fmt(invoice.invoice_date)}</div>
+        </div>
+        <button class="save" id="workspaceRecordPayment">Record Payment</button>
+      </div>
+      <div class="payment-panel-summary">
+        <div class="payment-summary-card"><label>Total</label><strong>${money(centString(invoice.total_cents))}</strong></div>
+        <div class="payment-summary-card"><label>Paid</label><strong>${money(centString(invoice.paid_cents))}</strong></div>
+        <div class="payment-summary-card"><label>Balance</label><strong>${money(centString(invoice.balance_cents))}</strong></div>
+      </div>
+      <section class="section">
+        <h3>Payment History</h3>
+        <table class="review-table payment-history-table">
+          <thead><tr><th>Payment Date</th><th>Method</th><th>Reference</th><th>Received From</th><th>Amount Applied</th><th>Status</th></tr></thead>
+          <tbody>${(data.payments || []).map(payment => `
+            <tr>
+              <td>${fmt(payment.received_at)}</td>
+              <td>${escapeHtml(paymentMethodLabel(payment.method))}</td>
+              <td>${fmt(payment.reference_number)}</td>
+              <td>${fmt(payment.received_from_name)}</td>
+              <td>${money(centString(payment.amount_applied_cents))}</td>
+              <td><span class="status-pill ${escapeAttr(payment.payment_status)}">${escapeHtml(paymentStatusLabel(payment.payment_status))}</span></td>
+            </tr>
+          `).join("") || '<tr class="empty-row"><td colspan="6">No payment history yet.</td></tr>'}</tbody>
+        </table>
+      </section>
+    </div>
+  `;
+  $("workspaceRecordPayment").onclick = (event) => openPaymentOverlay(invoice.invoice_id, event.currentTarget);
+}
+
+function closePaymentOverlay() {
+  const overlay = $("paymentOverlay");
+  if (!overlay) return;
+  overlay.hidden = true;
+  state.unpaid.submitting = false;
+  if (paymentOverlayReturnFocus && document.body.contains(paymentOverlayReturnFocus)) {
+    paymentOverlayReturnFocus.focus();
+  }
+  paymentOverlayReturnFocus = null;
+}
+
+async function openPaymentOverlay(invoiceId, focusReturnEl = null) {
+  const data = await api(`/api/invoices/${invoiceId}/payments`);
+  const invoice = data.invoice;
+  paymentOverlayReturnFocus = focusReturnEl;
+  $("paymentOverlayContent").innerHTML = `
+    <form id="paymentForm">
+      <div class="payment-form-grid">
+        <label class="field">Bill To<input value="${escapeAttr(invoice.bill_to_display_name || "")}" readonly /></label>
+        <label class="field">Invoice Number<input value="${escapeAttr(invoice.invoice_number || "")}" readonly /></label>
+        <label class="field">Outstanding Balance<input value="${escapeAttr(money(centString(invoice.balance_cents)))}" readonly /></label>
+        <label class="field">Payment Date<input id="paymentDateInput" type="date" value="${escapeAttr(new Date().toISOString().slice(0, 10))}" required /></label>
+        <label class="field">Amount Received<input id="paymentAmountInput" value="${escapeAttr(centString(invoice.balance_cents))}" required /></label>
+        <label class="field">Payment Method<select id="paymentMethodInput" required><option value="">Select a method</option><option value="zelle">Zelle</option><option value="check">Check</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="card">Card</option><option value="other">Other</option></select></label>
+        <label class="field">Reference Number<input id="paymentReferenceInput" value="" /></label>
+        <label class="field">Received From<input id="paymentReceivedFromInput" value="${escapeAttr(invoice.bill_to_display_name || "")}" /></label>
+        <label class="field wide">Administrative Note<input id="paymentAdministrativeNoteInput" value="" aria-describedby="paymentAdministrativeNoteHelp" /></label>
+      </div>
+      <div class="help" id="paymentAdministrativeNoteHelp">Administrative only. Do not include clinical information.</div>
+      <div class="payment-form-note">The payment will be applied automatically to this invoice from the oldest service date forward.</div>
+      <div class="payment-form-message" id="paymentFormMessage" aria-live="polite"></div>
+      <div class="payment-form-actions">
+        <button type="button" id="paymentCancelBtn">Cancel</button>
+        <button type="submit" class="save" id="paymentSubmitBtn">Record Payment</button>
+      </div>
+    </form>
+  `;
+  const overlay = $("paymentOverlay");
+  overlay.hidden = false;
+  $("paymentOverlayClose").onclick = closePaymentOverlay;
+  $("paymentCancelBtn").onclick = closePaymentOverlay;
+  $("paymentForm").onsubmit = async (event) => {
+    event.preventDefault();
+    await submitInvoicePayment(invoice);
+  };
+  requestAnimationFrame(() => $("paymentDateInput")?.focus());
+}
+
+async function submitInvoicePayment(invoice) {
+  if (state.unpaid.submitting) return;
+  const submitBtn = $("paymentSubmitBtn");
+  const cancelBtn = $("paymentCancelBtn");
+  const closeBtn = $("paymentOverlayClose");
+  const message = $("paymentFormMessage");
+  state.unpaid.submitting = true;
+  submitBtn.disabled = true;
+  cancelBtn.disabled = true;
+  closeBtn.disabled = true;
+  message.textContent = "";
+
+  const amountCents = parseMoneyToCents($("paymentAmountInput").value);
+  const payload = {
+    payment_date: $("paymentDateInput").value,
+    amount_cents: amountCents,
+    payment_method: $("paymentMethodInput").value,
+    reference_number: $("paymentReferenceInput").value.trim() || null,
+    received_from_name: $("paymentReceivedFromInput").value.trim() || null,
+    administrative_note: $("paymentAdministrativeNoteInput").value.trim() || null
+  };
+
+  try {
+    await api(`/api/invoices/${invoice.invoice_id}/payments`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    closePaymentOverlay();
+    await loadOutstandingInvoices(invoice.invoice_id);
+    showUnpaidSuccess("Payment recorded successfully.");
+  } catch (err) {
+    state.unpaid.submitting = false;
+    submitBtn.disabled = false;
+    cancelBtn.disabled = false;
+    closeBtn.disabled = false;
+    message.textContent = sanitizeUiErrorMessage(err.message, "Payment could not be recorded.");
+  }
 }
 
 function overlayKeydownHandler(e) {
@@ -1449,6 +1690,16 @@ async function showReports() {
   $("pageSubtitle").textContent = "Download billing and appointment exports";
   document.title = "Jordana Billing - Reports";
   await loadReports();
+}
+
+async function showUnpaid() {
+  hideViews();
+  $("unpaidView").hidden = false;
+  $("unpaidNav").classList.add("active");
+  $("pageTitle").textContent = "Outstanding Invoices & Payments";
+  $("pageSubtitle").textContent = "Record payments against finalized invoices with remaining balances";
+  document.title = "Jordana Billing - Outstanding Invoices & Payments";
+  await loadOutstandingInvoices();
 }
 
 async function loadReports() {
@@ -3887,6 +4138,7 @@ if (location.pathname.startsWith("/people/") && location.pathname.split("/")[2])
 if (location.hash === "#sessions") showSessions();
 if (location.hash === "#settings") showSettings();
 if (location.pathname === "/invoices") showInvoices();
+if (location.pathname === "/unpaid") showUnpaid();
 if (location.pathname === "/reports") showReports();
 window.addEventListener("hashchange", () => {
   const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;

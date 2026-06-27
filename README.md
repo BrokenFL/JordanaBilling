@@ -6,7 +6,7 @@ Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot r
 
 Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
 
-Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. While backend payment and allocation foundations exist, a complete payment UI, reconciliation, reversal/void workflows, and month-close workflow remain unfinished.
+Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. Round 1 payment tracking now adds an `Unpaid` workspace for outstanding finalized invoices, single-invoice payment entry, deterministic allocation across invoice lines, and read-only payment history. Credits, reversals/voiding controls, multi-invoice payments, and reconciliation remain unfinished.
 
 ## Current Scope
 
@@ -129,6 +129,8 @@ The `Sessions` sidebar screen is a read-only ledger built from the same appointm
 
 The `Rate Card` sidebar screen supports global rates plus one-client, clients-together, and billing-relationship exceptions. Replace and End actions preserve rate-rule history, immediately refresh unapproved session suggestions, and never rewrite approved sessions or finalized invoices.
 
+The `Unpaid` sidebar screen is the first payment workspace. It lists finalized invoices with a remaining balance greater than zero, derives paid/balance amounts from posted payments plus active allocations, allows one full or partial payment to be recorded against one invoice at a time, and shows compact payment history. It does not yet support credits, reversals, voiding, or multi-invoice payments.
+
 The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 
 Calendar filters can show all calendars, the preferred work calendar, other calendars, personal/admin calendars, and hidden calendars. Hidden means hidden from the normal queue only; records remain searchable and recoverable.
@@ -166,7 +168,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - SQLite is the local application database.
 - Ambiguous rows stay reviewable and reversible.
 - Calendar import and review commands do not generate invoices automatically.
-- Phase 2 includes local PDF invoice generation and immutable finalization snapshots (invoice delivery and payment tracking UI are deferred).
+- Phase 2 includes local PDF invoice generation and immutable finalization snapshots plus a first-round outstanding-payments workspace.
 - No polished production dashboard is built yet.
 - Do not store clinical notes beyond the raw calendar evidence already imported.
 - Do not rewrite historical finalized invoice values when rates change later.

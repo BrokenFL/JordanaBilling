@@ -183,6 +183,7 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `reverse_allocation` — Sets status to `reversed`, preserves the row. Rejects double reversal.
 - `void_payment` — Requires all allocations reversed first. Sets status to `void`. Rejects double void.
 - Read helpers: `payment_allocated_amount`, `payment_unapplied_amount`, `session_paid_amount`, `invoice_line_paid_amount`, `get_payment_detail`.
+- Round 1 invoice-payment helpers: `list_outstanding_invoices`, `list_invoice_payment_history`, and `record_invoice_payment`.
 - `dry_run_paid_at_session_backfill` — Read-only analyzer that classifies `paid_at_session` sessions into eligibility categories and returns a sanitized aggregate report. Performs no writes. Classification order: already backfilled, not approved, missing Bill To, missing/invalid amount, missing/invalid date, existing manual allocation conflict, eligible. Amount priority: `rate_cents_snapshot` then `approved_rate_cents`. Date priority: `session_date` then `start_at`.
 
 ### Dry-Run CLI
@@ -204,10 +205,38 @@ python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.
 
 All calculation helpers count only allocations where `payment.status = 'posted'` and `payment_allocation.status = 'active'`.
 
+## Payment Tracking Round 1
+
+The `Unpaid` screen now covers the normal payment path only.
+
+### Included
+
+- Lists finalized, non-void invoices with a remaining balance greater than zero.
+- Derives invoice `paid_cents` and `balance_cents` from the payment ledger instead of storing a second editable balance field.
+- Labels invoice payment state as `unpaid`, `partially_paid`, or `paid` from those derived values.
+- Records one manual payment against one invoice at a time using payment date, amount, method, reference number, received from, and administrative note.
+- Re-reads invoice ownership, finalized status, current balance, and invoice lines inside the write transaction.
+- Allocates each payment across line items in this deterministic order:
+  1. oldest `service_date`
+  2. then `sort_order`
+  3. then `invoice_line_item_id`
+- Applies each allocation only up to that line's unpaid amount.
+- Uses one `BEGIN IMMEDIATE` transaction so payment creation plus all intended allocations succeed or fail together.
+- Keeps a compact read-only payment history per invoice. Only posted payments with active allocations count toward current paid totals; reversed or voided records remain visible but inactive.
+
+### Current limitations
+
+- No overpayments or unapplied credits
+- No multi-invoice payments
+- No edit, reversal, or void controls in the UI
+- No due dates, overdue labels, aging, reconciliation, receipts, or email confirmations
+- No historical paid-at-session backfill
+- No invoice PDF appearance changes
+
 ### What Is Not Implemented
 
 - No apply mode exists — only the read-only dry-run analyzer and its CLI are available.
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
-- No API routes, UI, reports, or PDF changes.
+- Payment tracking beyond Round 1 remains unfinished: credits, reversals/voiding controls, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds.

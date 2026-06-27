@@ -13,10 +13,11 @@ over-allocate a payment or charge.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .db import DatabaseBusyError
-from .util import json_dumps, new_id, normalize_payment_status, now_iso, text
+from .util import json_dumps, new_id, now_iso, text
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,21 @@ def _validate_received_at(value: str) -> str:
     raw = text(value)
     if not raw:
         raise ValueError("received_at is required.")
+    return raw
+
+
+PAYMENT_METHODS = {"zelle", "check", "cash", "ach", "card", "other"}
+RECENT_DUPLICATE_WINDOW_SECONDS = 120
+
+
+def _validate_payment_method(value: str | None, *, required: bool = False) -> str:
+    raw = text(value).lower()
+    if not raw:
+        if required:
+            raise ValueError("Payment method is required.")
+        return "other"
+    if raw not in PAYMENT_METHODS:
+        raise ValueError("Unsupported payment method.")
     return raw
 
 
@@ -87,11 +103,134 @@ def _active_allocations_for_session(conn: sqlite3.Connection, session_id: str) -
     ).fetchone()[0]
 
 
-# ---------------------------------------------------------------------------
-# Public service functions
-# ---------------------------------------------------------------------------
+def _invoice_line_rows_for_invoice(conn: sqlite3.Connection, invoice_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT li.*
+        FROM invoice_line_items li
+        WHERE li.invoice_id = ?
+        ORDER BY li.service_date ASC, li.sort_order ASC, li.invoice_line_item_id ASC
+        """,
+        (invoice_id,),
+    ).fetchall()
 
-def create_payment(
+
+def _invoice_paid_amount(conn: sqlite3.Connection, invoice_id: str) -> int:
+    return conn.execute(
+        """
+        SELECT COALESCE(SUM(pa.amount_cents), 0)
+        FROM payment_allocations pa
+        JOIN payments p ON p.payment_id = pa.payment_id
+        JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+        WHERE li.invoice_id = ? AND pa.status = 'active' AND p.status = 'posted'
+        """,
+        (invoice_id,),
+    ).fetchone()[0]
+
+
+def _invoice_summary_row(conn: sqlite3.Connection, invoice_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        """
+        SELECT i.*, bp.billing_name AS bill_to_display_name
+        FROM invoices i
+        JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+        WHERE i.invoice_id = ?
+        """,
+        (invoice_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Invoice was not found.")
+    return row
+
+
+def _invoice_balance_summary(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
+    invoice = _invoice_summary_row(conn, invoice_id)
+    paid_cents = _invoice_paid_amount(conn, invoice_id)
+    total_cents = int(invoice["total_cents"] or 0)
+    balance_cents = max(total_cents - paid_cents, 0)
+    if balance_cents == 0:
+        payment_status = "paid"
+    elif paid_cents == 0:
+        payment_status = "unpaid"
+    else:
+        payment_status = "partially_paid"
+    return {
+        **dict(invoice),
+        "paid_cents": paid_cents,
+        "balance_cents": balance_cents,
+        "payment_status": payment_status,
+    }
+
+
+def _find_recent_duplicate_invoice_payment(
+    conn: sqlite3.Connection,
+    *,
+    invoice_id: str,
+    billing_party_id: str,
+    amount_cents: int,
+    received_at: str,
+    method: str,
+    reference_number: str | None,
+    received_from_name: str | None,
+    administrative_note: str | None,
+) -> sqlite3.Row | None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=RECENT_DUPLICATE_WINDOW_SECONDS)).isoformat().replace("+00:00", "Z")
+    rows = conn.execute(
+        """
+        SELECT p.*
+        FROM payments p
+        WHERE p.billing_party_id = ?
+          AND p.amount_cents = ?
+          AND p.received_at = ?
+          AND p.method = ?
+          AND COALESCE(p.reference_number, '') = COALESCE(?, '')
+          AND COALESCE(p.received_from_name, '') = COALESCE(?, '')
+          AND COALESCE(p.administrative_note, '') = COALESCE(?, '')
+          AND p.status = 'posted'
+          AND p.source_type = 'manual'
+          AND p.created_at >= ?
+        ORDER BY p.created_at DESC
+        """,
+        (
+            billing_party_id,
+            amount_cents,
+            received_at,
+            method,
+            reference_number,
+            received_from_name,
+            administrative_note,
+            cutoff,
+        ),
+    ).fetchall()
+    for row in rows:
+        detail = get_payment_detail(conn, row["payment_id"])
+        if detail["allocated_cents"] != amount_cents:
+            continue
+        allocations = detail["allocations"]
+        if not allocations:
+            continue
+        linked_invoice_ids = {
+            alloc_invoice["invoice_id"]
+            for alloc_invoice in (
+                conn.execute(
+                    """
+                    SELECT li.invoice_id
+                    FROM invoice_line_items li
+                    WHERE li.invoice_line_item_id = ?
+                    """,
+                    (allocation["invoice_line_item_id"],),
+                ).fetchone()
+                for allocation in allocations
+                if allocation.get("invoice_line_item_id")
+            )
+            if alloc_invoice is not None
+        }
+        if linked_invoice_ids == {invoice_id}:
+            return row
+    return None
+
+
+def _insert_payment_record(
     conn: sqlite3.Connection,
     *,
     billing_party_id: str,
@@ -104,10 +243,6 @@ def create_payment(
     source_type: str = "manual",
     source_session_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create a posted payment record.
-
-    Returns the stored payment row as a dict.
-    """
     if not billing_party_id or not text(billing_party_id):
         raise ValueError("billing_party_id is required.")
     party = conn.execute(
@@ -118,12 +253,11 @@ def create_payment(
     if not isinstance(amount_cents, int) or amount_cents <= 0:
         raise ValueError("amount_cents must be a positive integer.")
     received = _validate_received_at(received_at)
-    method_val = text(method) or "other"
+    method_val = _validate_payment_method(method)
     ref = text(reference_number) if reference_number is not None else None
     from_name = text(received_from_name) if received_from_name is not None else None
     note = text(administrative_note) if administrative_note is not None else None
 
-    # Provenance validation
     if source_type not in ("manual", "paid_at_session_backfill"):
         raise ValueError("Unsupported source_type.")
     if source_type == "manual" and source_session_id is not None:
@@ -154,9 +288,107 @@ def create_payment(
         "amount_cents": amount_cents,
         "source_type": source_type,
     })
-    conn.commit()
     row = conn.execute("SELECT * FROM payments WHERE payment_id = ?", (payment_id,)).fetchone()
     return dict(row)
+
+
+def _allocate_payment_to_session_locked(
+    conn: sqlite3.Connection,
+    *,
+    payment_id: str,
+    session_id: str,
+    amount_cents: int,
+    invoice_line_item_id: str | None = None,
+) -> dict[str, Any]:
+    payment = _payment_row(conn, payment_id)
+    if payment["status"] != "posted":
+        raise ValueError("Payment is not posted.")
+    session = _session_row(conn, session_id)
+    if payment["billing_party_id"] != session["billing_party_id"]:
+        raise ValueError("Payment Bill To party does not match the session billing party.")
+    if not isinstance(amount_cents, int) or amount_cents <= 0:
+        raise ValueError("amount_cents must be a positive integer.")
+
+    current_payment_alloc = _active_allocations_for_payment(conn, payment_id)
+    if current_payment_alloc + amount_cents > payment["amount_cents"]:
+        raise ValueError("Allocation exceeds the remaining unapplied payment amount.")
+
+    charge = _session_charge_cents(session)
+    current_session_alloc = _active_allocations_for_session(conn, session_id)
+    if current_session_alloc + amount_cents > charge:
+        raise ValueError("Allocation exceeds the session charge amount.")
+
+    if invoice_line_item_id is not None:
+        line = conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_line_item_id = ?", (invoice_line_item_id,)
+        ).fetchone()
+        if line is None:
+            raise ValueError("Invoice line item was not found.")
+        if line["source_session_id"] != session_id:
+            raise ValueError("Invoice line does not belong to the specified session.")
+        invoice = conn.execute(
+            "SELECT bill_to_party_id FROM invoices WHERE invoice_id = ?", (line["invoice_id"],)
+        ).fetchone()
+        if invoice is None:
+            raise ValueError("Invoice for the line item was not found.")
+        if invoice["bill_to_party_id"] != payment["billing_party_id"]:
+            raise ValueError("Invoice Bill To party does not match the payment Bill To party.")
+
+    allocation_id = new_id()
+    now = now_iso()
+    conn.execute(
+        """INSERT INTO payment_allocations
+           (allocation_id, payment_id, session_id, invoice_line_item_id,
+            amount_cents, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?)""",
+        (allocation_id, payment_id, session_id, invoice_line_item_id, amount_cents, now, now),
+    )
+    _audit(conn, "payment_allocation", allocation_id, "allocation_created", {
+        "payment_id": payment_id,
+        "session_id": session_id,
+        "amount_cents": amount_cents,
+    })
+    row = conn.execute(
+        "SELECT * FROM payment_allocations WHERE allocation_id = ?", (allocation_id,)
+    ).fetchone()
+    return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Public service functions
+# ---------------------------------------------------------------------------
+
+def create_payment(
+    conn: sqlite3.Connection,
+    *,
+    billing_party_id: str,
+    amount_cents: int,
+    received_at: str,
+    method: str = "other",
+    reference_number: str | None = None,
+    received_from_name: str | None = None,
+    administrative_note: str | None = None,
+    source_type: str = "manual",
+    source_session_id: str | None = None,
+) -> dict[str, Any]:
+    """Create a posted payment record.
+
+    Returns the stored payment row as a dict.
+    """
+    row = _insert_payment_record(
+        conn,
+        billing_party_id=billing_party_id,
+        amount_cents=amount_cents,
+        received_at=received_at,
+        method=method,
+        reference_number=reference_number,
+        received_from_name=received_from_name,
+        administrative_note=administrative_note,
+        source_type=source_type,
+        source_session_id=source_session_id,
+    )
+    conn.commit()
+    return row
 
 
 def allocate_payment_to_session(
@@ -173,61 +405,15 @@ def allocate_payment_to_session(
     """
     _begin_immediate(conn)
     try:
-        payment = _payment_row(conn, payment_id)
-        if payment["status"] != "posted":
-            raise ValueError("Payment is not posted.")
-        session = _session_row(conn, session_id)
-        if payment["billing_party_id"] != session["billing_party_id"]:
-            raise ValueError("Payment Bill To party does not match the session billing party.")
-        if not isinstance(amount_cents, int) or amount_cents <= 0:
-            raise ValueError("amount_cents must be a positive integer.")
-
-        current_payment_alloc = _active_allocations_for_payment(conn, payment_id)
-        if current_payment_alloc + amount_cents > payment["amount_cents"]:
-            raise ValueError("Allocation exceeds the remaining unapplied payment amount.")
-
-        charge = _session_charge_cents(session)
-        current_session_alloc = _active_allocations_for_session(conn, session_id)
-        if current_session_alloc + amount_cents > charge:
-            raise ValueError("Allocation exceeds the session charge amount.")
-
-        line_invoice_party: str | None = None
-        if invoice_line_item_id is not None:
-            line = conn.execute(
-                "SELECT * FROM invoice_line_items WHERE invoice_line_item_id = ?", (invoice_line_item_id,)
-            ).fetchone()
-            if line is None:
-                raise ValueError("Invoice line item was not found.")
-            if line["source_session_id"] != session_id:
-                raise ValueError("Invoice line does not belong to the specified session.")
-            invoice = conn.execute(
-                "SELECT bill_to_party_id FROM invoices WHERE invoice_id = ?", (line["invoice_id"],)
-            ).fetchone()
-            if invoice is None:
-                raise ValueError("Invoice for the line item was not found.")
-            if invoice["bill_to_party_id"] != payment["billing_party_id"]:
-                raise ValueError("Invoice Bill To party does not match the payment Bill To party.")
-            line_invoice_party = invoice["bill_to_party_id"]
-
-        allocation_id = new_id()
-        now = now_iso()
-        conn.execute(
-            """INSERT INTO payment_allocations
-               (allocation_id, payment_id, session_id, invoice_line_item_id,
-                amount_cents, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'active', ?, ?)""",
-            (allocation_id, payment_id, session_id, invoice_line_item_id, amount_cents, now, now),
+        row = _allocate_payment_to_session_locked(
+            conn,
+            payment_id=payment_id,
+            session_id=session_id,
+            amount_cents=amount_cents,
+            invoice_line_item_id=invoice_line_item_id,
         )
-        _audit(conn, "payment_allocation", allocation_id, "allocation_created", {
-            "payment_id": payment_id,
-            "session_id": session_id,
-            "amount_cents": amount_cents,
-        })
         conn.commit()
-        row = conn.execute(
-            "SELECT * FROM payment_allocations WHERE allocation_id = ?", (allocation_id,)
-        ).fetchone()
-        return dict(row)
+        return row
     except Exception:
         conn.rollback()
         raise
@@ -421,6 +607,173 @@ def get_payment_detail(conn: sqlite3.Connection, payment_id: str) -> dict[str, A
         "allocated_cents": allocated,
         "unapplied_cents": payment["amount_cents"] - allocated if payment["status"] == "posted" else 0,
     }
+
+
+def list_outstanding_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """List finalized invoices with a positive remaining balance."""
+    rows = conn.execute(
+        """
+        SELECT i.invoice_id
+        FROM invoices i
+        WHERE i.status = 'finalized'
+        ORDER BY i.invoice_date DESC, i.finalized_at DESC, i.created_at DESC
+        """
+    ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        summary = _invoice_balance_summary(conn, row["invoice_id"])
+        if summary["balance_cents"] <= 0:
+            continue
+        results.append(summary)
+    return results
+
+
+def list_invoice_payment_history(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
+    """Return read-only payment history for one invoice."""
+    summary = _invoice_balance_summary(conn, invoice_id)
+    rows = conn.execute(
+        """
+        SELECT
+          p.*,
+          COALESCE(SUM(CASE WHEN p.status = 'posted' AND pa.status = 'active' THEN pa.amount_cents ELSE 0 END), 0) AS amount_applied_cents,
+          COALESCE(SUM(CASE WHEN pa.status = 'active' THEN 1 ELSE 0 END), 0) AS active_allocation_count,
+          COALESCE(SUM(CASE WHEN pa.status = 'reversed' THEN 1 ELSE 0 END), 0) AS reversed_allocation_count
+        FROM payments p
+        JOIN payment_allocations pa ON pa.payment_id = p.payment_id
+        JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+        WHERE li.invoice_id = ?
+        GROUP BY p.payment_id
+        ORDER BY p.received_at DESC, p.created_at DESC, p.payment_id DESC
+        """,
+        (invoice_id,),
+    ).fetchall()
+    payments: list[dict[str, Any]] = []
+    for row in rows:
+        status = "posted"
+        if row["status"] == "void":
+            status = "void"
+        elif row["active_allocation_count"] == 0 and row["reversed_allocation_count"] > 0:
+            status = "reversed"
+        payments.append({
+            "payment_id": row["payment_id"],
+            "received_at": row["received_at"],
+            "method": row["method"],
+            "reference_number": row["reference_number"],
+            "received_from_name": row["received_from_name"],
+            "administrative_note": row["administrative_note"],
+            "payment_status": status,
+            "amount_applied_cents": int(row["amount_applied_cents"] or 0),
+        })
+    return {"invoice": summary, "payments": payments}
+
+
+def record_invoice_payment(
+    conn: sqlite3.Connection,
+    *,
+    invoice_id: str,
+    payment_date: str,
+    amount_cents: int,
+    payment_method: str,
+    reference_number: str | None = None,
+    received_from_name: str | None = None,
+    administrative_note: str | None = None,
+    billing_party_id: str | None = None,
+) -> dict[str, Any]:
+    """Create one manual payment and allocate it across a finalized invoice atomically."""
+    if not text(payment_date):
+        raise ValueError("Payment date is required.")
+    received = _validate_received_at(payment_date)
+    method = _validate_payment_method(payment_method, required=True)
+    if not isinstance(amount_cents, int) or amount_cents <= 0:
+        raise ValueError("Payment amount must be greater than zero.")
+
+    _begin_immediate(conn)
+    try:
+        invoice = _invoice_summary_row(conn, invoice_id)
+        if invoice["status"] == "draft":
+            raise ValueError("Cannot record a payment for a draft invoice.")
+        if invoice["status"] == "void":
+            raise ValueError("Cannot record a payment for a void invoice.")
+        if invoice["status"] != "finalized":
+            raise ValueError("Only a finalized invoice can accept a payment.")
+        if billing_party_id and billing_party_id != invoice["bill_to_party_id"]:
+            raise ValueError("Payment Bill To party does not match the invoice Bill To party.")
+
+        summary = _invoice_balance_summary(conn, invoice_id)
+        if summary["balance_cents"] <= 0:
+            raise ValueError("Invoice is already fully paid.")
+        if amount_cents > summary["balance_cents"]:
+            raise ValueError("Payment amount cannot exceed the current invoice balance.")
+
+        ref = text(reference_number) if reference_number is not None else None
+        from_name = text(received_from_name) if received_from_name is not None else None
+        note = text(administrative_note) if administrative_note is not None else None
+
+        duplicate = _find_recent_duplicate_invoice_payment(
+            conn,
+            invoice_id=invoice_id,
+            billing_party_id=invoice["bill_to_party_id"],
+            amount_cents=amount_cents,
+            received_at=received,
+            method=method,
+            reference_number=ref,
+            received_from_name=from_name,
+            administrative_note=note,
+        )
+        if duplicate is not None:
+            conn.rollback()
+            detail = get_payment_detail(conn, duplicate["payment_id"])
+            refreshed_summary = _invoice_balance_summary(conn, invoice_id)
+            return {
+                "invoice": refreshed_summary,
+                "payment": detail["payment"],
+                "allocations": detail["allocations"],
+                "duplicate_submission_ignored": True,
+            }
+
+        payment = _insert_payment_record(
+            conn,
+            billing_party_id=invoice["bill_to_party_id"],
+            amount_cents=amount_cents,
+            received_at=received,
+            method=method,
+            reference_number=ref,
+            received_from_name=from_name,
+            administrative_note=note,
+        )
+        remaining = amount_cents
+        allocations: list[dict[str, Any]] = []
+        for line in _invoice_line_rows_for_invoice(conn, invoice_id):
+            if remaining <= 0:
+                break
+            if not line["source_session_id"]:
+                raise ValueError("Invoice line is missing a source session and cannot accept a payment.")
+            unpaid_cents = int(line["line_amount_cents"] or 0) - invoice_line_paid_amount(conn, line["invoice_line_item_id"])
+            if unpaid_cents <= 0:
+                continue
+            alloc_amount = min(unpaid_cents, remaining)
+            allocations.append(
+                _allocate_payment_to_session_locked(
+                    conn,
+                    payment_id=payment["payment_id"],
+                    session_id=line["source_session_id"],
+                    amount_cents=alloc_amount,
+                    invoice_line_item_id=line["invoice_line_item_id"],
+                )
+            )
+            remaining -= alloc_amount
+        if remaining != 0:
+            raise RuntimeError("Payment allocation did not fully apply to the invoice.")
+        conn.commit()
+        return {
+            "invoice": _invoice_balance_summary(conn, invoice_id),
+            "payment": payment,
+            "allocations": allocations,
+            "duplicate_submission_ignored": False,
+        }
+    except Exception:
+        conn.rollback()
+        raise
 
 
 # ---------------------------------------------------------------------------

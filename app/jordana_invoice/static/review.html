@@ -19,7 +19,7 @@
           <a href="#" id="sessionsNav">Sessions</a>
           <a href="/invoices" id="invoicesNav">Invoices</a>
           <a href="/reports" id="reportsNav">Reports</a>
-          <a>Unpaid</a>
+          <a href="/unpaid" id="unpaidNav">Unpaid</a>
           <a href="#" id="settingsNav">Settings</a>
           <a>Help</a>
         </nav>
@@ -96,6 +96,16 @@
               <button id="reviewOverlayClose" class="review-overlay-close-btn" type="button">Close</button>
             </div>
             <div id="reviewOverlayContent" class="review-overlay-content"></div>
+          </div>
+        </div>
+
+        <div id="paymentOverlay" class="review-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="paymentOverlayTitle">
+          <div class="review-overlay-modal payment-overlay-modal">
+            <div class="review-overlay-header">
+              <h2 id="paymentOverlayTitle">Record Payment</h2>
+              <button id="paymentOverlayClose" class="review-overlay-close-btn" type="button">Close</button>
+            </div>
+            <div id="paymentOverlayContent" class="review-overlay-content"></div>
           </div>
         </div>
 
@@ -300,6 +310,21 @@
               </table>
             </section>
             <aside class="invoice-workspace" id="invoiceWorkspace"><div class="empty-state">Create or open an invoice.</div></aside>
+          </div>
+        </section>
+
+        <section class="invoice-view" id="unpaidView" hidden>
+          <div class="crm-header">
+            <div><h2>Outstanding Invoices &amp; Payments</h2><p>Record payments against finalized invoices and derive balances from the payment ledger.</p></div>
+          </div>
+          <div class="invoice-layout">
+            <section>
+              <table class="review-table invoice-list-table unpaid-list-table">
+                <thead><tr><th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
+                <tbody id="unpaidRows"></tbody>
+              </table>
+            </section>
+            <aside class="invoice-workspace" id="unpaidWorkspace"><div class="empty-state">Select an outstanding invoice to review payment history.</div></aside>
           </div>
         </section>
 

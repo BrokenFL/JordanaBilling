@@ -84,6 +84,11 @@ from .invoice_services import (
     update_invoice_line_item,
     void_invoice,
 )
+from .payment_services import (
+    list_invoice_payment_history,
+    list_outstanding_invoices,
+    record_invoice_payment,
+)
 from .csv_reports import (
     available_report_types,
     available_years,
@@ -171,6 +176,17 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Session-update scope is only available for lines linked to a session.",
             "Line item does not belong to this invoice.",
             "Invoice has changed. Please reload and try again.",
+            "Payment date is required.",
+            "Payment method is required.",
+            "Unsupported payment method.",
+            "Payment amount must be greater than zero.",
+            "Cannot record a payment for a draft invoice.",
+            "Cannot record a payment for a void invoice.",
+            "Only a finalized invoice can accept a payment.",
+            "Invoice is already fully paid.",
+            "Payment amount cannot exceed the current invoice balance.",
+            "Invoice line is missing a source session and cannot accept a payment.",
+            "Payment Bill To party does not match the invoice Bill To party.",
             # Billing parties
             "Billing name is required.",
             "Invalid preferred delivery method.",
@@ -326,7 +342,7 @@ def make_handler(database_path: str, write_token: str | None = None):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             try:
-                if parsed.path in {"/", "/review", "/invoices", "/reports"} or parsed.path.startswith("/invoices/"):
+                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid"} or parsed.path.startswith("/invoices/"):
                     self.send_static("review.html")
                     return
                 if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
@@ -438,6 +454,13 @@ def make_handler(database_path: str, write_token: str | None = None):
                     return
                 if parsed.path == "/api/invoices":
                     self.send_json(list_invoice_records(self.conn(), first(parse_qs(parsed.query), "status")))
+                    return
+                if parsed.path == "/api/payments/outstanding-invoices":
+                    self.send_json({"items": list_outstanding_invoices(self.conn())})
+                    return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(list_invoice_payment_history(self.conn(), invoice_id))
                     return
                 if parsed.path.startswith("/api/invoices/"):
                     self.send_json(get_invoice(self.conn(), parsed.path.strip("/").split("/")[2]))
@@ -592,6 +615,21 @@ def make_handler(database_path: str, write_token: str | None = None):
                                 raise ValueError("Each session_id must be a non-empty string.")
                     self.send_json(
                         stage_approved_sessions_to_monthly_drafts(self.conn(), session_ids=session_ids)
+                    )
+                    return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(
+                        record_invoice_payment(
+                            self.conn(),
+                            invoice_id=invoice_id,
+                            payment_date=data.get("payment_date") or "",
+                            amount_cents=data.get("amount_cents"),
+                            payment_method=data.get("payment_method") or "",
+                            reference_number=data.get("reference_number"),
+                            received_from_name=data.get("received_from_name"),
+                            administrative_note=data.get("administrative_note"),
+                        )
                     )
                     return
                 if parsed.path.startswith("/api/invoices/"):

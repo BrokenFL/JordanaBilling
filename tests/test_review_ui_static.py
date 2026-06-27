@@ -16,8 +16,49 @@ class ReviewUiStaticTests(unittest.TestCase):
 
         self.assertIn('id="peopleNav">Clients</a>', html)
         self.assertIn('id="clientsNav">Billing Relationships</a>', html)
+        self.assertIn('id="unpaidNav">Unpaid</a>', html)
         self.assertNotIn('id="peopleNav">People</a>', html)
         self.assertNotIn('id="clientsNav">Clients & Accounts</a>', html)
+
+    def test_unpaid_workspace_heading_and_columns_exist(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertIn("Outstanding Invoices &amp; Payments", html)
+        self.assertIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
+        self.assertIn('id="unpaidRows"', html)
+        self.assertIn('id="unpaidWorkspace"', html)
+
+    def test_unpaid_js_opens_record_payment_form_and_refreshes(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('history.pushState({}, "", "/unpaid");', js)
+        self.assertIn('$("pageTitle").textContent = "Outstanding Invoices & Payments";', js)
+        self.assertIn('Record Payment', js)
+        self.assertIn('Bill To<input', js)
+        self.assertIn('Invoice Number<input', js)
+        self.assertIn('Outstanding Balance<input', js)
+        self.assertIn('Payment Date<input', js)
+        self.assertIn('Amount Received<input', js)
+        self.assertIn('Payment Method<select', js)
+        self.assertIn('Reference Number<input', js)
+        self.assertIn('Received From<input', js)
+        self.assertIn('Administrative Note<input', js)
+        self.assertIn('state.unpaid.submitting = true;', js)
+        self.assertIn('submitBtn.disabled = true;', js)
+        self.assertIn('cancelBtn.disabled = true;', js)
+        self.assertIn('closePaymentOverlay();', js)
+        self.assertIn('await loadOutstandingInvoices(invoice.invoice_id);', js)
+        self.assertIn('showUnpaidSuccess("Payment recorded successfully.");', js)
+        self.assertIn('message.textContent = sanitizeUiErrorMessage(err.message, "Payment could not be recorded.");', js)
+
+    def test_unpaid_js_renders_history_and_sanitized_statuses(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Payment History", js)
+        self.assertIn("Amount Applied", js)
+        self.assertIn("paymentStatusLabel(payment.payment_status)", js)
+        self.assertIn("paymentMethodLabel(payment.method)", js)
+        self.assertIn("sanitizeUiErrorMessage", js)
 
     def test_review_client_and_bill_to_controls_use_approved_terms(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
