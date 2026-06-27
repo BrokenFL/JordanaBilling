@@ -834,10 +834,49 @@ def validate_invoice_readiness(
     }
 
 
+def synchronize_draft_delivery_method(conn: sqlite3.Connection, invoice_id: str) -> bool:
+    """Resolve a stale unresolved/blank delivery_method on a draft invoice from the active billing setup.
+
+    Only operates on draft invoices. Only fills in blank or 'unresolved' values —
+    never overwrites a deliberate email/mail/both choice. Only uses the active billing party.
+    Increments revision and writes audit exactly once when a real change occurs.
+    Idempotent: repeated calls with no change produce no writes.
+
+    Returns True if a change was made.
+    """
+    invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    if not invoice or invoice["status"] != "draft":
+        return False
+    current = str(invoice["delivery_method"] or "unresolved").strip()
+    if current in ("email", "mail", "both"):
+        return False
+    party = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1",
+        (invoice["bill_to_party_id"],),
+    ).fetchone()
+    if not party:
+        return False
+    resolved = str(party["preferred_delivery_method"] or "unresolved").strip()
+    if resolved not in ("email", "mail", "both"):
+        return False
+    conn.execute(
+        "UPDATE invoices SET delivery_method = ?, revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+        (resolved, now_iso(), invoice_id),
+    )
+    _audit(conn, "invoice", invoice_id, "delivery_method_synced", {
+        "from": current,
+        "to": resolved,
+        "source": "active_billing_setup",
+    })
+    conn.commit()
+    return True
+
+
 def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dict[str, Any] | None = None) -> dict[str, Any]:
     _draft(conn, invoice_id)
     if data:
         update_invoice_draft(conn, invoice_id, data)
+    synchronize_draft_delivery_method(conn, invoice_id)
     result = get_invoice(conn, invoice_id)
     invoice = result["invoice"]
     lines = result["lines"]
@@ -873,6 +912,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         raise
     pdf_path: Path | None = None
     try:
+        synchronize_draft_delivery_method(conn, invoice_id)
         readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision)
         if not readiness["ready"]:
             raise ValueError("; ".join(e["message"] for e in readiness["errors"]))
