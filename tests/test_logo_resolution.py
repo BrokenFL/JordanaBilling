@@ -194,7 +194,7 @@ class LogoResolutionTests(unittest.TestCase):
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
         # The PDF flowable should resolve to the same logo_path
-        flowable = _logo_flowable(render["logo_path"], 3.15 * 72, 1.35 * 72)
+        flowable = _logo_flowable(render["logo_path"], 1.05 * 72, 0.73 * 72)
         self.assertIsNotNone(flowable, "PDF logo flowable should not be None when logo_path is valid")
 
     # --- Test 9: Logo aspect ratio remains preserved ---
@@ -210,7 +210,7 @@ class LogoResolutionTests(unittest.TestCase):
         with PILImage.open(str(DEFAULT_LOGO_PATH)) as img:
             orig_w, orig_h = img.size
         orig_ratio = orig_w / orig_h
-        max_w, max_h = 3.15 * 72, 1.35 * 72
+        max_w, max_h = 1.05 * 72, 0.73 * 72
         flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), max_w, max_h)
         self.assertIsNotNone(flowable)
         rendered_ratio = flowable.drawWidth / flowable.drawHeight
@@ -237,6 +237,119 @@ class LogoResolutionTests(unittest.TestCase):
         # Verify the data URI is purely a base64 data URI, not a file:// or path reference
         self.assertFalse(uri.startswith("file://"))
         self.assertFalse(uri.startswith("/"))
+
+    # --- Test 11: HTML preview logo has constrained maximum width ---
+
+    def test_html_logo_max_width_constraint(self):
+        css_path = Path(__file__).parent.parent / "app" / "jordana_invoice" / "static" / "review.css"
+        css = css_path.read_text()
+        # The logo container must have a max-width ≤ 220px
+        import re
+        match = re.search(r'\.invoice-preview-logo\s*\{[^}]*max-width:\s*(\d+)px', css)
+        self.assertIsNotNone(match, "invoice-preview-logo max-width rule must exist")
+        max_width = int(match.group(1))
+        self.assertLessEqual(max_width, 220, "HTML logo max-width must be ≤ 220px")
+
+    # --- Test 12: Height remains automatic / aspect-ratio-safe ---
+
+    def test_html_logo_height_auto(self):
+        css_path = Path(__file__).parent.parent / "app" / "jordana_invoice" / "static" / "review.css"
+        css = css_path.read_text()
+        # The logo img must use height: auto to preserve aspect ratio
+        self.assertRegex(css, r'\.invoice-preview-logo img\s*\{[^}]*height:\s*auto')
+
+    # --- Test 13: Logo and invoice metadata share top alignment ---
+
+    def test_header_top_alignment(self):
+        css_path = Path(__file__).parent.parent / "app" / "jordana_invoice" / "static" / "review.css"
+        css = css_path.read_text()
+        # The header grid must use align-items: start so both columns top-align
+        self.assertRegex(css, r'\.invoice-preview-header\s*\{[^}]*align-items:\s*start')
+
+    # --- Test 14: Sender block remains below the logo ---
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_sender_below_logo_in_render_model(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("logo14")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        render = preview["render_model"]
+        # render_model must have both logo_data_uri and sender_lines
+        self.assertIsNotNone(render["logo_data_uri"])
+        self.assertTrue(len(render["sender_lines"]) > 0)
+        # In the JS template, logo comes first, then sender — verify the render model
+        # has both keys in the right order (logo before sender in the dict)
+        keys = list(render.keys())
+        logo_idx = keys.index("logo_data_uri")
+        sender_idx = keys.index("sender_lines")
+        self.assertLess(logo_idx, sender_idx, "logo_data_uri must come before sender_lines in render model")
+
+    # --- Test 15: PDF uses proportionally reduced logo size ---
+
+    def test_pdf_logo_reduced_size(self):
+        try:
+            import reportlab  # noqa: F401
+        except ImportError:
+            self.skipTest("reportlab not installed")
+        from jordana_invoice.invoice_pdf import _logo_flowable
+        from PIL import Image as PILImage
+        with PILImage.open(str(DEFAULT_LOGO_PATH)) as img:
+            orig_w, orig_h = img.size
+        # New max dimensions: 1.05" x 0.73" = 75.6pt x 52.56pt
+        max_w, max_h = 1.05 * 72, 0.73 * 72
+        flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), max_w, max_h)
+        self.assertIsNotNone(flowable)
+        # The rendered width must not exceed the max width
+        self.assertLessEqual(flowable.drawWidth, max_w + 0.1)
+        # The rendered width should be significantly smaller than the old 3.15" (226.8pt)
+        self.assertLess(flowable.drawWidth, 80, "PDF logo width must be reduced to ~1/3 of former size")
+
+    # --- Test 16: PDF preserves aspect ratio at new size ---
+
+    def test_pdf_aspect_ratio_at_reduced_size(self):
+        try:
+            import reportlab  # noqa: F401
+        except ImportError:
+            self.skipTest("reportlab not installed")
+        from jordana_invoice.invoice_pdf import _logo_flowable
+        from PIL import Image as PILImage
+        with PILImage.open(str(DEFAULT_LOGO_PATH)) as img:
+            orig_w, orig_h = img.size
+        orig_ratio = orig_w / orig_h
+        flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), 1.05 * 72, 0.73 * 72)
+        self.assertIsNotNone(flowable)
+        rendered_ratio = flowable.drawWidth / flowable.drawHeight
+        self.assertAlmostEqual(rendered_ratio, orig_ratio, places=2)
+
+    # --- Test 17: Existing invoice data and numbering behavior remain unchanged ---
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_invoice_data_and_numbering_unchanged(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("logo17")
+        draft = self._draft([session])
+        finalized = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        inv = finalized["invoice"]
+        self.assertEqual(inv["status"], "finalized")
+        self.assertEqual(inv["invoice_number"], "2026-0001")
+        self.assertEqual(inv["total_cents"], 15000)
+        self.assertEqual(inv["bill_to_name_snapshot"], "Logo Test")
+        self.assertEqual(len(finalized["lines"]), 1)
+        self.assertEqual(finalized["lines"][0]["line_amount_cents"], 15000)
+
+    # --- Test 18: No unrelated invoice layout sections change ---
+
+    def test_no_unrelated_css_changes(self):
+        css_path = Path(__file__).parent.parent / "app" / "jordana_invoice" / "static" / "review.css"
+        css = css_path.read_text()
+        # Verify table, totals, payment, bill-to sections are untouched
+        self.assertIn(".invoice-preview-table", css)
+        self.assertIn(".invoice-total", css)
+        self.assertIn(".invoice-payment", css)
+        self.assertIn(".invoice-billto", css)
+        # Verify the header grid template hasn't changed (still uses 220px right column)
+        self.assertRegex(css, r'grid-template-columns:\s*minmax\(0,\s*1fr\)\s*220px')
 
 
 if __name__ == "__main__":

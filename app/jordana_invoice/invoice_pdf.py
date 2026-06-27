@@ -68,7 +68,7 @@ def generate_invoice_pdf(
     )
     render = render_model or build_invoice_render_model(invoice, lines)
     story = []
-    logo_flowable = _logo_flowable(render.get("logo_path"), 3.15 * inch, 1.35 * inch)
+    logo_flowable = _logo_flowable(render.get("logo_path"), 1.05 * inch, 0.73 * inch)
     if logo_flowable is None:
         fallback = [para(invoice.get("business_name_snapshot") or "Business", styles["Heading2"])]
         for value in render.get("sender_lines") or []:
