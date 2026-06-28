@@ -34,7 +34,9 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 - Relationship editing: invoice recipient, covered clients, billing delivery
 - Deactivate and reactivate billing relationships (no permanent deletion)
 - Session Review integration: attach billing relationship to a review candidate
-- Exact active duplicate prevention for billing relationships
+- Exact active duplicate prevention for billing relationships, using payer identity plus normalized covered-client set
+- Shared Bill To delivery data reused across a payer's valid active relationships
+- Read-only duplicate analysis for legacy relationship and payer-record conflicts
 - Initial client, alias, rate, session, review, and audit tables
 - Local CSV reports after successful sync
 - Acceptance report for June-style data

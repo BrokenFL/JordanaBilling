@@ -238,6 +238,23 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("Billing Relationships", person_record)
         self.assertIn("No billing relationships yet.", person_record)
 
+    def test_billing_relationship_duplicate_banner_exists(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="billingDirDuplicateBanner"', html)
+        self.assertIn("renderBillingDirDuplicateBanner", js)
+        self.assertIn("/api/billing-relationships/duplicate-analysis", js)
+
+    def test_billing_relationship_directory_marks_duplicates(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function renderBillingDirRows")
+        end = js.index("async function loadClients", start)
+        directory = js[start:end]
+
+        self.assertIn("Duplicate active relationship detected.", directory)
+        self.assertIn("Multiple active Bill To records exist for this payer.", directory)
+
     def test_billing_summary_renders_all_four_values(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("async function openPersonRecord")

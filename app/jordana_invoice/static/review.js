@@ -3103,7 +3103,12 @@ async function promptToEndRateRule(ruleId) {
   await loadRateRules();
 }
 
-const billingDirState = { records: [], filter: "all", statusFilter: "active" };
+const billingDirState = {
+  records: [],
+  filter: "all",
+  statusFilter: "active",
+  duplicateAnalysis: null
+};
 
 const BILLING_DIR_TYPE_LABELS = {
   self_pay: "Self-pay",
@@ -3168,6 +3173,26 @@ function billingDirLinkedText(rec) {
   return "";
 }
 
+function renderBillingDirDuplicateBanner() {
+  const banner = $("billingDirDuplicateBanner");
+  if (!banner) return;
+  const summary = billingDirState.duplicateAnalysis?.summary;
+  if (!summary || (!summary.exact_active_duplicate_group_count && !summary.payer_record_conflict_count)) {
+    banner.hidden = true;
+    banner.textContent = "";
+    return;
+  }
+  const parts = [];
+  if (summary.exact_active_duplicate_group_count) {
+    parts.push(`${summary.exact_active_duplicate_group_count} duplicate active relationship group${summary.exact_active_duplicate_group_count === 1 ? "" : "s"}`);
+  }
+  if (summary.payer_record_conflict_count) {
+    parts.push(`${summary.payer_record_conflict_count} payer delivery conflict${summary.payer_record_conflict_count === 1 ? "" : "s"}`);
+  }
+  banner.hidden = false;
+  banner.textContent = `${parts.join(" and ")} detected. Existing duplicates remain visible here and should be resolved later through an explicit audited deactivation or merge workflow.`;
+}
+
 function billingDirDeliveryText(rec) {
   if (rec.record_type === "account") return "—";
   const method = rec.preferred_delivery_method;
@@ -3217,6 +3242,11 @@ function renderBillingDirRows() {
     const payerName = billingDirPayerName(rec);
     const subtext = billingDirPayerSubtext(rec);
     const linked = billingDirLinkedText(rec);
+    const duplicateWarning = rec.has_exact_active_duplicate
+      ? `<div class="billing-dir-warning">Duplicate active relationship detected.</div>`
+      : rec.has_payer_record_conflict
+        ? `<div class="billing-dir-warning">Multiple active Bill To records exist for this payer.</div>`
+        : "";
     const covers = billingDirCoversText(rec);
     const delivery = billingDirDeliveryText(rec);
     const status = rec.active ? "Active" : "Inactive";
@@ -3224,7 +3254,7 @@ function renderBillingDirRows() {
     const openBtn = billingDirOpenButton(rec);
     return `<tr data-record-id="${escapeHtml(rec.record_id)}">
       <td><span class="dir-type-label">${escapeHtml(typeLabel)}</span></td>
-      <td><span class="primary">${payerName}</span><div class="dir-subtext">${subtext}</div>${linked}</td>
+      <td><span class="primary">${payerName}</span><div class="dir-subtext">${subtext}</div>${linked}${duplicateWarning}</td>
       <td>${covers}</td>
       <td>${fmt(rec.session_count || 0)}</td>
       <td>${fmt(rec.latest_session_date)}</td>
@@ -3259,7 +3289,13 @@ function renderBillingDirRows() {
 }
 
 async function loadClients() {
-  billingDirState.records = await api("/api/billing-relationships");
+  const [records, duplicateAnalysis] = await Promise.all([
+    api("/api/billing-relationships"),
+    api("/api/billing-relationships/duplicate-analysis"),
+  ]);
+  billingDirState.records = records;
+  billingDirState.duplicateAnalysis = duplicateAnalysis;
+  renderBillingDirDuplicateBanner();
   renderBillingDirRows();
 }
 

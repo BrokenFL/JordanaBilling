@@ -426,6 +426,25 @@ CREATE TABLE IF NOT EXISTS billing_parties (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS billing_relationship_keys (
+  account_id TEXT PRIMARY KEY REFERENCES client_accounts(account_id),
+  payer_identity_key TEXT NOT NULL,
+  payer_kind TEXT NOT NULL,
+  payer_person_id TEXT REFERENCES people(person_id),
+  payer_billing_party_id TEXT REFERENCES billing_parties(billing_party_id),
+  covered_client_key TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_relationship_keys_active_unique
+  ON billing_relationship_keys(payer_identity_key, covered_client_key)
+  WHERE active = 1;
+
+CREATE INDEX IF NOT EXISTS idx_billing_relationship_keys_payer
+  ON billing_relationship_keys(payer_identity_key, active);
+
 CREATE TABLE IF NOT EXISTS business_profile (
   business_profile_id TEXT PRIMARY KEY,
   business_name TEXT NOT NULL,
@@ -1180,6 +1199,116 @@ def _apply_migration_007(conn: sqlite3.Connection) -> None:
     """)
 
 
+MIGRATION_008_BILLING_RELATIONSHIP_KEYS = "008_billing_relationship_keys"
+
+
+def _billing_relationship_key_parts_for_account(
+    conn: sqlite3.Connection,
+    account_id: str,
+) -> tuple[str, str, str | None, str | None, str] | None:
+    row = conn.execute(
+        """
+        SELECT
+          ca.account_id,
+          ca.active AS account_active,
+          bp.billing_party_id,
+          bp.billing_party_type,
+          bp.person_id
+        FROM client_accounts ca
+        LEFT JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+        WHERE ca.account_id = ?
+        """,
+        (account_id,),
+    ).fetchone()
+    if not row or not row["account_active"] or not row["billing_party_id"]:
+        return None
+    covered_ids = sorted(
+        {
+            member["person_id"]
+            for member in conn.execute(
+                "SELECT person_id FROM account_members WHERE account_id = ?",
+                (account_id,),
+            ).fetchall()
+            if member["person_id"]
+        }
+    )
+    if not covered_ids:
+        return None
+    if row["billing_party_type"] == "organization":
+        payer_kind = "organization"
+        payer_identity_key = f"organization:{row['billing_party_id']}"
+        payer_person_id = None
+        payer_billing_party_id = row["billing_party_id"]
+    elif row["person_id"]:
+        payer_kind = "person"
+        payer_identity_key = f"person:{row['person_id']}"
+        payer_person_id = row["person_id"]
+        payer_billing_party_id = row["billing_party_id"]
+    else:
+        return None
+    return (
+        payer_identity_key,
+        payer_kind,
+        payer_person_id,
+        payer_billing_party_id,
+        ",".join(covered_ids),
+    )
+
+
+def _apply_migration_008(conn: sqlite3.Connection) -> None:
+    from .util import now_iso
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS billing_relationship_keys (
+          account_id TEXT PRIMARY KEY REFERENCES client_accounts(account_id),
+          payer_identity_key TEXT NOT NULL,
+          payer_kind TEXT NOT NULL,
+          payer_person_id TEXT REFERENCES people(person_id),
+          payer_billing_party_id TEXT REFERENCES billing_parties(billing_party_id),
+          covered_client_key TEXT NOT NULL,
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_relationship_keys_active_unique
+          ON billing_relationship_keys(payer_identity_key, covered_client_key)
+          WHERE active = 1;
+        CREATE INDEX IF NOT EXISTS idx_billing_relationship_keys_payer
+          ON billing_relationship_keys(payer_identity_key, active);
+        """
+    )
+    applied_at = now_iso()
+    conn.execute("DELETE FROM billing_relationship_keys")
+    for row in conn.execute(
+        "SELECT account_id FROM client_accounts WHERE active = 1 ORDER BY account_id"
+    ).fetchall():
+        parts = _billing_relationship_key_parts_for_account(conn, row["account_id"])
+        if not parts:
+            continue
+        try:
+            conn.execute(
+                """
+                INSERT INTO billing_relationship_keys (
+                  account_id,
+                  payer_identity_key,
+                  payer_kind,
+                  payer_person_id,
+                  payer_billing_party_id,
+                  covered_client_key,
+                  active,
+                  created_at,
+                  updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (row["account_id"], *parts, applied_at, applied_at),
+            )
+        except sqlite3.IntegrityError:
+            # Legacy duplicate active relationships are left out of the helper table
+            # so they can be reviewed explicitly instead of being silently rewritten.
+            continue
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1188,6 +1317,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT, _apply_migration_005),
     (MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY, _apply_migration_006),
     (MIGRATION_007_PAYMENT_CORRECTIONS, _apply_migration_007),
+    (MIGRATION_008_BILLING_RELATIONSHIP_KEYS, _apply_migration_008),
 ]
 
 

@@ -188,6 +188,8 @@ When a relationship save refreshes suggestions, the browser preserves unsaved se
 
 Shared billing and relationships are still available, but ordinary review no longer exposes inline relationship-role editing. That deeper work stays in the Billing Relationships workflow and record view.
 
+Active billing relationships are unique by payer identity plus normalized covered-client UUID set. Covered-client order does not matter, and duplicate cleanup remains an explicit audited follow-up task rather than an automatic rewrite.
+
 Calendar evidence remains read-only under View Calendar Evidence.
 
 ## Reparse Unapproved Candidates

@@ -12,6 +12,7 @@ from jordana_invoice.db import (
     MIGRATION_004_PAYMENT_PROVENANCE,
     MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT,
     MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY,
+    MIGRATION_008_BILLING_RELATIONSHIP_KEYS,
     MigrationError,
     connect,
     init_db,
@@ -126,6 +127,7 @@ class MigrationSafetyTests(unittest.TestCase):
             MIGRATION_004_PAYMENT_PROVENANCE,
             MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT,
             MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY,
+            MIGRATION_008_BILLING_RELATIONSHIP_KEYS,
         ]:
             row = conn.execute(
                 "SELECT migration_id FROM schema_migrations WHERE migration_id = ?",
@@ -205,6 +207,7 @@ class MigrationSafetyTests(unittest.TestCase):
             MIGRATION_004_PAYMENT_PROVENANCE,
             MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT,
             MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY,
+            MIGRATION_008_BILLING_RELATIONSHIP_KEYS,
         ]:
             rows = conn.execute(
                 "SELECT migration_id FROM schema_migrations WHERE migration_id = ?",

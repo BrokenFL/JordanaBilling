@@ -158,6 +158,7 @@ Billing Setup is editable from the full-screen client profile. The following beh
 
 - **Multiple records:** A client may have multiple Billing Setup records. Each record represents billing contact and invoice-delivery information for that permanent client.
 - **No primary or default flag:** There is no primary, default, or preferred billing setup field. All records are equal.
+- **Billing Relationships reuse one active Bill To record per payer:** When a billing relationship is created or edited for a person payer, the app reuses one canonical active billing-party record for that payer instead of silently creating a new competing Bill To record.
 - **Inactive records remain visible:** Inactive billing setups are shown with reduced opacity and an "Inactive" status pill. They are not hidden.
 - **Add:** The "Add Billing Setup" button opens an inline form with the client's display name prefilled as the billing name, delivery method defaulting to "Unresolved", and all optional fields blank.
 - **Edit:** Each card has an Edit button that opens the inline form pre-filled with current values.
@@ -169,6 +170,7 @@ Billing Setup is editable from the full-screen client profile. The following beh
 - **Historical preservation:** Existing sessions and finalized invoices retain their billing-party references and snapshots. Editing a billing setup does not rewrite historical session or invoice values.
 - **Audit:** All create, update, deactivate, and reactivate actions are recorded in the audit log. Audit details contain changed field names only — no billing email, phone, address, or other field values are exposed.
 - **Organization editing remains out of scope:** The client profile Billing Setup form does not expose organization fields. Organization billing-party editing is a separate future feature.
+- **Legacy duplicates stay reviewable:** If multiple active billing-party records or duplicate active relationships already exist, they are surfaced for review rather than merged or deleted automatically. Cleanup requires an explicit audited deactivation or merge workflow.
 
 ### Payer Relationship Wording
 
@@ -220,12 +222,26 @@ When a client is selected and Create is pressed:
 
 #### Duplicate Relationship Prevention
 
-An active account is treated as equivalent when any of the following is true:
-- The selected client is the sole account member
-- The selected client is the primary account member
-- The account's default billing party belongs to the selected client and the account has at most one member or the client is primary
+An active billing relationship is unique by:
 
-This detection does not rely on account name, exact generated label, a single account type, or one exact combination of `is_primary` and member count. A shared relationship where the client is a non-primary member is NOT treated as equivalent.
+- the payer identity;
+- the normalized covered-client UUID set;
+- active status.
+
+Covered-client order does not matter. Labels and account names do not make otherwise equivalent active relationships distinct.
+
+Valid examples:
+
+- Rebecca pays for Rebecca.
+- Rebecca pays for Rebecca and Barbara.
+- Rebecca pays only for Barbara.
+
+Invalid duplicates:
+
+- two active self-pay relationships for Rebecca;
+- two active Rebecca → Rebecca and Barbara relationships;
+- the same payer plus the same covered-client set under slightly different account names;
+- the same payer plus the same covered-client set split across competing active Bill To records.
 
 When an equivalent active relationship exists, the backend returns a 409 response with the existing account's identifier. The modal shows an inline message: "A billing relationship already exists for this client." with an "Open existing relationship" button. Clicking it opens the existing record and preserves return-to-review context. No duplicate account is created.
 
@@ -988,6 +1004,17 @@ If the edited payer and covered-client set matches an existing active relationsh
 #### No Browser Prompts
 
 The editor uses in-page error boxes and duplicate boxes — no `alert()`, `prompt()`, or `confirm()`.
+
+### Duplicate Analysis
+
+The Billing Relationships screen includes a read-only duplicate analyzer. It flags:
+
+- exact active duplicate relationships;
+- duplicate self-pay relationships;
+- same payer with the same normalized covered-client set;
+- active relationships for one payer that still point at multiple active Bill To records.
+
+The analyzer does not delete, merge, deactivate, or rewrite records. Existing duplicates remain visible and require a later explicit audited resolution workflow.
 
 #### No Schema Migration
 

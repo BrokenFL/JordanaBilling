@@ -19,6 +19,7 @@ from .google_sync import (
 )
 from .review_services import (
     add_account_member,
+    analyze_billing_relationship_duplicates,
     approve_candidate,
     BillingPartyNotFoundError,
     BillingPartyTypeError,
@@ -429,6 +430,9 @@ def make_handler(database_path: str, write_token: str | None = None):
                     return
                 if parsed.path == "/api/billing-relationships":
                     self.send_json(list_billing_relationship_records(self.conn()))
+                    return
+                if parsed.path == "/api/billing-relationships/duplicate-analysis":
+                    self.send_json(analyze_billing_relationship_duplicates(self.conn()))
                     return
                 if parsed.path == "/api/billing-relationships/find-duplicate":
                     qs = parse_qs(parsed.query)

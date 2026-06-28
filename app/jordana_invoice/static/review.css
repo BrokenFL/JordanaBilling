@@ -354,6 +354,8 @@ tr.empty-row:hover { background: transparent; }
 .billing-dir-table th:nth-child(6) { width: 10%; }
 .billing-dir-table th:nth-child(7) { width: 8%; }
 .billing-dir-table th:nth-child(8) { width: 12%; }
+.billing-dir-duplicate-banner { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: #fff8e1; border: 1px solid #f0c36d; color: #6f4e00; font-size: 13px; }
+.billing-dir-warning { margin-top: 6px; color: #8a5a00; font-size: 12px; font-weight: 600; }
 .dir-type-label { font-size: 11px; font-weight: 700; color: #3b4a63; }
 .dir-subtext { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .dir-muted { font-size: 11px; color: var(--muted); margin-top: 2px; font-style: italic; }

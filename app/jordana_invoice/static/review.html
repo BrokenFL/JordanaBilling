@@ -244,6 +244,7 @@
             <div><h2>Billing Relationships</h2><p>Who receives invoices and who they pay for, including shared billing groups.</p></div>
             <div class="crm-tools"><input id="clientSearch" type="search" placeholder="Search billing relationships..." /><select id="billingDirStatusFilter"><option value="active" selected>Active</option><option value="inactive">Inactive</option><option value="all">All</option></select><select id="billingDirFilter"><option value="all">All Types</option><option value="self_pay">Self-pay</option><option value="third_party">Pays for others</option><option value="organization">Organizations</option><option value="account">Shared billing groups</option></select><button id="newAccountBtn" class="save">Create Billing Relationship</button></div>
           </div>
+          <div id="billingDirDuplicateBanner" class="billing-dir-duplicate-banner" hidden></div>
           <div class="crm-layout">
             <div class="table-scroll-wrap">
               <table class="review-table crm-table billing-dir-table">
