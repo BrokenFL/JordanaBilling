@@ -1800,9 +1800,9 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("amount_display", self.fn)
 
     def test_preview_shows_total(self):
-        self.assertIn("invoice-total", self.fn)
-        self.assertIn("total_display", self.fn)
-        self.assertIn("total_label", self.fn)
+        self.assertIn("invoice-total", self.js)
+        self.assertIn("total_display", self.js)
+        self.assertIn("total_label", self.js)
 
     def test_preview_shows_single_payment_block(self):
         self.assertIn("payment_title", self.fn)

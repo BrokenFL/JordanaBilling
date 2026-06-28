@@ -154,6 +154,7 @@ def build_invoice_render_model(
     *,
     business_profile: dict[str, Any] | None = None,
     billing_party: dict[str, Any] | None = None,
+    account_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile = business_profile or {}
     party = billing_party or {}
@@ -234,6 +235,25 @@ def build_invoice_render_model(
             "amount_display": money(line.get("line_amount_cents")),
         })
 
+    summary_model = None
+    if account_summary:
+        summary_model = {
+            "current_invoice_total_cents": account_summary.get("current_invoice_total_cents", 0),
+            "current_invoice_paid_cents": account_summary.get("current_invoice_paid_cents", 0),
+            "current_invoice_balance_cents": account_summary.get("current_invoice_balance_cents", 0),
+            "prior_unpaid_balance_cents": account_summary.get("prior_unpaid_balance_cents", 0),
+            "total_amount_due_cents": account_summary.get("total_amount_due_cents", 0),
+
+            # Displays
+            "current_invoice_total_display": money(account_summary.get("current_invoice_total_cents", 0)),
+            "current_invoice_paid_display": money(account_summary.get("current_invoice_paid_cents", 0)),
+            "current_invoice_balance_display": money(account_summary.get("current_invoice_balance_cents", 0)),
+            "prior_unpaid_balance_display": money(account_summary.get("prior_unpaid_balance_cents", 0)),
+            "total_amount_due_display": money(account_summary.get("total_amount_due_cents", 0)),
+
+            "prior_invoices": account_summary.get("prior_invoices", []),
+        }
+
     return {
         "logo_path": logo_path,
         "logo_data_uri": logo_uri,
@@ -258,6 +278,7 @@ def build_invoice_render_model(
         "notes": str(invoice.get("notes") or "").strip(),
         "total_label": str(invoice.get("total_label_snapshot") or profile.get("invoice_total_label") or "TOTAL DUE"),
         "total_display": money(invoice.get("total_cents")),
+        "account_summary": summary_model,
     }
 
 
@@ -275,6 +296,7 @@ def build_print_preview_html(
     *,
     business_profile: dict[str, Any] | None = None,
     billing_party: dict[str, Any] | None = None,
+    account_summary: dict[str, Any] | None = None,
 ) -> str:
     """Build a self-contained HTML print-preview page with a DRAFT watermark.
 
@@ -285,6 +307,7 @@ def build_print_preview_html(
         invoice, lines,
         business_profile=business_profile,
         billing_party=billing_party,
+        account_summary=account_summary,
     )
     logo_html = ""
     if render.get("logo_data_uri"):
@@ -302,6 +325,43 @@ def build_print_preview_html(
     payment_lines_html = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("payment_lines") or []))
     zelle_html = f"<div>{_esc(render.get('payment_zelle_line'))}</div>" if render.get("payment_zelle_line") else ""
     notes_html = f"<div class=\"notes\"><b>Notes:</b> {_esc(render.get('notes'))}</div>" if render.get("notes") else ""
+
+    summary_html = ""
+    summary = render.get("account_summary")
+    if summary and (summary.get("prior_unpaid_balance_cents", 0) > 0 or summary.get("current_invoice_paid_cents", 0) > 0):
+        prior_list = summary.get("prior_invoices") or []
+        prior_invoices_html = ""
+        if prior_list:
+            items_html = "".join(
+                f"<div>Invoice {item['invoice_number']} &middot; {format_long_date(item['invoice_date'])} &middot; {money(item['remaining_balance_cents'])} remaining</div>"
+                for item in prior_list
+            )
+            prior_invoices_html = f"""
+            <div class="prior-invoices-list" style="margin-top: 10px; font-size: 8pt; color: #42526A; text-align: right;">
+              <strong style="color: #102A43;">Prior unpaid invoices:</strong>
+              {items_html}
+            </div>
+            """
+
+        summary_html = f"""
+        <div class="total-row" style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 18px;">
+          <table style="width: auto; border: none; margin-bottom: 0;">
+            <tr style="border: none;"><td style="border: none; padding: 3px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Current Charges</td><td style="border: none; padding: 3px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">{summary["current_invoice_total_display"]}</td></tr>
+            <tr style="border: none;"><td style="border: none; padding: 3px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Payments Applied</td><td style="border: none; padding: 3px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">-{summary["current_invoice_paid_display"]}</td></tr>
+            <tr style="border-bottom: 0.5pt solid #D9E2EC;"><td style="border: none; padding: 3px 10px 6px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Current Invoice Balance</td><td style="border: none; padding: 3px 0 6px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">{summary["current_invoice_balance_display"]}</td></tr>
+            <tr style="border: none;"><td style="border: none; padding: 6px 10px 6px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Prior Unpaid Balance</td><td style="border: none; padding: 6px 0 6px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">{summary["prior_unpaid_balance_display"]}</td></tr>
+            <tr style="border-top: 1pt solid #102A43;"><td style="border: none; padding: 9px 10px; text-align: left; font-weight: bold; font-size: 13pt; color: #102A43;">TOTAL AMOUNT DUE</td><td style="border: none; padding: 9px 0; text-align: right; font-weight: bold; font-size: 13pt; color: #102A43;">{summary["total_amount_due_display"]}</td></tr>
+          </table>
+          {prior_invoices_html}
+        </div>
+        """
+    else:
+        summary_html = f"""
+        <div class="total-row"><table><tr>
+          <td>{_esc(render.get('total_label') or 'TOTAL DUE')}</td>
+          <td style="text-align:right">{_esc(render.get('total_display'))}</td>
+        </tr></table></div>
+        """
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -352,10 +412,7 @@ def build_print_preview_html(
   <div class="bill-to"><strong>BILL TO</strong>{bill_to_lines}</div>
   <table><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
   <tbody>{line_rows}</tbody></table>
-  <div class="total-row"><table><tr>
-    <td>{_esc(render.get('total_label') or 'TOTAL DUE')}</td>
-    <td style="text-align:right">{_esc(render.get('total_display'))}</td>
-  </tr></table></div>
+  {summary_html}
   <div class="payment-section">
     <b>{_esc(render.get('payment_title') or 'Please make all checks payable to:')}</b>
     <div>{_esc(render.get('payment_name') or '')}</div>

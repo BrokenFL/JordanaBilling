@@ -24,3 +24,16 @@ SVG wrappers with embedded PNG/JPEG artwork and PNG images preserve aspect ratio
 Multi-page invoices repeat headers, keep rows intact, identify invoice/page on every page, and show totals/payment instructions only on the last page. The payment footer remains above the invoice/page footer and is never intended to overlap it. New finalized files are atomic at `Invoices/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf`; the frozen person code remains the stable internal filing identity and appears in the folder only when needed to disambiguate two different people with the same sanitized display name. Bill To organization names are not used as the folder when the invoice is filed under a client.
 
 Existing finalized PDFs are immutable; layout and filing-path refinements apply only when a new invoice PDF is generated. Existing `pdf_path` and checksum values are preserved.
+
+## Prior Unpaid Balance & Account Summary Layout
+
+When an invoice contains prior unpaid balances or payments applied, the standard single-row "TOTAL DUE" block is replaced with a multi-row structured table displaying:
+1. **Current Charges**: Total charges generated during the current period.
+2. **Payments Applied**: Total payments allocated to the current invoice.
+3. **Current Invoice Balance**: The remaining balance for the current invoice.
+4. **Prior Unpaid Balance**: Unpaid balance from prior finalized non-void invoices.
+5. **TOTAL AMOUNT DUE**: The final sum of current balance and prior unpaid balance (rendered with large, bold text).
+
+Below the table, if there are prior unpaid invoices, a detailed right-aligned sub-list specifies each prior invoice number, date, and its remaining unpaid balance.
+
+This layout is identical in both the HTML print preview and the ReportLab PDF rendering.

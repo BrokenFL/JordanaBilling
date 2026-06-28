@@ -747,7 +747,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   finalized_at TEXT,
-  voided_at TEXT
+  voided_at TEXT,
+  account_summary_snapshot TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_invoices_status_date
@@ -1331,6 +1332,15 @@ def _apply_migration_009(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_010_INVOICE_PRIOR_BALANCE_SNAPSHOTS = "010_invoice_prior_balance_snapshots"
+
+
+def _apply_migration_010(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "invoices", {
+        "account_summary_snapshot": "TEXT",
+    })
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1341,6 +1351,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_007_PAYMENT_CORRECTIONS, _apply_migration_007),
     (MIGRATION_008_BILLING_RELATIONSHIP_KEYS, _apply_migration_008),
     (MIGRATION_009_INVOICE_FILING_OWNER, _apply_migration_009),
+    (MIGRATION_010_INVOICE_PRIOR_BALANCE_SNAPSHOTS, _apply_migration_010),
 ]
 
 

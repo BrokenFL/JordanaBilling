@@ -372,3 +372,41 @@ POST /api/billing-relationships/normalize-payer
 ```
 
 Audited normalization of duplicate active person-linked billing parties for a given payer. Request body: `{ "person_id": "...", "canonical_billing_party_id": "..." (optional) }`. Selects or establishes one canonical active billing-party record, copies missing contact/delivery fields from redundant records (never overwriting non-empty canonical fields), deactivates redundant records, repoints safe mutable references (account defaults, draft-only invoice/session references), and leaves finalized invoices, snapshots, PDF paths, and payment ownership unchanged. Returns a structured summary of the merge operation.
+
+## Prior Unpaid Balance & Account Summary Presentation
+
+Invoices clearly show current-period charges alongside unpaid balances from earlier finalized invoices for the same payer responsibility.
+
+### Calculations
+For a given invoice:
+- **Current Period Charges**: The sum of the line items of the current invoice.
+- **Payments Applied**: The total payment amount currently allocated to the current invoice.
+- **Current Invoice Balance**: `max(Charges - Payments, 0)`. Forced to `0` for void invoices.
+- **Prior Unpaid Balance**: The sum of the remaining unpaid balances of prior finalized, non-void invoices for the same responsibility, net of their own payments.
+- **TOTAL AMOUNT DUE**: `Current Invoice Balance + Prior Unpaid Balance`.
+
+This prior balance is displayed as a summary block and does not create duplicate service lines.
+
+### Same-Date Cutoff Ordering
+Determining whether an invoice is "prior" relative to the current one uses a strict deterministic ordering:
+1. **Invoice Date**: Candidate is prior if `candidate.invoice_date < current.invoice_date`.
+2. **Tie-Breaker 1 (Finalized vs Draft)**: If dates match, a finalized invoice is prior to a draft invoice.
+3. **Tie-Breaker 2 (Finalized Timestamps)**: If both are finalized and dates match, candidate is prior if `candidate.finalized_at < current.finalized_at`.
+4. **Tie-Breaker 3 (UUID comparison)**: If finalized at the exact same millisecond, candidate is prior if `candidate.invoice_id < current.invoice_id` (alphabetically).
+
+### Persistence & Immutability
+- **Snapshot Finalization**: During finalization, the calculated summary is frozen in a versioned JSON snapshot (version 1) in the database (`account_summary_snapshot`). The PDF generated reflects this frozen snapshot and remains immutable.
+- **Live Status Card**: The local UI details page displays the frozen "As-Finalized" summary side-by-side with the current live status (live paid amount and current remaining balance from the payment ledger).
+- **Legacy Invoices**: Legacy invoices finalized before this implementation (where `account_summary_snapshot` is NULL) are handled gracefully. The system bypasses the frozen snapshot view and displays only the live ledger status, notifying the operator that the historical snapshot is unavailable.
+- **Void Invoices**: Void invoices carry a current balance of zero and do not contribute to subsequent prior unpaid balance calculations.
+
+### Unimplemented Features
+The following features are **not implemented** in this round and remain out of scope:
+- Receipts and receipt numbering
+- Paid Invoice or Paid Receipt documents
+- Optional prior-invoice PDF packets
+- Email or mail delivery and delivery tracking
+- Paid-at-session backfill apply mode (dry-run only)
+- Credits, write-offs, or refunds
+- Automated multi-invoice payment allocation
+- Reconciliation and month-close workflows
