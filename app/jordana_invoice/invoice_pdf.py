@@ -554,11 +554,15 @@ def _build_pdf_footer(
         summary_label_style = ParagraphStyle(
             "SummaryLabel",
             parent=body_style,
+            fontSize=SMALL_FONT_SIZE,
+            leading=SMALL_LEADING,
             alignment=TA_RIGHT,
         )
         summary_amount_style = ParagraphStyle(
             "SummaryAmount",
             parent=body_style,
+            fontSize=SMALL_FONT_SIZE,
+            leading=SMALL_LEADING,
             alignment=TA_RIGHT,
         )
 
@@ -566,6 +570,8 @@ def _build_pdf_footer(
             "TotalDueLabel",
             parent=total_label_style,
             fontName="Helvetica-Bold",
+            fontSize=TOTAL_FONT_SIZE,
+            leading=TOTAL_LEADING,
             alignment=TA_LEFT,
             textColor=colors.HexColor("#102A43"),
         )
@@ -575,62 +581,82 @@ def _build_pdf_footer(
             alignment=TA_RIGHT,
         )
 
+        has_prior = summary.get("prior_unpaid_balance_cents", 0) > 0
+        has_payments = summary.get("current_invoice_paid_cents", 0) > 0
+
         summary_rows = [
             [
                 para("Current Charges", summary_label_style),
                 para(summary["current_invoice_total_display"], summary_amount_style),
             ],
-            [
+        ]
+        if has_payments:
+            summary_rows.append([
                 para("Payments Applied", summary_label_style),
                 para(f"-{summary['current_invoice_paid_display']}", summary_amount_style),
-            ],
-            [
+            ])
+        if has_prior:
+            summary_rows.append([
                 para("Current Invoice Balance", summary_label_style),
                 para(summary["current_invoice_balance_display"], summary_amount_style),
-            ],
-            [
+            ])
+            summary_rows.append([
                 para("Prior Unpaid Balance", summary_label_style),
                 para(summary["prior_unpaid_balance_display"], summary_amount_style),
-            ],
-            [
-                para("TOTAL AMOUNT DUE", total_due_label_style),
-                para(summary["total_amount_due_display"], total_due_amount_style),
-            ],
-        ]
+            ])
+        else:
+            summary_rows.append([
+                para("Current Invoice Balance", summary_label_style),
+                para(summary["current_invoice_balance_display"], summary_amount_style),
+            ])
+        total_row_idx = len(summary_rows)
+        summary_rows.append([
+            para("TOTAL AMOUNT DUE", total_due_label_style),
+            para(summary["total_amount_due_display"], total_due_amount_style),
+        ])
 
         summary_table_style = TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            # Line above TOTAL AMOUNT DUE
-            ("LINEABOVE", (0, 4), (1, 4), 1, colors.HexColor("#102A43")),
-            ("TOPPADDING", (0, 4), (-1, 4), 8),
-            # Line below Current Invoice Balance
-            ("LINEBELOW", (0, 2), (1, 2), 0.5, colors.HexColor("#D9E2EC")),
-            ("BOTTOMPADDING", (0, 2), (-1, 2), 6),
-            ("TOPPADDING", (0, 3), (-1, 3), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ])
+        if has_prior:
+            balance_row_idx = 1 + (1 if has_payments else 0)
+            summary_table_style.add("LINEBELOW", (0, balance_row_idx), (1, balance_row_idx), 0.5, colors.HexColor("#D9E2EC"))
+            summary_table_style.add("BOTTOMPADDING", (0, balance_row_idx), (-1, balance_row_idx), 4)
+            summary_table_style.add("TOPPADDING", (0, balance_row_idx + 1), (-1, balance_row_idx + 1), 4)
+        summary_table_style.add("LINEABOVE", (0, total_row_idx), (1, total_row_idx), 1, colors.HexColor("#102A43"))
+        summary_table_style.add("TOPPADDING", (0, total_row_idx), (-1, total_row_idx), 6)
 
         footer_table = Table(summary_rows, colWidths=TOTAL_COLUMN_WIDTHS, style=summary_table_style)
 
         prior_list = summary.get("prior_invoices") or []
         prior_flowables = []
-        if prior_list:
+        if prior_list and has_prior:
             summary_small_right = ParagraphStyle(
                 "SummarySmallRight",
                 parent=small_style,
+                fontSize=8,
+                leading=10,
                 alignment=TA_RIGHT,
             )
-            prior_flowables.append(Spacer(1, 0.08 * inch))
-            prior_flowables.append(Paragraph("<b>Prior unpaid invoices:</b>", summary_small_right))
-            for item in prior_list:
+            from .invoice_rendering import format_long_date
+            prior_flowables.append(Spacer(1, 0.06 * inch))
+            if len(prior_list) == 1:
+                item = prior_list[0]
                 remaining_display = f"${int(item['remaining_balance_cents']) / 100:,.2f}"
-                from .invoice_rendering import format_long_date
                 date_display = format_long_date(item["invoice_date"])
-                desc = f"Invoice {item['invoice_number']} &mdash; {date_display} &mdash; {remaining_display} remaining"
-                prior_flowables.append(Paragraph(desc, summary_small_right))
+                note = f"Includes prior invoice {item['invoice_number']} dated {date_display} &mdash; {remaining_display} remaining"
+                prior_flowables.append(Paragraph(note, summary_small_right))
+            else:
+                prior_flowables.append(Paragraph("<b>Prior unpaid invoices:</b>", summary_small_right))
+                for item in prior_list:
+                    remaining_display = f"${int(item['remaining_balance_cents']) / 100:,.2f}"
+                    date_display = format_long_date(item["invoice_date"])
+                    desc = f"Invoice {item['invoice_number']} &mdash; {date_display} &mdash; {remaining_display} remaining"
+                    prior_flowables.append(Paragraph(desc, summary_small_right))
 
         footer_table_flowables = [footer_table] + prior_flowables
     else:

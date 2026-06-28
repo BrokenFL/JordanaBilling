@@ -109,7 +109,11 @@ HTTP server.
 - Void with reason; source sessions become eligible for reissue
 - Invoice library: searchable, filterable, paginated
 - **Prior Unpaid Balance & Account-Summary Presentation**:
-  - Displays current charges, payments applied, current balance, prior unpaid balances from prior finalized non-void invoices, and a final "TOTAL AMOUNT DUE" on HTML print previews and ReportLab PDFs.
+  - Displays current charges, current balance, prior unpaid balances from prior finalized non-void invoices, and a final "TOTAL AMOUNT DUE" on HTML print previews and ReportLab PDFs.
+  - Payments Applied row is omitted when current-invoice payments are zero; shown with negative formatting only when greater than zero.
+  - Customer-facing previews and PDFs use "TOTAL AMOUNT DUE" without "(As Finalized)" or snapshot/version terminology; internal app detail views still distinguish frozen historical values from live status.
+  - Compact right-aligned summary block with single-line labels, reduced padding, and smaller-font prior-invoice note beneath the block.
+  - Single prior invoice: compact note "Includes prior invoice NNN dated … — $X remaining"; multiple: heading + one line per invoice.
   - Frozen `account_summary_snapshot` JSON snapshot (version 1) is persisted in the database upon finalization.
   - Deterministic same-date cutoff tie-breaking (using date, draft/finalized status, finalized_at timestamp, and alphabetical UUID).
   - Graceful fallback for legacy invoices with NULL snapshots (UI shows live payment status and hides the as-finalized snapshot section).
