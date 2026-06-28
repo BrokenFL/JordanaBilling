@@ -15,8 +15,10 @@ from jordana_invoice.invoice_services import (
     finalize_invoice,
 )
 from jordana_invoice.review_services import (
+    add_account_member,
     approve_candidate,
     billing_party_for_person,
+    create_account,
     create_billing_party,
     create_person,
     list_billing_relationship_records,
@@ -239,6 +241,89 @@ class CanonicalPayerTests(unittest.TestCase):
         fred_records = [r for r in records if r.get("payer_person_id") == self.fred["person_id"]]
         self.assertEqual(len(fred_records), 1, "Fred should appear once in the directory")
         self.assertTrue(fred_records[0]["has_payer_record_conflict"])
+
+    def test_billing_directory_folds_shared_group_for_same_person_payer(self):
+        fred_bp = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "person_id": self.fred["person_id"],
+            "billing_email": "fred@example.test",
+            "preferred_delivery_method": "email",
+        })
+        account = create_account(self.conn, "Shared billing group", "family", commit=False)
+        add_account_member(self.conn, account["account_id"], self.fred["person_id"], "primary", True, commit=False)
+        add_account_member(self.conn, account["account_id"], self.bobsey["person_id"], "member", False, commit=False)
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?",
+            (fred_bp["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+
+        import_rows(
+            self.conn,
+            [
+                raw_row("fred-person-bill-to", "Fred Colin | 60 | Office", "2026-05-10T10:00:00-04:00"),
+                raw_row("fred-shared-group", "Bobsey Colin and Fred Colin | 60 | Office", "2026-05-20T10:00:00-04:00"),
+            ],
+            "test",
+        )
+        first_candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash("calendar_event_id:event-fred-person-bill-to"),),
+        ).fetchone()[0]
+        second_candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash("calendar_event_id:event-fred-shared-group"),),
+        ).fetchone()[0]
+        approve_candidate(self.conn, first_candidate_id, {
+            "participants": [{"person_id": self.fred["person_id"], "display_name": "Fred Colin"}],
+            "billing_party_id": fred_bp["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "150.00",
+            "payment_status": "unpaid",
+            "billing_treatment": "billable",
+        })
+        approve_candidate(self.conn, second_candidate_id, {
+            "participants": [
+                {"person_id": self.bobsey["person_id"], "display_name": "Bobsey Colin"},
+                {"person_id": self.fred["person_id"], "display_name": "Fred Colin"},
+            ],
+            "billing_party_id": fred_bp["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "150.00",
+            "payment_status": "unpaid",
+            "billing_treatment": "billable",
+        })
+        self.conn.execute(
+            """
+            UPDATE sessions
+            SET account_id = ?
+            WHERE id IN (
+              SELECT session_id FROM review_items WHERE candidate_id = ?
+            )
+            """,
+            (account["account_id"], second_candidate_id),
+        )
+        self.conn.commit()
+
+        records = list_billing_relationship_records(self.conn)
+        fred_records = [r for r in records if r.get("payer_person_id") == self.fred["person_id"]]
+        account_records = [r for r in records if r.get("record_type") == "account" and r.get("account_id") == account["account_id"]]
+
+        self.assertEqual(len(fred_records), 1, "Fred should appear as one payer-centered row")
+        self.assertEqual(account_records, [], "The same-payer shared group should not appear as a second normal row")
+        fred_record = fred_records[0]
+        self.assertEqual(fred_record["record_type"], "third_party")
+        self.assertFalse(fred_record["has_payer_record_conflict"])
+        self.assertEqual(fred_record["session_count"], 2)
+        self.assertEqual(fred_record["latest_session_date"], "2026-05-20")
+        self.assertEqual(fred_record["preferred_delivery_method"], "email")
+        self.assertEqual(fred_record["consolidated_account_ids"], [account["account_id"]])
+        covered_ids = {person["person_id"] for person in fred_record["covered_people"]}
+        self.assertEqual(covered_ids, {self.fred["person_id"], self.bobsey["person_id"]})
 
     # 10. save_billing_section reuses canonical billing party instead of creating duplicates.
     def test_save_billing_section_reuses_canonical(self):

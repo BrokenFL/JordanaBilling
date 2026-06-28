@@ -30,12 +30,25 @@ A type filter (All, Self-pay, Pays for others, Organizations, Shared billing gro
 
 ## Linked Payer and Account Rows
 
-When a billing party is linked as an account's default payer, both records appear in the directory:
+When a shared billing account's default payer resolves to a person-linked Bill To
+record for the same payer and covered-client relationship, the normal Billing
+Relationships directory folds that account into the payer-centered row. The row
+uses the person payer as the primary label, merges covered clients and session
+activity from the linked account, and does not expose backend account/group
+terminology as a second normal relationship row.
+
+When a billing party is linked as an account's default payer but the account is a
+genuine separate backend grouping that does not resolve to the same person-payer
+relationship, both records may appear in the directory:
 
 - The **payer row** shows muted text: "Linked to shared billing group: {account_name}"
 - The **account row** shows muted text: "Default bill to: {billing_name}"
 
-Both records are shown intentionally to preserve all relationship evidence and direct session billing activity. Records are not merged.
+Separate records are shown only when needed to preserve relationship evidence and
+direct session billing activity. The account detail view remains available for
+backend account/group information; folding a same-payer shared group into the
+normal payer row does not delete or rewrite the account, members, sessions,
+approved billing decisions, invoices, payments, or audit history.
 
 ## Navigation
 
