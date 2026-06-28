@@ -136,11 +136,34 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 - Required `zelle_recipient` in Invoice Settings
 - Valid, unique invoice number generation
 - All included sessions remain invoice-eligible
+- Resolved `File invoice under` client when filing ownership is ambiguous
 - Preview revision is not stale (when `expected_revision` is provided)
 
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
-Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
+
+### File Invoice Under
+
+`File invoice under` is a separate filing-owner concept from Participants, Bill To, billing relationship/account, and payment owner. Bill To remains the payer and `billing_party_id` remains the payment owner. Filing owner determines the local client folder for newly finalized PDFs.
+
+Resolution rules:
+
+- A self-paying client files under that client.
+- When Bill To is an established client person, the invoice files under that paying client, even if another client received the service.
+- When Bill To is an organization, the invoice files under a covered client from that billing relationship. One eligible covered client can be selected automatically; multiple eligible clients require Jordana to choose.
+- When Bill To is a non-client individual, the invoice files under the service client when unambiguous; multi-client ambiguity requires Jordana to choose.
+- Only eligible covered client people may be selected. Draft preview still works when unresolved, but finalization readiness fails with a filing-owner validation message.
+
+Billing relationships may store `default_filing_owner_person_id`. It must reference a covered client. If relationship membership changes through the relationship editor and the default no longer belongs, the update must clear or replace the default; it must not silently choose among multiple remaining clients. Approved sessions are not rewritten by default changes.
+
+Finalization freezes `filing_owner_person_id`, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, and `pdf_path`. Later person-name or relationship changes do not move or rename finalized invoices. Existing finalized invoices keep their existing path/checksum/snapshots and are not backfilled by guessing.
+
+New finalized PDFs are stored as:
+
+`Invoices/<PERSON_CODE> - <Display Name>/<year>/Invoice_<number>.pdf`
+
+Path parts are sanitized, the stable person code is preserved, and organization names are not used as the folder when the invoice is filed under a client.
 
 Bill To rendering is delivery-aware:
 
@@ -156,7 +179,7 @@ Void requires a reason and preserves the number, snapshots, PDF, and checksum. S
 
 ## Client Page Invoice History
 
-The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The client page now shows account summary cards (Total Finalized Invoices, Total Payments Applied, Current Balance, Account Status) powered by `client_account_summary`. The invoice table includes Payment Status and Paid columns. Session tables use "Payment Handling" with labels "Invoice billing" and "Paid at session".
+The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person and can identify invoices filed under that client. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The client page now shows account summary cards (Total Finalized Invoices, Total Payments Applied, Current Balance, Account Status) powered by `client_account_summary`. The invoice table includes Payment Status and Paid columns. Session tables use "Payment Handling" with labels "Invoice billing" and "Paid at session".
 
 ## Payment Ledger Foundation
 

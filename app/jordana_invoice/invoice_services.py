@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -108,6 +110,193 @@ _VALID_SORT_FIELDS = {
 }
 
 
+def _sanitize_path_part(value: Any, fallback: str = "Unknown") -> str:
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", str(value or "").strip())
+    text = re.sub(r"\s+", " ", text).strip(" .")
+    return text or fallback
+
+
+def _eligible_filing_clients(conn: sqlite3.Connection, invoice_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT p.person_id, p.display_name, p.person_code
+        FROM invoice_line_items li
+        JOIN session_participants sp ON sp.session_id = li.source_session_id
+        JOIN people p ON p.person_id = sp.person_id
+        WHERE li.invoice_id = ? AND p.active = 1
+        ORDER BY p.display_name, p.person_id
+        """,
+        (invoice_id,),
+    ).fetchall()
+    clients = {row["person_id"]: dict(row) for row in rows}
+    payer = conn.execute(
+        """
+        SELECT p.person_id, p.display_name, p.person_code
+        FROM invoices i
+        JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+        JOIN people p ON p.person_id = bp.person_id
+        WHERE i.invoice_id = ? AND p.active = 1
+        """,
+        (invoice_id,),
+    ).fetchone()
+    if payer:
+        clients[payer["person_id"]] = dict(payer)
+    return sorted(clients.values(), key=lambda row: (row.get("display_name") or "", row.get("person_id") or ""))
+
+
+def _relationship_defaults_for_invoice(conn: sqlite3.Connection, invoice: dict[str, Any]) -> list[sqlite3.Row]:
+    eligible_ids = {client["person_id"] for client in _eligible_filing_clients(conn, invoice["invoice_id"])}
+    if not eligible_ids:
+        return []
+    rows = conn.execute(
+        """
+        SELECT ca.*
+        FROM client_accounts ca
+        WHERE ca.active = 1 AND ca.default_billing_party_id = ?
+        ORDER BY ca.updated_at DESC, ca.created_at DESC
+        """,
+        (invoice["bill_to_party_id"],),
+    ).fetchall()
+    matches = []
+    for row in rows:
+        member_ids = {
+            member["person_id"]
+            for member in conn.execute(
+                "SELECT person_id FROM account_members WHERE account_id = ?",
+                (row["account_id"],),
+            ).fetchall()
+        }
+        if eligible_ids.issubset(member_ids):
+            matches.append(row)
+    return matches
+
+
+def resolve_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
+    invoice_row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    if not invoice_row:
+        raise ValueError("Invoice was not found.")
+    invoice = dict(invoice_row)
+    eligible = _eligible_filing_clients(conn, invoice_id)
+    eligible_ids = {client["person_id"] for client in eligible}
+    stored_id = invoice.get("filing_owner_person_id")
+    party = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ?",
+        (invoice["bill_to_party_id"],),
+    ).fetchone()
+    selected = None
+    source = "unresolved"
+    message = ""
+
+    if stored_id:
+        selected = next((client for client in eligible if client["person_id"] == stored_id), None)
+        if selected:
+            source = "invoice_selection"
+        elif invoice["status"] in ("finalized", "void"):
+            selected = {
+                "person_id": stored_id,
+                "person_code": invoice.get("filing_owner_person_code_snapshot"),
+                "display_name": invoice.get("filing_owner_display_name_snapshot"),
+            }
+            source = "finalized_snapshot"
+        else:
+            message = "Selected filing client is no longer eligible for this draft."
+
+    if not selected and party and party["person_id"] and party["person_id"] in eligible_ids:
+        selected = next(client for client in eligible if client["person_id"] == party["person_id"])
+        source = "bill_to_client"
+
+    relationships = _relationship_defaults_for_invoice(conn, invoice)
+    if not selected:
+        default_ids = []
+        for relationship in relationships:
+            default_id = relationship["default_filing_owner_person_id"]
+            if default_id and default_id in eligible_ids:
+                default_ids.append(default_id)
+        unique_defaults = sorted(set(default_ids))
+        if len(unique_defaults) == 1:
+            selected = next(client for client in eligible if client["person_id"] == unique_defaults[0])
+            source = "relationship_default"
+        elif len(eligible) == 1:
+            selected = eligible[0]
+            source = "single_eligible_client"
+
+    if not selected and len(eligible) > 1:
+        message = "Choose which covered client this invoice should be filed under."
+    elif not selected and not eligible:
+        message = "Add at least one eligible client before choosing where to file this invoice."
+
+    return {
+        "selected": selected,
+        "eligible_clients": eligible,
+        "source": source,
+        "required": invoice["status"] == "draft",
+        "message": message,
+    }
+
+
+def update_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str, person_id: str | None) -> dict[str, Any]:
+    _draft(conn, invoice_id)
+    resolution = resolve_invoice_filing_owner(conn, invoice_id)
+    eligible_ids = {client["person_id"] for client in resolution["eligible_clients"]}
+    chosen = str(person_id or "").strip()
+    if chosen and chosen not in eligible_ids:
+        raise ValueError("File invoice under must be one of the eligible covered clients.")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "UPDATE invoices SET filing_owner_person_id = ?, revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+            (chosen or None, now_iso(), invoice_id),
+        )
+        _audit(conn, "invoice", invoice_id, "filing_owner_selected", {"filing_owner_person_id": chosen or None})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return get_invoice(conn, invoice_id)
+
+
+def trusted_invoice_document_action(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    action: str,
+    *,
+    pdf_root: str | Path | None = None,
+) -> dict[str, Any]:
+    if action not in {"open_pdf", "show_in_finder", "open_client_folder"}:
+        raise ValueError("Unsupported invoice document action.")
+    row = conn.execute(
+        "SELECT status, pdf_path, filing_owner_person_id FROM invoices WHERE invoice_id = ?",
+        (invoice_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError("Invoice was not found.")
+    if row["status"] not in ("finalized", "void"):
+        raise ValueError("Only finalized or void invoices have stored document actions.")
+    pdf_text = str(row["pdf_path"] or "").strip()
+    if not pdf_text:
+        raise ValueError("No PDF file is stored for this invoice.")
+    pdf_path = Path(pdf_text).expanduser()
+    root = Path(pdf_root or os.getenv("JORDANA_INVOICES_DIR", "Invoices")).expanduser()
+    try:
+        resolved_pdf = pdf_path.resolve(strict=False)
+        resolved_root = root.resolve(strict=False)
+        resolved_pdf.relative_to(resolved_root)
+    except (OSError, ValueError):
+        raise ValueError("Stored invoice path is outside the configured invoice folder.")
+    if not resolved_pdf.is_file():
+        raise ValueError("The PDF file for this invoice is missing from the expected location.")
+    args = ["open", str(resolved_pdf)]
+    if action == "show_in_finder":
+        args = ["open", "-R", str(resolved_pdf)]
+    elif action == "open_client_folder":
+        target = resolved_pdf.parent.parent
+        if not target.is_dir():
+            raise ValueError("The client invoice folder is missing.")
+        args = ["open", str(target)]
+    subprocess.run(args, check=True)
+    return {"ok": True, "action": action}
+
+
 def list_invoice_records(
     conn: sqlite3.Connection,
     *,
@@ -182,10 +371,13 @@ def list_invoice_records(
     rows = conn.execute(
         f"""
         SELECT i.*, bp.billing_name AS current_bill_to_name,
+               fp.display_name AS filing_owner_current_name,
+               fp.person_code AS filing_owner_current_code,
                COUNT(DISTINCT li.invoice_line_item_id) AS line_count,
                GROUP_CONCAT(DISTINCT li.participants_snapshot) AS participants_display
         FROM invoices i
         JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+        LEFT JOIN people fp ON fp.person_id = i.filing_owner_person_id
         LEFT JOIN invoice_line_items li ON li.invoice_id = i.invoice_id
         {where}
         GROUP BY i.invoice_id
@@ -205,6 +397,11 @@ def list_invoice_records(
         record["paid_cents"] = paid_cents
         record["balance_cents"] = balance_cents
         record["payment_status"] = _derive_payment_status(record["status"], paid_cents, total_cents)
+        record["filing_owner_display"] = (
+            record.get("filing_owner_display_name_snapshot")
+            or record.get("filing_owner_current_name")
+            or ""
+        )
         # Deduplicate participant names from the concatenated snapshot
         raw_participants = record.get("participants_display") or ""
         if raw_participants:
@@ -255,11 +452,18 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     invoice["paid_cents"] = paid_cents
     invoice["balance_cents"] = max(total_cents - paid_cents, 0)
     invoice["payment_status"] = _derive_payment_status(invoice["status"], paid_cents, total_cents)
+    filing = resolve_invoice_filing_owner(conn, invoice_id)
+    invoice["filing_owner_display"] = (
+        invoice.get("filing_owner_display_name_snapshot")
+        or (filing.get("selected") or {}).get("display_name")
+        or ""
+    )
     return {
         "invoice": invoice,
         "lines": line_dicts,
         "business_profile": profile,
         "billing_party": party,
+        "filing_owner": filing,
         "render_model": build_invoice_render_model(
             invoice,
             line_dicts,
@@ -1073,6 +1277,14 @@ def validate_invoice_readiness(
                 })
 
     # 10. Preview revision is stale
+    filing = resolve_invoice_filing_owner(conn, invoice_id)
+    if not filing.get("selected"):
+        errors.append({
+            "field": "filing_owner",
+            "message": filing.get("message") or "Choose which client this invoice should be filed under.",
+        })
+
+    # 11. Preview revision is stale
     if expected_revision is not None and invoice["revision"] != expected_revision:
         errors.append({"field": "revision", "message": "Invoice has changed since preview. Please review and try again."})
 
@@ -1137,6 +1349,7 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
         "lines": [dict(line) for line in lines],
         "business_profile": dict(profile) if profile else None,
         "billing_party": dict(party) if party else None,
+        "filing_owner": resolve_invoice_filing_owner(conn, invoice_id),
         "render_model": build_invoice_render_model(
             dict(invoice),
             [dict(line) for line in lines],
@@ -1160,6 +1373,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             ) from error
         raise
     pdf_path: Path | None = None
+    pdf_existed_before = False
     try:
         synchronize_draft_delivery_method(conn, invoice_id)
         readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision)
@@ -1169,6 +1383,10 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order", (invoice_id,)).fetchall()
         profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
         party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
+        filing = resolve_invoice_filing_owner(conn, invoice_id)
+        filing_owner = filing.get("selected")
+        if not filing_owner:
+            raise ValueError(filing.get("message") or "Choose which client this invoice should be filed under.")
         number = _next_invoice_number(conn, int(str(invoice["invoice_date"])[:4]), profile["invoice_number_format"])
         now = now_iso()
         snapshots = {
@@ -1186,6 +1404,9 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "payee_name_snapshot": profile["payee_name"],
             "payment_address_snapshot": _address(profile, "payment_", include_name=profile["payee_name"]),
             "zelle_recipient_snapshot": _present_text(profile["zelle_recipient"]),
+            "filing_owner_person_id": filing_owner["person_id"],
+            "filing_owner_person_code_snapshot": filing_owner.get("person_code"),
+            "filing_owner_display_name_snapshot": filing_owner.get("display_name"),
             "logo_reference_snapshot": resolve_logo_path(profile["logo_path"]),
             "logo_contains_business_details_snapshot": profile["logo_contains_business_details"],
             "show_email_below_logo_snapshot": profile["show_email_below_logo"],
@@ -1197,14 +1418,19 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         _recalculate(conn, invoice_id)
         frozen = get_invoice(conn, invoice_id)
         root = Path(pdf_root or os.getenv("JORDANA_INVOICES_DIR", "Invoices"))
-        pdf_path = root / str(invoice["invoice_date"])[:4] / f"Invoice_{number}.pdf"
+        folder = f"{_sanitize_path_part(filing_owner.get('person_code'), filing_owner['person_id'])} - {_sanitize_path_part(filing_owner.get('display_name'))}"
+        pdf_path = root / folder / str(invoice["invoice_date"])[:4] / f"Invoice_{number}.pdf"
+        pdf_existed_before = pdf_path.exists()
+        if pdf_existed_before:
+            raise ValueError("A finalized invoice PDF already exists at the target invoice location.")
         checksum = generate_invoice_pdf(frozen["invoice"], frozen["lines"], pdf_path, render_model=frozen["render_model"])
         conn.execute("UPDATE invoices SET pdf_path = ?, pdf_sha256 = ?, updated_at = ? WHERE invoice_id = ?", (str(pdf_path), checksum, now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "finalized", {"invoice_number": number, "pdf_sha256": checksum})
         conn.commit()
     except Exception:
         conn.rollback()
-        if pdf_path and pdf_path.exists(): pdf_path.unlink()
+        if pdf_path and not pdf_existed_before and pdf_path.exists():
+            pdf_path.unlink()
         raise
     return get_invoice(conn, invoice_id)
 

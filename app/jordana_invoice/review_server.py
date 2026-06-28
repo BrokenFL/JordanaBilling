@@ -84,7 +84,9 @@ from .invoice_services import (
     remove_line_from_draft,
     save_business_profile,
     stage_approved_sessions_to_monthly_drafts,
+    trusted_invoice_document_action,
     update_invoice_draft,
+    update_invoice_filing_owner,
     update_invoice_line_item,
     void_invoice,
 )
@@ -842,6 +844,12 @@ def make_handler(database_path: str, write_token: str | None = None):
                         if not data.get("confirmed"):
                             raise ValueError("Explicit finalization confirmation is required.")
                         self.send_json(finalize_invoice(self.conn(), invoice_id, expected_revision=data.get("expected_revision")))
+                        return
+                    if action == "filing-owner":
+                        self.send_json(update_invoice_filing_owner(self.conn(), invoice_id, data.get("person_id")))
+                        return
+                    if action == "document-action":
+                        self.send_json(trusted_invoice_document_action(self.conn(), invoice_id, data.get("action") or ""))
                         return
                     if action == "void":
                         self.send_json(void_invoice(self.conn(), invoice_id, data.get("reason") or ""))

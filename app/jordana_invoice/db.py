@@ -384,6 +384,7 @@ CREATE TABLE IF NOT EXISTS client_accounts (
   account_name TEXT NOT NULL,
   account_type TEXT NOT NULL DEFAULT 'individual',
   default_billing_party_id TEXT,
+  default_filing_owner_person_id TEXT REFERENCES people(person_id),
   administrative_notes TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -728,6 +729,9 @@ CREATE TABLE IF NOT EXISTS invoices (
   payee_name_snapshot TEXT,
   payment_address_snapshot TEXT,
   zelle_recipient_snapshot TEXT,
+  filing_owner_person_id TEXT REFERENCES people(person_id),
+  filing_owner_person_code_snapshot TEXT,
+  filing_owner_display_name_snapshot TEXT,
   logo_reference_snapshot TEXT,
   logo_contains_business_details_snapshot INTEGER NOT NULL DEFAULT 0,
   show_email_below_logo_snapshot INTEGER NOT NULL DEFAULT 0,
@@ -1309,6 +1313,24 @@ def _apply_migration_008(conn: sqlite3.Connection) -> None:
             continue
 
 
+MIGRATION_009_INVOICE_FILING_OWNER = "009_invoice_filing_owner"
+
+
+def _apply_migration_009(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "client_accounts", {
+        "default_filing_owner_person_id": "TEXT REFERENCES people(person_id)",
+    })
+    add_columns(conn, "invoices", {
+        "filing_owner_person_id": "TEXT REFERENCES people(person_id)",
+        "filing_owner_person_code_snapshot": "TEXT",
+        "filing_owner_display_name_snapshot": "TEXT",
+    })
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoices_filing_owner"
+        " ON invoices(filing_owner_person_id, status)"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1318,6 +1340,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY, _apply_migration_006),
     (MIGRATION_007_PAYMENT_CORRECTIONS, _apply_migration_007),
     (MIGRATION_008_BILLING_RELATIONSHIP_KEYS, _apply_migration_008),
+    (MIGRATION_009_INVOICE_FILING_OWNER, _apply_migration_009),
 ]
 
 

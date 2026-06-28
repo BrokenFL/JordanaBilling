@@ -14,11 +14,13 @@ from jordana_invoice.invoice_services import (
     invoice_ineligibility_reasons,
     preview_finalization,
     remove_line_from_draft,
+    resolve_invoice_filing_owner,
     save_business_profile,
+    update_invoice_filing_owner,
     update_invoice_draft,
     void_invoice,
 )
-from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
+from jordana_invoice.review_services import add_account_member, approve_candidate, create_account, create_billing_party, create_person
 from jordana_invoice.util import normalize_payment_status, stable_hash
 
 
@@ -513,6 +515,183 @@ class SafeFinalizationTests(unittest.TestCase):
         self.assertFalse(preview["readiness"]["ready"])
         error_fields = {e["field"] for e in preview["readiness"]["errors"]}
         self.assertIn("lines", error_fields)
+
+
+class FilingOwnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.conn = connect(self.root / "test.sqlite3")
+        init_db(self.conn)
+        save_business_profile(self.conn, {
+            "business_name": "Filing Practice", "provider_display_name": "Filing Provider",
+            "address_line_1": "1 Main", "city": "Test", "state": "FL", "postal_code": "00000",
+            "phone": "555-0300", "email": "billing@filing", "payee_name": "Filing Payee",
+            "payment_address_line_1": "1 Main", "payment_city": "Test", "payment_state": "FL",
+            "payment_postal_code": "00000", "zelle_recipient": "filing-zelle@example.test",
+        })
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _person(self, first, last):
+        return create_person(self.conn, {"first_name": first, "last_name": last, "display_name": f"{first} {last}"})
+
+    def _party(self, name, person_id=None, *, organization=False):
+        return create_billing_party(self.conn, {
+            "billing_party_type": "organization" if organization else "person",
+            "organization_name": name if organization else None,
+            "billing_name": name,
+            "person_id": person_id,
+            "billing_email": f"{name.split()[0].lower()}@example.test",
+            "billing_address_line_1": "10 Billing St",
+            "billing_city": "Test",
+            "billing_state": "FL",
+            "billing_postal_code": "00000",
+            "preferred_delivery_method": "email",
+        })
+
+    def _session(self, key, participants, bill_to_party_id):
+        import_rows(self.conn, [raw_row(key, f"{participants[0]['display_name']} | 60 | Office", f"2026-05-{10 + len(key):02d}T10:00:00-04:00")], "test")
+        candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash(f"calendar_event_id:event-{key}"),),
+        ).fetchone()[0]
+        detail = approve_candidate(self.conn, candidate_id, {
+            "participants": participants,
+            "billing_party_id": bill_to_party_id,
+            "approved_duration_minutes": 60, "service_mode": "office",
+            "time_category": "standard", "approved_rate": "150.00",
+            "payment_status": "unpaid", "billing_treatment": "billable",
+        })
+        return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
+
+    def _draft(self, party_id, sessions):
+        return create_invoice_draft(self.conn, {
+            "bill_to_party_id": party_id,
+            "billing_period_start": "2026-05-01",
+            "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31",
+            "session_ids": [s["id"] for s in sessions],
+        })
+
+    def _relationship(self, name, party_id, people, default_filing_owner_person_id=None):
+        account = create_account(self.conn, name)
+        for index, person in enumerate(people):
+            add_account_member(self.conn, account["account_id"], person["person_id"], "primary" if index == 0 else "family_member", index == 0)
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ?, default_filing_owner_person_id = ? WHERE account_id = ?",
+            (party_id, default_filing_owner_person_id, account["account_id"]),
+        )
+        self.conn.commit()
+        return account
+
+    def test_self_paying_client_files_under_self(self):
+        client = self._person("Self", "Client")
+        party = self._party("Self Client", client["person_id"])
+        session = self._session("selfpay", [{"person_id": client["person_id"], "display_name": "Self Client"}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        filing = resolve_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(filing["selected"]["person_id"], client["person_id"])
+        self.assertEqual(filing["source"], "bill_to_client")
+
+    def test_client_bill_to_paying_for_another_client_files_under_bill_to(self):
+        child = self._person("Child", "Client")
+        parent = self._person("Parent", "Client")
+        party = self._party("Parent Client", parent["person_id"])
+        session = self._session("parentpay", [{"person_id": child["person_id"], "display_name": "Child Client"}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        filing = resolve_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(filing["selected"]["person_id"], parent["person_id"])
+        update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], parent["person_id"])
+
+    def test_organization_one_covered_client_auto_resolves(self):
+        client = self._person("Org", "Client")
+        org = self._party("Helpful Org", organization=True)
+        self._relationship("Helpful Org Relationship", org["billing_party_id"], [client])
+        session = self._session("orgone", [{"person_id": client["person_id"], "display_name": "Org Client"}], org["billing_party_id"])
+        draft = self._draft(org["billing_party_id"], [session])
+        filing = resolve_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(filing["selected"]["person_id"], client["person_id"])
+        self.assertEqual(filing["source"], "single_eligible_client")
+
+    def test_organization_multiple_clients_requires_choice_and_rejects_outside_client(self):
+        a = self._person("Alpha", "Client")
+        b = self._person("Beta", "Client")
+        outside = self._person("Outside", "Client")
+        org = self._party("Multi Org", organization=True)
+        self._relationship("Multi Org Relationship", org["billing_party_id"], [a, b])
+        sessions = [
+            self._session("orga", [{"person_id": a["person_id"], "display_name": "Alpha Client"}], org["billing_party_id"]),
+            self._session("orgb", [{"person_id": b["person_id"], "display_name": "Beta Client"}], org["billing_party_id"]),
+        ]
+        draft = self._draft(org["billing_party_id"], sessions)
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(preview["readiness"]["ready"])
+        self.assertIn("filing_owner", {e["field"] for e in preview["readiness"]["errors"]})
+        with self.assertRaises(ValueError):
+            update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], outside["person_id"])
+        updated = update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], b["person_id"])
+        self.assertEqual(updated["filing_owner"]["selected"]["person_id"], b["person_id"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalization_freezes_filing_owner_snapshots_and_stable_folder(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "c" * 64
+        fake_pdf.side_effect = write_pdf
+        client = self._person("Folder", "Client")
+        party = self._party("Folder Client", client["person_id"])
+        session = self._session("folder", [{"person_id": client["person_id"], "display_name": "Folder Client"}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], expected_revision=preview["preview_revision"], pdf_root=self.root / "Invoices")
+        person_code = client["person_code"]
+        self.assertEqual(final["invoice"]["filing_owner_person_id"], client["person_id"])
+        self.assertEqual(final["invoice"]["filing_owner_person_code_snapshot"], person_code)
+        self.assertIn(f"{person_code} - Folder Client/2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.conn.execute("UPDATE people SET display_name = ? WHERE person_id = ?", ("Changed Name", client["person_id"]))
+        self.conn.commit()
+        reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
+        self.assertEqual(reopened["invoice"]["filing_owner_display_name_snapshot"], "Folder Client")
+        self.assertEqual(reopened["invoice"]["pdf_path"], final["invoice"]["pdf_path"])
+
+    def test_collision_does_not_overwrite_existing_pdf_or_finalize(self):
+        client = self._person("Collision", "Client")
+        party = self._party("Collision Client", client["person_id"])
+        session = self._session("collision", [{"person_id": client["person_id"], "display_name": "Collision Client"}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        folder = f"{client['person_code']} - Collision Client"
+        target = self.root / "Invoices" / folder / "2026" / "Invoice_2026-0001.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"existing")
+        with self.assertRaises(ValueError):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], expected_revision=preview["preview_revision"], pdf_root=self.root / "Invoices")
+        self.assertEqual(target.read_bytes(), b"existing")
+        self.assertEqual(get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]["status"], "draft")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_storage_failure_rolls_back_and_removes_partial_file(self, fake_pdf):
+        def fail_after_write(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"partial")
+            raise RuntimeError("storage failed")
+        fake_pdf.side_effect = fail_after_write
+        client = self._person("Partial", "Client")
+        party = self._party("Partial Client", client["person_id"])
+        session = self._session("partial", [{"person_id": client["person_id"], "display_name": "Partial Client"}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        with self.assertRaises(RuntimeError):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], expected_revision=preview["preview_revision"], pdf_root=self.root / "Invoices")
+        invoice = get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]
+        self.assertEqual(invoice["status"], "draft")
+        self.assertIsNone(invoice["pdf_path"])
+        folder = f"{client['person_code']} - Partial Client"
+        self.assertFalse((self.root / "Invoices" / folder / "2026" / "Invoice_2026-0001.pdf").exists())
 
 
 if __name__ == "__main__":

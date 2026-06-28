@@ -2263,6 +2263,12 @@ def update_billing_relationship(
             primary_person_id = payer_person_id
         elif covered_client_ids:
             primary_person_id = covered_client_ids[0]
+        requested_filing_owner = payload.get("default_filing_owner_person_id", account["default_filing_owner_person_id"])
+        requested_filing_owner = str(requested_filing_owner or "").strip() or None
+        if requested_filing_owner and requested_filing_owner not in new_set:
+            raise ValueError("Default filing client must be one of the covered clients.")
+        if not requested_filing_owner and len(covered_client_ids) == 1:
+            requested_filing_owner = covered_client_ids[0]
 
         for cid in covered_client_ids:
             if cid in current_members:
@@ -2279,8 +2285,8 @@ def update_billing_relationship(
 
         now = now_iso()
         conn.execute(
-            "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
-            (billing_party_id, now, account_id),
+            "UPDATE client_accounts SET default_billing_party_id = ?, default_filing_owner_person_id = ?, updated_at = ? WHERE account_id = ?",
+            (billing_party_id, requested_filing_owner, now, account_id),
         )
 
         conn.execute(
@@ -5832,7 +5838,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             }
         )
 
-    # --- Account rows: only for non-person-linked accounts ---
+    # --- Account rows: keep genuine billing relationships visible even when their Bill To is person-linked. ---
     acct_rows = conn.execute(
         """
         SELECT
@@ -5856,7 +5862,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     ).fetchall()
 
     for row in acct_rows:
-        if row["account_id"] in person_linked_account_ids:
+        if row["account_id"] in person_linked_account_ids and row["account_id"] in account_session_map:
             continue
         member_ids = [
             mid for mid in (row["member_ids_raw"] or "").split(",") if mid

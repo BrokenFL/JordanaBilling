@@ -213,7 +213,9 @@ Four compact summary cards appear near the top of the client workspace:
 
 ### Client Invoice History
 
-The invoices table shows all invoices addressed to billing parties belonging to this person. Columns: Invoice Number, Billing Period, Issue Date, Bill To, Status, Total, Balance, and Open. Void invoices show zero balance. The Open action navigates to the existing invoice view. Invoice history is read-only from the client page — no payment, finalization, or void controls appear here.
+The invoices table shows invoices addressed to billing parties belonging to this person and can identify invoices filed under this client. Columns include Invoice Number, Billing Period, Issue Date, Bill To, File Under where practical, Status, Total, Balance, and Open. Void invoices show zero balance. The Open action navigates to the existing invoice view. Invoice history is read-only from the client page — no payment, finalization, or void controls appear here.
+
+`File invoice under` is not Bill To and is not the payment owner. It is the selected permanent client folder for finalized PDFs. Organization Bill To history still shows the organization as Bill To while the filing client remains a separate display value.
 
 No schema migration was required for any of these features, including editable Billing Setup. All data is derived from existing tables and the existing billing-parties schema.
 
