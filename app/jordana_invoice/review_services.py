@@ -5581,12 +5581,13 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         WHERE ca.default_billing_party_id IS NOT NULL
         """
     ).fetchall():
-        account_links[row["default_billing_party_id"]] = {
+        link = {
             "account_id": row["account_id"],
             "account_code": row["account_code"],
             "account_name": row["account_name"],
             "account_type": row["account_type"],
         }
+        account_links[row["default_billing_party_id"]] = link
         if row["payer_person_id"]:
             person_linked_account_ids.add(row["account_id"])
 
@@ -5603,6 +5604,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
           bp.preferred_delivery_method,
           bp.active AS billing_party_active,
           COUNT(DISTINCT s.id) AS session_count,
+          GROUP_CONCAT(DISTINCT s.id) AS session_ids_raw,
           MAX(s.session_date) AS latest_session_date,
           GROUP_CONCAT(DISTINCT sp.person_id) AS covered_person_ids_raw
         FROM billing_parties bp
@@ -5637,6 +5639,28 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             mid for mid in (acct_row["member_ids"] or "").split(",") if mid
         ]
 
+    account_session_map: dict[str, dict[str, Any]] = {}
+    for acct_session_row in conn.execute(
+        """
+        SELECT
+          account_id,
+          COUNT(DISTINCT id) AS session_count,
+          GROUP_CONCAT(DISTINCT id) AS session_ids_raw,
+          MAX(session_date) AS latest_session_date,
+          GROUP_CONCAT(DISTINCT sp.person_id) AS covered_person_ids_raw
+        FROM sessions s
+        LEFT JOIN session_participants sp ON sp.session_id = s.id AND sp.person_id IS NOT NULL
+        WHERE account_id IS NOT NULL
+        GROUP BY account_id
+        """
+    ).fetchall():
+        account_session_map[acct_session_row["account_id"]] = {
+            "session_count": acct_session_row["session_count"],
+            "session_ids_raw": acct_session_row["session_ids_raw"],
+            "latest_session_date": acct_session_row["latest_session_date"],
+            "covered_person_ids_raw": acct_session_row["covered_person_ids_raw"],
+        }
+
     records: list[dict[str, Any]] = []
 
     for pid, parties in person_groups.items():
@@ -5659,14 +5683,16 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         all_covered: set[str] = set()
         all_bp_ids: list[str] = []
         all_account_ids: list[str] = []
-        total_sessions = 0
+        all_session_ids: set[str] = set()
         latest_date = None
         for p in parties:
             all_bp_ids.append(p["billing_party_id"])
             for cid in (p["covered_person_ids_raw"] or "").split(","):
                 if cid:
                     all_covered.add(cid)
-            total_sessions += int(p["session_count"] or 0)
+            for sid in (p["session_ids_raw"] or "").split(","):
+                if sid:
+                    all_session_ids.add(sid)
             d = p["latest_session_date"]
             if d and (latest_date is None or d > latest_date):
                 latest_date = d
@@ -5675,6 +5701,20 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 all_account_ids.append(link["account_id"])
                 for mid in account_member_map.get(link["account_id"], []):
                     all_covered.add(mid)
+
+        for account_id in list(all_account_ids):
+            session_info = account_session_map.get(account_id)
+            if not session_info:
+                continue
+            for sid in (session_info["session_ids_raw"] or "").split(","):
+                if sid:
+                    all_session_ids.add(sid)
+            d = session_info["latest_session_date"]
+            if d and (latest_date is None or d > latest_date):
+                latest_date = d
+            for cid in (session_info["covered_person_ids_raw"] or "").split(","):
+                if cid:
+                    all_covered.add(cid)
 
         covered_people = [
             {"person_id": cid, "display_name": people_map.get(cid, "")}
@@ -5705,7 +5745,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "preferred_delivery_method": canonical["preferred_delivery_method"],
                 "active": bool(canonical["billing_party_active"]),
                 "covered_people": covered_people,
-                "session_count": total_sessions,
+                "session_count": len(all_session_ids),
                 "latest_session_date": latest_date,
                 "account_id": link["account_id"] if link else None,
                 "account_code": link["account_code"] if link else None,
@@ -5789,6 +5829,8 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     ).fetchall()
 
     for row in acct_rows:
+        if row["account_id"] in person_linked_account_ids:
+            continue
         member_ids = [
             mid for mid in (row["member_ids_raw"] or "").split(",") if mid
         ]

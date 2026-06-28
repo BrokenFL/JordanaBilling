@@ -122,6 +122,10 @@ _SECURITY_HEADERS = (
     ("Referrer-Policy", "no-referrer"),
     ("X-Frame-Options", "DENY"),
 )
+_PDF_SAFE_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+)
 
 
 def review_sync_config(database_path: str):
@@ -563,13 +567,7 @@ def make_handler(database_path: str, write_token: str | None = None):
                         data["invoice"], data["lines"],
                         render_model=render_model,
                     )
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/pdf")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header("Content-Disposition", 'inline')
-                    self._apply_security_headers()
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self.send_pdf(body, f"Invoice_{invoice_id}_draft.pdf")
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/final-pdf"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
@@ -589,13 +587,7 @@ def make_handler(database_path: str, write_token: str | None = None):
                         self.send_json({"ok": False, "error": "The PDF file for this invoice is missing from the expected location."}, status=404)
                         return
                     body = pdf_path.read_bytes()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/pdf")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header("Content-Disposition", 'inline')
-                    self._apply_security_headers()
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self.send_pdf(body, pdf_path.name or f"Invoice_{invoice_id}.pdf")
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
@@ -1067,6 +1059,25 @@ def make_handler(database_path: str, write_token: str | None = None):
                 self.send_header(key, value)
             self.send_header("Content-Security-Policy", self._build_csp(nonce))
             self._security_headers_applied = True
+
+        def _apply_pdf_safe_headers(self) -> None:
+            if self._security_headers_applied:
+                return
+            for key, value in _PDF_SAFE_HEADERS:
+                self.send_header(key, value)
+            self._security_headers_applied = True
+
+        def send_pdf(self, body: bytes, filename: str) -> None:
+            safe_filename = Path(filename).name.replace('"', "")
+            if not safe_filename.lower().endswith(".pdf"):
+                safe_filename = f"{safe_filename}.pdf"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", f'inline; filename="{safe_filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self._apply_pdf_safe_headers()
+            self.end_headers()
+            self.wfile.write(body)
 
         def end_headers(self) -> None:
             self._apply_security_headers()

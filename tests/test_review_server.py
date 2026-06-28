@@ -956,6 +956,21 @@ class SecurityHeaderTests(unittest.TestCase):
         self.assertIn("script-src 'self'", csp)
         self.assertNotIn("'unsafe-inline'", csp.split("style-src")[0])
 
+    def test_inline_pdf_response_uses_pdf_safe_headers(self):
+        handler, captured = self._handler()
+        body = b"%PDF-1.4\n%%EOF\n"
+        handler.send_pdf(body, 'preview".pdf')
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["headers"].get("Content-Type"), "application/pdf")
+        self.assertEqual(captured["headers"].get("Content-Length"), str(len(body)))
+        self.assertEqual(captured["headers"].get("Content-Disposition"), 'inline; filename="preview.pdf"')
+        self.assertEqual(captured["headers"].get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(captured["headers"].get("Referrer-Policy"), "no-referrer")
+        self.assertNotIn("Content-Security-Policy", captured["headers"])
+        self.assertNotIn("X-Frame-Options", captured["headers"])
+        self.assertEqual(handler.wfile.getvalue(), body)
+
 
 if __name__ == "__main__":
     unittest.main()
