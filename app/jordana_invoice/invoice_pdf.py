@@ -10,6 +10,45 @@ from typing import Any
 
 from .invoice_rendering import build_invoice_render_model, money as format_money
 
+POINTS_PER_INCH = 72.0
+LETTER_PAGE_WIDTH = 8.5 * POINTS_PER_INCH
+LETTER_PAGE_HEIGHT = 11.0 * POINTS_PER_INCH
+LEFT_RIGHT_MARGIN = 0.50 * POINTS_PER_INCH
+TOP_MARGIN = 0.50 * POINTS_PER_INCH
+BOTTOM_MARGIN = 0.55 * POINTS_PER_INCH
+CONTENT_WIDTH = LETTER_PAGE_WIDTH - (2 * LEFT_RIGHT_MARGIN)
+
+BODY_FONT_SIZE = 10.25
+BODY_LEADING = 13.0
+SMALL_FONT_SIZE = 9.0
+SMALL_LEADING = 11.0
+LABEL_FONT_SIZE = 9.0
+LABEL_LEADING = 11.0
+TITLE_FONT_SIZE = 29.0
+TITLE_LEADING = 31.0
+TOTAL_FONT_SIZE = 14.5
+TOTAL_LEADING = 18.0
+
+LOGO_MAX_WIDTH = 1.50 * POINTS_PER_INCH
+LOGO_MAX_HEIGHT = 1.05 * POINTS_PER_INCH
+
+HEADER_LEFT_WIDTH = 4.55 * POINTS_PER_INCH
+HEADER_RIGHT_WIDTH = CONTENT_WIDTH - HEADER_LEFT_WIDTH
+TABLE_COLUMN_WIDTHS = [
+    1.12 * POINTS_PER_INCH,
+    1.65 * POINTS_PER_INCH,
+    2.78 * POINTS_PER_INCH,
+    0.85 * POINTS_PER_INCH,
+    1.10 * POINTS_PER_INCH,
+]
+TOTAL_COLUMN_WIDTHS = [6.15 * POINTS_PER_INCH, 1.35 * POINTS_PER_INCH]
+
+TABLE_ROW_TOP_PADDING = 9
+TABLE_ROW_BOTTOM_PADDING = 9
+TABLE_CELL_LEFT_PADDING = 6
+TABLE_CELL_RIGHT_PADDING = 6
+PAYMENT_FOOTER_MIN_CLEARANCE = 0.30 * POINTS_PER_INCH
+
 
 def generate_invoice_pdf(
     invoice: dict[str, Any],
@@ -20,7 +59,7 @@ def generate_invoice_pdf(
 ) -> str:
     try:
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_RIGHT
+        from reportlab.lib.enums import TA_LEFT, TA_RIGHT
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import inch
@@ -44,11 +83,73 @@ def generate_invoice_pdf(
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     styles = getSampleStyleSheet()
-    body = ParagraphStyle("InvoiceBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, leading=12)
-    small = ParagraphStyle("InvoiceSmall", parent=body, fontSize=8, leading=10, textColor=colors.HexColor("#42526A"))
-    label = ParagraphStyle("InvoiceLabel", parent=body, fontSize=8, leading=10, textColor=colors.HexColor("#526171"), spaceAfter=3)
-    title = ParagraphStyle("InvoiceTitle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=26, leading=28, alignment=TA_RIGHT, textColor=colors.HexColor("#102A43"))
-    total_style = ParagraphStyle("InvoiceTotal", parent=body, fontName="Helvetica-Bold", fontSize=13, leading=16, alignment=TA_RIGHT)
+    body = ParagraphStyle(
+        "InvoiceBody",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
+        textColor=colors.HexColor("#102A43"),
+    )
+    small = ParagraphStyle(
+        "InvoiceSmall",
+        parent=body,
+        fontSize=SMALL_FONT_SIZE,
+        leading=SMALL_LEADING,
+        textColor=colors.HexColor("#42526A"),
+    )
+    label = ParagraphStyle(
+        "InvoiceLabel",
+        parent=body,
+        fontName="Helvetica-Bold",
+        fontSize=LABEL_FONT_SIZE,
+        leading=LABEL_LEADING,
+        textColor=colors.HexColor("#526171"),
+        spaceAfter=4,
+    )
+    title = ParagraphStyle(
+        "InvoiceTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=TITLE_FONT_SIZE,
+        leading=TITLE_LEADING,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor("#102A43"),
+    )
+    total_label_style = ParagraphStyle(
+        "InvoiceTotalLabel",
+        parent=body,
+        fontName="Helvetica-Bold",
+        fontSize=TOTAL_FONT_SIZE,
+        leading=TOTAL_LEADING,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#102A43"),
+    )
+    total_amount_style = ParagraphStyle(
+        "InvoiceTotalAmount",
+        parent=total_label_style,
+        alignment=TA_RIGHT,
+    )
+    meta_label = ParagraphStyle(
+        "InvoiceMetaLabel",
+        parent=small,
+        fontName="Helvetica-Bold",
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor("#526171"),
+    )
+    meta_value = ParagraphStyle(
+        "InvoiceMetaValue",
+        parent=body,
+        alignment=TA_RIGHT,
+    )
+    payment_title_style = ParagraphStyle(
+        "InvoicePaymentTitle",
+        parent=body,
+        fontName="Helvetica-Bold",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
+        spaceAfter=2,
+    )
 
     def para(value: Any, style=body):
         return Paragraph(_escape(value), style)
@@ -68,7 +169,7 @@ def generate_invoice_pdf(
     )
     render = render_model or build_invoice_render_model(invoice, lines)
     story = []
-    logo_flowable = _logo_flowable(render.get("logo_path"), 1.25 * inch, 0.87 * inch)
+    logo_flowable = _logo_flowable(render.get("logo_path"), LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
     if logo_flowable is None:
         fallback = [para(invoice.get("business_name_snapshot") or "Business", styles["Heading2"])]
         for value in render.get("sender_lines") or []:
@@ -77,22 +178,43 @@ def generate_invoice_pdf(
         logo_cell = fallback
     else:
         logo_cell = [logo_flowable]
+        logo_cell.append(Spacer(1, 0.08 * inch))
         for value in render.get("sender_lines") or []:
             logo_cell.append(para(value, small))
     meta = [para("INVOICE", title)]
+    meta_rows = []
     for key, value in (
         ("Invoice Number", render.get("invoice_number_display") or ""),
         ("Invoice Date", render.get("invoice_date_display") or ""),
         ("Billing Period", render.get("billing_period_display") or ""),
     ):
-        meta.append(Paragraph(f"<b>{_escape(key)}:</b> {_escape(value)}", small))
-    header = Table([[logo_cell, meta]], colWidths=[4.8 * inch, 2.7 * inch], hAlign="LEFT")
-    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-    story.extend([header, Spacer(1, 0.18 * inch), para("BILL TO", label)])
+        meta_rows.append([para(f"{key}", meta_label), para(value, meta_value)])
+    meta.append(
+        Table(
+            meta_rows,
+            colWidths=[1.20 * inch, HEADER_RIGHT_WIDTH - (1.20 * inch)],
+            style=TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]),
+        )
+    )
+    header = Table([[logo_cell, meta]], colWidths=[HEADER_LEFT_WIDTH, HEADER_RIGHT_WIDTH], hAlign="LEFT")
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.extend([header, Spacer(1, 0.24 * inch), para("BILL TO", label)])
     for value in render.get("bill_to_lines") or []:
         if value:
             story.append(para(value))
-    story.append(Spacer(1, 0.16 * inch))
+    story.append(Spacer(1, 0.24 * inch))
 
     data = [[para("Date", small), para("Participants", small), para("Service", small), para("Duration", small), para("Amount", small)]]
     for line in render.get("lines") or []:
@@ -103,7 +225,7 @@ def generate_invoice_pdf(
             para(line.get("duration_display")),
             para(line.get("amount_display")),
         ])
-    table = LongTable(data, colWidths=[1.00 * inch, 1.65 * inch, 2.90 * inch, 0.85 * inch, 1.10 * inch], repeatRows=1, hAlign="LEFT")
+    table = LongTable(data, colWidths=TABLE_COLUMN_WIDTHS, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#102A43")),
@@ -111,21 +233,45 @@ def generate_invoice_pdf(
         ("LINEBELOW", (0, 1), (-1, -1), 0.3, colors.HexColor("#D9E2EC")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), TABLE_ROW_TOP_PADDING),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), TABLE_ROW_BOTTOM_PADDING),
+        ("LEFTPADDING", (0, 0), (-1, -1), TABLE_CELL_LEFT_PADDING),
+        ("RIGHTPADDING", (0, 0), (-1, -1), TABLE_CELL_RIGHT_PADDING),
     ]))
     story.append(table)
-    total = invoice.get("total_cents", 0)
+    story.append(Spacer(1, _footer_pushdown_height(render)))
     footer = [
-        Spacer(1, 0.16 * inch),
-        Table([[para(render.get("total_label") or "TOTAL DUE", total_style), para(render.get("total_display") or format_money(total), total_style)]], colWidths=[6.40 * inch, 1.10 * inch], style=TableStyle([("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")), ("TOPPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])),
-        Spacer(1, 0.20 * inch),
-        Paragraph(f"<b>{_escape(render.get('payment_title') or 'Please make all checks payable to:')}</b>", body),
-        Paragraph(_escape(render.get("payment_name") or ""), body),
-        *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],
-        *([Paragraph(_escape(render.get("payment_zelle_line")), body)] if render.get("payment_zelle_line") else []),
+        Table(
+            [[
+                para(render.get("total_label") or "TOTAL DUE", total_label_style),
+                para(render.get("total_display") or format_money(invoice.get("total_cents", 0)), total_amount_style),
+            ]],
+            colWidths=TOTAL_COLUMN_WIDTHS,
+            style=TableStyle([
+                ("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")),
+                ("TOPPADDING", (0, 0), (-1, -1), 12),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]),
+        ),
+        Spacer(1, 0.18 * inch),
+        Table(
+            [[[
+                Paragraph(_escape(render.get("payment_title") or "Please make all checks payable to:"), payment_title_style),
+                Paragraph(_escape(render.get("payment_name") or ""), body),
+                *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],
+                *([Paragraph(_escape(render.get("payment_zelle_line")), body)] if render.get("payment_zelle_line") else []),
+            ]]],
+            colWidths=[CONTENT_WIDTH],
+            style=TableStyle([
+                ("LINEABOVE", (0, 0), (-1, -1), 0.6, colors.HexColor("#9FB3C8")),
+                ("TOPPADDING", (0, 0), (-1, -1), 12),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]),
+        ),
     ]
     story.append(KeepTogether(footer))
     try:
@@ -174,5 +320,16 @@ def _logo_flowable(raw_path: str | None, max_width: float, max_height: float):
         return image
     except Exception:
         return None
+
+
+def _footer_pushdown_height(render: dict[str, Any]) -> float:
+    line_count = max(0, len(render.get("lines") or []))
+    if line_count >= 9:
+        return 0.0
+    line_reduction = min(line_count, 8) * (0.17 * POINTS_PER_INCH)
+    extra_space = (1.55 * POINTS_PER_INCH) - line_reduction
+    return max(0.0, min(extra_space, 1.35 * POINTS_PER_INCH))
+
+
 def _escape(value: Any) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")

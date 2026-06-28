@@ -1,22 +1,39 @@
-"""Focused tests for invoice PDF layout refinement.
-
-Verifies margins, content widths, column widths, date wrapping,
-multi-page headers, footer/page numbering, overwrite protection,
-and nonempty file generation.
-"""
+"""Focused tests for invoice PDF presentation refinement."""
 import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 
-from jordana_invoice.invoice_pdf import generate_invoice_pdf
+from jordana_invoice.invoice_pdf import (
+    BODY_FONT_SIZE,
+    CONTENT_WIDTH,
+    HEADER_LEFT_WIDTH,
+    HEADER_RIGHT_WIDTH,
+    LABEL_FONT_SIZE,
+    LETTER_PAGE_HEIGHT,
+    LETTER_PAGE_WIDTH,
+    LOGO_MAX_HEIGHT,
+    LOGO_MAX_WIDTH,
+    PAYMENT_FOOTER_MIN_CLEARANCE,
+    SMALL_FONT_SIZE,
+    TABLE_CELL_LEFT_PADDING,
+    TABLE_CELL_RIGHT_PADDING,
+    TABLE_COLUMN_WIDTHS,
+    TABLE_ROW_BOTTOM_PADDING,
+    TABLE_ROW_TOP_PADDING,
+    TITLE_FONT_SIZE,
+    TOTAL_COLUMN_WIDTHS,
+    TOTAL_FONT_SIZE,
+    _footer_pushdown_height,
+    generate_invoice_pdf,
+)
 
 # US Letter in points
-PAGE_W = 612.0
-PAGE_H = 792.0
+PAGE_W = LETTER_PAGE_WIDTH
+PAGE_H = LETTER_PAGE_HEIGHT
 MARGIN_IN = 0.50
 MARGIN_PT = MARGIN_IN * 72
-CONTENT_W = PAGE_W - 2 * MARGIN_PT  # 540pt = 7.5"
+CONTENT_W = CONTENT_WIDTH
 
 
 def _sample_invoice(**overrides):
@@ -135,21 +152,49 @@ class InvoicePdfLayoutTests(unittest.TestCase):
     # --- 2. Column widths sum exactly to content width ---
 
     def test_table_column_widths_sum_to_content_width(self):
-        from reportlab.lib.units import inch
-        cols = [1.00 * inch, 1.65 * inch, 2.90 * inch, 0.85 * inch, 1.10 * inch]
-        self.assertAlmostEqual(sum(cols), CONTENT_W, delta=0.5)
+        self.assertAlmostEqual(sum(TABLE_COLUMN_WIDTHS), CONTENT_W, delta=0.5)
 
     def test_header_column_widths_sum_to_content_width(self):
-        from reportlab.lib.units import inch
-        cols = [4.80 * inch, 2.70 * inch]
-        self.assertAlmostEqual(sum(cols), CONTENT_W, delta=0.5)
+        self.assertAlmostEqual(HEADER_LEFT_WIDTH + HEADER_RIGHT_WIDTH, CONTENT_W, delta=0.5)
 
-    def test_total_bar_widths_sum_to_content_width(self):
-        from reportlab.lib.units import inch
-        cols = [6.40 * inch, 1.10 * inch]
-        self.assertAlmostEqual(sum(cols), CONTENT_W, delta=0.5)
+    def test_total_section_uses_full_width(self):
+        self.assertAlmostEqual(sum(TOTAL_COLUMN_WIDTHS), CONTENT_W, delta=0.5)
 
-    # --- 3. Header/table/total use full frame width (content present) ---
+    # --- 3. Typography, logo, and row spacing scale up for print ---
+
+    def test_typography_sizes_match_print_contract(self):
+        self.assertGreaterEqual(BODY_FONT_SIZE, 10.0)
+        self.assertLessEqual(BODY_FONT_SIZE, 10.5)
+        self.assertAlmostEqual(SMALL_FONT_SIZE, 9.0, delta=0.1)
+        self.assertGreaterEqual(TITLE_FONT_SIZE, 28.0)
+        self.assertLessEqual(TITLE_FONT_SIZE, 30.0)
+        self.assertGreaterEqual(TOTAL_FONT_SIZE, 14.0)
+        self.assertLessEqual(TOTAL_FONT_SIZE, 15.0)
+        self.assertAlmostEqual(LABEL_FONT_SIZE, 9.0, delta=0.1)
+
+    def test_logo_max_dimensions_match_refinement(self):
+        self.assertGreaterEqual(LOGO_MAX_WIDTH, 1.45 * 72)
+        self.assertLessEqual(LOGO_MAX_WIDTH, 1.55 * 72)
+        self.assertLessEqual(LOGO_MAX_HEIGHT, 1.10 * 72)
+
+    def test_logo_scales_within_bounds(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_pdf import _logo_flowable
+
+        logo_path = Path("app/jordana_invoice/static/assets/jordana-logo.png")
+        image = _logo_flowable(str(logo_path), LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
+        self.assertIsNotNone(image)
+        self.assertLessEqual(image.drawWidth, LOGO_MAX_WIDTH + 0.1)
+        self.assertLessEqual(image.drawHeight, LOGO_MAX_HEIGHT + 0.1)
+
+    def test_row_padding_matches_print_spacing(self):
+        self.assertEqual(TABLE_ROW_TOP_PADDING, 9)
+        self.assertEqual(TABLE_ROW_BOTTOM_PADDING, 9)
+        self.assertGreaterEqual(TABLE_CELL_LEFT_PADDING, 6)
+        self.assertGreaterEqual(TABLE_CELL_RIGHT_PADDING, 6)
+
+    # --- 4. Header/table/total use full frame width (content present) ---
 
     def test_invoice_text_present_on_page(self):
         if not _has_pdf_deps():
@@ -179,17 +224,14 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = reader.pages[0].extract_text() or ""
         self.assertIn("TOTAL DUE", text)
 
-    # --- 4. Date column wide enough to avoid avoidable wrapping ---
+    # --- 5. Date column wide enough to avoid avoidable wrapping ---
 
     def test_date_column_wider_than_old_width(self):
-        from reportlab.lib.units import inch
-        new_w = 1.00 * inch
-        old_w = 0.78 * inch
-        self.assertGreater(new_w, old_w)
+        old_w = 0.78 * 72
+        self.assertGreater(TABLE_COLUMN_WIDTHS[0], old_w)
 
     def test_date_column_fits_long_date_text(self):
-        from reportlab.lib.units import inch
-        available = 1.00 * inch - 10  # LEFTPADDING + RIGHTPADDING
+        available = TABLE_COLUMN_WIDTHS[0] - (TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING)
         # "June 22, 2026" at 9pt Helvetica is ~58pt
         self.assertGreaterEqual(available, 58)
 
@@ -209,7 +251,33 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = reader.pages[0].extract_text() or ""
         self.assertIn("June 22, 2026", text)
 
-    # --- 5. Multi-page table headers still repeat ---
+    # --- 6. Short-invoice footer placement and page balance ---
+
+    def test_short_invoice_stays_one_page(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+
+        path = self._generate_pdf()
+        self.assertEqual(len(PdfReader(path).pages), 1)
+
+    def test_short_invoice_uses_footer_pushdown_spacing(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+
+        render = {
+            "lines": _sample_lines(),
+        }
+        self.assertGreater(_footer_pushdown_height(render), 0.80 * 72)
+        self.assertGreaterEqual(PAYMENT_FOOTER_MIN_CLEARANCE, 0.30 * 72)
+
+    def test_multi_page_invoice_uses_no_extra_footer_pushdown(self):
+        render = {
+            "lines": _multi_page_lines(),
+        }
+        self.assertEqual(_footer_pushdown_height(render), 0.0)
+
+    # --- 7. Multi-page table headers still repeat ---
 
     def test_multi_page_table_headers_repeat(self):
         if not _has_pdf_deps():
@@ -224,7 +292,15 @@ class InvoicePdfLayoutTests(unittest.TestCase):
             self.assertIn("Date", text)
             self.assertIn("Participants", text)
 
-    # --- 6. Footer/page numbering behavior remains ---
+    def test_multi_page_invoice_still_splits_normally(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+
+        path = self._generate_pdf(lines=_multi_page_lines())
+        self.assertGreater(len(PdfReader(path).pages), 1)
+
+    # --- 8. Footer/page numbering behavior remains ---
 
     def test_footer_invoice_number_on_every_page(self):
         if not _has_pdf_deps():
@@ -260,7 +336,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIn("TOTAL DUE", texts[-1])
         self.assertIn("Please make all checks payable to:", texts[-1])
 
-    # --- 7. Existing-file overwrite protection remains ---
+    # --- 9. Existing-file overwrite protection remains ---
 
     def test_overwrite_protection_raises(self):
         if not _has_pdf_deps():
@@ -270,7 +346,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             generate_invoice_pdf(_sample_invoice(), _sample_lines(), path)
 
-    # --- 8. PDF generation produces a nonempty valid file ---
+    # --- 10. PDF generation produces a nonempty valid file ---
 
     def test_generates_nonempty_valid_pdf(self):
         if not _has_pdf_deps():
