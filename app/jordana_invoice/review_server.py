@@ -44,6 +44,7 @@ from .review_services import (
     list_rate_rules,
     mark_candidate,
     merge_people,
+    normalize_duplicate_payer_billing_parties,
     promote_candidate_to_review,
     recalc_unapproved_session_rates,
     reparse_unapproved_candidates,
@@ -87,7 +88,8 @@ from .invoice_services import (
     update_invoice_line_item,
     void_invoice,
 )
-from .invoice_rendering import build_print_preview_html
+from .invoice_rendering import build_print_preview_html, build_invoice_render_model
+from .invoice_pdf import generate_draft_pdf_bytes
 from .financial_summary import get_financial_summary
 from .payment_services import (
     apply_available_funds,
@@ -546,6 +548,29 @@ def make_handler(database_path: str, write_token: str | None = None):
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/draft-pdf"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    data = get_invoice(self.conn(), invoice_id)
+                    if data["invoice"]["status"] != "draft":
+                        self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
+                        return
+                    render_model = build_invoice_render_model(
+                        data["invoice"], data["lines"],
+                        business_profile=data.get("business_profile"),
+                        billing_party=data.get("billing_party"),
+                    )
+                    body = generate_draft_pdf_bytes(
+                        data["invoice"], data["lines"],
+                        render_model=render_model,
+                    )
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Content-Disposition", 'inline')
+                    self._apply_security_headers()
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/final-pdf"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
                     row = self.conn().execute("SELECT status, pdf_path FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
@@ -926,6 +951,18 @@ def make_handler(database_path: str, write_token: str | None = None):
                     return
                 if parsed.path == "/api/billing-relationships/setup":
                     self.send_json(setup_billing_relationship(self.conn(), data))
+                    return
+                if parsed.path == "/api/billing-relationships/normalize-payer":
+                    person_id = data.get("person_id")
+                    if not person_id:
+                        self.send_json({"ok": False, "error": "person_id is required."}, status=400)
+                        return
+                    canonical_bp_id = data.get("canonical_billing_party_id")
+                    result = normalize_duplicate_payer_billing_parties(
+                        self.conn(), person_id,
+                        canonical_billing_party_id=canonical_bp_id,
+                    )
+                    self.send_json({"ok": True, **result})
                     return
                 self.send_error(404)
             except Exception as error:

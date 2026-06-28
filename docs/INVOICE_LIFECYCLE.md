@@ -318,6 +318,14 @@ GET /api/invoices/{invoice_id}/print-preview
 
 Returns a self-contained HTML page with a **DRAFT** watermark and banner. Side-effect free: does not write to the database, generate PDFs, assign invoice numbers, or change any state. Only available for draft invoices; finalized or void invoices return HTTP 400.
 
+### Draft PDF Preview
+
+```
+GET /api/invoices/{invoice_id}/draft-pdf
+```
+
+Returns a real PDF preview of a draft invoice using the same ReportLab render model and layout as final invoice generation. The PDF is clearly marked **DRAFT** and does not assign an invoice number. Side-effect free: does not write to the database, does not write `pdf_path` or `pdf_sha256`, does not change invoice status or revision, and does not create any audit event. Missing readiness errors (e.g. missing address or email) do not block the preview. Only available for draft invoices; finalized or void invoices return HTTP 400.
+
 ### Final PDF Serving
 
 ```
@@ -325,3 +333,11 @@ GET /api/invoices/{invoice_id}/final-pdf
 ```
 
 Serves the stored PDF file for finalized or void invoices. Returns the raw PDF bytes with `Content-Type: application/pdf` and `Content-Disposition: inline`. Does not expose the file path to the client. Returns HTTP 400 for draft invoices, HTTP 404 if the invoice or PDF file is missing.
+
+### Normalize Duplicate Payer Billing Parties
+
+```
+POST /api/billing-relationships/normalize-payer
+```
+
+Audited normalization of duplicate active person-linked billing parties for a given payer. Request body: `{ "person_id": "...", "canonical_billing_party_id": "..." (optional) }`. Selects or establishes one canonical active billing-party record, copies missing contact/delivery fields from redundant records (never overwriting non-empty canonical fields), deactivates redundant records, repoints safe mutable references (account defaults, draft-only invoice/session references), and leaves finalized invoices, snapshots, PDF paths, and payment ownership unchanged. Returns a structured summary of the merge operation.

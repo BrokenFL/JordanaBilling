@@ -2484,7 +2484,7 @@ async function renderInvoiceEditor(data) {
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Print Preview</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Preview PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
 
   document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
@@ -2516,8 +2516,9 @@ async function renderInvoiceEditor(data) {
   };
 
   $("printPreviewBtn").onclick = () => {
-    window.open(`/api/invoices/${i.invoice_id}/print-preview`, "_blank");
+    window.open(`/api/invoices/${i.invoice_id}/draft-pdf`, "_blank");
   };
+  // /print-preview HTML endpoint remains available as a fallback
 }
 
 
@@ -2777,12 +2778,15 @@ function renderFinalizationPreview(preview) {
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
       ${notesHtml}
     </article>
-    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="backToDraftBtn">Back to Draft</button></div>
+    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="draftPdfPreviewBtn">Preview PDF</button><button id="backToDraftBtn">Back to Draft</button></div>
   </div>`;
   const finalizeBtn = $("confirmFinalizeBtn");
   const backBtn = $("backToDraftBtn");
   const errorDiv = $("finalizeError");
   backBtn.onclick = () => { state.finalizeInProgress = false; renderInvoiceEditor(preview); };
+  if ($("draftPdfPreviewBtn")) $("draftPdfPreviewBtn").onclick = () => {
+    window.open(`/api/invoices/${i.invoice_id}/draft-pdf`, "_blank");
+  };
   finalizeBtn.onclick = async () => {
     if (state.finalizeInProgress) return;
     state.finalizeInProgress = true;
@@ -3190,6 +3194,10 @@ function billingDirPayerName(rec) {
 
 function billingDirPayerSubtext(rec) {
   if (rec.record_type === "self_pay") {
+    const people = rec.covered_people || [];
+    if (people.length > 1) {
+      return `Pays for ${people.map(p => escapeHtml(p.display_name || "Unknown")).join(" and ")}`;
+    }
     return "Pays for herself";
   }
   if (rec.record_type === "third_party") {
@@ -3198,7 +3206,7 @@ function billingDirPayerSubtext(rec) {
       return `Pays for ${escapeHtml(people[0].display_name || "Unknown")}`;
     }
     if (people.length > 1) {
-      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")} and ${people.length - 1} other${people.length - 1 === 1 ? "" : "s"}`;
+      return `Pays for ${people.map(p => escapeHtml(p.display_name || "Unknown")).join(" and ")}`;
     }
     return "Pays for others";
   }
@@ -3266,7 +3274,10 @@ function billingDirOpenButton(rec) {
     return `<button class="mini" data-open-organization="${escapeHtml(rec.billing_party_id)}">Open</button>`;
   }
   if (rec.payer_person_id) {
-    return `<button class="mini" data-open-person="${escapeHtml(rec.payer_person_id)}">Open</button>`;
+    const normalizeBtn = rec.has_payer_record_conflict
+      ? `<button class="mini" data-normalize-payer="${escapeHtml(rec.payer_person_id)}">Normalize</button>`
+      : "";
+    return `<button class="mini" data-open-person="${escapeHtml(rec.payer_person_id)}">Open</button> ${normalizeBtn}`;
   }
   return `<button class="mini" disabled title="No detail view available">Details unavailable</button>`;
 }
@@ -3341,6 +3352,23 @@ function renderBillingDirRows() {
       openOrgBtn.onclick = (e) => {
         e.stopPropagation();
         openOrganizationRecord(openOrgBtn.dataset.openOrganization);
+      };
+    }
+    const normalizeBtn = tr.querySelector("[data-normalize-payer]");
+    if (normalizeBtn) {
+      normalizeBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm("Normalize duplicate billing parties for this payer? This will select one canonical record, copy missing fields, deactivate redundant records, and repoint safe references. Finalized invoices and payment history will not be changed.")) return;
+        try {
+          const result = await api("/api/billing-relationships/normalize-payer", {
+            method: "POST",
+            body: JSON.stringify({ person_id: normalizeBtn.dataset.normalizePayer }),
+          });
+          alert(`Normalized: ${result.deactivated_count} redundant record(s) deactivated. ${result.fields_copied.length} field(s) copied. ${result.conflicts.length} conflict(s) found.`);
+          await loadClients();
+        } catch (err) {
+          alert(err.message || "Failed to normalize payer records.");
+        }
       };
     }
   });

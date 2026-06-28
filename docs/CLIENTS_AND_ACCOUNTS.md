@@ -170,7 +170,7 @@ Billing Setup is editable from the full-screen client profile. The following beh
 - **Historical preservation:** Existing sessions and finalized invoices retain their billing-party references and snapshots. Editing a billing setup does not rewrite historical session or invoice values.
 - **Audit:** All create, update, deactivate, and reactivate actions are recorded in the audit log. Audit details contain changed field names only — no billing email, phone, address, or other field values are exposed.
 - **Organization editing remains out of scope:** The client profile Billing Setup form does not expose organization fields. Organization billing-party editing is a separate future feature.
-- **Legacy duplicates stay reviewable:** If multiple active billing-party records or duplicate active relationships already exist, they are surfaced for review rather than merged or deleted automatically. Cleanup requires an explicit audited deactivation or merge workflow.
+- **Legacy duplicates stay reviewable:** If multiple active billing-party records or duplicate active relationships already exist, they are surfaced for review rather than merged or deleted automatically. Cleanup uses the explicit audited normalization endpoint (`POST /api/billing-relationships/normalize-payer`) which selects one canonical record, copies missing fields, deactivates redundant records, repoints safe mutable references, and leaves finalized invoices and payment history unchanged. The Billing Relationships UI shows a "Normalize" button on payer rows with detected conflicts.
 
 ### Payer Relationship Wording
 
