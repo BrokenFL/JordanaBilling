@@ -104,7 +104,7 @@ Open the generated report and focus on:
 
 ## Do Not Do Yet
 
-The local prototype now supports invoice drafts, finalization, PDF history, and void/reissue. Configure private identity/branding with `docs/BUSINESS_PROFILE.md` before any private trial. New generated PDFs default to ignored `Invoices/<PERSON_CODE> - <Display Name>/<year>/`; this application does not send them.
+The local prototype now supports invoice drafts, finalization, PDF history, and void/reissue. Configure private identity/branding with `docs/BUSINESS_PROFILE.md` before any private trial. New generated PDFs default to ignored `Invoices/<Client Display Name>/<Month YYYY>/`; this application does not send them.
 
 - Do not mark sessions invoice-ready without Jordana review.
 - Do not add clinical notes.

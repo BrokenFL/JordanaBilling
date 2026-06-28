@@ -16,6 +16,7 @@ from jordana_invoice.invoice_services import (
     remove_line_from_draft,
     resolve_invoice_filing_owner,
     save_business_profile,
+    trusted_invoice_document_action,
     update_invoice_filing_owner,
     update_invoice_draft,
     void_invoice,
@@ -636,7 +637,7 @@ class FilingOwnerTests(unittest.TestCase):
         self.assertEqual(updated["filing_owner"]["selected"]["person_id"], b["person_id"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_finalization_freezes_filing_owner_snapshots_and_stable_folder(self, fake_pdf):
+    def test_finalization_freezes_filing_owner_snapshots_and_human_folder(self, fake_pdf):
         def write_pdf(_invoice, _lines, output_path, **_kwargs):
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             Path(output_path).write_bytes(b"pdf")
@@ -651,7 +652,8 @@ class FilingOwnerTests(unittest.TestCase):
         person_code = client["person_code"]
         self.assertEqual(final["invoice"]["filing_owner_person_id"], client["person_id"])
         self.assertEqual(final["invoice"]["filing_owner_person_code_snapshot"], person_code)
-        self.assertIn(f"{person_code} - Folder Client/2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.assertIn("Folder Client/May 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.assertNotIn(f"{person_code} - Folder Client", final["invoice"]["pdf_path"])
         self.conn.execute("UPDATE people SET display_name = ? WHERE person_id = ?", ("Changed Name", client["person_id"]))
         self.conn.commit()
         reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
@@ -664,14 +666,127 @@ class FilingOwnerTests(unittest.TestCase):
         session = self._session("collision", [{"person_id": client["person_id"], "display_name": "Collision Client"}], party["billing_party_id"])
         draft = self._draft(party["billing_party_id"], [session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
-        folder = f"{client['person_code']} - Collision Client"
-        target = self.root / "Invoices" / folder / "2026" / "Invoice_2026-0001.pdf"
+        (self.root / "Invoices" / "Collision Client").mkdir(parents=True, exist_ok=True)
+        target = self.root / "Invoices" / f"Collision Client [{client['person_code']}]" / "May 2026" / "Invoice_2026-0001.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"existing")
         with self.assertRaises(ValueError):
             finalize_invoice(self.conn, draft["invoice"]["invoice_id"], expected_revision=preview["preview_revision"], pdf_root=self.root / "Invoices")
         self.assertEqual(target.read_bytes(), b"existing")
         self.assertEqual(get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]["status"], "draft")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_duplicate_display_name_uses_person_code_only_for_conflict(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "d" * 64
+        fake_pdf.side_effect = write_pdf
+        first = self._person("Lou", "Yeager")
+        second = self._person("Louis", "Yeager")
+        self.conn.execute("UPDATE people SET display_name = ? WHERE person_id = ?", ("Lou Yeager", second["person_id"]))
+        self.conn.commit()
+        first_party = self._party("Lou Yeager", first["person_id"])
+        second_party = self._party("Lou Yeager 2", second["person_id"])
+        first_session = self._session("louone", [{"person_id": first["person_id"], "display_name": "Lou Yeager"}], first_party["billing_party_id"])
+        second_session = self._session("loutwo", [{"person_id": second["person_id"], "display_name": "Lou Yeager"}], second_party["billing_party_id"])
+        first_draft = self._draft(first_party["billing_party_id"], [first_session])
+        second_draft = self._draft(second_party["billing_party_id"], [second_session])
+
+        first_final = finalize_invoice(self.conn, first_draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        second_final = finalize_invoice(self.conn, second_draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+
+        self.assertIn("Lou Yeager/May 2026/Invoice_2026-0001.pdf", first_final["invoice"]["pdf_path"])
+        self.assertIn(f"Lou Yeager [{second['person_code']}]/May 2026/Invoice_2026-0002.pdf", second_final["invoice"]["pdf_path"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_same_person_reuses_existing_new_client_folder(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "g" * 64
+        fake_pdf.side_effect = write_pdf
+        client = self._person("Reuse", "Client")
+        party = self._party("Reuse Client", client["person_id"])
+        first_session = self._session("reusea", [{"person_id": client["person_id"], "display_name": "Reuse Client"}], party["billing_party_id"])
+        first_draft = self._draft(party["billing_party_id"], [first_session])
+        first_final = finalize_invoice(self.conn, first_draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.conn.execute("UPDATE people SET display_name = ? WHERE person_id = ?", ("Reuse Client Renamed", client["person_id"]))
+        self.conn.commit()
+        second_session = self._session("reuseb", [{"person_id": client["person_id"], "display_name": "Reuse Client Renamed"}], party["billing_party_id"])
+        second_draft = self._draft(party["billing_party_id"], [second_session])
+        second_final = finalize_invoice(self.conn, second_draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertIn("Reuse Client/May 2026/Invoice_2026-0001.pdf", first_final["invoice"]["pdf_path"])
+        self.assertIn("Reuse Client/May 2026/Invoice_2026-0002.pdf", second_final["invoice"]["pdf_path"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_month_folder_uses_billing_period_not_invoice_date_or_wall_clock(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "e" * 64
+        fake_pdf.side_effect = write_pdf
+        client = self._person("Month", "Client")
+        party = self._party("Month Client", client["person_id"])
+        session = self._session("monthsrc", [{"person_id": client["person_id"], "display_name": "Month Client"}], party["billing_party_id"])
+        self.conn.execute("UPDATE sessions SET session_date = ? WHERE id = ?", ("2026-06-15", session["id"]))
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": party["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-07-02",
+            "session_ids": [session["id"]],
+        })
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertIn("Month Client/June 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.assertNotIn("July 2026", final["invoice"]["pdf_path"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_sanitized_display_name_folder_is_deterministic(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "f" * 64
+        fake_pdf.side_effect = write_pdf
+        client = create_person(self.conn, {"first_name": "Bad", "last_name": "Name", "display_name": "Bad / Name: Jr."})
+        party = self._party("Bad Name", client["person_id"])
+        session = self._session("badname", [{"person_id": client["person_id"], "display_name": "Bad / Name: Jr."}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertIn("Bad Name Jr/May 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+
+    @patch("jordana_invoice.invoice_services.subprocess.run")
+    def test_document_actions_support_new_and_legacy_paths(self, fake_open):
+        client = self._person("Finder", "Client")
+        new_pdf = self.root / "Invoices" / "Finder Client" / "May 2026" / "Invoice_2026-0001.pdf"
+        old_pdf = self.root / "Invoices" / f"{client['person_code']} - Finder Client" / "2026" / "Invoice_2026-0000.pdf"
+        new_pdf.parent.mkdir(parents=True, exist_ok=True)
+        old_pdf.parent.mkdir(parents=True, exist_ok=True)
+        new_pdf.write_bytes(b"pdf")
+        old_pdf.write_bytes(b"pdf")
+        now = "2026-06-01T00:00:00"
+        party = self._party("Finder Client", client["person_id"])
+        for invoice_id, pdf_path in (("new-doc-action", new_pdf), ("old-doc-action", old_pdf)):
+            self.conn.execute(
+                """
+                INSERT INTO invoices (
+                  invoice_id, invoice_number, status, bill_to_party_id, billing_period_start,
+                  billing_period_end, invoice_date, total_cents, delivery_method,
+                  filing_owner_person_id, filing_owner_person_code_snapshot,
+                  filing_owner_display_name_snapshot, pdf_path, pdf_sha256,
+                  created_at, updated_at, finalized_at
+                ) VALUES (?, ?, 'finalized', ?, '2026-05-01', '2026-05-31', '2026-05-31',
+                  1000, 'email', ?, ?, 'Finder Client', ?, ?, ?, ?, ?)
+                """,
+                (invoice_id, invoice_id, party["billing_party_id"], client["person_id"], client["person_code"], str(pdf_path), "a" * 64, now, now, now),
+            )
+        self.conn.commit()
+
+        trusted_invoice_document_action(self.conn, "new-doc-action", "open_client_folder", pdf_root=self.root / "Invoices")
+        self.assertEqual(fake_open.call_args.args[0], ["open", str((self.root / "Invoices" / "Finder Client").resolve(strict=False))])
+        trusted_invoice_document_action(self.conn, "old-doc-action", "show_in_finder", pdf_root=self.root / "Invoices")
+        self.assertEqual(fake_open.call_args.args[0], ["open", "-R", str(old_pdf.resolve(strict=False))])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_storage_failure_rolls_back_and_removes_partial_file(self, fake_pdf):
@@ -690,8 +805,7 @@ class FilingOwnerTests(unittest.TestCase):
         invoice = get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]
         self.assertEqual(invoice["status"], "draft")
         self.assertIsNone(invoice["pdf_path"])
-        folder = f"{client['person_code']} - Partial Client"
-        self.assertFalse((self.root / "Invoices" / folder / "2026" / "Invoice_2026-0001.pdf").exists())
+        self.assertFalse((self.root / "Invoices" / "Partial Client" / "May 2026" / "Invoice_2026-0001.pdf").exists())
 
 
 if __name__ == "__main__":

@@ -129,7 +129,7 @@ Append-only record of parsing, proposed sessions, review decisions, and future i
 
 ## Invoice Filing Owner Additions
 
-Finalized invoices can freeze `filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`. These identify the permanent client person whose folder contains the invoice PDF and are separate from `bill_to_party_id`, participants, account membership, and payment ownership. Existing finalized invoices may have these fields blank and must keep their stored `pdf_path` and checksum.
+Finalized invoices can freeze `filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`. These identify the permanent client person whose folder contains the invoice PDF and are separate from `bill_to_party_id`, participants, account membership, and payment ownership. New visible folders normally use the display-name snapshot; the frozen person code disambiguates same-name collisions and remains the internal identity. Existing finalized invoices may have these fields blank and must keep their stored `pdf_path` and checksum.
 ## Calendar Status Additions
 
 Authoritative raw calendar evidence remains in `raw_calendar_snapshots`. The existing `calendar` payload/header maps to `calendar_name`.
