@@ -6,7 +6,7 @@ Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot r
 
 Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
 
-Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. Round 1 payment tracking now adds an `Unpaid` workspace for outstanding finalized invoices, single-invoice payment entry, deterministic allocation across invoice lines, and read-only payment history. Credits, reversals/voiding controls, multi-invoice payments, and reconciliation remain unfinished.
+Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. The payment ledger is now implemented with payment creation, allocation across invoice lines, reversal/void corrections, apply-available-funds, invoice payment history, and a tabbed Payments workspace. Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.
 
 ## Current Scope
 
@@ -83,15 +83,15 @@ JORDANA_BACKUP_DIR=
 Then run:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice sync
-PYTHONPATH=app python -m jordana_invoice sync-status
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync-status
 ```
 
 Useful variants:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice sync --dry-run
-PYTHONPATH=app python -m jordana_invoice sync --full
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --full
 ```
 
 `sync` fetches only rows after the saved cursor. `sync --full` asks for all available completed rows but still does not duplicate snapshots because `snapshot_key` is unique locally.
@@ -109,7 +109,7 @@ The reports are written atomically so a failed write does not leave a partial CS
 Run the local review workbench:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
 ```
 
 Open:
@@ -159,7 +159,7 @@ Create and launch the isolated demo database:
 
 ```bash
 scripts/create_demo_database.sh
-PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
 ```
 
 The generated demo DB is ignored by Git and explicitly marked as demo mode, causing the UI to show `DEMO DATA - NOT FOR REAL BILLING`.
@@ -171,7 +171,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - SQLite is the local application database.
 - Ambiguous rows stay reviewable and reversible.
 - Calendar import and review commands do not generate invoices automatically.
-- Phase 2 includes local PDF invoice generation and immutable finalization snapshots plus a first-round outstanding-payments workspace.
+- Phase 2 includes local PDF invoice generation and immutable finalization snapshots plus an implemented payment ledger with corrections.
 - No polished production dashboard is built yet.
 - Do not store clinical notes beyond the raw calendar evidence already imported.
 - Do not rewrite historical finalized invoice values when rates change later.

@@ -72,5 +72,5 @@ print(f"DEMO: raw_snapshots={raw_count} candidates={candidate_count} sessions={s
 print(f"DEMO: invoices={invoice_counts}")
 print(f"DEMO: sanitized invoice PDFs={invoice_pdf_root}")
 print("DEMO: SQLite integrity_check=ok")
-print(f"DEMO: launch review UI with: PYTHONPATH=app python3 -m jordana_invoice --db {db_path} serve-review")
+print(f"DEMO: launch review UI with: PYTHONPATH=app .venv/bin/python -m jordana_invoice --db {db_path} serve-review")
 PY

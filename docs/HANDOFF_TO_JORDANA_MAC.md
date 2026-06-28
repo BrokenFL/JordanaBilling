@@ -29,14 +29,14 @@ The setup script creates `.venv`, required folders, initializes or migrates SQLi
 Run a manual sync:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice sync
-PYTHONPATH=app python -m jordana_invoice sync-status
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync-status
 ```
 
 Run a test without writing:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice sync --dry-run
+PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run
 ```
 
 ## Install Hourly Mac Sync
@@ -83,8 +83,8 @@ This does not replace automated sync. It is for testing or emergency recovery.
 1. Change the accepted key in Apps Script.
 2. Deploy a new Apps Script web app version.
 3. Update `JORDANA_INGEST_API_KEY` in `.env` on the Mac.
-4. Run `PYTHONPATH=app python -m jordana_invoice sync --dry-run`.
-5. If dry run succeeds, run `PYTHONPATH=app python -m jordana_invoice sync`.
+4. Run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run`.
+5. If dry run succeeds, run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync`.
 
 ## What To Review First
 
@@ -158,12 +158,12 @@ See `docs/CLIENTS_AND_ACCOUNTS.md` for full documentation of all rounds.
 - Developer commands for rate seeding, rate policy, and review decisions
 - Phase 2 CSV exports
 
-The next product round should add a complete payment UI, reconciliation, reversal/void workflows, and month-close workflow (backend payment and allocation foundations exist but these workflows remain unfinished), as well as an invoice delivery workflow and dashboard integration.
+The next product round should add invoice delivery workflow and dashboard integration. The payment ledger, allocations, corrections (reversal/void/apply-funds), invoice payment history, and Payments workspace are now implemented. Credits, multi-invoice payments, formal reconciliation, and month-close workflows remain unfinished.
 
 ## Start Review UI
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
 ```
 
 Open `http://127.0.0.1:8765/review`.
@@ -196,7 +196,7 @@ For demo review on a Mac, create the isolated sanitized database:
 
 ```bash
 scripts/create_demo_database.sh
-PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
 ```
 
 Never import demo rows into a live database.

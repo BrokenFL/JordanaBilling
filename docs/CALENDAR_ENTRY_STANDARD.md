@@ -81,7 +81,7 @@ scripts/create_demo_database.sh
 Launch the demo review UI:
 
 ```bash
-PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
 ```
 
 The demo database is explicitly marked with `app_metadata.demo_mode=true`, and the UI shows `DEMO DATA - NOT FOR REAL BILLING`.

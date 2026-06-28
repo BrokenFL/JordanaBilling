@@ -50,6 +50,12 @@ backend account/group information; folding a same-payer shared group into the
 normal payer row does not delete or rewrite the account, members, sessions,
 approved billing decisions, invoices, payments, or audit history.
 
+The **Normalize** button appears only on payer rows with detected true duplicate
+person-linked billing-party conflicts (multiple active person-linked billing
+parties for the same payer). It does not appear merely because an internal shared
+account exists — a shared account that resolves to the same payer relationship is
+folded into one payer-centered row as normal display behavior, not a conflict.
+
 ## Navigation
 
 - **Person-linked payer rows:** Open navigates to `#people/{person_id}`, opening the full-screen client profile.
@@ -70,7 +76,7 @@ The panel displays:
 
 - **Header:** Organization name (falling back to billing name), billing name as secondary when different, Active/Inactive status, and a Close button. Internal UUIDs are not displayed prominently.
 - **Billing Details:** Read-only organization name, billing name, email, phone, address, preferred delivery method, and administrative notes. Missing values show a neutral fallback (em dash). No Edit, Save, Delete, Deactivate, or Reactivate controls appear.
-- **Billing Summary:** Five compact cards — Sessions, Approved Uninvoiced Sessions, Invoices, Total Invoiced, and Finalized Invoice Total. The total reflects non-void finalized invoice totals only. A muted note explains: "Finalized invoice totals reflect non-void finalized invoices only. Payment tracking is not yet implemented."
+- **Billing Summary:** Five compact cards — Sessions, Approved Uninvoiced Sessions, Invoices, Total Invoiced, and Finalized Invoice Total. The total reflects non-void finalized invoice totals only. A muted note explains: "Finalized invoice totals reflect non-void finalized invoices only. Payment and allocation details are available in the Payments workspace."
 - **Covered Clients:** Table with client name, person code, session count, latest session date, and Open (navigates to `#people/{person_id}`). Empty state: "No clients have sessions billed to this organization yet." No account membership is inferred from sessions.
 - **Sessions:** Table with date, participants, session type, duration, time category, stored approved rate, review status, invoice, and Open in Review. Sessions are newest first. Rates are displayed as stored — no recalculation. Draft invoices with an `invoice_id` but no `invoice_number` show "Draft invoice." Open in Review navigates to the existing review workbench via `candidate_id`.
 - **Invoice History:** Table with invoice number, billing period, issue date, status, total, balance, and Open. Void invoices show zero balance. Open uses the existing invoice view. No Finalize, Mark Paid, Delete, or payment controls appear.
@@ -87,7 +93,7 @@ The panel fetches data from `GET /api/billing-parties/{billing_party_id}`. This 
 - No person or account is automatically created.
 - Invoices may be opened read-only via the existing invoice view.
 - No payment or finalization controls are available.
-- Finalized Invoice Total reflects non-void finalized invoices only; invoice payments are not yet tracked.
+- Finalized Invoice Total reflects non-void finalized invoices only; payment and allocation details are available in the Payments workspace, not in this panel.
 - No schema migration was required.
 
 ### Organization Editing
@@ -170,9 +176,10 @@ Billing setup is stored through billing-party records linked to the person. The 
 Billing Setup is editable from the full-screen client profile. The following behaviors apply:
 
 - **Multiple records:** A client may have multiple Billing Setup records. Each record represents billing contact and invoice-delivery information for that permanent client.
-- **No primary or default flag:** There is no primary, default, or preferred billing setup field. All records are equal.
-- **Billing Relationships reuse one active Bill To record per payer:** When a billing relationship is created or edited for a person payer, the app reuses one canonical active billing-party record for that payer instead of silently creating a new competing Bill To record.
-- **Inactive records remain visible:** Inactive billing setups are shown with reduced opacity and an "Inactive" status pill. They are not hidden.
+- **One canonical active record per payer:** For normal future use, each person-linked payer has one canonical active billing-party record. When a billing relationship is created or edited for a person payer, the app reuses this canonical active record instead of silently creating a new competing Bill To record. Legacy duplicate active records may remain historically visible until explicitly normalized through the audited normalization endpoint.
+- **Normalization is audited and safe:** The `POST /api/billing-relationships/normalize-payer` endpoint selects one canonical record, copies missing contact/delivery fields from redundant records (never overwriting non-empty canonical fields), deactivates redundant records, repoints safe mutable references (account defaults, draft-only invoice/session references), and leaves finalized invoices, snapshots, PDF paths, payment ownership, and approved historical values unchanged.
+- **Inactive historical records remain visible:** Inactive billing setups are shown with reduced opacity and an "Inactive" status pill. They are not hidden.
+- **Multiple active competing payer profiles are not normal:** The system does not treat multiple active competing payer profiles as intended behavior. The Normalize button appears on payer rows with detected conflicts to guide explicit resolution.
 - **Add:** The "Add Billing Setup" button opens an inline form with the client's display name prefilled as the billing name, delivery method defaulting to "Unresolved", and all optional fields blank.
 - **Edit:** Each card has an Edit button that opens the inline form pre-filled with current values.
 - **Field clearing:** Optional fields (email, phone, address lines, city, state, postal code, administrative notes) can be cleared by leaving them blank. Blank values are sent as empty strings and stored as NULL. The billing name is required and cannot be blank.
@@ -202,7 +209,7 @@ Four compact summary cards appear near the top of the client workspace:
 1. **Active Billing Records** — count of active billing parties where this person is the payer
 2. **Approved Uninvoiced Sessions** — count of approved, billable, non-future sessions billed to this person that are not already attached to a draft or finalized invoice
 3. **Total Invoiced** — sum of all non-void invoice totals for billing parties belonging to this person
-4. **Finalized Invoice Total** — sum of totals for non-void finalized invoices; invoice payments are not yet tracked
+4. **Finalized Invoice Total** — sum of totals for non-void finalized invoices; payment and allocation details are available in the Payments workspace
 
 ### Client Invoice History
 

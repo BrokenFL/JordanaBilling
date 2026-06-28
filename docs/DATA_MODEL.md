@@ -244,7 +244,7 @@ The database schema directly enforces only:
 - Allowed status values (CHECK constraints).
 - Required identifiers and timestamps (NOT NULL).
 
-The following are intentionally deferred to the payment-service round and are not schema-enforced:
+The following are enforced by the payment service layer (`payment_services.py`) and are not schema-enforced:
 
 - Allocations not exceeding a payment amount.
 - Allocations not exceeding a session charge.
@@ -255,7 +255,7 @@ The following are intentionally deferred to the payment-service round and are no
 
 ### Payment Services (Backend Only)
 
-The module `payment_services.py` provides backend functions for the payment ledger. No API routes, UI, or invoice-total changes are included.
+The module `payment_services.py` provides backend functions for the payment ledger. API routes, a tabbed Payments workspace UI, and invoice payment history are now implemented. Invoice totals themselves are not modified — paid/balance amounts are derived dynamically from the payment ledger.
 
 **Available operations**:
 
@@ -311,7 +311,7 @@ Amount priority: `rate_cents_snapshot` (if positive) preferred over `approved_ra
 A local command-line interface is available in `app/jordana_invoice/payment_backfill_cli.py`:
 
 ```
-python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.sqlite
+.venv/bin/python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.sqlite
 ```
 
 - An explicit `--db` database path is mandatory. No default operational database is used.
@@ -328,6 +328,6 @@ python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.
 - No apply mode exists — only the read-only dry-run analyzer and its CLI are available.
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition.
-- No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
-- No UI, API routes, reports, or PDF changes.
+- No `paid_cents`, `balance_cents`, or settlement-status columns on invoices — paid and balance amounts are derived dynamically from the payment ledger.
 - Paid-at-session sessions remain excluded from invoicing.
+- Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.

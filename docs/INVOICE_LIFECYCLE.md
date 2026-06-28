@@ -24,13 +24,13 @@ Users can edit the description and line amount of draft invoices before finaliza
 
 Drafts may optionally carry a `billing_month` (`YYYY-MM`) that identifies the invoice as belonging to a specific calendar month. When `billing_month` is provided, the billing period start and end are derived automatically as the first and last day of that month. When only `billing_period_start` and `billing_period_end` are provided, `billing_month` is derived only if the period is exactly one complete calendar month; otherwise `billing_month` is `NULL` (legacy or nonmonthly).
 
-At most one open draft may exist per Bill To party and billing month. Finalized and void invoices do not block new drafts for the same month. `supplement_sequence` 0 marks the original monthly draft; 1+ is reserved for supplemental drafts.
+For person-linked payers, at most one open draft may exist per canonical payer and billing month. The staging service consolidates duplicate drafts tied to legacy duplicate person-linked billing-party records into one canonical draft before staging. Finalized and void invoices do not block new drafts for the same month. `supplement_sequence` 0 marks the original monthly draft; 1+ is reserved for supplemental drafts. Organizations remain grouped by their actual organization billing-party record.
 
 ### Monthly Staging Service
 
 A backend reconciliation service `stage_approved_sessions_to_monthly_drafts()` now exists in `invoice_services.py`. It is idempotent: repeated calls produce the same correct result.
 
-The service groups eligible approved sessions by `billing_party_id` + calendar billing month and reconciles them into monthly draft invoices. For each (party, month) group it uses one `BEGIN IMMEDIATE` transaction:
+The service first consolidates duplicate drafts tied to legacy duplicate person-linked billing-party records (Step 0), then groups eligible approved sessions by `billing_party_id` + calendar billing month and reconciles them into monthly draft invoices. For person-linked payers, this means one open monthly draft per canonical payer and month. For each (party, month) group it uses one `BEGIN IMMEDIATE` transaction:
 
 - Finds the existing open monthly draft for the party and month, or creates one if none exists and there are eligible sessions to stage.
 - If prior finalized or void invoices exist for the party and month, assigns `supplement_sequence = MAX(existing) + 1` for the new draft.
@@ -44,7 +44,7 @@ Stale draft lines are reconciled before finalization:
 - If a session is no longer eligible, the line is removed and the session is left unstaged.
 - Finalized and void invoice lines are never moved or modified.
 
-The service returns a structured summary with counts of drafts created/reused, sessions staged/already staged/moved/removed as ineligible, sessions skipped with reasons, and errors by party/month. It does not expose private names in returned diagnostic identifiers.
+The service returns a structured summary with counts of drafts created/reused, sessions staged/already staged/moved/removed as ineligible, sessions skipped with reasons, drafts consolidated, and errors by party/month. It does not expose private names in returned diagnostic identifiers.
 
 ### Staging API Endpoint
 
@@ -112,7 +112,7 @@ Session approval now triggers monthly invoice staging automatically. When a cand
 - If the Invoices view is visible, the UI automatically invalidates/refreshes the active invoices list via `loadInvoices()` and reopens the active invoice via `openInvoice(...)` to reflect the newly staged session without requiring a manual reload.
 
 
-Paid-at-session sessions remain excluded from staging temporarily. Payment behavior will change in a later dedicated round.
+Paid-at-session sessions remain excluded from staging temporarily. Paid-at-session backfill is analyzed by a read-only dry-run CLI (see [Payment Ledger Foundation](#payment-ledger-foundation) below), but no apply mode exists yet.
 
 ## Finalized
 
@@ -152,7 +152,7 @@ The payment block remains one centered block and now always includes both the ch
 
 ## Void And Reissue
 
-Void requires a reason and preserves the number, snapshots, PDF, and checksum. Source sessions become eligible for a new invoice with a new number. Payments and delivery are deferred.
+Void requires a reason and preserves the number, snapshots, PDF, and checksum. Source sessions become eligible for a new invoice with a new number. Payments and delivery are not automatically handled by void; existing payment records and allocations remain in the ledger and are not deleted.
 
 ## Client Page Invoice History
 
@@ -192,7 +192,7 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 A local CLI command is available for running the dry-run analyzer against a specified database:
 
 ```
-python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.sqlite
+.venv/bin/python -m jordana_invoice.payment_backfill_cli --dry-run --db /path/to/database.sqlite
 ```
 
 - An explicit `--db` path is mandatory. No default database is used.
@@ -281,7 +281,7 @@ API endpoints added:
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
-- Payment tracking beyond Round 3 remains unfinished: credits, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds.
+- Payment tracking beyond Round 3 remains unfinished: credits, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds. The implemented payment ledger, allocations, invoice payment history, and applying available funds are all functional.
 
 ## Invoice Library
 
@@ -310,7 +310,7 @@ Query parameters (all optional):
 
 **Response**: a paginated dict `{ items, total, limit, offset }`. Each item includes all invoice columns plus `current_bill_to_name`, `line_count`, `participants_display` (deduplicated), `paid_cents`, `balance_cents`, and `payment_status`.
 
-### Print Preview (Draft Only)
+### Print Preview (Draft Only, HTML)
 
 ```
 GET /api/invoices/{invoice_id}/print-preview
@@ -325,6 +325,8 @@ GET /api/invoices/{invoice_id}/draft-pdf
 ```
 
 Returns a real PDF preview of a draft invoice using the same ReportLab render model and layout as final invoice generation. The PDF is clearly marked **DRAFT** and does not assign an invoice number. Side-effect free: does not write to the database, does not write `pdf_path` or `pdf_sha256`, does not change invoice status or revision, and does not create any audit event. Missing readiness errors (e.g. missing address or email) do not block the preview. Only available for draft invoices; finalized or void invoices return HTTP 400.
+
+Both draft PDF and final PDF endpoints use dedicated inline PDF response headers (`Content-Type: application/pdf`, `Content-Disposition: inline`) compatible with Safari. PDF responses use `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` but do not apply the `X-Frame-Options: DENY` or CSP headers used for HTML/JSON responses, allowing inline browser preview.
 
 ### Final PDF Serving
 

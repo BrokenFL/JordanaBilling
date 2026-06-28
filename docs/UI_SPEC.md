@@ -15,7 +15,7 @@ Approved mockup is stored locally at `docs/review-ui-approved-mockup.png` when a
 Run locally:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
 ```
 
 Then open:
