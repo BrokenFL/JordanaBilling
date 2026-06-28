@@ -182,6 +182,14 @@ Later steps stay locked until the earlier step is established. When the backend 
 
 Confirm Client(s), Save Bill To, and Save Session remain independent. None of them approves a session. After section saves, the backend refresh service recomputes payer, rate, unresolved fields, checklist state, review status, and the separate review-authority score used for guided review.
 
+Candidate-only calendar records may appear in the review list when a title needs
+manual relationship review before it is safe to treat it as a client session.
+The first section-level save for one of those rows promotes it into exactly one
+reviewable `sessions` row inside the same backend save flow, then saves the
+confirmed clients, Bill To, or session details against that row. Later section
+saves and approval reuse the same `sessions.candidate_id` link and must not
+create a second session.
+
 Removing all clients and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
 
 When a relationship save refreshes suggestions, the browser preserves unsaved session draft fields so Jordana can resolve identity first without losing rate or payment edits.

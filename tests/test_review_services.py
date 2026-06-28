@@ -28,6 +28,7 @@ from jordana_invoice.review_services import (
     save_billing_section,
     save_relationship_section,
     save_interpretation,
+    save_session_draft,
 )
 
 
@@ -675,6 +676,131 @@ class ReviewServiceTests(unittest.TestCase):
             "SELECT * FROM calendar_aliases WHERE normalized_alias = ?", ("bobsey and fred",),
         ).fetchone()
         self.assertIsNone(alias)
+
+    def test_candidate_only_joint_session_saves_and_approves_once(self):
+        candidate_id = self.import_candidate_only("snap-joint-save", "Bobsey and Fred 6")
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Colin", "display_name": "Bobsey Colin"})
+        payer = create_billing_party(
+            self.conn,
+            {"billing_name": "Fred Colin", "billing_party_type": "person", "person_id": fred["person_id"]},
+        )
+
+        participants = [
+            {"person_id": bobsey["person_id"], "display_name": "Bobsey Colin", "is_primary": True},
+            {"person_id": fred["person_id"], "display_name": "Fred Colin"},
+        ]
+        relationship = save_relationship_section(self.conn, candidate_id, {"participants": participants})
+        session_id = relationship["session"]["id"]
+        self.assertTrue(session_id)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()["count"],
+            1,
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM session_participants WHERE session_id = ?", (session_id,)).fetchone()["count"],
+            2,
+        )
+
+        save_billing_section(self.conn, candidate_id, {"billing_party_id": payer["billing_party_id"]})
+        saved = save_session_draft(
+            self.conn,
+            candidate_id,
+            {
+                "approved_duration_minutes": 60,
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "approved_rate": "400.00",
+                "payment_status": "unpaid",
+                "billing_treatment": "billable",
+            },
+        )
+        self.assertEqual(saved["session"]["id"], session_id)
+        self.assertEqual(saved["session"]["billing_party_id"], payer["billing_party_id"])
+        self.assertEqual(saved["session"]["approved_rate_cents"], 40000)
+
+        approved = approve_candidate(
+            self.conn,
+            candidate_id,
+            {
+                "participants": participants,
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "approved_rate": "400.00",
+                "payment_status": "unpaid",
+                "billing_treatment": "billable",
+            },
+        )
+        self.assertEqual(approved["session"]["id"], session_id)
+        self.assertEqual(approved["session"]["review_status"], "approved")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()["count"],
+            1,
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM session_participants WHERE session_id = ?", (session_id,)).fetchone()["count"],
+            2,
+        )
+        self.assertTrue(
+            self.conn.execute(
+                "SELECT 1 FROM review_items WHERE candidate_id = ? AND session_id = ? AND review_status = 'approved'",
+                (candidate_id, session_id),
+            ).fetchone()
+        )
+
+        repeated = approve_candidate(
+            self.conn,
+            candidate_id,
+            {
+                "participants": participants,
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "approved_rate": "400.00",
+                "payment_status": "unpaid",
+                "billing_treatment": "billable",
+            },
+        )
+        self.assertEqual(repeated["session"]["id"], session_id)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()["count"],
+            1,
+        )
+
+    def test_candidate_only_single_session_behavior_still_saves(self):
+        candidate_id = self.import_candidate_only("snap-single-save", "Fred 6")
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+
+        saved = save_relationship_section(
+            self.conn,
+            candidate_id,
+            {"participants": [{"person_id": fred["person_id"], "display_name": "Fred Colin", "is_primary": True}]},
+        )
+
+        self.assertTrue(saved["session"]["id"])
+        self.assertEqual(len(saved["participants"]), 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS count FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()["count"],
+            1,
+        )
+
+    def import_candidate_only(self, snapshot_key, title):
+        import_rows(self.conn, [raw_row(snapshot_key, title=title)], "test")
+        candidate_id = next(row["candidate_id"] for row in list_review_candidates(self.conn)["items"] if row["raw_title"] == title)
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        if session:
+            self.conn.execute(
+                "UPDATE review_items SET session_id = NULL WHERE candidate_id = ?",
+                (candidate_id,),
+            )
+            self.conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session["id"],))
+            self.conn.execute("DELETE FROM sessions WHERE id = ?", (session["id"],))
+            self.conn.commit()
+        self.assertIsNone(self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone())
+        return candidate_id
 
 
 def count(conn, table):
