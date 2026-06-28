@@ -116,6 +116,85 @@ def _sanitize_path_part(value: Any, fallback: str = "Unknown") -> str:
     return text or fallback
 
 
+def _month_folder_label(invoice: sqlite3.Row | dict[str, Any]) -> str:
+    billing_month = str(invoice["billing_month"] if isinstance(invoice, sqlite3.Row) else invoice.get("billing_month") or "").strip()
+    if billing_month:
+        try:
+            parsed = date(int(billing_month[:4]), int(billing_month[5:7]), 1)
+            return parsed.strftime("%B %Y")
+        except (TypeError, ValueError):
+            pass
+    period_start = str(invoice["billing_period_start"] if isinstance(invoice, sqlite3.Row) else invoice.get("billing_period_start") or "").strip()
+    try:
+        parsed = date.fromisoformat(period_start[:10])
+    except (TypeError, ValueError):
+        return _sanitize_path_part(billing_month or period_start, "Unknown Month")
+    return parsed.strftime("%B %Y")
+
+
+def _existing_filing_folder_for_person(conn: sqlite3.Connection, root: Path, person_id: str) -> Path | None:
+    rows = conn.execute(
+        """
+        SELECT pdf_path
+        FROM invoices
+        WHERE status IN ('finalized', 'void')
+          AND filing_owner_person_id = ?
+          AND pdf_path IS NOT NULL
+        ORDER BY finalized_at DESC, updated_at DESC
+        """,
+        (person_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            resolved = Path(row["pdf_path"]).expanduser().resolve(strict=False)
+            rel = resolved.relative_to(root.resolve(strict=False))
+        except (OSError, ValueError):
+            continue
+        if len(rel.parts) >= 3 and not re.fullmatch(r"\d{4}", rel.parts[1]):
+            return root / rel.parts[0]
+    return None
+
+
+def _plain_filing_folder_owned_by_different_person(conn: sqlite3.Connection, folder_name: str, person_id: str) -> bool:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT filing_owner_person_id, filing_owner_display_name_snapshot
+        FROM invoices
+        WHERE status IN ('finalized', 'void')
+          AND filing_owner_person_id IS NOT NULL
+          AND filing_owner_person_id != ?
+          AND filing_owner_display_name_snapshot IS NOT NULL
+        """,
+        (person_id,),
+    ).fetchall()
+    return any(_sanitize_path_part(row["filing_owner_display_name_snapshot"]) == folder_name for row in rows)
+
+
+def _filing_owner_folder(conn: sqlite3.Connection, root: Path, filing_owner: dict[str, Any]) -> Path:
+    person_id = str(filing_owner.get("person_id") or "")
+    display_name = _sanitize_path_part(filing_owner.get("display_name"), person_id or "Unknown Client")
+    person_code = _sanitize_path_part(filing_owner.get("person_code"), person_id or "Unknown")
+    existing = _existing_filing_folder_for_person(conn, root, person_id)
+    if existing:
+        return existing
+    plain = root / display_name
+    if _plain_filing_folder_owned_by_different_person(conn, display_name, person_id):
+        return root / f"{display_name} [{person_code}]"
+    if plain.exists():
+        return root / f"{display_name} [{person_code}]"
+    return plain
+
+
+def _client_invoice_folder_for_pdf(root: Path, resolved_pdf: Path) -> Path:
+    try:
+        rel = resolved_pdf.relative_to(root)
+    except ValueError:
+        return resolved_pdf.parent
+    if len(rel.parts) >= 3:
+        return root / rel.parts[0]
+    return resolved_pdf.parent
+
+
 def _eligible_filing_clients(conn: sqlite3.Connection, invoice_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -289,7 +368,7 @@ def trusted_invoice_document_action(
     if action == "show_in_finder":
         args = ["open", "-R", str(resolved_pdf)]
     elif action == "open_client_folder":
-        target = resolved_pdf.parent.parent
+        target = _client_invoice_folder_for_pdf(resolved_root, resolved_pdf)
         if not target.is_dir():
             raise ValueError("The client invoice folder is missing.")
         args = ["open", str(target)]
@@ -1418,8 +1497,9 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         _recalculate(conn, invoice_id)
         frozen = get_invoice(conn, invoice_id)
         root = Path(pdf_root or os.getenv("JORDANA_INVOICES_DIR", "Invoices"))
-        folder = f"{_sanitize_path_part(filing_owner.get('person_code'), filing_owner['person_id'])} - {_sanitize_path_part(filing_owner.get('display_name'))}"
-        pdf_path = root / folder / str(invoice["invoice_date"])[:4] / f"Invoice_{number}.pdf"
+        client_folder = _filing_owner_folder(conn, root, filing_owner)
+        month_folder = _sanitize_path_part(_month_folder_label(invoice), "Unknown Month")
+        pdf_path = client_folder / month_folder / f"Invoice_{number}.pdf"
         pdf_existed_before = pdf_path.exists()
         if pdf_existed_before:
             raise ValueError("A finalized invoice PDF already exists at the target invoice location.")
