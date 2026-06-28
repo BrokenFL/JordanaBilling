@@ -164,17 +164,42 @@ class CompactAccountSummaryTests(unittest.TestCase):
         text = " ".join((p.extract_text() or "") for p in reader.pages)
         self.assertNotIn("Payments Applied", text)
 
-    # ── 2. Payments Applied appears when > 0 ──
+    # ── 1b. Current Invoice Balance absent when no payments ──
+
+    def test_current_invoice_balance_absent_when_no_payments_html(self):
+        d2 = self._setup_prior_unpaid()
+        data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
+        html = build_print_preview_html(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=(data.get("render_model") or {}).get("account_summary"),
+        )
+        self.assertNotIn("Current Invoice Balance", html)
+
+    def test_current_invoice_balance_absent_when_no_payments_pdf(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+        d2 = self._setup_prior_unpaid()
+        data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
+        render_model = build_invoice_render_model(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=(data.get("render_model") or {}).get("account_summary"),
+        )
+        pdf_bytes = generate_draft_pdf_bytes(data["invoice"], data["lines"], render_model=render_model)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = " ".join((p.extract_text() or "") for p in reader.pages)
+        self.assertNotIn("Current Invoice Balance", text)
+
+    # ── 2. Payments Applied appears when > 0, Current Invoice Balance also appears ──
 
     def test_payments_applied_present_when_nonzero_html(self):
         d2 = self._setup_prior_unpaid()
-        # Record a payment on the prior invoice so the newer draft's account summary
-        # shows current_invoice_paid_cents > 0 — but that's on the prior invoice, not
-        # the current draft. We need to pay the *current* draft, which is impossible
-        # since it's a draft. Instead, we test the render model directly.
         data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
         summary = (data.get("render_model") or {}).get("account_summary") or {}
-        # Simulate a payment on the current draft by modifying the summary
         summary_with_payment = dict(summary)
         summary_with_payment["current_invoice_paid_cents"] = 10000
         summary_with_payment["current_invoice_paid_display"] = "$100.00"
@@ -190,6 +215,34 @@ class CompactAccountSummaryTests(unittest.TestCase):
         )
         self.assertIn("Payments Applied", html)
         self.assertIn("-$100.00", html)
+        self.assertIn("Current Invoice Balance", html)
+        self.assertIn("$50.00", html)
+
+    def test_payments_applied_present_when_nonzero_pdf(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+        d2 = self._setup_prior_unpaid()
+        data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
+        summary = (data.get("render_model") or {}).get("account_summary") or {}
+        summary_with_payment = dict(summary)
+        summary_with_payment["current_invoice_paid_cents"] = 10000
+        summary_with_payment["current_invoice_paid_display"] = "$100.00"
+        summary_with_payment["current_invoice_balance_cents"] = 5000
+        summary_with_payment["current_invoice_balance_display"] = "$50.00"
+        summary_with_payment["total_amount_due_cents"] = 25000
+        summary_with_payment["total_amount_due_display"] = "$250.00"
+        render_model = build_invoice_render_model(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=summary_with_payment,
+        )
+        pdf_bytes = generate_draft_pdf_bytes(data["invoice"], data["lines"], render_model=render_model)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = " ".join((p.extract_text() or "") for p in reader.pages)
+        self.assertIn("Payments Applied", text)
+        self.assertIn("Current Invoice Balance", text)
 
     # ── 3. Customer-facing HTML does not contain (As Finalized) ──
 
@@ -267,13 +320,42 @@ class CompactAccountSummaryTests(unittest.TestCase):
             billing_party=data.get("billing_party"),
             account_summary=(data.get("render_model") or {}).get("account_summary"),
         )
-        # Prior invoice number should appear
         prior_inv = self.conn.execute(
             "SELECT invoice_number, invoice_date FROM invoices WHERE status = 'finalized'"
         ).fetchone()
         self.assertIn(prior_inv["invoice_number"], html)
         self.assertIn("April 30, 2026", html)
         self.assertIn("$150.00", html)
+
+    def test_prior_invoice_date_is_human_readable_html(self):
+        d2 = self._setup_prior_unpaid()
+        data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
+        html = build_print_preview_html(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=(data.get("render_model") or {}).get("account_summary"),
+        )
+        # Human-readable date format, not ISO format
+        self.assertIn("April 30, 2026", html)
+        self.assertNotIn("2026-04-30", html)
+
+    def test_prior_invoice_date_is_human_readable_pdf(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+        d2 = self._setup_prior_unpaid()
+        data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
+        render_model = build_invoice_render_model(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=(data.get("render_model") or {}).get("account_summary"),
+        )
+        pdf_bytes = generate_draft_pdf_bytes(data["invoice"], data["lines"], render_model=render_model)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = " ".join((p.extract_text() or "") for p in reader.pages)
+        self.assertIn("April 30, 2026", text)
 
     def test_prior_invoice_details_present_pdf(self):
         if not _has_pdf_deps():
@@ -376,9 +458,39 @@ class CompactAccountSummaryTests(unittest.TestCase):
             billing_party=data.get("billing_party"),
             account_summary=(data.get("render_model") or {}).get("account_summary"),
         )
-        # Should use "Includes prior invoice" not "Prior unpaid invoices:"
         self.assertIn("Includes prior invoice", html)
         self.assertNotIn("Prior unpaid invoices:", html)
+
+    # ── 7. PDF text and HTML text contain the same rows ──
+
+    def test_pdf_and_html_contain_same_rows(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+        d2 = self._setup_prior_unpaid()
+        data = get_invoice(self.conn, d2["invoice"]["invoice_id"])
+        summary = (data.get("render_model") or {}).get("account_summary")
+        html = build_print_preview_html(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=summary,
+        )
+        render_model = build_invoice_render_model(
+            data["invoice"], data["lines"],
+            business_profile=data.get("business_profile"),
+            billing_party=data.get("billing_party"),
+            account_summary=summary,
+        )
+        pdf_bytes = generate_draft_pdf_bytes(data["invoice"], data["lines"], render_model=render_model)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pdf_text = " ".join((p.extract_text() or "") for p in reader.pages)
+        for label in ["Current Charges", "Prior Unpaid Balance", "TOTAL AMOUNT DUE"]:
+            self.assertIn(label, html)
+            self.assertIn(label, pdf_text)
+        for absent in ["Payments Applied", "Current Invoice Balance"]:
+            self.assertNotIn(absent, html)
+            self.assertNotIn(absent, pdf_text)
 
 
 if __name__ == "__main__":

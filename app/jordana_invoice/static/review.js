@@ -2761,59 +2761,49 @@ async function showAddSessionsToDraft(data) {
 }
 
 function buildPreviewSummaryHtml(render, data, invoice) {
-  let totalSectionHtml = `<div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>`;
   const summary = render.account_summary;
+  const fallbackTotal = `<tr style="border-top:1px solid #102a43;border-bottom:none;"><td colspan="4" style="text-align:right;font-weight:850;font-size:13pt;padding:10px 6px;border-bottom:none;">${fmt(render.total_label)}</td><td style="text-align:right;font-weight:850;font-size:13pt;padding:10px 6px;border-bottom:none;">${fmt(render.total_display)}</td></tr>`;
 
   if (summary && (summary.prior_unpaid_balance_cents > 0 || summary.current_invoice_paid_cents > 0)) {
     const hasPrior = summary.prior_unpaid_balance_cents > 0;
     const hasPayments = summary.current_invoice_paid_cents > 0;
-    let priorInvoicesHtml = "";
+
+    const rows = [];
+    rows.push(["Current Charges", fmt(summary.current_invoice_total_display)]);
+    if (hasPayments) {
+      rows.push(["Payments Applied", `-${fmt(summary.current_invoice_paid_display)}`]);
+      rows.push(["Current Invoice Balance", fmt(summary.current_invoice_balance_display)]);
+    }
+    if (hasPrior) {
+      rows.push(["Prior Unpaid Balance", fmt(summary.prior_unpaid_balance_display)]);
+    }
+
+    let rowsHtml = rows.map(([label, amount]) =>
+      `<tr><td colspan="4" style="text-align:right;border-bottom:0.3pt solid #D9E2EC;">${fmt(label)}</td><td style="text-align:right;border-bottom:0.3pt solid #D9E2EC;">${amount}</td></tr>`
+    ).join("");
+    rowsHtml += `<tr style="border-top:1px solid #102a43;border-bottom:none;"><td colspan="4" style="text-align:right;font-weight:850;font-size:13pt;padding:10px 6px;border-bottom:none;">TOTAL AMOUNT DUE</td><td style="text-align:right;font-weight:850;font-size:13pt;padding:10px 6px;border-bottom:none;">${fmt(summary.total_amount_due_display)}</td></tr>`;
+
+    let noteHtml = "";
     const priorList = summary.prior_invoices || [];
     if (priorList.length > 0 && hasPrior) {
       if (priorList.length === 1) {
         const item = priorList[0];
-        priorInvoicesHtml = `<div style="margin-top:5px;font-size:8pt;color:#42526A;text-align:right;">Includes prior invoice ${fmt(item.invoice_number)} dated ${fmt(item.invoice_date)} &mdash; ${money(centString(item.remaining_balance_cents))} remaining</div>`;
+        noteHtml = `<div style="margin-top:4px;font-size:8pt;color:#42526A;">Includes prior invoice ${fmt(item.invoice_number)} dated ${fmt(item.invoice_date)} &mdash; ${money(centString(item.remaining_balance_cents))} remaining</div>`;
       } else {
         const itemsHtml = priorList.map(item => `<div>Invoice ${fmt(item.invoice_number)} &middot; ${fmt(item.invoice_date)} &mdash; ${money(centString(item.remaining_balance_cents))} remaining</div>`).join("");
-        priorInvoicesHtml = `<div style="margin-top:5px;font-size:8pt;color:#42526A;text-align:right;line-height:1.4;"><strong style="color:#102A43;">Prior unpaid invoices:</strong>${itemsHtml}</div>`;
+        noteHtml = `<div style="margin-top:4px;font-size:8pt;color:#42526A;line-height:1.4;"><strong style="color:#102A43;">Prior unpaid invoices:</strong>${itemsHtml}</div>`;
       }
     }
 
-    const _lbl = "border:none;padding:2px 12px 2px 24px;text-align:left;font-size:9pt;font-weight:normal;color:#42526A;white-space:nowrap;";
-    const _amt = "border:none;padding:2px 0;text-align:right;font-size:9pt;font-weight:500;color:#102A43;white-space:nowrap;min-width:100px;";
-    const _totLbl = "border:none;padding:6px 12px 6px 24px;text-align:left;font-weight:bold;font-size:11pt;color:#102A43;white-space:nowrap;";
-    const _totAmt = "border:none;padding:6px 0;text-align:right;font-weight:bold;font-size:11pt;color:#102A43;white-space:nowrap;";
-
-    let rowsHtml = `<tr><td style="${_lbl}">Current Charges</td><td style="${_amt}">${fmt(summary.current_invoice_total_display)}</td></tr>`;
-    if (hasPayments) {
-      rowsHtml += `<tr><td style="${_lbl}">Payments Applied</td><td style="${_amt}">-${fmt(summary.current_invoice_paid_display)}</td></tr>`;
-    }
-    if (hasPrior) {
-      rowsHtml += `<tr style="border-bottom:0.5pt solid #D9E2EC;"><td style="${_lbl}padding-bottom:4px;">Current Invoice Balance</td><td style="${_amt}padding-bottom:4px;">${fmt(summary.current_invoice_balance_display)}</td></tr>`;
-      rowsHtml += `<tr><td style="${_lbl}padding-top:4px;">Prior Unpaid Balance</td><td style="${_amt}padding-top:4px;">${fmt(summary.prior_unpaid_balance_display)}</td></tr>`;
-    } else {
-      rowsHtml += `<tr><td style="${_lbl}">Current Invoice Balance</td><td style="${_amt}">${fmt(summary.current_invoice_balance_display)}</td></tr>`;
-    }
-    rowsHtml += `<tr style="border-top:1pt solid #102A43;"><td style="${_totLbl}">TOTAL AMOUNT DUE</td><td style="${_totAmt}">${fmt(summary.total_amount_due_display)}</td></tr>`;
-
-    totalSectionHtml = `
-      <div class="invoice-summary-block" style="display:flex;flex-direction:column;align-items:flex-end;margin-bottom:14px;width:100%;">
-        <table style="width:auto;margin-bottom:0;border:none;font-size:9pt;border-collapse:collapse;">
-          ${rowsHtml}
-        </table>
-        ${priorInvoicesHtml}
-      </div>
-    `;
+    return { rowsHtml, noteHtml };
   } else if ((invoice.status === "finalized" || invoice.status === "void") && !data.as_finalized_summary) {
-    totalSectionHtml = `
-      <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
-      <div style="margin: 16px 0; padding: 10px; background: #F0F4F8; color: #42526A; font-size: 9pt; border-radius: 4px; border: 1px dashed #BCCCDC; width: 100%; text-align: center; line-height: 1.4;">
-        Historical account summary snapshot not available for this legacy invoice.
-      </div>
-    `;
+    return {
+      rowsHtml: fallbackTotal,
+      noteHtml: `<div style="margin: 16px 0; padding: 10px; background: #F0F4F8; color: #42526A; font-size: 9pt; border-radius: 4px; border: 1px dashed #BCCCDC; width: 100%; text-align: center; line-height: 1.4;">Historical account summary snapshot not available for this legacy invoice.</div>`,
+    };
   }
 
-  return totalSectionHtml;
+  return { rowsHtml: fallbackTotal, noteHtml: "" };
 }
 
 function renderFinalizationPreview(preview) {
@@ -2852,8 +2842,8 @@ function renderFinalizationPreview(preview) {
           <div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div>
         </div>
       </header>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
-      ${buildPreviewSummaryHtml(render, preview, i)}
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}${buildPreviewSummaryHtml(render, preview, i).rowsHtml}</tbody></table>
+      ${buildPreviewSummaryHtml(render, preview, i).noteHtml}
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
       ${notesHtml}
     </article>
@@ -2934,8 +2924,8 @@ function renderInvoicePreview(data) {
         </div>
         <div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice Date:</strong> ${fmt(render.invoice_date_display)}</div><div><strong>Billing Period:</strong> ${fmt(render.billing_period_display)}</div><div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div></div>
       </header>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
-      ${buildPreviewSummaryHtml(render, data, i)}
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}${buildPreviewSummaryHtml(render, data, i).rowsHtml}</tbody></table>
+      ${buildPreviewSummaryHtml(render, data, i).noteHtml}
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
       ${notesHtml}
     </article>
