@@ -62,6 +62,10 @@ Join table connecting people to accounts with roles such as primary, spouse, chi
 
 The person or organization responsible for payment. The billing party is not assumed to be the session participant.
 
+## `client_accounts`
+
+Billing relationships/groupings for covered clients and the default Bill To party. `default_filing_owner_person_id` is an optional relationship-level default for `File invoice under`; it must reference a covered client and is used only to prefill draft/finalization filing ownership. Changing it does not rewrite approved sessions or finalized invoices.
+
 ## `calendar_aliases`
 
 Reusable reviewed aliases for client names, household aliases, or personal/admin exclusions.
@@ -120,7 +124,12 @@ Append-only record of parsing, proposed sessions, review decisions, and future i
 - Never import the same non-empty `snapshot_key` twice.
 - Preserve event versions and review decisions.
 - Never rewrite historical finalized invoice values after rate changes.
+- Never move, rename, or rewrite finalized invoice PDFs because a filing owner, person display name, or billing relationship changes later.
 - Never add clinical interpretation to this app.
+
+## Invoice Filing Owner Additions
+
+Finalized invoices can freeze `filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`. These identify the permanent client person whose folder contains the invoice PDF and are separate from `bill_to_party_id`, participants, account membership, and payment ownership. Existing finalized invoices may have these fields blank and must keep their stored `pdf_path` and checksum.
 ## Calendar Status Additions
 
 Authoritative raw calendar evidence remains in `raw_calendar_snapshots`. The existing `calendar` payload/header maps to `calendar_name`.

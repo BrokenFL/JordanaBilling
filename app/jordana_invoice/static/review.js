@@ -2414,6 +2414,7 @@ function renderInvoiceLibrary() {
         <td>${fmt(row.invoice_date)}</td>
         <td>${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}</td>
         <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
+        <td>${fmt(row.filing_owner_display || "—")}</td>
         <td>${escapeHtml(row.participants_display || "—")}</td>
         <td><span class="status-pill ${escapeAttr(row.status)}">${fmt(row.status)}</span></td>
         <td><span class="status-pill ${escapeAttr(row.payment_status || "unpaid")}">${escapeHtml(paymentStatusLabel(row.payment_status))}</span></td>
@@ -2422,7 +2423,7 @@ function renderInvoiceLibrary() {
         <td>${money(centString(row.balance_cents || 0))}</td>
         <td><button class="mini" data-open-invoice="${escapeAttr(row.invoice_id)}">Open</button></td>
       </tr>`).join("")
-    : `<tr><td colspan="11" class="readonly-note">No invoices found.</td></tr>`;
+    : `<tr><td colspan="12" class="readonly-note">No invoices found.</td></tr>`;
   document.querySelectorAll("#invoiceRows [data-open-invoice]").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); openInvoice(btn.dataset.openInvoice); };
   });
@@ -2485,11 +2486,18 @@ async function openInvoice(invoiceId) {
 async function renderInvoiceEditor(data) {
   state.invoice = data;
   const i = data.invoice;
+  const filing = data.filing_owner || {};
+  const selectedFilingId = (filing.selected && filing.selected.person_id) || i.filing_owner_person_id || "";
+  const filingOptions = (filing.eligible_clients || []).map(person =>
+    `<option value="${escapeAttr(person.person_id)}" ${person.person_id === selectedFilingId ? "selected" : ""}>${fmt(person.display_name)}${person.person_code ? ` (${escapeHtml(person.person_code)})` : ""}</option>`
+  ).join("");
+  const filingControl = `<label class="field wide">File invoice under<select id="filingOwnerSelect"><option value="">Select filing client</option>${filingOptions}</select><span class="help">${escapeHtml(filing.message || (filing.selected ? `Resolved from ${String(filing.source || "").replaceAll("_", " ")}.` : "Choose the client folder for the finalized PDF."))}</span></label>`;
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
     <div class="field-grid">
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
+      ${filingControl}
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
@@ -2516,6 +2524,10 @@ async function renderInvoiceEditor(data) {
   };
 
   $("addDraftSessions").onclick = () => showAddSessionsToDraft(data);
+  if ($("filingOwnerSelect")) $("filingOwnerSelect").onchange = async () => {
+    const updated = await api(`/api/invoices/${i.invoice_id}/filing-owner`, {method:"POST", body:JSON.stringify({person_id:$("filingOwnerSelect").value})});
+    await renderInvoiceEditor(updated); await loadInvoices();
+  };
 
   $("reviewFinalizeBtn").onclick = async () => {
     const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
@@ -2759,6 +2771,8 @@ function renderFinalizationPreview(preview) {
   const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
   const revision = preview.preview_revision;
   const readiness = preview.readiness || {ready: true, errors: []};
+  const filing = preview.filing_owner || {};
+  const filingName = (filing.selected && filing.selected.display_name) || preview.invoice.filing_owner_display || "";
   const ready = readiness.ready;
   const readinessHtml = ready
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
@@ -2768,6 +2782,7 @@ function renderFinalizationPreview(preview) {
     <div class="help">Review the invoice below carefully. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
+    <div class="relationship-summary ${filingName ? "success" : ""}"><strong>File invoice under</strong><div>${fmt(filingName || "Selection required")}</div></div>
     <article class="invoice-preview">
       <header class="invoice-preview-header">
         <div class="invoice-preview-left">
@@ -2842,12 +2857,14 @@ function renderInvoicePreview(data) {
          <div class="payment-summary-card"><label>Payment Status</label><strong>${escapeHtml(paymentStatusLabel(i.payment_status))}</strong></div>
        </div>`
     : "";
+  const filingDisplay = i.filing_owner_display || i.filing_owner_display_name_snapshot || (data.filing_owner?.selected?.display_name) || "";
   const pdfButtonsHtml = i.status === "finalized"
-    ? `<button id="openPdfBtn">Open PDF</button><button id="printPdfBtn">Print PDF</button>`
+    ? `<button id="openPdfBtn">Open PDF</button><button id="showPdfInFinderBtn">Show in Finder</button><button id="openClientFolderBtn">Open client invoice folder</button><button id="printPdfBtn">Print PDF</button>`
     : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     ${voidHtml}
     ${paymentSummaryHtml}
+    <div class="relationship-summary"><strong>File invoice under</strong><div>${fmt(filingDisplay || "—")}</div></div>
     <article class="invoice-preview">
       <header class="invoice-preview-header">
         <div class="invoice-preview-left">
@@ -2866,6 +2883,8 @@ function renderInvoicePreview(data) {
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
   if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { window.open(`/api/invoices/${i.invoice_id}/final-pdf`, "_blank"); };
+  if ($("showPdfInFinderBtn")) $("showPdfInFinderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"show_in_finder"})});
+  if ($("openClientFolderBtn")) $("openClientFolderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"open_client_folder"})});
   if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { window.open(`/api/invoices/${i.invoice_id}/final-pdf`, "_blank"); };
 }
 

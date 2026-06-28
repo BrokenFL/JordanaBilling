@@ -17,7 +17,7 @@ HTTP server.
 - **Review:** Local web UI at `http://127.0.0.1:8765/review`
 - **Database:** SQLite at `data/jordana_invoice.sqlite3`
 - **Reports:** Local CSV exports after sync
-- **Invoices:** Local PDF generation via ReportLab; files stored in ignored `Invoices/<year>/`
+- **Invoices:** Local PDF generation via ReportLab; new files stored in ignored `Invoices/<PERSON_CODE> - <Display Name>/<year>/`
 - **Payments:** Payment ledger in SQLite with API and UI
 
 ### Key Modules
@@ -138,6 +138,15 @@ HTTP server.
 - Client page account summary cards (Total Finalized, Total Payments Applied, Current Balance, Account Status)
 - Shared financial summaries for draft value, monthly finalized, monthly receipts, and outstanding balance
 - Read-only dry-run backfill analyzer and CLI for paid-at-session sessions
+
+### Invoice Filing Owner
+
+- `File invoice under` is separate from Participants, Bill To, billing relationships/accounts, and payment ownership.
+- Additive schema: `client_accounts.default_filing_owner_person_id`; `invoices.filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`.
+- Draft preview/finalization resolves filing ownership from Bill To client, eligible covered clients, and relationship defaults. Ambiguous multi-client drafts can preview but cannot finalize until Jordana selects an eligible client.
+- New finalized PDFs use `Invoices/<PERSON_CODE> - <Display Name>/<year>/Invoice_<number>.pdf`.
+- Existing finalized invoices keep their current `pdf_path`, checksum, and immutable snapshots; no guessing backfill is performed.
+- Local document actions are record-derived only: Open PDF uses the served final PDF endpoint, while Show in Finder/Open client invoice folder validate stored paths under the configured invoice root before calling macOS `open`.
 
 ### Rate Rules
 
