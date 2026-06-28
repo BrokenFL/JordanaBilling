@@ -12,6 +12,7 @@ over-allocate a payment or charge.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -483,11 +484,45 @@ def link_session_allocations_to_invoice_line(
         raise
 
 
-def reverse_allocation(conn: sqlite3.Connection, allocation_id: str) -> dict[str, Any]:
+def _check_idempotency_key(
+    conn: sqlite3.Connection,
+    idempotency_key: str | None,
+    entity_type: str,
+    entity_id: str,
+    action: str,
+) -> bool:
+    """Return True and record the key if it is new; return False if already used."""
+    if idempotency_key is None:
+        return True
+    existing = conn.execute(
+        "SELECT 1 FROM idempotency_keys WHERE idempotency_key = ?",
+        (idempotency_key,),
+    ).fetchone()
+    if existing is not None:
+        return False
+    conn.execute(
+        "INSERT INTO idempotency_keys (idempotency_key, entity_type, entity_id, action, created_at) VALUES (?, ?, ?, ?, ?)",
+        (idempotency_key, entity_type, entity_id, action, now_iso()),
+    )
+    return True
+
+
+def reverse_allocation(
+    conn: sqlite3.Connection,
+    allocation_id: str,
+    *,
+    reason: str = "",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
     """Reverse an active allocation, preserving the row.
 
-    Reversing a second time raises ``ValueError`` (not idempotent).
+    Requires a non-empty administrative reason.  Reversing a second
+    time raises ``ValueError`` (not idempotent).  If an idempotency key
+    is supplied and has already been used, the request is rejected.
     """
+    reason_val = text(reason)
+    if not reason_val:
+        raise ValueError("A reversal reason is required.")
     _begin_immediate(conn)
     try:
         row = conn.execute(
@@ -495,15 +530,18 @@ def reverse_allocation(conn: sqlite3.Connection, allocation_id: str) -> dict[str
         ).fetchone()
         if row is None:
             raise ValueError("Allocation was not found.")
+        if not _check_idempotency_key(conn, idempotency_key, "payment_allocation", allocation_id, "reverse"):
+            raise ValueError("This request has already been processed.")
         if row["status"] != "active":
             raise ValueError("Allocation is already reversed.")
         now = now_iso()
         conn.execute(
-            "UPDATE payment_allocations SET status = 'reversed', reversed_at = ?, updated_at = ? WHERE allocation_id = ?",
-            (now, now, allocation_id),
+            "UPDATE payment_allocations SET status = 'reversed', reversed_at = ?, reversal_reason = ?, updated_at = ? WHERE allocation_id = ?",
+            (now, reason_val, now, allocation_id),
         )
         _audit(conn, "payment_allocation", allocation_id, "allocation_reversed", {
             "amount_cents": row["amount_cents"],
+            "reason": reason_val,
         })
         conn.commit()
         updated = conn.execute(
@@ -515,15 +553,28 @@ def reverse_allocation(conn: sqlite3.Connection, allocation_id: str) -> dict[str
         raise
 
 
-def void_payment(conn: sqlite3.Connection, payment_id: str) -> dict[str, Any]:
+def void_payment(
+    conn: sqlite3.Connection,
+    payment_id: str,
+    *,
+    reason: str = "",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
     """Void a posted payment.
 
-    Rejects voiding if the payment has active allocations.
-    Re-voiding a void payment raises ``ValueError`` (not idempotent).
+    Requires a non-empty administrative reason.  Rejects voiding if the
+    payment has active allocations.  Re-voiding a void payment raises
+    ``ValueError`` (not idempotent).  If an idempotency key is supplied
+    and has already been used, the request is rejected.
     """
+    reason_val = text(reason)
+    if not reason_val:
+        raise ValueError("A void reason is required.")
     _begin_immediate(conn)
     try:
         payment = _payment_row(conn, payment_id)
+        if not _check_idempotency_key(conn, idempotency_key, "payment", payment_id, "void"):
+            raise ValueError("This request has already been processed.")
         if payment["status"] != "posted":
             raise ValueError("Payment is already void.")
         active_count = conn.execute(
@@ -534,13 +585,93 @@ def void_payment(conn: sqlite3.Connection, payment_id: str) -> dict[str, Any]:
             raise ValueError("Cannot void a payment with active allocations. Reverse all allocations first.")
         now = now_iso()
         conn.execute(
-            "UPDATE payments SET status = 'void', voided_at = ?, updated_at = ? WHERE payment_id = ?",
-            (now, now, payment_id),
+            "UPDATE payments SET status = 'void', voided_at = ?, void_reason = ?, updated_at = ? WHERE payment_id = ?",
+            (now, reason_val, now, payment_id),
         )
-        _audit(conn, "payment", payment_id, "payment_voided", {"amount_cents": payment["amount_cents"]})
+        _audit(conn, "payment", payment_id, "payment_voided", {
+            "amount_cents": payment["amount_cents"],
+            "reason": reason_val,
+        })
         conn.commit()
         updated = conn.execute("SELECT * FROM payments WHERE payment_id = ?", (payment_id,)).fetchone()
         return dict(updated)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def apply_available_funds(
+    conn: sqlite3.Connection,
+    payment_id: str,
+    *,
+    invoice_id: str,
+    amount_cents: int,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Apply available (unapplied) funds from a posted payment to a finalized invoice.
+
+    Creates new allocation rows — never edits or overwrites reversed
+    allocations.  Validates that the payment is posted, the invoice is
+    finalized, the invoice Bill To matches the payment Bill To, the
+    amount is positive and does not exceed available funds or the
+    invoice balance.  Uses ``BEGIN IMMEDIATE`` for atomicity.
+    """
+    if not isinstance(amount_cents, int) or amount_cents <= 0:
+        raise ValueError("Amount must be greater than zero.")
+    _begin_immediate(conn)
+    try:
+        payment = _payment_row(conn, payment_id)
+        if payment["status"] != "posted":
+            raise ValueError("Payment is not posted.")
+        invoice = _invoice_summary_row(conn, invoice_id)
+        if invoice["status"] != "finalized":
+            raise ValueError("Only a finalized invoice can accept a payment.")
+        if invoice["bill_to_party_id"] != payment["billing_party_id"]:
+            raise ValueError("Payment Bill To party does not match the invoice Bill To party.")
+        if not _check_idempotency_key(conn, idempotency_key, "payment", payment_id, "apply_funds"):
+            raise ValueError("This request has already been processed.")
+        available = payment["amount_cents"] - _active_allocations_for_payment(conn, payment_id)
+        if amount_cents > available:
+            raise ValueError("Amount exceeds available unapplied funds.")
+        summary = _invoice_balance_summary(conn, invoice_id)
+        if summary["balance_cents"] <= 0:
+            raise ValueError("Invoice is already fully paid.")
+        if amount_cents > summary["balance_cents"]:
+            raise ValueError("Amount exceeds the current invoice balance.")
+
+        remaining = amount_cents
+        allocations: list[dict[str, Any]] = []
+        for line in _invoice_line_rows_for_invoice(conn, invoice_id):
+            if remaining <= 0:
+                break
+            if not line["source_session_id"]:
+                raise ValueError("Invoice line is missing a source session and cannot accept a payment.")
+            unpaid = int(line["line_amount_cents"] or 0) - invoice_line_paid_amount(conn, line["invoice_line_item_id"])
+            if unpaid <= 0:
+                continue
+            alloc_amount = min(unpaid, remaining)
+            allocations.append(
+                _allocate_payment_to_session_locked(
+                    conn,
+                    payment_id=payment_id,
+                    session_id=line["source_session_id"],
+                    amount_cents=alloc_amount,
+                    invoice_line_item_id=line["invoice_line_item_id"],
+                )
+            )
+            remaining -= alloc_amount
+        if remaining != 0:
+            raise RuntimeError("Fund application did not fully apply to the invoice.")
+        _audit(conn, "payment", payment_id, "funds_applied", {
+            "invoice_id": invoice_id,
+            "amount_cents": amount_cents,
+        })
+        conn.commit()
+        return {
+            "payment": dict(_payment_row(conn, payment_id)),
+            "invoice": _invoice_balance_summary(conn, invoice_id),
+            "allocations": allocations,
+        }
     except Exception:
         conn.rollback()
         raise
@@ -743,10 +874,57 @@ def list_all_payments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return results
 
 
+def get_payment_correction_history(conn: sqlite3.Connection, payment_id: str) -> list[dict[str, Any]]:
+    """Return correction history for a payment from the audit log.
+
+    Includes entries for allocation reversals, payment voids, and fund
+    applications.  Sorted newest first.
+    """
+    allocation_ids = [
+        row["allocation_id"]
+        for row in conn.execute(
+            "SELECT allocation_id FROM payment_allocations WHERE payment_id = ?",
+            (payment_id,),
+        ).fetchall()
+    ]
+    entity_ids = [payment_id] + allocation_ids
+    if not entity_ids:
+        return []
+    placeholders = ",".join("?" * len(entity_ids))
+    rows = conn.execute(
+        f"""
+        SELECT entity_type, entity_id, action, details, created_at
+        FROM audit_log
+        WHERE entity_id IN ({placeholders})
+          AND action IN ('allocation_reversed', 'payment_voided', 'funds_applied')
+        ORDER BY created_at DESC
+        """,
+        entity_ids,
+    ).fetchall()
+    history: list[dict[str, Any]] = []
+    for row in rows:
+        details = {}
+        try:
+            details = json.loads(row["details"]) if row["details"] else {}
+        except (ValueError, TypeError):
+            pass
+        history.append({
+            "entity_type": row["entity_type"],
+            "entity_id": row["entity_id"],
+            "action": row["action"],
+            "reason": details.get("reason"),
+            "amount_cents": details.get("amount_cents"),
+            "created_at": row["created_at"],
+        })
+    return history
+
+
 def get_payment_detail_view(conn: sqlite3.Connection, payment_id: str) -> dict[str, Any]:
     """Return a payment detail view with related invoice information.
 
-    Does not expose internal UUIDs in the normal display fields.
+    Includes allocation correction details (reversed_at, reversal_reason)
+    and payment void details (voided_at, void_reason).  Also includes a
+    correction history list derived from the audit log.
     """
     detail = get_payment_detail(conn, payment_id)
     payment = detail["payment"]
@@ -774,8 +952,12 @@ def get_payment_detail_view(conn: sqlite3.Connection, payment_id: str) -> dict[s
             "allocation_id": alloc["allocation_id"],
             "amount_cents": alloc["amount_cents"],
             "status": alloc["status"],
+            "reversed_at": alloc.get("reversed_at"),
+            "reversal_reason": alloc.get("reversal_reason"),
+            "created_at": alloc.get("created_at"),
             "invoice_info": invoice_info,
         })
+    correction_history = get_payment_correction_history(conn, payment_id)
     return {
         "payment_id": payment["payment_id"],
         "billing_party_id": payment["billing_party_id"],
@@ -787,9 +969,12 @@ def get_payment_detail_view(conn: sqlite3.Connection, payment_id: str) -> dict[s
         "administrative_note": payment["administrative_note"],
         "status": payment["status"],
         "source_type": payment["source_type"],
+        "voided_at": payment.get("voided_at"),
+        "void_reason": payment.get("void_reason"),
         "allocated_cents": detail["allocated_cents"],
         "unapplied_cents": detail["unapplied_cents"],
         "allocations": allocations,
+        "correction_history": correction_history,
     }
 
 

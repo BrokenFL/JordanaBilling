@@ -119,7 +119,7 @@ class DryRunBackfillTests(unittest.TestCase):
         p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"],
                            amount_cents=15000, received_at="2026-05-10",
                            source_type="paid_at_session_backfill", source_session_id=s["id"])
-        void_payment(self.conn, p["payment_id"])
+        void_payment(self.conn, p["payment_id"], reason="Test void")
         report = dry_run_paid_at_session_backfill(self.conn)
         self.assertEqual(report["sessions_already_backfilled"], 1)
         self.assertEqual(report["sessions_eligible"], 0)
@@ -132,7 +132,7 @@ class DryRunBackfillTests(unittest.TestCase):
                            source_type="paid_at_session_backfill", source_session_id=s["id"])
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"],
                                         session_id=s["id"], amount_cents=15000)
-        reverse_allocation(self.conn, a["allocation_id"])
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test reversal")
         report = dry_run_paid_at_session_backfill(self.conn)
         self.assertEqual(report["sessions_already_backfilled"], 1)
         self.assertEqual(report["sessions_eligible"], 0)
@@ -249,7 +249,7 @@ class DryRunBackfillTests(unittest.TestCase):
                            amount_cents=15000, received_at="2026-05-10")
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"],
                                         session_id=s["id"], amount_cents=15000)
-        reverse_allocation(self.conn, a["allocation_id"])
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test reversal")
         report = dry_run_paid_at_session_backfill(self.conn)
         self.assertEqual(report["sessions_skipped"]["existing_manual_allocation_conflict"], 0)
         self.assertEqual(report["sessions_eligible"], 1)

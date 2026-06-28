@@ -803,6 +803,7 @@ CREATE TABLE IF NOT EXISTS payments (
   source_session_id TEXT
     REFERENCES sessions(id),
   voided_at TEXT,
+  void_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -831,6 +832,7 @@ CREATE TABLE IF NOT EXISTS payment_allocations (
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'reversed')),
   reversed_at TEXT,
+  reversal_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -848,6 +850,17 @@ CREATE INDEX IF NOT EXISTS idx_allocations_invoice_line
 CREATE INDEX IF NOT EXISTS idx_allocations_session_active
   ON payment_allocations(session_id, status)
   WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  idempotency_key TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_entity
+  ON idempotency_keys(entity_type, entity_id, action);
 """
 
 
@@ -1148,6 +1161,25 @@ def _apply_migration_006(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_007_PAYMENT_CORRECTIONS = "007_payment_corrections"
+
+
+def _apply_migration_007(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "payments", {"void_reason": "TEXT"})
+    add_columns(conn, "payment_allocations", {"reversal_reason": "TEXT"})
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+          idempotency_key TEXT PRIMARY KEY,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_idempotency_keys_entity
+          ON idempotency_keys(entity_type, entity_id, action);
+    """)
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1155,6 +1187,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_004_PAYMENT_PROVENANCE, _apply_migration_004),
     (MIGRATION_005_INVOICE_LINE_CORRECTIONS_AUDIT, _apply_migration_005),
     (MIGRATION_006_INVOICE_ZELLE_AND_DELIVERY, _apply_migration_006),
+    (MIGRATION_007_PAYMENT_CORRECTIONS, _apply_migration_007),
 ]
 
 

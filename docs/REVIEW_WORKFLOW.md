@@ -265,3 +265,24 @@ The Invoices view (`#invoices`) provides a searchable, filterable, paginated lib
 **Finalized invoices** show "Open PDF" and "Print PDF" buttons that serve the stored final PDF via `/api/invoices/{id}/final-pdf`. The file path is never exposed to the client.
 
 See `docs/INVOICE_LIFECYCLE.md` for full API documentation.
+
+## Payment Corrections
+
+The **All Payments** tab in the Payments workspace now supports correction actions via a payment detail overlay (replacing the former `alert()` display).
+
+**Opening the overlay**: Click a payment row in the All Payments tab. The overlay shows:
+
+- Payment fields (date, method, reference, received from, amount, applied, unapplied, status)
+- Void reason and voided-at timestamp (if voided)
+- Allocations table with per-row reverse buttons (for active allocations)
+- Correction history table (allocation reversals, payment voids, fund applications)
+- Apply Available Funds form (when the payment is posted and has unapplied funds)
+- Void Payment form (when the payment is posted and all allocations are reversed)
+
+**Reversing an allocation**: Click "Reverse" on an active allocation row. A prompt asks for an administrative reason. The reversal is stored with the reason and timestamp. The overlay refreshes to show the updated state.
+
+**Applying available funds**: Enter an invoice UUID and amount in cents. The funds are allocated across invoice line items deterministically (oldest service date first). The payment and invoice must share the same Bill To party.
+
+**Voiding a payment**: Enter an administrative reason. All allocations must be reversed first. The void reason and timestamp are stored.
+
+All correction actions support an optional `idempotency_key` to prevent duplicate processing of the same request.

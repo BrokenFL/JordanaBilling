@@ -180,8 +180,9 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `create_payment` — Creates a posted payment. Validates Bill To party exists, positive cents, required received_at. Accepts internal-only `source_type` and `source_session_id` parameters for provenance. Validates that manual payments have no source session, backfill payments have a valid matching session, and unsupported source types are rejected.
 - `allocate_payment_to_session` — Allocates to a session charge using `BEGIN IMMEDIATE`. Enforces Bill To matching, payment limit, session charge limit, and invoice line consistency.
 - `link_session_allocations_to_invoice_line` — Links pre-staging allocations to a later invoice line. Idempotent. Does not recreate rows.
-- `reverse_allocation` — Sets status to `reversed`, preserves the row. Rejects double reversal.
-- `void_payment` — Requires all allocations reversed first. Sets status to `void`. Rejects double void.
+- `reverse_allocation` — Sets status to `reversed`, preserves the row. Requires a non-empty administrative reason. Supports optional idempotency key. Rejects double reversal.
+- `void_payment` — Requires all allocations reversed first. Requires a non-empty administrative reason. Supports optional idempotency key. Sets status to `void`. Rejects double void.
+- `apply_available_funds` — Applies unapplied payment funds to a finalized invoice. Creates new allocation rows (never edits reversed ones). Validates payment posted, invoice finalized, Bill To match, amount within available and balance. Supports optional idempotency key.
 - Read helpers: `payment_allocated_amount`, `payment_unapplied_amount`, `session_paid_amount`, `invoice_line_paid_amount`, `get_payment_detail`.
 - Round 1 invoice-payment helpers: `list_outstanding_invoices`, `list_invoice_payment_history`, and `record_invoice_payment`.
 - `dry_run_paid_at_session_backfill` — Read-only analyzer that classifies `paid_at_session` sessions into eligibility categories and returns a sanitized aggregate report. Performs no writes. Classification order: already backfilled, not approved, missing Bill To, missing/invalid amount, missing/invalid date, existing manual allocation conflict, eligible. Amount priority: `rate_cents_snapshot` then `approved_rate_cents`. Date priority: `session_date` then `start_at`.
@@ -228,7 +229,6 @@ The **Payments** workspace (formerly the "Unpaid" screen) now covers the normal 
 
 - No overpayments or unapplied credits
 - No multi-invoice payments
-- No edit, reversal, or void controls in the UI
 - No due dates, overdue labels, aging, reconciliation, receipts, or email confirmations
 - No historical paid-at-session backfill
 - No invoice PDF appearance changes
@@ -255,13 +255,33 @@ API endpoints added:
 - `GET /api/payments/{payment_id}`
 - `GET /api/people/{person_id}/account-summary`
 
+### Payment Corrections (Round 3)
+
+Migration `007_payment_corrections` adds `void_reason` to `payments`, `reversal_reason` to `payment_allocations`, and a new `idempotency_keys` table for deduplication of correction requests.
+
+**Reversal** — `reverse_allocation` now requires a non-empty administrative reason (stored as `reversal_reason`). An optional `idempotency_key` prevents duplicate processing.
+
+**Void** — `void_payment` now requires a non-empty administrative reason (stored as `void_reason`). An optional `idempotency_key` prevents duplicate processing.
+
+**Apply Available Funds** — `apply_available_funds` applies unapplied funds from a posted payment to a finalized invoice. Creates new allocation rows (never edits reversed ones). Validates payment posted, invoice finalized, Bill To match, amount within available and balance. Supports optional idempotency key.
+
+**Correction History** — `get_payment_correction_history` returns audit-log-derived entries for allocation reversals, payment voids, and fund applications. `get_payment_detail_view` now includes correction history, `void_reason`, `voided_at`, and per-allocation `reversal_reason` and `reversed_at`.
+
+**UI** — The payment detail overlay replaces the former `alert()` display. It shows payment fields, allocation table with per-row reverse buttons, correction history table, an apply-funds form (when unapplied funds exist), and a void payment form (when posted).
+
+API endpoints added:
+
+- `POST /api/payments/allocations/{allocation_id}/reverse`
+- `POST /api/payments/{payment_id}/apply-funds`
+- `POST /api/payments/{payment_id}/void`
+
 ### What Is Not Implemented
 
 - No apply mode exists — only the read-only dry-run analyzer and its CLI are available.
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
-- Payment tracking beyond Round 1 remains unfinished: credits, reversals/voiding controls, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds.
+- Payment tracking beyond Round 3 remains unfinished: credits, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds.
 
 ## Invoice Library
 

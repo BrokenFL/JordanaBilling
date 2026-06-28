@@ -27,6 +27,8 @@ from jordana_invoice.payment_services import (
     list_invoice_payment_history,
     list_outstanding_invoices,
     list_paid_invoices,
+    apply_available_funds,
+    get_payment_correction_history,
     payment_allocated_amount,
     payment_unapplied_amount,
     record_invoice_payment,
@@ -284,9 +286,10 @@ class PaymentServicesTests(unittest.TestCase):
     def test_reverse_allocation_preserves_row(self):
         p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
-        reversed_alloc = reverse_allocation(self.conn, a["allocation_id"])
+        reversed_alloc = reverse_allocation(self.conn, a["allocation_id"], reason="Duplicate allocation")
         self.assertEqual(reversed_alloc["status"], "reversed")
         self.assertIsNotNone(reversed_alloc["reversed_at"])
+        self.assertEqual(reversed_alloc["reversal_reason"], "Duplicate allocation")
         self.assertEqual(session_paid_amount(self.conn, self.session_id), 0)
         self.assertEqual(payment_unapplied_amount(self.conn, p["payment_id"]), 15000)
 
@@ -295,23 +298,24 @@ class PaymentServicesTests(unittest.TestCase):
         p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
         allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
         with self.assertRaises(ValueError):
-            void_payment(self.conn, p["payment_id"])
+            void_payment(self.conn, p["payment_id"], reason="Test void")
 
     # 20. Payment can be voided after allocations are reversed
     def test_void_after_reversing_allocations(self):
         p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
-        reverse_allocation(self.conn, a["allocation_id"])
-        voided = void_payment(self.conn, p["payment_id"])
+        reverse_allocation(self.conn, a["allocation_id"], reason="Correcting error")
+        voided = void_payment(self.conn, p["payment_id"], reason="Payment was reversed")
         self.assertEqual(voided["status"], "void")
         self.assertIsNotNone(voided["voided_at"])
+        self.assertEqual(voided["void_reason"], "Payment was reversed")
 
     # 21. Void payment contributes zero to active paid totals
     def test_void_payment_zero_paid(self):
         p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
-        reverse_allocation(self.conn, a["allocation_id"])
-        void_payment(self.conn, p["payment_id"])
+        reverse_allocation(self.conn, a["allocation_id"], reason="Correcting error")
+        void_payment(self.conn, p["payment_id"], reason="Payment was reversed")
         self.assertEqual(session_paid_amount(self.conn, self.session_id), 0)
         self.assertEqual(payment_allocated_amount(self.conn, p["payment_id"]), 0)
         self.assertEqual(payment_unapplied_amount(self.conn, p["payment_id"]), 0)
@@ -348,8 +352,8 @@ class PaymentServicesTests(unittest.TestCase):
                            reference_number="CHECK-123", received_from_name="Grandma",
                            administrative_note="Private note about patient")
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
-        reverse_allocation(self.conn, a["allocation_id"])
-        void_payment(self.conn, p["payment_id"])
+        reverse_allocation(self.conn, a["allocation_id"], reason="Audit test reversal")
+        void_payment(self.conn, p["payment_id"], reason="Audit test void")
         audits = self.conn.execute(
             "SELECT entity_type, entity_id, action, details FROM audit_log WHERE entity_type IN ('payment', 'payment_allocation') ORDER BY created_at"
         ).fetchall()
@@ -414,7 +418,7 @@ class PaymentServicesTests(unittest.TestCase):
             amount_cents=25000,
             invoice_line_item_id=self._get_invoice_line_id(paid_session["id"]),
         )
-        reverse_allocation(self.conn, paid_allocation["allocation_id"])
+        reverse_allocation(self.conn, paid_allocation["allocation_id"], reason="Test reversal")
         p_void = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=25000, received_at="2026-05-21", method="ach")
         allocate_payment_to_session(
             self.conn,
@@ -427,8 +431,8 @@ class PaymentServicesTests(unittest.TestCase):
             "SELECT allocation_id FROM payment_allocations WHERE payment_id = ?",
             (p_void["payment_id"],),
         ).fetchone()["allocation_id"]
-        reverse_allocation(self.conn, paid_active)
-        void_payment(self.conn, p_void["payment_id"])
+        reverse_allocation(self.conn, paid_active, reason="Test reversal")
+        void_payment(self.conn, p_void["payment_id"], reason="Test void")
         p_paid_active = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=25000, received_at="2026-05-22", method="card")
         allocate_payment_to_session(
             self.conn,
@@ -651,7 +655,7 @@ class PaymentServicesTests(unittest.TestCase):
             amount_cents=2500,
             invoice_line_item_id=self._get_invoice_line_id(self.session_id),
         )
-        reverse_allocation(self.conn, reversed_allocation["allocation_id"])
+        reverse_allocation(self.conn, reversed_allocation["allocation_id"], reason="Test reversal")
         voided_payment = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=2500, received_at="2026-05-28", method="check")
         voided_allocation = allocate_payment_to_session(
             self.conn,
@@ -660,8 +664,8 @@ class PaymentServicesTests(unittest.TestCase):
             amount_cents=2500,
             invoice_line_item_id=self._get_invoice_line_id(self.session_id),
         )
-        reverse_allocation(self.conn, voided_allocation["allocation_id"])
-        void_payment(self.conn, voided_payment["payment_id"])
+        reverse_allocation(self.conn, voided_allocation["allocation_id"], reason="Test reversal")
+        void_payment(self.conn, voided_payment["payment_id"], reason="Test void")
 
         history = list_invoice_payment_history(self.conn, final["invoice"]["invoice_id"])
         statuses = {row["payment_id"]: row["payment_status"] for row in history["payments"]}
@@ -750,6 +754,228 @@ class PaymentServicesTests(unittest.TestCase):
         self.assertEqual(summary["total_paid_cents"], 0)
         self.assertEqual(summary["current_balance_cents"], 0)
         self.assertEqual(summary["account_status"], "Current")
+
+
+class PaymentCorrectionTests(unittest.TestCase):
+    """Tests for payment correction features: reversal reason, void reason,
+    idempotency keys, apply_available_funds, correction history, and
+    expanded detail view."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmpdir.name) / "test.db"
+        migrate_database(self.db_path)
+        self.conn = connect(self.db_path)
+        self.person = create_person(self.conn, {"first_name": "Alice", "last_name": "Test", "display_name": "Alice Test"})
+        self.party = create_billing_party(self.conn, {
+            "billing_name": "Alice Billing", "person_id": self.person["person_id"],
+            "billing_email": "alice@example.test", "billing_address_line_1": "1 Test St",
+            "billing_city": "Test", "billing_state": "FL", "billing_postal_code": "00000",
+            "preferred_delivery_method": "email",
+        })
+        save_business_profile(self.conn, {
+            "business_name": "Test Practice", "provider_display_name": "Test Provider",
+            "address_line_1": "100 Test Ave", "city": "Test", "state": "FL", "postal_code": "00000",
+            "phone": "555-0100", "email": "billing@test", "payee_name": "Test Payee",
+            "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
+            "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
+        })
+        row = raw_row("s1", "Alice Test | 60 | Office", "2026-05-10T10:00:00-04:00")
+        import_rows(self.conn, [row], "test")
+        candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash("calendar_event_id:event-s1"),),
+        ).fetchone()[0]
+        detail = approve_candidate(self.conn, candidate_id, {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Alice Test"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60, "service_mode": "office",
+            "time_category": "standard", "approved_rate": "150.00",
+            "payment_status": "unpaid", "billing_treatment": "billable",
+        })
+        self.session_id = detail["session"]["id"]
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmpdir.cleanup()
+
+    def _draft_and_finalize(self, session_id):
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session_id],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
+            fake_pdf.return_value = "x" * 64
+            return finalize_invoice(
+                self.conn, draft["invoice"]["invoice_id"],
+            )
+
+    # 40. reverse_allocation requires a reason
+    def test_reverse_allocation_requires_reason(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
+        with self.assertRaises(ValueError) as ctx:
+            reverse_allocation(self.conn, a["allocation_id"])
+        self.assertIn("reversal reason", str(ctx.exception).lower())
+
+    # 41. reverse_allocation stores reversal_reason
+    def test_reverse_allocation_stores_reason(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
+        result = reverse_allocation(self.conn, a["allocation_id"], reason="Wrong session")
+        self.assertEqual(result["reversal_reason"], "Wrong session")
+
+    # 42. void_payment requires a reason
+    def test_void_payment_requires_reason(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        with self.assertRaises(ValueError) as ctx:
+            void_payment(self.conn, p["payment_id"])
+        self.assertIn("void reason", str(ctx.exception).lower())
+
+    # 43. void_payment stores void_reason
+    def test_void_payment_stores_reason(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        result = void_payment(self.conn, p["payment_id"], reason="Bank error")
+        self.assertEqual(result["void_reason"], "Bank error")
+
+    # 44. Idempotency key prevents duplicate reversal
+    def test_idempotency_key_prevents_duplicate_reversal(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test", idempotency_key="key-1")
+        with self.assertRaises(ValueError) as ctx:
+            reverse_allocation(self.conn, a["allocation_id"], reason="Test", idempotency_key="key-1")
+        self.assertIn("already been processed", str(ctx.exception))
+
+    # 45. Idempotency key prevents duplicate void
+    def test_idempotency_key_prevents_duplicate_void(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        void_payment(self.conn, p["payment_id"], reason="Test", idempotency_key="key-2")
+        with self.assertRaises(ValueError) as ctx:
+            void_payment(self.conn, p["payment_id"], reason="Test", idempotency_key="key-2")
+        self.assertIn("already been processed", str(ctx.exception))
+
+    # 46. Idempotency key is optional (no key = no dedup)
+    def test_idempotency_key_optional(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test")
+        # Second call without key still raises because allocation is already reversed
+        with self.assertRaises(ValueError):
+            reverse_allocation(self.conn, a["allocation_id"], reason="Test")
+
+    # 47. apply_available_funds creates new allocations
+    def test_apply_available_funds_creates_allocations(self):
+        final = self._draft_and_finalize(self.session_id)
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        result = apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000)
+        self.assertEqual(len(result["allocations"]), 1)
+        self.assertEqual(result["invoice"]["balance_cents"], 0)
+        self.assertEqual(result["payment"]["amount_cents"], 15000)
+
+    # 48. apply_available_funds rejects non-posted payment
+    def test_apply_funds_rejects_non_posted(self):
+        final = self._draft_and_finalize(self.session_id)
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        void_payment(self.conn, p["payment_id"], reason="Voided")
+        with self.assertRaises(ValueError) as ctx:
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000)
+        self.assertIn("not posted", str(ctx.exception))
+
+    # 49. apply_available_funds rejects draft invoice
+    def test_apply_funds_rejects_draft_invoice(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [self.session_id],
+        })
+        with self.assertRaises(ValueError) as ctx:
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=draft["invoice"]["invoice_id"], amount_cents=15000)
+        self.assertIn("finalized", str(ctx.exception))
+
+    # 50. apply_available_funds rejects mismatched Bill To
+    def test_apply_funds_rejects_mismatched_bill_to(self):
+        final = self._draft_and_finalize(self.session_id)
+        person2 = create_person(self.conn, {"display_name": "Bob Test"})
+        party2 = create_billing_party(self.conn, {
+            "billing_name": "Bob Billing",
+            "person_id": person2["person_id"],
+        })
+        p = create_payment(self.conn, billing_party_id=party2["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        with self.assertRaises(ValueError) as ctx:
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000)
+        self.assertIn("Bill To", str(ctx.exception))
+
+    # 51. apply_available_funds rejects amount exceeding available
+    def test_apply_funds_rejects_excess_amount(self):
+        final = self._draft_and_finalize(self.session_id)
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=10000, received_at="2026-05-10")
+        with self.assertRaises(ValueError) as ctx:
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000)
+        self.assertIn("exceeds available", str(ctx.exception))
+
+    # 52. apply_available_funds rejects zero/negative amount
+    def test_apply_funds_rejects_zero_amount(self):
+        final = self._draft_and_finalize(self.session_id)
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        with self.assertRaises(ValueError):
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=0)
+        with self.assertRaises(ValueError):
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=-100)
+
+    # 53. apply_available_funds with idempotency key prevents duplicate
+    def test_apply_funds_idempotency(self):
+        final = self._draft_and_finalize(self.session_id)
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=30000, received_at="2026-05-10")
+        apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000, idempotency_key="apply-1")
+        with self.assertRaises(ValueError) as ctx:
+            apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000, idempotency_key="apply-1")
+        self.assertIn("already been processed", str(ctx.exception))
+
+    # 54. get_payment_correction_history returns entries after reversal
+    def test_correction_history_after_reversal(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test reversal")
+        history = get_payment_correction_history(self.conn, p["payment_id"])
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["action"], "allocation_reversed")
+        self.assertEqual(history[0]["reason"], "Test reversal")
+
+    # 55. get_payment_correction_history includes void entry
+    def test_correction_history_after_void(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        void_payment(self.conn, p["payment_id"], reason="Bank error")
+        history = get_payment_correction_history(self.conn, p["payment_id"])
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["action"], "payment_voided")
+        self.assertEqual(history[0]["reason"], "Bank error")
+
+    # 56. get_payment_detail_view includes correction history and void reason
+    def test_detail_view_includes_corrections(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=self.session_id, amount_cents=15000)
+        reverse_allocation(self.conn, a["allocation_id"], reason="Wrong session")
+        void_payment(self.conn, p["payment_id"], reason="All reversed")
+        detail = get_payment_detail_view(self.conn, p["payment_id"])
+        self.assertEqual(detail["status"], "void")
+        self.assertEqual(detail["void_reason"], "All reversed")
+        self.assertIsNotNone(detail["voided_at"])
+        self.assertEqual(len(detail["correction_history"]), 2)
+        self.assertEqual(len(detail["allocations"]), 1)
+        self.assertEqual(detail["allocations"][0]["reversal_reason"], "Wrong session")
+        self.assertEqual(detail["allocations"][0]["status"], "reversed")
+
+    # 57. get_payment_detail_view includes funds_applied in correction history
+    def test_detail_view_includes_funds_applied(self):
+        final = self._draft_and_finalize(self.session_id)
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-10")
+        apply_available_funds(self.conn, p["payment_id"], invoice_id=final["invoice"]["invoice_id"], amount_cents=15000)
+        detail = get_payment_detail_view(self.conn, p["payment_id"])
+        actions = [h["action"] for h in detail["correction_history"]]
+        self.assertIn("funds_applied", actions)
 
 
 if __name__ == "__main__":

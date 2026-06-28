@@ -178,7 +178,7 @@ class PaymentProvenanceTests(unittest.TestCase):
         p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"],
                            amount_cents=15000, received_at="2026-05-10",
                            source_type="paid_at_session_backfill", source_session_id=self.session_id)
-        void_payment(self.conn, p["payment_id"])
+        void_payment(self.conn, p["payment_id"], reason="Test void")
         with self.assertRaises(sqlite3.IntegrityError):
             create_payment(self.conn, billing_party_id=self.party["billing_party_id"],
                            amount_cents=15000, received_at="2026-05-10",
@@ -191,7 +191,7 @@ class PaymentProvenanceTests(unittest.TestCase):
                            source_type="paid_at_session_backfill", source_session_id=self.session_id)
         a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"],
                                         session_id=self.session_id, amount_cents=15000)
-        reverse_allocation(self.conn, a["allocation_id"])
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test reversal")
         with self.assertRaises(sqlite3.IntegrityError):
             create_payment(self.conn, billing_party_id=self.party["billing_party_id"],
                            amount_cents=15000, received_at="2026-05-10",

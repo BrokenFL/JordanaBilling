@@ -269,6 +269,81 @@ class PaymentApiTests(unittest.TestCase):
                 html = response.read().decode("utf-8")
         self.assertIn("paymentsView", html)
 
+    def test_post_reverse_allocation(self):
+        session = self._approved_session("api-rev", "2026-05-10T10:00:00-04:00", amount="150.00")
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-15")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=session["id"], amount_cents=15000)
+        with self.server() as base_url:
+            result = self.request_json(
+                base_url,
+                f"/api/payments/allocations/{a['allocation_id']}/reverse",
+                method="POST",
+                payload={"reason": "Wrong session"},
+            )
+        self.assertEqual(result["status"], "reversed")
+        self.assertEqual(result["reversal_reason"], "Wrong session")
+
+    def test_post_reverse_allocation_requires_reason(self):
+        session = self._approved_session("api-rev-rr", "2026-05-10T10:00:00-04:00", amount="150.00")
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-15")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=session["id"], amount_cents=15000)
+        with self.server() as base_url:
+            request = urllib.request.Request(
+                f"{base_url}/api/payments/allocations/{a['allocation_id']}/reverse",
+                data=json.dumps({}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Jordana-Write-Token": self.fetch_write_token(base_url),
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(request)
+        self.assertEqual(ctx.exception.code, 400)
+        payload = json.loads(ctx.exception.read().decode("utf-8"))
+        self.assertIn("reversal reason", payload["error"].lower())
+        ctx.exception.close()
+
+    def test_post_void_payment(self):
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-15")
+        with self.server() as base_url:
+            result = self.request_json(
+                base_url,
+                f"/api/payments/{p['payment_id']}/void",
+                method="POST",
+                payload={"reason": "Bank error"},
+            )
+        self.assertEqual(result["status"], "void")
+        self.assertEqual(result["void_reason"], "Bank error")
+
+    def test_post_apply_funds(self):
+        session = self._approved_session("api-apply", "2026-05-10T10:00:00-04:00", amount="150.00")
+        invoice = self._finalize_invoice([session["id"]])["invoice"]["invoice_id"]
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-15")
+        with self.server() as base_url:
+            result = self.request_json(
+                base_url,
+                f"/api/payments/{p['payment_id']}/apply-funds",
+                method="POST",
+                payload={"invoice_id": invoice, "amount_cents": 15000},
+            )
+        self.assertEqual(len(result["allocations"]), 1)
+        self.assertEqual(result["invoice"]["balance_cents"], 0)
+
+    def test_get_payment_detail_includes_corrections(self):
+        session = self._approved_session("api-det-corr", "2026-05-10T10:00:00-04:00", amount="150.00")
+        p = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-15")
+        a = allocate_payment_to_session(self.conn, payment_id=p["payment_id"], session_id=session["id"], amount_cents=15000)
+        from jordana_invoice.payment_services import reverse_allocation, void_payment
+        reverse_allocation(self.conn, a["allocation_id"], reason="Test reversal")
+        void_payment(self.conn, p["payment_id"], reason="Test void")
+        with self.server() as base_url:
+            detail = self.request_json(base_url, f"/api/payments/{p['payment_id']}")
+        self.assertEqual(detail["status"], "void")
+        self.assertEqual(detail["void_reason"], "Test void")
+        self.assertEqual(len(detail["correction_history"]), 2)
+        self.assertEqual(detail["allocations"][0]["reversal_reason"], "Test reversal")
+
 
 if __name__ == "__main__":
     unittest.main()

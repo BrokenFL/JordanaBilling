@@ -60,7 +60,9 @@ The sidebar entry formerly labelled "Unpaid" is now **Payments**, a tabbed works
 
 - `list_paid_invoices(conn)` — finalized non-void invoices with zero balance, includes `paid_date` and `payment_method`
 - `list_all_payments(conn)` — ledger of all payments with bill-to name, invoice references, and applied amounts
-- `get_payment_detail_view(conn, payment_id)` — detailed payment info with allocation breakdown and invoice references
+- `get_payment_detail_view(conn, payment_id)` — detailed payment info with allocation breakdown, invoice references, correction history, and void/reversal reasons
+- `get_payment_correction_history(conn, payment_id)` — audit-log-derived list of allocation reversals, payment voids, and fund applications
+- `apply_available_funds(conn, payment_id, *, invoice_id, amount_cents, idempotency_key)` — apply unapplied payment funds to a finalized invoice
 - `client_account_summary(conn, person_id)` — total billed, total paid, current balance, and account status for a person
 
 ### API Endpoints
@@ -70,8 +72,11 @@ The sidebar entry formerly labelled "Unpaid" is now **Payments**, a tabbed works
 | `GET /api/payments/outstanding-invoices` | List finalized invoices with positive balance |
 | `GET /api/payments/paid-invoices` | List finalized invoices with zero balance |
 | `GET /api/payments` | List all payments chronologically |
-| `GET /api/payments/{payment_id}` | Payment detail with allocations and invoice info |
+| `GET /api/payments/{payment_id}` | Payment detail with allocations, correction history, and void info |
 | `POST /api/invoices/{invoice_id}/payments` | Record a payment against an invoice |
+| `POST /api/payments/allocations/{allocation_id}/reverse` | Reverse an active allocation with a required reason |
+| `POST /api/payments/{payment_id}/apply-funds` | Apply available unapplied funds to a finalized invoice |
+| `POST /api/payments/{payment_id}/void` | Void a posted payment with a required reason |
 | `GET /api/people/{person_id}/account-summary` | Account summary for a person |
 
 ### Client Page Integration

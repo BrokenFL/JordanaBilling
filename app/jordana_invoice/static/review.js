@@ -1866,10 +1866,157 @@ function renderAllPayments(items) {
 
 async function openPaymentDetail(paymentId) {
   const data = await api(`/api/payments/${paymentId}`);
-  const allocs = (data.allocations || []).filter(a => a.invoice_info);
-  const invoiceInfo = allocs.length ? allocs[0].invoice_info : null;
-  alert(`Payment Detail\n\nDate: ${fmt(data.received_at)}\nMethod: ${escapeHtml(paymentMethodLabel(data.method))}\nReference: ${fmt(data.reference_number)}\nReceived From: ${fmt(data.received_from_name)}\nAmount: ${money(centString(data.amount_cents))}\nApplied: ${money(centString(data.allocated_cents))}\nStatus: ${escapeHtml(paymentStatusLabel(data.status))}${invoiceInfo ? "\nInvoice: " + fmt(invoiceInfo.invoice_number) + " — " + fmt(invoiceInfo.bill_to_name) : ""}`);
+  paymentDetailReturnFocus = document.activeElement;
+  const allocs = data.allocations || [];
+  const history = data.correction_history || [];
+  const canVoid = data.status === "posted" && allocs.every(a => a.status !== "active");
+  const hasUnapplied = data.status === "posted" && data.unapplied_cents > 0;
+  const activeAllocs = allocs.filter(a => a.status === "active");
+  const reversedAllocs = allocs.filter(a => a.status === "reversed");
+
+  const allocRows = allocs.map(a => `
+    <tr>
+      <td>${money(centString(a.amount_cents))}</td>
+      <td><span class="status-pill ${escapeAttr(a.status)}">${escapeHtml(a.status === "active" ? "Active" : "Reversed")}</span></td>
+      <td>${a.invoice_info ? fmt(a.invoice_info.invoice_number) : "—"}</td>
+      <td>${a.invoice_info ? fmt(a.invoice_info.bill_to_name) : "—"}</td>
+      <td>${a.reversed_at ? fmt(a.reversed_at) : "—"}</td>
+      <td>${a.reversal_reason ? escapeHtml(a.reversal_reason) : "—"}</td>
+      <td>${a.status === "active" ? `<button class="mini danger" data-reverse-alloc="${escapeAttr(a.allocation_id)}">Reverse</button>` : ""}</td>
+    </tr>
+  `).join("");
+
+  const historyRows = history.length ? history.map(h => `
+    <tr>
+      <td>${escapeHtml(h.action === "allocation_reversed" ? "Allocation Reversed" : h.action === "payment_voided" ? "Payment Voided" : h.action === "funds_applied" ? "Funds Applied" : escapeHtml(h.action))}</td>
+      <td>${h.amount_cents != null ? money(centString(h.amount_cents)) : "—"}</td>
+      <td>${h.reason ? escapeHtml(h.reason) : "—"}</td>
+      <td>${fmt(h.created_at)}</td>
+    </tr>
+  `).join("") : '<tr class="empty-row"><td colspan="4">No corrections recorded.</td></tr>';
+
+  $("paymentDetailOverlayContent").innerHTML = `
+    <div class="payment-detail-section">
+      <div class="payment-detail-grid">
+        <label class="field">Date<input value="${escapeAttr(data.received_at || "")}" readonly /></label>
+        <label class="field">Method<input value="${escapeAttr(paymentMethodLabel(data.method))}" readonly /></label>
+        <label class="field">Reference<input value="${escapeAttr(data.reference_number || "")}" readonly /></label>
+        <label class="field">Received From<input value="${escapeAttr(data.received_from_name || "")}" readonly /></label>
+        <label class="field">Amount<input value="${escapeAttr(money(centString(data.amount_cents)))}" readonly /></label>
+        <label class="field">Applied<input value="${escapeAttr(money(centString(data.allocated_cents)))}" readonly /></label>
+        <label class="field">Unapplied<input value="${escapeAttr(money(centString(data.unapplied_cents)))}" readonly /></label>
+        <label class="field">Status<input value="${escapeAttr(paymentStatusLabel(data.status))}" readonly /></label>
+      </div>
+      ${data.status === "void" && data.void_reason ? `<p class="payment-detail-void-reason"><strong>Void Reason:</strong> ${escapeHtml(data.void_reason)}</p>` : ""}
+      ${data.voided_at ? `<p class="payment-detail-voided-at"><strong>Voided At:</strong> ${fmt(data.voided_at)}</p>` : ""}
+    </div>
+    <div class="payment-detail-section">
+      <h3>Allocations</h3>
+      <table class="review-table">
+        <thead><tr><th>Amount</th><th>Status</th><th>Invoice</th><th>Bill To</th><th>Reversed At</th><th>Reason</th><th>Actions</th></tr></thead>
+        <tbody>${allocRows || '<tr class="empty-row"><td colspan="7">No allocations.</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div class="payment-detail-section">
+      <h3>Correction History</h3>
+      <table class="review-table">
+        <thead><tr><th>Action</th><th>Amount</th><th>Reason</th><th>Date</th></tr></thead>
+        <tbody>${historyRows}</tbody>
+      </table>
+    </div>
+    ${hasUnapplied ? `
+      <div class="payment-detail-section">
+        <h3>Apply Available Funds</h3>
+        <form id="applyFundsForm" class="payment-detail-action-form">
+          <label class="field">Invoice ID<input id="applyFundsInvoiceId" placeholder="Invoice UUID" required /></label>
+          <label class="field">Amount (cents)<input id="applyFundsAmount" type="number" min="1" max="${data.unapplied_cents}" placeholder="e.g. 5000" required /></label>
+          <button type="submit" class="save">Apply Funds</button>
+        </form>
+      </div>
+    ` : ""}
+    ${data.status === "posted" ? `
+      <div class="payment-detail-section">
+        <h3>Void Payment</h3>
+        <form id="voidPaymentForm" class="payment-detail-action-form">
+          <label class="field">Void Reason<input id="voidPaymentReason" placeholder="Administrative reason" required ${canVoid ? "" : "disabled"} /></label>
+          <button type="submit" class="danger" ${canVoid ? "" : "disabled"}>${canVoid ? "Void Payment" : "Reverse all allocations first"}</button>
+        </form>
+      </div>
+    ` : ""}
+  `;
+
+  const overlay = $("paymentDetailOverlay");
+  overlay.hidden = false;
+  $("paymentDetailOverlayClose").onclick = closePaymentDetailOverlay;
+
+  document.querySelectorAll("[data-reverse-alloc]").forEach(btn => {
+    btn.onclick = async () => {
+      const reason = prompt("Enter a reversal reason (administrative):");
+      if (!reason || !reason.trim()) return;
+      try {
+        await api(`/api/payments/allocations/${encodeURIComponent(btn.dataset.reverseAlloc)}/reverse`, {
+          method: "POST",
+          body: JSON.stringify({ reason: reason.trim() }),
+        });
+        await openPaymentDetail(paymentId);
+        await loadAllPayments();
+      } catch (err) {
+        alert(err.message || "Reversal failed.");
+      }
+    };
+  });
+
+  const applyForm = $("applyFundsForm");
+  if (applyForm) {
+    applyForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const invoiceId = $("applyFundsInvoiceId").value.trim();
+      const amount = parseInt($("applyFundsAmount").value, 10);
+      if (!invoiceId || !amount || amount <= 0) return;
+      try {
+        await api(`/api/payments/${encodeURIComponent(paymentId)}/apply-funds`, {
+          method: "POST",
+          body: JSON.stringify({ invoice_id: invoiceId, amount_cents: amount }),
+        });
+        await openPaymentDetail(paymentId);
+        await loadAllPayments();
+      } catch (err) {
+        alert(err.message || "Apply funds failed.");
+      }
+    };
+  }
+
+  const voidForm = $("voidPaymentForm");
+  if (voidForm) {
+    voidForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const reason = $("voidPaymentReason").value.trim();
+      if (!reason) return;
+      try {
+        await api(`/api/payments/${encodeURIComponent(paymentId)}/void`, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
+        await openPaymentDetail(paymentId);
+        await loadAllPayments();
+      } catch (err) {
+        alert(err.message || "Void failed.");
+      }
+    };
+  }
 }
+
+function closePaymentDetailOverlay() {
+  const overlay = $("paymentDetailOverlay");
+  if (!overlay) return;
+  overlay.hidden = true;
+  if (paymentDetailReturnFocus && document.body.contains(paymentDetailReturnFocus)) {
+    paymentDetailReturnFocus.focus();
+  }
+  paymentDetailReturnFocus = null;
+}
+
+let paymentDetailReturnFocus = null;
 
 async function loadReports() {
   const grid = $("reportCardGrid");

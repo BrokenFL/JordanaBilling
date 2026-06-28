@@ -88,12 +88,15 @@ from .invoice_services import (
 )
 from .invoice_rendering import build_print_preview_html
 from .payment_services import (
+    apply_available_funds,
     get_payment_detail_view,
     list_all_payments,
     list_invoice_payment_history,
     list_outstanding_invoices,
     list_paid_invoices,
     record_invoice_payment,
+    reverse_allocation,
+    void_payment,
 )
 from .csv_reports import (
     available_report_types,
@@ -193,6 +196,19 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Payment amount cannot exceed the current invoice balance.",
             "Invoice line is missing a source session and cannot accept a payment.",
             "Payment Bill To party does not match the invoice Bill To party.",
+            # Payment corrections
+            "A reversal reason is required.",
+            "A void reason is required.",
+            "Allocation was not found.",
+            "Allocation is already reversed.",
+            "Payment was not found.",
+            "Payment is already void.",
+            "Cannot void a payment with active allocations. Reverse all allocations first.",
+            "Payment is not posted.",
+            "Amount must be greater than zero.",
+            "Amount exceeds available unapplied funds.",
+            "Amount exceeds the current invoice balance.",
+            "This request has already been processed.",
             # Billing parties
             "Billing name is required.",
             "Invalid preferred delivery method.",
@@ -730,6 +746,42 @@ def make_handler(database_path: str, write_token: str | None = None):
                             reference_number=data.get("reference_number"),
                             received_from_name=data.get("received_from_name"),
                             administrative_note=data.get("administrative_note"),
+                        )
+                    )
+                    return
+                if parsed.path.startswith("/api/payments/allocations/") and parsed.path.endswith("/reverse"):
+                    parts = parsed.path.strip("/").split("/")
+                    if len(parts) == 5 and parts[4] == "reverse":
+                        allocation_id = parts[3]
+                        self.send_json(
+                            reverse_allocation(
+                                self.conn(),
+                                allocation_id,
+                                reason=data.get("reason") or "",
+                                idempotency_key=data.get("idempotency_key"),
+                            )
+                        )
+                        return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/apply-funds"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(
+                        apply_available_funds(
+                            self.conn(),
+                            payment_id,
+                            invoice_id=data.get("invoice_id") or "",
+                            amount_cents=data.get("amount_cents"),
+                            idempotency_key=data.get("idempotency_key"),
+                        )
+                    )
+                    return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/void"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(
+                        void_payment(
+                            self.conn(),
+                            payment_id,
+                            reason=data.get("reason") or "",
+                            idempotency_key=data.get("idempotency_key"),
                         )
                     )
                     return
