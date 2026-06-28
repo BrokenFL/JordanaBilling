@@ -224,6 +224,7 @@ HTTP server.
 - **Canonical payer (PR #4):** Unified payer billing profiles; one canonical active person-linked billing-party record per payer; draft PDF preview restored using same ReportLab render model as final PDFs
 - **Folded payer rows and Safari PDF headers (PR #5):** Same-payer shared billing accounts folded into one payer-centered Billing Relationships row; browser-compatible inline PDF headers for Safari
 - **Joint-session review linkage (PR #6):** Candidate-only review records promoted into exactly one sessions row during section save; multi-participant save and approval reusing the same candidate-to-session link; approval remaining successful even if invoice staging later warns
+- **Draft preview account-summary wiring fix:** The `/api/invoices/<id>/print-preview` and `/api/invoices/<id>/draft-pdf` endpoints now pass the already-calculated `account_summary` (from `get_invoice()`) into `build_print_preview_html` and `build_invoice_render_model`, so draft previews correctly display prior unpaid balances and total amount due. Previously these endpoints omitted the `account_summary` argument, causing draft previews to miss the prior-balance section.
 
 ## Current Test Strategy
 

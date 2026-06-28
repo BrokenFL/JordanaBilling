@@ -545,6 +545,7 @@ def make_handler(database_path: str, write_token: str | None = None):
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
+                        account_summary=(data.get("render_model") or {}).get("account_summary"),
                     )
                     body = html.encode("utf-8")
                     self.send_response(200)
@@ -564,6 +565,7 @@ def make_handler(database_path: str, write_token: str | None = None):
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
+                        account_summary=(data.get("render_model") or {}).get("account_summary"),
                     )
                     body = generate_draft_pdf_bytes(
                         data["invoice"], data["lines"],
