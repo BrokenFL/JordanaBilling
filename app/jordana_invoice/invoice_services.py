@@ -535,6 +535,103 @@ def _session_month(session_date: str | None) -> str | None:
         return None
 
 
+def _consolidate_duplicate_payer_drafts(conn: sqlite3.Connection) -> int:
+    """Merge draft invoices for duplicate person-linked billing parties.
+
+    For each person with multiple active person-linked billing parties, find
+    draft invoices for the same billing_month and move lines from redundant
+    drafts to the canonical draft. Never touches finalized or void invoices.
+    Returns the number of redundant drafts consolidated.
+    """
+    # Find persons with multiple active person-linked billing parties
+    dup_persons = conn.execute(
+        """
+        SELECT bp.person_id, COUNT(*) AS bp_count
+        FROM billing_parties bp
+        WHERE bp.active = 1 AND bp.person_id IS NOT NULL AND bp.billing_party_type = 'person'
+        GROUP BY bp.person_id
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+
+    consolidated = 0
+    for row in dup_persons:
+        person_id = row["person_id"]
+        # Get all active billing parties for this person, ordered by account reference count
+        parties = conn.execute(
+            """
+            SELECT bp.*,
+              (SELECT COUNT(*) FROM client_accounts ca
+               WHERE ca.default_billing_party_id = bp.billing_party_id AND ca.active = 1) AS acct_count
+            FROM billing_parties bp
+            WHERE bp.active = 1 AND bp.person_id = ? AND bp.billing_party_type = 'person'
+            ORDER BY acct_count DESC, bp.updated_at DESC
+            """,
+            (person_id,),
+        ).fetchall()
+
+        canonical_id = parties[0]["billing_party_id"]
+        redundant_ids = [p["billing_party_id"] for p in parties[1:]]
+
+        for r_id in redundant_ids:
+            # Find draft invoices for the redundant billing party
+            r_drafts = conn.execute(
+                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND status = 'draft'",
+                (r_id,),
+            ).fetchall()
+            for r_draft in r_drafts:
+                bm = r_draft["billing_month"]
+                if not bm:
+                    continue
+                # Find or create canonical draft for same month
+                canonical_draft = conn.execute(
+                    "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+                    (canonical_id, bm),
+                ).fetchone()
+                if not canonical_draft:
+                    # Repoint the redundant draft to canonical
+                    conn.execute(
+                        "UPDATE invoices SET bill_to_party_id = ?, updated_at = ? WHERE invoice_id = ?",
+                        (canonical_id, now_iso(), r_draft["invoice_id"]),
+                    )
+                    continue
+                # Move lines from redundant draft to canonical draft
+                r_lines = conn.execute(
+                    "SELECT * FROM invoice_line_items WHERE invoice_id = ?",
+                    (r_draft["invoice_id"],),
+                ).fetchall()
+                for line in r_lines:
+                    already = conn.execute(
+                        "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+                        (canonical_draft["invoice_id"], line["source_session_id"]),
+                    ).fetchone()
+                    if not already:
+                        order = conn.execute(
+                            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
+                            (canonical_draft["invoice_id"],),
+                        ).fetchone()[0]
+                        conn.execute(
+                            "UPDATE invoice_line_items SET invoice_id = ?, sort_order = ? WHERE invoice_line_item_id = ?",
+                            (canonical_draft["invoice_id"], order, line["invoice_line_item_id"]),
+                        )
+                # Recalculate canonical draft totals
+                _recalculate(conn, canonical_draft["invoice_id"])
+                conn.execute(
+                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                    (now_iso(), canonical_draft["invoice_id"]),
+                )
+                # Delete the now-empty redundant draft
+                conn.execute("DELETE FROM invoices WHERE invoice_id = ?", (r_draft["invoice_id"],))
+                _audit(conn, "invoice", r_draft["invoice_id"], "consolidated_into_canonical_draft",
+                       {"canonical_invoice_id": canonical_draft["invoice_id"], "billing_month": bm})
+                consolidated += 1
+
+    if consolidated > 0:
+        conn.commit()
+
+    return consolidated
+
+
 def _find_or_create_monthly_draft(
     conn: sqlite3.Connection,
     billing_party_id: str,
@@ -619,7 +716,11 @@ def stage_approved_sessions_to_monthly_drafts(
         "sessions_removed_ineligible": 0,
         "sessions_skipped": [],
         "errors": [],
+        "drafts_consolidated": 0,
     }
+
+    # --- Step 0: Consolidate drafts for duplicate person-linked billing parties ---
+    result["drafts_consolidated"] = _consolidate_duplicate_payer_drafts(conn)
 
     # --- Step 1: Determine the set of (party, month) groups to process ---
 

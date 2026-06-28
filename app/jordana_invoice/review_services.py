@@ -912,6 +912,11 @@ def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: d
         if billing.get("billing_party_id"):
             updated = update_billing_party(conn, billing["billing_party_id"], billing)
             billing_party_id = updated["billing_party_id"]
+        elif billing.get("person_id") and billing.get("billing_party_type", "person") == "person":
+            billing_party_id = _canonical_billing_party_for_person(conn, billing["person_id"])
+            bp_update = {k: v for k, v in billing.items() if k != "person_id"}
+            bp_update["billing_party_id"] = billing_party_id
+            update_billing_party(conn, billing_party_id, bp_update)
         else:
             created = create_billing_party(conn, billing)
             billing_party_id = created["billing_party_id"]
@@ -5313,14 +5318,244 @@ def analyze_billing_relationship_duplicates(conn: sqlite3.Connection) -> dict[st
     }
 
 
+def normalize_duplicate_payer_billing_parties(
+    conn: sqlite3.Connection,
+    person_id: str,
+    *,
+    canonical_billing_party_id: str | None = None,
+) -> dict[str, Any]:
+    """Audited normalization of duplicate active person-linked billing parties.
+
+    Selects or establishes one canonical active billing-party record for the
+    given payer person, copies missing contact/delivery fields from redundant
+    records (never overwriting non-empty canonical fields), deactivates
+    redundant records, repoints safe mutable references (account defaults,
+    draft-only invoice/session references), and leaves finalized invoices,
+    snapshots, PDF paths, and payment ownership unchanged.
+
+    Returns a structured summary of the merge operation.
+    """
+    init_db(conn)
+
+    person = conn.execute(
+        "SELECT * FROM people WHERE person_id = ? AND active = 1", (person_id,)
+    ).fetchone()
+    if not person:
+        raise ValueError("Person does not exist or is not active.")
+
+    active_parties = conn.execute(
+        """
+        SELECT * FROM billing_parties
+        WHERE person_id = ? AND active = 1 AND billing_party_type = 'person'
+        ORDER BY updated_at DESC
+        """,
+        (person_id,),
+    ).fetchall()
+
+    if len(active_parties) <= 1:
+        return {
+            "person_id": person_id,
+            "canonical_billing_party_id": active_parties[0]["billing_party_id"] if active_parties else None,
+            "deactivated_count": 0,
+            "fields_copied": [],
+            "conflicts": [],
+            "repointed_accounts": [],
+            "repointed_drafts": [],
+            "repointed_sessions": [],
+            "skipped": "No duplicate active billing parties found.",
+        }
+
+    # --- Select canonical record ---
+    if canonical_billing_party_id:
+        canonical = next(
+            (p for p in active_parties if p["billing_party_id"] == canonical_billing_party_id),
+            None,
+        )
+        if not canonical:
+            raise ValueError("Specified canonical billing party is not an active record for this person.")
+    else:
+        # Prefer the one referenced by the most active accounts
+        account_counts = {}
+        for p in active_parties:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM client_accounts WHERE default_billing_party_id = ? AND active = 1",
+                (p["billing_party_id"],),
+            ).fetchone()[0]
+            account_counts[p["billing_party_id"]] = count
+        canonical = max(active_parties, key=lambda p: (
+            account_counts.get(p["billing_party_id"], 0),
+            p["updated_at"],
+        ))
+
+    canonical_id = canonical["billing_party_id"]
+    redundant = [p for p in active_parties if p["billing_party_id"] != canonical_id]
+
+    # --- Copy missing fields from redundant records (field-level safe rules) ---
+    contact_fields = [
+        "billing_email", "billing_phone", "billing_address_line_1",
+        "billing_address_line_2", "billing_city", "billing_state",
+        "billing_postal_code", "preferred_delivery_method", "administrative_notes",
+    ]
+    fields_copied: list[str] = []
+    conflicts: list[dict[str, str]] = []
+
+    canonical_updates: dict[str, Any] = {}
+    for field in contact_fields:
+        canonical_val = str(canonical[field] or "").strip() if canonical[field] is not None else ""
+        if not canonical_val:
+            for r in redundant:
+                redundant_val = str(r[field] or "").strip() if r[field] is not None else ""
+                if redundant_val:
+                    if field not in canonical_updates:
+                        canonical_updates[field] = redundant_val
+                        fields_copied.append(field)
+                    elif canonical_updates[field] != redundant_val:
+                        conflicts.append({
+                            "field": field,
+                            "canonical_value": "",
+                            "conflicting_values": f"{canonical_updates[field]} vs {redundant_val}",
+                        })
+                    break  # only check first redundant with a value for this field
+
+    # Detect conflicts: canonical has a value and a redundant has a different value
+    for field in contact_fields:
+        canonical_val = str(canonical[field] or "").strip() if canonical[field] is not None else ""
+        if canonical_val:
+            for r in redundant:
+                redundant_val = str(r[field] or "").strip() if r[field] is not None else ""
+                if redundant_val and redundant_val != canonical_val:
+                    conflicts.append({
+                        "field": field,
+                        "canonical_value": canonical_val,
+                        "conflicting_values": redundant_val,
+                    })
+
+    # Apply canonical updates
+    if canonical_updates:
+        now = now_iso()
+        set_clauses = ", ".join(f"{k} = ?" for k in canonical_updates)
+        params = list(canonical_updates.values()) + [now, canonical_id]
+        conn.execute(
+            f"UPDATE billing_parties SET {set_clauses}, updated_at = ? WHERE billing_party_id = ?",
+            params,
+        )
+
+    # --- Begin transaction for structural changes ---
+    _begin_immediate(conn)
+    try:
+        now = now_iso()
+
+        # Repoint active account defaults
+        repointed_accounts: list[str] = []
+        for r in redundant:
+            r_id = r["billing_party_id"]
+            accounts = conn.execute(
+                "SELECT account_id FROM client_accounts WHERE default_billing_party_id = ? AND active = 1",
+                (r_id,),
+            ).fetchall()
+            for acct in accounts:
+                conn.execute(
+                    "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
+                    (canonical_id, now, acct["account_id"]),
+                )
+                repointed_accounts.append(acct["account_id"])
+
+        # Repoint draft-only invoice references
+        repointed_drafts: list[str] = []
+        for r in redundant:
+            r_id = r["billing_party_id"]
+            draft_invoices = conn.execute(
+                "SELECT invoice_id FROM invoices WHERE bill_to_party_id = ? AND status = 'draft'",
+                (r_id,),
+            ).fetchall()
+            for inv in draft_invoices:
+                # Check if canonical already has a draft for the same billing month
+                existing_month = conn.execute(
+                    "SELECT billing_month FROM invoices WHERE invoice_id = ?",
+                    (inv["invoice_id"],),
+                ).fetchone()
+                bm = existing_month["billing_month"] if existing_month else None
+                if bm:
+                    target = conn.execute(
+                        "SELECT invoice_id FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft' AND invoice_id != ?",
+                        (canonical_id, bm, inv["invoice_id"]),
+                    ).fetchone()
+                    if target:
+                        # Move lines to the target draft instead of repointing
+                        conn.execute(
+                            "UPDATE invoice_line_items SET invoice_id = ? WHERE invoice_id = ?",
+                            (target["invoice_id"], inv["invoice_id"]),
+                        )
+                        conn.execute(
+                            "DELETE FROM invoices WHERE invoice_id = ?",
+                            (inv["invoice_id"],),
+                        )
+                        repointed_drafts.append(inv["invoice_id"])
+                        continue
+                conn.execute(
+                    "UPDATE invoices SET bill_to_party_id = ?, updated_at = ? WHERE invoice_id = ?",
+                    (canonical_id, now, inv["invoice_id"]),
+                )
+                repointed_drafts.append(inv["invoice_id"])
+
+        # Repoint non-approved session references
+        repointed_sessions: list[str] = []
+        for r in redundant:
+            r_id = r["billing_party_id"]
+            sessions = conn.execute(
+                "SELECT id FROM sessions WHERE billing_party_id = ? AND review_status != 'approved'",
+                (r_id,),
+            ).fetchall()
+            for sess in sessions:
+                conn.execute(
+                    "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
+                    (canonical_id, now, sess["id"]),
+                )
+                repointed_sessions.append(sess["id"])
+
+        # Deactivate redundant records
+        for r in redundant:
+            r_id = r["billing_party_id"]
+            conn.execute(
+                "UPDATE billing_parties SET active = 0, updated_at = ? WHERE billing_party_id = ?",
+                (now, r_id),
+            )
+            record_audit(conn, "billing_party", r_id, "deactivated_by_payer_normalization", {
+                "canonical_billing_party_id": canonical_id,
+                "person_id": person_id,
+            })
+
+        record_audit(conn, "billing_party", canonical_id, "canonical_payer_normalization", {
+            "person_id": person_id,
+            "deactivated_count": len(redundant),
+            "fields_copied": fields_copied,
+            "conflict_count": len(conflicts),
+        })
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return {
+        "person_id": person_id,
+        "canonical_billing_party_id": canonical_id,
+        "deactivated_count": len(redundant),
+        "fields_copied": fields_copied,
+        "conflicts": conflicts,
+        "repointed_accounts": repointed_accounts,
+        "repointed_drafts": repointed_drafts,
+        "repointed_sessions": repointed_sessions,
+        "skipped": None,
+    }
+
+
 def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return a unified billing directory of all payer relationships and account groupings.
 
-    Produces one normalized record per logical entry:
-    - self_pay: person-linked billing party where the payer is also the participant
-    - third_party: person-linked billing party covering other people
-    - organization: organization billing party
-    - account: genuine client_accounts grouping (family, couple, household, etc.)
+    Produces one consolidated record per person payer (grouping all their
+    active person-linked billing parties and accounts), plus separate records
+    for organization billing parties and genuine non-person-linked account groupings.
 
     No accounts, people, billing parties, sessions, or invoices are created or modified.
     """
@@ -5335,12 +5570,15 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     duplicate_analysis = analyze_billing_relationship_duplicates(conn)
     duplicate_account_ids = set(duplicate_analysis["duplicate_account_ids"])
     payer_conflict_account_ids = set(duplicate_analysis["payer_conflict_account_ids"])
+    person_linked_account_ids: set[str] = set()
     for row in conn.execute(
         """
-        SELECT account_id, account_code, account_name, account_type,
-               default_billing_party_id, active
-        FROM client_accounts
-        WHERE default_billing_party_id IS NOT NULL
+        SELECT ca.account_id, ca.account_code, ca.account_name, ca.account_type,
+               ca.default_billing_party_id, ca.active,
+               bp.person_id AS payer_person_id
+        FROM client_accounts ca
+        LEFT JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+        WHERE ca.default_billing_party_id IS NOT NULL
         """
     ).fetchall():
         account_links[row["default_billing_party_id"]] = {
@@ -5349,6 +5587,8 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             "account_name": row["account_name"],
             "account_type": row["account_type"],
         }
+        if row["payer_person_id"]:
+            person_linked_account_ids.add(row["account_id"])
 
     bp_rows = conn.execute(
         """
@@ -5378,12 +5618,112 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         """
     ).fetchall()
 
+    # --- Consolidate person-linked billing parties by person_id ---
+    person_groups: dict[str, list[sqlite3.Row]] = {}
+    org_rows: list[sqlite3.Row] = []
+    for row in bp_rows:
+        if row["billing_party_type"] == "person" and row["payer_person_id"]:
+            pid = row["payer_person_id"]
+            person_groups.setdefault(pid, []).append(row)
+        else:
+            org_rows.append(row)
+
+    # Build account-member map for merging covered clients
+    account_member_map: dict[str, list[str]] = {}
+    for acct_row in conn.execute(
+        "SELECT account_id, GROUP_CONCAT(person_id) AS member_ids FROM account_members GROUP BY account_id"
+    ).fetchall():
+        account_member_map[acct_row["account_id"]] = [
+            mid for mid in (acct_row["member_ids"] or "").split(",") if mid
+        ]
+
     records: list[dict[str, Any]] = []
 
-    for row in bp_rows:
+    for pid, parties in person_groups.items():
+        # Pick canonical: most account references, then active, then ID
+        acct_counts = {}
+        for p in parties:
+            acct_counts[p["billing_party_id"]] = conn.execute(
+                "SELECT COUNT(*) FROM client_accounts WHERE default_billing_party_id = ? AND active = 1",
+                (p["billing_party_id"],),
+            ).fetchone()[0]
+        canonical = max(parties, key=lambda p: (
+            acct_counts.get(p["billing_party_id"], 0),
+            int(p["billing_party_active"]),
+            p["billing_party_id"],
+        ))
+
+        canonical_id = canonical["billing_party_id"]
+
+        # Merge covered people from all billing parties and account members
+        all_covered: set[str] = set()
+        all_bp_ids: list[str] = []
+        all_account_ids: list[str] = []
+        total_sessions = 0
+        latest_date = None
+        for p in parties:
+            all_bp_ids.append(p["billing_party_id"])
+            for cid in (p["covered_person_ids_raw"] or "").split(","):
+                if cid:
+                    all_covered.add(cid)
+            total_sessions += int(p["session_count"] or 0)
+            d = p["latest_session_date"]
+            if d and (latest_date is None or d > latest_date):
+                latest_date = d
+            link = account_links.get(p["billing_party_id"])
+            if link:
+                all_account_ids.append(link["account_id"])
+                for mid in account_member_map.get(link["account_id"], []):
+                    all_covered.add(mid)
+
+        covered_people = [
+            {"person_id": cid, "display_name": people_map.get(cid, "")}
+            for cid in sorted(all_covered)
+        ]
+
+        if all_covered and all(cid == pid for cid in all_covered):
+            record_type = "self_pay"
+        elif all_covered:
+            record_type = "third_party"
+        else:
+            record_type = "self_pay"
+
+        link = account_links.get(canonical_id)
+
+        records.append(
+            {
+                "record_type": record_type,
+                "record_id": canonical_id,
+                "billing_party_id": canonical_id,
+                "payer_person_id": pid,
+                "payer_display_name": people_map.get(pid, ""),
+                "organization_name": None,
+                "billing_name": canonical["billing_name"],
+                "billing_party_type": "person",
+                "billing_email": canonical["billing_email"],
+                "billing_phone": canonical["billing_phone"],
+                "preferred_delivery_method": canonical["preferred_delivery_method"],
+                "active": bool(canonical["billing_party_active"]),
+                "covered_people": covered_people,
+                "session_count": total_sessions,
+                "latest_session_date": latest_date,
+                "account_id": link["account_id"] if link else None,
+                "account_code": link["account_code"] if link else None,
+                "account_name": link["account_name"] if link else None,
+                "account_type": link["account_type"] if link else None,
+                "consolidated_billing_party_ids": all_bp_ids,
+                "consolidated_account_ids": all_account_ids,
+                "has_payer_record_conflict": len(parties) > 1,
+                "has_exact_active_duplicate": any(
+                    aid in duplicate_account_ids for aid in all_account_ids
+                ),
+            }
+        )
+
+    # --- Organization billing parties (not consolidated) ---
+    for row in org_rows:
         bp_id = row["billing_party_id"]
         bp_type = row["billing_party_type"]
-        payer_pid = row["payer_person_id"]
         active = bool(row["billing_party_active"])
 
         covered_ids = [
@@ -5394,18 +5734,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             for pid in covered_ids
         ]
 
-        if bp_type == "organization":
-            record_type = "organization"
-        elif payer_pid and covered_ids:
-            if all(pid == payer_pid for pid in covered_ids):
-                record_type = "self_pay"
-            else:
-                record_type = "third_party"
-        elif payer_pid:
-            record_type = "self_pay"
-        else:
-            record_type = "organization"
-
+        record_type = "organization"
         link = account_links.get(bp_id)
 
         records.append(
@@ -5413,8 +5742,8 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "record_type": record_type,
                 "record_id": bp_id,
                 "billing_party_id": bp_id,
-                "payer_person_id": payer_pid,
-                "payer_display_name": people_map.get(payer_pid, "") if payer_pid else None,
+                "payer_person_id": None,
+                "payer_display_name": None,
                 "organization_name": row["organization_name"],
                 "billing_name": row["billing_name"],
                 "billing_party_type": bp_type,
@@ -5429,11 +5758,14 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "account_code": link["account_code"] if link else None,
                 "account_name": link["account_name"] if link else None,
                 "account_type": link["account_type"] if link else None,
+                "consolidated_billing_party_ids": [bp_id],
+                "consolidated_account_ids": [link["account_id"]] if link else [],
                 "has_exact_active_duplicate": bool(link and link["account_id"] in duplicate_account_ids),
-                "has_payer_record_conflict": bool(link and link["account_id"] in payer_conflict_account_ids),
+                "has_payer_record_conflict": False,
             }
         )
 
+    # --- Account rows: only for non-person-linked accounts ---
     acct_rows = conn.execute(
         """
         SELECT
@@ -5444,6 +5776,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
           ca.active AS account_active,
           ca.default_billing_party_id,
           bp.billing_name AS default_billing_party_name,
+          bp.person_id AS payer_person_id,
           GROUP_CONCAT(DISTINCT am.person_id) AS member_ids_raw,
           COUNT(DISTINCT s.id) AS session_count,
           MAX(s.session_date) AS latest_session_date
@@ -5485,6 +5818,8 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "account_code": row["account_code"],
                 "account_name": row["account_name"],
                 "account_type": row["account_type"],
+                "consolidated_billing_party_ids": [row["default_billing_party_id"]] if row["default_billing_party_id"] else [],
+                "consolidated_account_ids": [row["account_id"]],
                 "has_exact_active_duplicate": row["account_id"] in duplicate_account_ids,
                 "has_payer_record_conflict": row["account_id"] in payer_conflict_account_ids,
             }
