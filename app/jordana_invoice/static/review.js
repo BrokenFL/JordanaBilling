@@ -47,6 +47,10 @@ const state = {
     selectedPaidInvoiceId: null,
     selectedPaymentId: null
   },
+  financialSummary: {
+    month: "",
+    data: null
+  },
   invoiceLibrary: {
     items: [],
     total: 0,
@@ -144,6 +148,56 @@ async function api(path, options = {}) {
   const json = await res.json();
   if (!res.ok || json.ok === false) throw new Error(json.error || "Request failed");
   return json;
+}
+
+function currentLocalMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function summaryMoney(value) {
+  return money(centString(Number(value) || 0));
+}
+
+function renderFinancialSummary(data) {
+  const values = {
+    invoiceDraftValue: data.draft_invoice_value_cents,
+    invoiceFinalizedValue: data.finalized_invoice_value_for_month_cents,
+    invoiceOutstandingValue: data.outstanding_balance_cents,
+    paymentsInvoicedValue: data.finalized_invoice_value_for_month_cents,
+    paymentsReceivedValue: data.payments_received_for_month_cents,
+    paymentsOutstandingValue: data.outstanding_balance_cents,
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const node = $(id);
+    if (node) node.textContent = summaryMoney(value);
+  });
+}
+
+async function loadFinancialSummary() {
+  const month = state.financialSummary.month || currentLocalMonth();
+  state.financialSummary.month = month;
+  ["invoiceSummaryMonth", "paymentsSummaryMonth"].forEach(id => {
+    const input = $(id);
+    if (!input) return;
+    input.value = month;
+    input.onchange = async () => {
+      if (!input.value) return;
+      state.financialSummary.month = input.value;
+      await loadFinancialSummary();
+    };
+  });
+  try {
+    const data = await api(`/api/financial-summary?month=${encodeURIComponent(month)}`);
+    state.financialSummary.data = data;
+    renderFinancialSummary(data);
+  } catch (_) {
+    state.financialSummary.data = null;
+    ["invoiceDraftValue", "invoiceFinalizedValue", "invoiceOutstandingValue", "paymentsInvoicedValue", "paymentsReceivedValue", "paymentsOutstandingValue"].forEach(id => {
+      const node = $(id);
+      if (node) node.textContent = "Unavailable";
+    });
+  }
 }
 
 async function loadList() {
@@ -1304,6 +1358,7 @@ async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selected
   const data = await api("/api/payments/outstanding-invoices");
   state.unpaid.items = data.items || [];
   renderOutstandingInvoices(state.unpaid.items);
+  await loadFinancialSummary();
   if (!state.unpaid.items.length) {
     state.unpaid.selectedInvoiceId = null;
     $("unpaidWorkspace").innerHTML = `<div class="empty-state">No outstanding finalized invoices.</div>`;
@@ -1763,6 +1818,7 @@ async function loadPaidInvoices() {
   const data = await api("/api/payments/paid-invoices");
   state.payments.paidItems = data.items || [];
   renderPaidInvoices(state.payments.paidItems);
+  await loadFinancialSummary();
 }
 
 function renderPaidInvoices(items) {
@@ -1840,6 +1896,7 @@ async function loadAllPayments() {
   const data = await api("/api/payments");
   state.payments.allPaymentsItems = data.items || [];
   renderAllPayments(state.payments.allPaymentsItems);
+  await loadFinancialSummary();
 }
 
 function renderAllPayments(items) {
@@ -2334,6 +2391,7 @@ async function loadInvoices() {
   lib.total = result.total || 0;
   lib.loaded = true;
   renderInvoiceLibrary();
+  await loadFinancialSummary();
 }
 
 function renderInvoiceLibrary() {

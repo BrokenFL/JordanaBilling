@@ -88,6 +88,7 @@ from .invoice_services import (
     void_invoice,
 )
 from .invoice_rendering import build_print_preview_html
+from .financial_summary import get_financial_summary
 from .payment_services import (
     apply_available_funds,
     get_payment_detail_view,
@@ -484,6 +485,10 @@ def make_handler(database_path: str, write_token: str | None = None):
                     return
                 if parsed.path == "/api/service-catalog":
                     self.send_json(list_services(self.conn(), first(parse_qs(parsed.query), "include_inactive") == "1"))
+                    return
+                if parsed.path == "/api/financial-summary":
+                    query = parse_qs(parsed.query)
+                    self.send_json(get_financial_summary(self.conn(), first(query, "month") or None))
                     return
                 if parsed.path == "/api/invoices/eligible-sessions":
                     query = parse_qs(parsed.query)

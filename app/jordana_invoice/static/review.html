@@ -324,6 +324,14 @@
               <button id="newInvoiceBtn" class="save">Create Invoice</button>
             </div>
           </div>
+          <div class="financial-summary-toolbar">
+            <label class="field">Summary month<input id="invoiceSummaryMonth" type="month" /></label>
+          </div>
+          <div class="summary-cards financial-summary-cards" id="invoiceSummaryCards" aria-live="polite">
+            <div class="summary-card"><div class="summary-card-label">Draft Invoice Value</div><div class="summary-card-value" id="invoiceDraftValue">$0.00</div><div class="summary-card-note">Current drafts</div></div>
+            <div class="summary-card"><div class="summary-card-label">Finalized This Month</div><div class="summary-card-value" id="invoiceFinalizedValue">$0.00</div><div class="summary-card-note">By finalization date</div></div>
+            <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value" id="invoiceOutstandingValue">$0.00</div><div class="summary-card-note">All finalized invoices</div></div>
+          </div>
           <div id="invoiceCustomDateRange" class="invoice-custom-date-range" hidden>
             <label class="field">From<input id="invoiceDateFrom" type="date"></label>
             <label class="field">To<input id="invoiceDateTo" type="date"></label>
@@ -347,6 +355,14 @@
         <section class="invoice-view" id="paymentsView" hidden>
           <div class="crm-header">
             <div><h2>Payments</h2><p>Record payments, review outstanding and paid invoices, and browse the payment ledger.</p></div>
+          </div>
+          <div class="financial-summary-toolbar">
+            <label class="field">Summary month<input id="paymentsSummaryMonth" type="month" /></label>
+          </div>
+          <div class="summary-cards financial-summary-cards" id="paymentsSummaryCards" aria-live="polite">
+            <div class="summary-card"><div class="summary-card-label">Invoiced This Month</div><div class="summary-card-value" id="paymentsInvoicedValue">$0.00</div><div class="summary-card-note">Finalized invoices</div></div>
+            <div class="summary-card"><div class="summary-card-label">Payments Received This Month</div><div class="summary-card-value" id="paymentsReceivedValue">$0.00</div><div class="summary-card-note">Posted cash receipts</div></div>
+            <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value" id="paymentsOutstandingValue">$0.00</div><div class="summary-card-note">All finalized invoices</div></div>
           </div>
           <div class="payments-tabs" id="paymentsTabs">
             <button class="payments-tab active" data-payments-tab="outstanding">Outstanding</button>

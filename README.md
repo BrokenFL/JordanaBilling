@@ -46,6 +46,7 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 - Draft, finalized, and void invoice lifecycle
 - Transaction-safe numbering and immutable invoice snapshots
 - Local multi-page PDF generation
+- Shared invoice/payment financial summaries for draft value, monthly finalized invoices, monthly payment receipts, and outstanding balance
 
 ## Quick Start
 
@@ -131,7 +132,7 @@ The `Sessions` sidebar screen is a read-only ledger built from the same appointm
 
 The `Rate Card` sidebar screen supports global rates plus one-client, clients-together, and billing-relationship exceptions. Replace and End actions preserve rate-rule history, immediately refresh unapproved session suggestions, and never rewrite approved sessions or finalized invoices.
 
-The `Unpaid` sidebar screen is the first payment workspace. It lists finalized invoices with a remaining balance greater than zero, derives paid/balance amounts from posted payments plus active allocations, allows one full or partial payment to be recorded against one invoice at a time, and shows compact payment history. It does not yet support credits, reversals, voiding, or multi-invoice payments.
+The `Payments` sidebar screen lists outstanding and paid finalized invoices, supports payment entry and corrections, and exposes a payment ledger. Its summary cards show finalized invoice value and posted payment receipts for a selected month plus the current outstanding balance. The `Invoices` screen shows the same shared finalized and outstanding totals alongside current draft value. Both screens use the same `/api/financial-summary` backend calculation so a future dashboard can reuse it without redefining accounting logic. Multi-invoice payment entry and formal reconciliation remain unfinished.
 
 The inspector has independent saves for Participants, Bill To, and Session Draft. None of those saves approve a session automatically. Account and relationship controls remain available in the collapsed Advanced relationships and shared billing section.
 
