@@ -66,10 +66,10 @@ Routine review uses Jordana's normal mental model:
 5. Suggested/editable rate
 6. Approve
 
-Payment status is no longer part of the main confirmation form. It defaults to **Unpaid** and can be changed in the **Additional Information** section. The only two options are:
+Payment handling is set in the **Additional Information** section. The label is now **Payment Handling** with two options:
 
-- **Unpaid** (default) — session remains eligible for invoicing
-- **Paid at time of session** — session is excluded from invoicing
+- **Invoice billing** (default) — session remains eligible for invoicing
+- **Paid at session** — session is excluded from invoicing
 
 ### Session Type Choices
 

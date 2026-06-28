@@ -87,8 +87,11 @@ from .invoice_services import (
     void_invoice,
 )
 from .payment_services import (
+    get_payment_detail_view,
+    list_all_payments,
     list_invoice_payment_history,
     list_outstanding_invoices,
+    list_paid_invoices,
     record_invoice_payment,
 )
 from .csv_reports import (
@@ -344,7 +347,7 @@ def make_handler(database_path: str, write_token: str | None = None):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             try:
-                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid"} or parsed.path.startswith("/invoices/"):
+                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid", "/payments"} or parsed.path.startswith("/invoices/"):
                     self.send_static("review.html")
                     return
                 if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
@@ -386,6 +389,11 @@ def make_handler(database_path: str, write_token: str | None = None):
                         self.send_json(list_people_records(self.conn(), first(query, "q")))
                     else:
                         self.send_json(search_people(self.conn(), first(query, "q")))
+                    return
+                if parsed.path.startswith("/api/people/") and parsed.path.endswith("/account-summary"):
+                    person_id = parsed.path.strip("/").split("/")[2]
+                    from .payment_services import client_account_summary as _cas
+                    self.send_json(_cas(self.conn(), person_id))
                     return
                 if parsed.path.startswith("/api/people/"):
                     person_id = parsed.path.rsplit("/", 1)[-1]
@@ -465,6 +473,16 @@ def make_handler(database_path: str, write_token: str | None = None):
                     return
                 if parsed.path == "/api/payments/outstanding-invoices":
                     self.send_json({"items": list_outstanding_invoices(self.conn())})
+                    return
+                if parsed.path == "/api/payments/paid-invoices":
+                    self.send_json({"items": list_paid_invoices(self.conn())})
+                    return
+                if parsed.path == "/api/payments":
+                    self.send_json({"items": list_all_payments(self.conn())})
+                    return
+                if parsed.path.startswith("/api/payments/") and not parsed.path.endswith("/outstanding-invoices") and not parsed.path.endswith("/paid-invoices"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(get_payment_detail_view(self.conn(), payment_id))
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
                     invoice_id = parsed.path.strip("/").split("/")[2]

@@ -45,3 +45,35 @@ Each invoice line item stores frozen snapshots at finalization:
 - `custom_service_code_snapshot` — Custom code if applicable
 
 Finalized invoice snapshots remain immutable. Current session or catalog changes never rewrite finalized line items.
+
+## Payments Workspace
+
+The sidebar entry formerly labelled "Unpaid" is now **Payments**, a tabbed workspace with three views:
+
+- **Outstanding** — finalized invoices with a positive remaining balance; supports recording payments
+- **Paid** — finalized invoices with zero balance, showing paid date and payment method
+- **All Payments** — chronological ledger of every payment with bill-to name, applied amount, and status
+
+### Shared Payment Calculations
+
+`payment_services.py` provides four shared functions used by both the API and the review services:
+
+- `list_paid_invoices(conn)` — finalized non-void invoices with zero balance, includes `paid_date` and `payment_method`
+- `list_all_payments(conn)` — ledger of all payments with bill-to name, invoice references, and applied amounts
+- `get_payment_detail_view(conn, payment_id)` — detailed payment info with allocation breakdown and invoice references
+- `client_account_summary(conn, person_id)` — total billed, total paid, current balance, and account status for a person
+
+### API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/payments/outstanding-invoices` | List finalized invoices with positive balance |
+| `GET /api/payments/paid-invoices` | List finalized invoices with zero balance |
+| `GET /api/payments` | List all payments chronologically |
+| `GET /api/payments/{payment_id}` | Payment detail with allocations and invoice info |
+| `POST /api/invoices/{invoice_id}/payments` | Record a payment against an invoice |
+| `GET /api/people/{person_id}/account-summary` | Account summary for a person |
+
+### Client Page Integration
+
+Client record pages display account summary cards (Total Finalized Invoices, Total Payments Applied, Current Balance, Account Status). The invoice table includes Payment Status and Paid columns. The session table uses "Payment Handling" with friendly labels: "Invoice billing" and "Paid at session".

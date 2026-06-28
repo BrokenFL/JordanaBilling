@@ -19,7 +19,7 @@
           <a href="#" id="sessionsNav">Sessions</a>
           <a href="/invoices" id="invoicesNav">Invoices</a>
           <a href="/reports" id="reportsNav">Reports</a>
-          <a href="/unpaid" id="unpaidNav">Unpaid</a>
+          <a href="/payments" id="paymentsNav">Payments</a>
           <a href="#" id="settingsNav">Settings</a>
           <a>Help</a>
         </nav>
@@ -287,7 +287,7 @@
           </div>
           <table class="review-table sessions-table">
             <thead>
-              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment</th><th>Review Status</th><th>Actions</th></tr>
+              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Actions</th></tr>
             </thead>
             <tbody id="sessionsRows"></tbody>
           </table>
@@ -313,18 +313,37 @@
           </div>
         </section>
 
-        <section class="invoice-view" id="unpaidView" hidden>
+        <section class="invoice-view" id="paymentsView" hidden>
           <div class="crm-header">
-            <div><h2>Outstanding Invoices &amp; Payments</h2><p>Record payments against finalized invoices and derive balances from the payment ledger.</p></div>
+            <div><h2>Payments</h2><p>Record payments, review outstanding and paid invoices, and browse the payment ledger.</p></div>
           </div>
-          <div class="invoice-layout">
-            <section>
-              <table class="review-table invoice-list-table unpaid-list-table">
-                <thead><tr><th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
-                <tbody id="unpaidRows"></tbody>
-              </table>
-            </section>
-            <aside class="invoice-workspace" id="unpaidWorkspace"><div class="empty-state">Select an outstanding invoice to review payment history.</div></aside>
+          <div class="payments-tabs" id="paymentsTabs">
+            <button class="payments-tab active" data-payments-tab="outstanding">Outstanding</button>
+            <button class="payments-tab" data-payments-tab="paid">Paid</button>
+            <button class="payments-tab" data-payments-tab="all-payments">All Payments</button>
+          </div>
+          <div class="payments-panel" id="paymentsOutstandingPanel">
+            <div class="invoice-layout">
+              <section>
+                <table class="review-table invoice-list-table unpaid-list-table">
+                  <thead><tr><th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
+                  <tbody id="unpaidRows"></tbody>
+                </table>
+              </section>
+              <aside class="invoice-workspace" id="unpaidWorkspace"><div class="empty-state">Select an outstanding invoice to review payment history.</div></aside>
+            </div>
+          </div>
+          <div class="payments-panel" id="paymentsPaidPanel" hidden>
+            <table class="review-table paid-invoices-table">
+              <thead><tr><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid Date</th><th>Payment Method</th><th>Status</th><th>Open</th></tr></thead>
+              <tbody id="paidRows"></tbody>
+            </table>
+          </div>
+          <div class="payments-panel" id="paymentsAllPaymentsPanel" hidden>
+            <table class="review-table all-payments-table">
+              <thead><tr><th>Payment Date</th><th>Bill To</th><th>Invoice Number</th><th>Method</th><th>Reference</th><th>Received From</th><th>Amount Applied</th><th>Status</th><th>Open</th></tr></thead>
+              <tbody id="allPaymentsRows"></tbody>
+            </table>
           </div>
         </section>
 

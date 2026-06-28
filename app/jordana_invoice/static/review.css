@@ -383,6 +383,10 @@ tr.empty-row:hover { background: transparent; }
 .unpaid-list-table th:last-child,
 .unpaid-list-table td:last-child { white-space: nowrap; }
 .invoice-workspace { border-left: 1px solid var(--line); padding-left: 18px; min-width: 0; min-height: 640px; }
+.payments-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--line); margin-bottom: 16px; }
+.payments-tab { padding: 8px 18px; border: none; background: none; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.payments-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+.payments-panel { min-height: 400px; }
 .invoice-builder { display: grid; gap: 14px; }
 .invoice-builder h3 { margin: 0; font-size: 18px; }
 .payment-panel { display: grid; gap: 14px; }

@@ -39,6 +39,13 @@ const state = {
     selectedInvoiceId: null,
     paymentHistory: [],
     submitting: false
+  },
+  payments: {
+    activeTab: "outstanding",
+    paidItems: [],
+    allPaymentsItems: [],
+    selectedPaidInvoiceId: null,
+    selectedPaymentId: null
   }
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
@@ -301,7 +308,7 @@ function renderInspector(data) {
                <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${escapeAttr(s.custom_service_description || "")}"></label>
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
                <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
-               <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Status<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Unpaid</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at time of session</option></select></label></div></details>
+               <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Handling<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Invoice billing</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at session</option></select></label></div></details>
                ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
                <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label></div></details>
                ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${escapeAttr(s.rate_override_reason || "")}"></label>` : ""}
@@ -1092,8 +1099,15 @@ function paymentMethodLabel(method) {
     cash: "Cash",
     ach: "ACH",
     card: "Card",
-    other: "Other"
+    other: "Other",
+    Multiple: "Multiple"
   }[method] || escapeHtml(method) || "Other");
+}
+function paymentHandlingLabel(status) {
+  return ({
+    unpaid: "Invoice billing",
+    paid_at_session: "Paid at session"
+  }[status] || escapeHtml(status) || "—");
 }
 function paymentStatusLabel(status) {
   return ({
@@ -1160,10 +1174,10 @@ document.getElementById("reportsNav").onclick = (event) => {
   history.pushState({}, "", "/reports");
   showReports();
 };
-document.getElementById("unpaidNav").onclick = (event) => {
+document.getElementById("paymentsNav").onclick = (event) => {
   event.preventDefault();
-  history.pushState({}, "", "/unpaid");
-  showUnpaid();
+  history.pushState({}, "", "/payments");
+  showPayments();
 };
 document.getElementById("settingsNav").onclick = (event) => {
   event.preventDefault();
@@ -1176,8 +1190,8 @@ document.getElementById("reviewNav").onclick = () => {
 };
 
 function hideViews() {
-  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","unpaidView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","unpaidNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -1262,7 +1276,7 @@ function showInvoiceSuccess(message) {
 }
 
 function showUnpaidSuccess(message) {
-  const view = $("unpaidView");
+  const view = $("paymentsView");
   if (!view) return;
   const banner = document.createElement("div");
   banner.className = "review-success-banner";
@@ -1619,7 +1633,7 @@ function renderSessions(rows, total) {
       <td>${fmt(row.calendar_title)}</td>
       <td>${fmt(row.session_length)}</td>
       <td>${money(row.rate)}</td>
-      <td>${fmt(row.payment_status)}</td>
+      <td>${escapeHtml(paymentHandlingLabel(row.payment_status))}</td>
       <td>${fmt(row.review_status)}</td>
       ${actionCell}
     </tr>`;
@@ -1692,14 +1706,154 @@ async function showReports() {
   await loadReports();
 }
 
-async function showUnpaid() {
+async function showPayments() {
   hideViews();
-  $("unpaidView").hidden = false;
-  $("unpaidNav").classList.add("active");
-  $("pageTitle").textContent = "Outstanding Invoices & Payments";
-  $("pageSubtitle").textContent = "Record payments against finalized invoices with remaining balances";
-  document.title = "Jordana Billing - Outstanding Invoices & Payments";
-  await loadOutstandingInvoices();
+  $("paymentsView").hidden = false;
+  $("paymentsNav").classList.add("active");
+  $("pageTitle").textContent = "Payments";
+  $("pageSubtitle").textContent = "Record payments, review outstanding and paid invoices, and browse the payment ledger";
+  document.title = "Jordana Billing - Payments";
+  setupPaymentsTabs();
+  if (state.payments.activeTab === "outstanding") {
+    await loadOutstandingInvoices();
+  } else if (state.payments.activeTab === "paid") {
+    await loadPaidInvoices();
+  } else if (state.payments.activeTab === "all-payments") {
+    await loadAllPayments();
+  }
+}
+
+function setupPaymentsTabs() {
+  document.querySelectorAll(".payments-tab").forEach(tab => {
+    tab.onclick = () => {
+      switchPaymentsTab(tab.dataset.paymentsTab);
+    };
+  });
+}
+
+function switchPaymentsTab(tabName) {
+  state.payments.activeTab = tabName;
+  document.querySelectorAll(".payments-tab").forEach(tab => {
+    tab.classList.toggle("active", tab.dataset.paymentsTab === tabName);
+  });
+  $("paymentsOutstandingPanel").hidden = tabName !== "outstanding";
+  $("paymentsPaidPanel").hidden = tabName !== "paid";
+  $("paymentsAllPaymentsPanel").hidden = tabName !== "all-payments";
+  if (tabName === "outstanding") loadOutstandingInvoices();
+  else if (tabName === "paid") loadPaidInvoices();
+  else if (tabName === "all-payments") loadAllPayments();
+}
+
+async function loadPaidInvoices() {
+  const data = await api("/api/payments/paid-invoices");
+  state.payments.paidItems = data.items || [];
+  renderPaidInvoices(state.payments.paidItems);
+}
+
+function renderPaidInvoices(items) {
+  const tbody = $("paidRows");
+  tbody.innerHTML = items.length
+    ? items.map(item => `
+      <tr data-invoice-id="${escapeAttr(item.invoice_id)}">
+        <td><span class="primary">${fmt(item.invoice_number)}</span></td>
+        <td>${fmt(item.bill_to_display_name)}</td>
+        <td>${fmt(item.invoice_date)}</td>
+        <td>${money(centString(item.total_cents))}</td>
+        <td>${fmt(item.paid_date)}</td>
+        <td>${escapeHtml(paymentMethodLabel(item.payment_method))}</td>
+        <td><span class="status-pill paid">Paid</span></td>
+        <td><button class="mini" data-open-paid-invoice="${escapeAttr(item.invoice_id)}">Open</button></td>
+      </tr>
+    `).join("")
+    : '<tr class="empty-row"><td colspan="8">No paid invoices.</td></tr>';
+  document.querySelectorAll("#paidRows [data-open-paid-invoice]").forEach(btn => {
+    btn.onclick = () => openPaidInvoice(btn.dataset.openPaidInvoice);
+  });
+}
+
+async function openPaidInvoice(invoiceId) {
+  const data = await api(`/api/invoices/${invoiceId}/payments`);
+  const invoice = data.invoice;
+  const payments = data.payments || [];
+  $("unpaidWorkspace").innerHTML = `
+    <div class="payment-panel">
+      <div class="payment-panel-header">
+        <div>
+          <h3>${fmt(invoice.invoice_number)}</h3>
+          <div class="help">${fmt(invoice.bill_to_display_name)} • Invoice date ${fmt(invoice.invoice_date)}</div>
+        </div>
+      </div>
+      <div class="payment-panel-summary">
+        <div class="payment-summary-card"><label>Total</label><strong>${money(centString(invoice.total_cents))}</strong></div>
+        <div class="payment-summary-card"><label>Total Paid</label><strong>${money(centString(invoice.paid_cents))}</strong></div>
+        <div class="payment-summary-card"><label>Balance</label><strong>$0.00</strong></div>
+      </div>
+      <section class="section">
+        <h3>Payment History</h3>
+        <table class="review-table payment-history-table">
+          <thead><tr><th>Payment Date</th><th>Method</th><th>Reference</th><th>Received From</th><th>Amount Applied</th><th>Status</th></tr></thead>
+          <tbody>${payments.map(payment => `
+            <tr>
+              <td>${fmt(payment.received_at)}</td>
+              <td>${escapeHtml(paymentMethodLabel(payment.method))}</td>
+              <td>${fmt(payment.reference_number)}</td>
+              <td>${fmt(payment.received_from_name)}</td>
+              <td>${money(centString(payment.amount_applied_cents))}</td>
+              <td><span class="status-pill ${escapeAttr(payment.payment_status)}">${escapeHtml(paymentStatusLabel(payment.payment_status))}</span></td>
+            </tr>
+          `).join("") || '<tr class="empty-row"><td colspan="6">No payment history.</td></tr>'}</tbody>
+        </table>
+      </section>
+    </div>
+  `;
+  switchPaymentsTab("paid");
+  $("paymentsOutstandingPanel").hidden = true;
+  $("paymentsAllPaymentsPanel").hidden = true;
+  const paidPanel = $("paymentsPaidPanel");
+  paidPanel.hidden = false;
+  const layout = document.createElement("div");
+  layout.className = "invoice-layout";
+  const tableSection = document.createElement("section");
+  tableSection.appendChild($("paidRows").closest("table"));
+  layout.appendChild(tableSection);
+  layout.appendChild($("unpaidWorkspace"));
+  paidPanel.innerHTML = "";
+  paidPanel.appendChild(layout);
+}
+
+async function loadAllPayments() {
+  const data = await api("/api/payments");
+  state.payments.allPaymentsItems = data.items || [];
+  renderAllPayments(state.payments.allPaymentsItems);
+}
+
+function renderAllPayments(items) {
+  const tbody = $("allPaymentsRows");
+  tbody.innerHTML = items.length
+    ? items.map(item => `
+      <tr data-payment-id="${escapeAttr(item.payment_id)}">
+        <td>${fmt(item.received_at)}</td>
+        <td>${fmt(item.bill_to_name)}</td>
+        <td>${fmt(item.invoice_numbers)}</td>
+        <td>${escapeHtml(paymentMethodLabel(item.method))}</td>
+        <td>${fmt(item.reference_number)}</td>
+        <td>${fmt(item.received_from_name)}</td>
+        <td>${money(centString(item.amount_applied_cents))}</td>
+        <td><span class="status-pill ${escapeAttr(item.status)}">${escapeHtml(paymentStatusLabel(item.status))}</span></td>
+        <td><button class="mini" data-open-payment="${escapeAttr(item.payment_id)}">Open</button></td>
+      </tr>
+    `).join("")
+    : '<tr class="empty-row"><td colspan="9">No payments recorded.</td></tr>';
+  document.querySelectorAll("#allPaymentsRows [data-open-payment]").forEach(btn => {
+    btn.onclick = () => openPaymentDetail(btn.dataset.openPayment);
+  });
+}
+
+async function openPaymentDetail(paymentId) {
+  const data = await api(`/api/payments/${paymentId}`);
+  const allocs = (data.allocations || []).filter(a => a.invoice_info);
+  const invoiceInfo = allocs.length ? allocs[0].invoice_info : null;
+  alert(`Payment Detail\n\nDate: ${fmt(data.received_at)}\nMethod: ${escapeHtml(paymentMethodLabel(data.method))}\nReference: ${fmt(data.reference_number)}\nReceived From: ${fmt(data.received_from_name)}\nAmount: ${money(centString(data.amount_cents))}\nApplied: ${money(centString(data.allocated_cents))}\nStatus: ${escapeHtml(paymentStatusLabel(data.status))}${invoiceInfo ? "\nInvoice: " + fmt(invoiceInfo.invoice_number) + " — " + fmt(invoiceInfo.bill_to_name) : ""}`);
 }
 
 async function loadReports() {
@@ -3773,7 +3927,7 @@ async function openPersonRecord(personId, options = {}) {
         <td>${fmt(s.custom_duration_minutes || s.duration_minutes)} min</td>
         <td>${timeLabel(s.time_category)}</td>
         <td>${money(centString(s.approved_rate_cents))}</td>
-        <td>${fmt(s.payment_status)}</td>
+        <td>${escapeHtml(paymentHandlingLabel(s.payment_status))}</td>
         <td>${fmt(s.review_status)}</td>
         <td><button class="mini" data-open-candidate="${escapeAttr(s.candidate_id)}">Open in Review</button></td>
       </tr>`).join("")
@@ -3786,11 +3940,13 @@ async function openPersonRecord(personId, options = {}) {
         <td>${fmt(inv.invoice_date)}</td>
         <td>${fmt(inv.bill_to_name)}</td>
         <td><span class="status-pill ${escapeAttr(inv.status)}">${fmt(inv.status)}</span></td>
+        <td><span class="status-pill ${escapeAttr(inv.payment_status || "unpaid")}">${escapeHtml(paymentStatusLabel(inv.payment_status || "unpaid"))}</span></td>
         <td>${money(centString(inv.total_cents))}</td>
+        <td>${money(centString(inv.paid_cents || 0))}</td>
         <td>${money(centString(inv.balance_cents))}</td>
         <td><button class="mini" data-open-invoice="${escapeAttr(inv.invoice_id)}">Open</button></td>
       </tr>`).join("")
-    : `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
+    : `<tr><td colspan="10" class="readonly-note">No invoices yet.</td></tr>`;
 
   $("personRecordView").innerHTML = `
     ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
@@ -3802,10 +3958,10 @@ async function openPersonRecord(personId, options = {}) {
       </div>
 
       <div class="summary-cards">
-        <div class="summary-card"><div class="summary-card-label">Active Billing Records</div><div class="summary-card-value">${fmt(summary.active_billing_parties)}</div></div>
-        <div class="summary-card"><div class="summary-card-label">Approved Uninvoiced Sessions</div><div class="summary-card-value">${fmt(summary.approved_uninvoiced_sessions)}</div></div>
-        <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value">${money(centString(summary.total_invoiced_cents))}</div></div>
-        <div class="summary-card"><div class="summary-card-label">Finalized Invoice Total</div><div class="summary-card-value">${money(centString(summary.finalized_invoice_total_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Total Finalized Invoices</div><div class="summary-card-value">${fmt(summary.total_finalized_invoices)}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Total Payments Applied</div><div class="summary-card-value">${money(centString(summary.total_paid_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Current Balance</div><div class="summary-card-value">${money(centString(summary.current_balance_cents))}</div></div>
+        <div class="summary-card"><div class="summary-card-label">Account Status</div><div class="summary-card-value">${escapeHtml(summary.account_status || "—")}</div></div>
       </div>
 
       <section class="client-section">
@@ -3841,7 +3997,7 @@ async function openPersonRecord(personId, options = {}) {
         <h3>Invoices</h3>
         <div class="table-scroll-wrap">
           <table class="review-table client-invoices-table">
-            <thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Bill To</th><th>Status</th><th>Total</th><th>Balance</th><th>Open</th></tr></thead>
+            <thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Bill To</th><th>Invoice Status</th><th>Payment Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Open</th></tr></thead>
             <tbody>${invoiceRowsHtml}</tbody>
           </table>
         </div>
@@ -3851,7 +4007,7 @@ async function openPersonRecord(personId, options = {}) {
         <h3>Sessions</h3>
         <div class="table-scroll-wrap">
           <table class="review-table client-sessions-table">
-            <thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Time Category</th><th>Rate</th><th>Payment Status</th><th>Review Status</th><th>Open in Review</th></tr></thead>
+            <thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Time Category</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Open in Review</th></tr></thead>
             <tbody>${sessionsRowsHtml}</tbody>
           </table>
         </div>
@@ -4249,7 +4405,7 @@ if (location.pathname.startsWith("/people/") && location.pathname.split("/")[2])
 if (location.hash === "#sessions") showSessions();
 if (location.hash === "#settings") showSettings();
 if (location.pathname === "/invoices") showInvoices();
-if (location.pathname === "/unpaid") showUnpaid();
+if (location.pathname === "/unpaid" || location.pathname === "/payments") showPayments();
 if (location.pathname === "/reports") showReports();
 window.addEventListener("hashchange", () => {
   const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;

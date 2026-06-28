@@ -37,6 +37,7 @@ from .session_types import (
 from .importer import apply_calendar_signal, initial_billing_treatment, maybe_insert_session
 from .parser import parse_event
 from .review import review_status_for_parse
+from .payment_services import _invoice_balance_summary, _invoice_paid_amount, client_account_summary
 from .util import json_dumps, new_id, now_iso, normalize_payment_status, parse_int, text
 
 
@@ -1414,9 +1415,18 @@ def _invoices_for_person(conn: sqlite3.Connection, person_id: str) -> list[dict[
     for row in rows:
         item = dict(row)
         if item["status"] == "void":
+            item["paid_cents"] = 0
             item["balance_cents"] = 0
-        else:
+            item["payment_status"] = "void"
+        elif item["status"] == "draft":
+            item["paid_cents"] = 0
             item["balance_cents"] = item["total_cents"]
+            item["payment_status"] = "unpaid"
+        else:
+            summary = _invoice_balance_summary(conn, item["invoice_id"])
+            item["paid_cents"] = summary["paid_cents"]
+            item["balance_cents"] = summary["balance_cents"]
+            item["payment_status"] = summary["payment_status"]
         result.append(item)
     return result
 
@@ -1453,12 +1463,17 @@ def _billing_summary(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]
         """,
         (person_id,),
     ).fetchone()[0]
+    account = client_account_summary(conn, person_id)
     return {
         "active_billing_parties": active_bp_count,
         "invoice_count": invoice_count,
         "total_invoiced_cents": total_invoiced,
         "finalized_invoice_total_cents": finalized_invoice_total,
         "approved_uninvoiced_sessions": approved_uninvoiced_count,
+        "total_paid_cents": account["total_paid_cents"],
+        "current_balance_cents": account["current_balance_cents"],
+        "account_status": account["account_status"],
+        "total_finalized_invoices": account["total_finalized_invoices"],
     }
 
 

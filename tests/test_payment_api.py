@@ -13,7 +13,7 @@ from unittest.mock import patch
 from jordana_invoice.db import connect, migrate_database
 from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_services import create_invoice_draft, finalize_invoice, preview_finalization, save_business_profile, void_invoice
-from jordana_invoice.payment_services import create_payment, allocate_payment_to_session
+from jordana_invoice.payment_services import create_payment, allocate_payment_to_session, record_invoice_payment
 from jordana_invoice.review_server import make_handler
 from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
 from jordana_invoice.util import stable_hash
@@ -211,6 +211,63 @@ class PaymentApiTests(unittest.TestCase):
         payload = json.loads(ctx.exception.read().decode("utf-8"))
         self.assertEqual(payload, {"ok": False, "error": "Payment date is required."})
         ctx.exception.close()
+
+    def test_get_paid_invoices(self):
+        session = self._approved_session("api-paid-inv", "2026-05-10T10:00:00-04:00", amount="200.00")
+        invoice = self._finalize_invoice([session["id"]])["invoice"]["invoice_id"]
+        record_invoice_payment(self.conn, invoice_id=invoice, payment_date="2026-05-20", amount_cents=20000, payment_method="zelle")
+        with self.server() as base_url:
+            result = self.request_json(base_url, "/api/payments/paid-invoices")
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["invoice_id"], invoice)
+        self.assertEqual(result["items"][0]["balance_cents"], 0)
+        self.assertIsNotNone(result["items"][0]["paid_date"])
+        self.assertEqual(result["items"][0]["payment_method"], "zelle")
+
+    def test_get_all_payments(self):
+        session = self._approved_session("api-all-pay", "2026-05-10T10:00:00-04:00", amount="150.00")
+        invoice = self._finalize_invoice([session["id"]])["invoice"]["invoice_id"]
+        record_invoice_payment(self.conn, invoice_id=invoice, payment_date="2026-05-15", amount_cents=15000, payment_method="ach")
+        with self.server() as base_url:
+            result = self.request_json(base_url, "/api/payments")
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["amount_cents"], 15000)
+        self.assertEqual(item["amount_applied_cents"], 15000)
+        self.assertEqual(item["bill_to_name"], "Pat Client")
+        self.assertEqual(item["method"], "ach")
+        self.assertEqual(item["status"], "posted")
+
+    def test_get_payment_detail(self):
+        session = self._approved_session("api-pay-detail", "2026-05-10T10:00:00-04:00", amount="150.00")
+        invoice = self._finalize_invoice([session["id"]])["invoice"]["invoice_id"]
+        result = record_invoice_payment(self.conn, invoice_id=invoice, payment_date="2026-05-15", amount_cents=15000, payment_method="zelle")
+        payment_id = result["payment"]["payment_id"]
+        with self.server() as base_url:
+            detail = self.request_json(base_url, f"/api/payments/{payment_id}")
+        self.assertEqual(detail["payment_id"], payment_id)
+        self.assertEqual(detail["amount_cents"], 15000)
+        self.assertEqual(detail["allocated_cents"], 15000)
+        self.assertEqual(len(detail["allocations"]), 1)
+        self.assertIsNotNone(detail["allocations"][0]["invoice_info"])
+
+    def test_get_account_summary(self):
+        session = self._approved_session("api-acct", "2026-05-10T10:00:00-04:00", amount="150.00")
+        invoice = self._finalize_invoice([session["id"]])["invoice"]["invoice_id"]
+        record_invoice_payment(self.conn, invoice_id=invoice, payment_date="2026-05-15", amount_cents=10000, payment_method="zelle")
+        with self.server() as base_url:
+            summary = self.request_json(base_url, f"/api/people/{self.person['person_id']}/account-summary")
+        self.assertEqual(summary["total_finalized_invoices"], 1)
+        self.assertEqual(summary["total_billed_cents"], 15000)
+        self.assertEqual(summary["total_paid_cents"], 10000)
+        self.assertEqual(summary["current_balance_cents"], 5000)
+        self.assertEqual(summary["account_status"], "Balance Due")
+
+    def test_payments_route_serves_html(self):
+        with self.server() as base_url:
+            with urllib.request.urlopen(f"{base_url}/payments") as response:
+                html = response.read().decode("utf-8")
+        self.assertIn("paymentsView", html)
 
 
 if __name__ == "__main__":

@@ -17,12 +17,16 @@ from jordana_invoice.invoice_services import (
 )
 from jordana_invoice.payment_services import (
     allocate_payment_to_session,
+    client_account_summary,
     create_payment,
     get_payment_detail,
+    get_payment_detail_view,
     invoice_line_paid_amount,
     link_session_allocations_to_invoice_line,
+    list_all_payments,
     list_invoice_payment_history,
     list_outstanding_invoices,
+    list_paid_invoices,
     payment_allocated_amount,
     payment_unapplied_amount,
     record_invoice_payment,
@@ -664,6 +668,88 @@ class PaymentServicesTests(unittest.TestCase):
         self.assertEqual(statuses[posted["payment"]["payment_id"]], "posted")
         self.assertEqual(statuses[reversed_payment["payment_id"]], "reversed")
         self.assertEqual(statuses[voided_payment["payment_id"]], "void")
+
+    # 33. list_paid_invoices returns fully-paid finalized invoices
+    def test_list_paid_invoices(self):
+        final = self._draft_and_finalize(self.session_id)
+        invoice_id = final["invoice"]["invoice_id"]
+        record_invoice_payment(self.conn, invoice_id=invoice_id, payment_date="2026-05-15", amount_cents=15000, payment_method="zelle")
+        paid = list_paid_invoices(self.conn)
+        self.assertEqual(len(paid), 1)
+        self.assertEqual(paid[0]["invoice_id"], invoice_id)
+        self.assertEqual(paid[0]["balance_cents"], 0)
+        self.assertEqual(paid[0]["paid_cents"], 15000)
+        self.assertIsNotNone(paid[0]["paid_date"])
+        self.assertEqual(paid[0]["payment_method"], "zelle")
+
+    # 34. list_paid_invoices excludes partially-paid and outstanding
+    def test_list_paid_invoices_excludes_partial(self):
+        final = self._draft_and_finalize(self.session_id)
+        record_invoice_payment(self.conn, invoice_id=final["invoice"]["invoice_id"], payment_date="2026-05-15", amount_cents=5000, payment_method="cash")
+        paid = list_paid_invoices(self.conn)
+        self.assertEqual(len(paid), 0)
+
+    # 35. list_all_payments returns chronological ledger
+    def test_list_all_payments(self):
+        final = self._draft_and_finalize(self.session_id)
+        p1 = record_invoice_payment(self.conn, invoice_id=final["invoice"]["invoice_id"], payment_date="2026-05-15", amount_cents=10000, payment_method="zelle")
+        p2 = create_payment(self.conn, billing_party_id=self.party["billing_party_id"],
+                           amount_cents=5000, received_at="2026-05-20", method="check")
+        all_payments = list_all_payments(self.conn)
+        self.assertEqual(len(all_payments), 2)
+        ids = {p["payment_id"] for p in all_payments}
+        self.assertIn(p1["payment"]["payment_id"], ids)
+        self.assertIn(p2["payment_id"], ids)
+        for p in all_payments:
+            if p["payment_id"] == p1["payment"]["payment_id"]:
+                self.assertEqual(p["amount_applied_cents"], 10000)
+                self.assertEqual(p["bill_to_name"], "Pat Client")
+            if p["payment_id"] == p2["payment_id"]:
+                self.assertEqual(p["amount_applied_cents"], 0)
+                self.assertEqual(p["status"], "posted")
+
+    # 36. get_payment_detail_view returns payment with invoice info
+    def test_get_payment_detail_view(self):
+        final = self._draft_and_finalize(self.session_id)
+        result = record_invoice_payment(self.conn, invoice_id=final["invoice"]["invoice_id"], payment_date="2026-05-15", amount_cents=15000, payment_method="zelle")
+        payment_id = result["payment"]["payment_id"]
+        detail = get_payment_detail_view(self.conn, payment_id)
+        self.assertEqual(detail["payment_id"], payment_id)
+        self.assertEqual(detail["amount_cents"], 15000)
+        self.assertEqual(detail["allocated_cents"], 15000)
+        self.assertEqual(detail["unapplied_cents"], 0)
+        self.assertEqual(len(detail["allocations"]), 1)
+        alloc = detail["allocations"][0]
+        self.assertIsNotNone(alloc["invoice_info"])
+        self.assertEqual(alloc["invoice_info"]["invoice_number"], final["invoice"]["invoice_number"])
+
+    # 37. client_account_summary returns correct totals
+    def test_client_account_summary(self):
+        final = self._draft_and_finalize(self.session_id)
+        record_invoice_payment(self.conn, invoice_id=final["invoice"]["invoice_id"], payment_date="2026-05-15", amount_cents=10000, payment_method="zelle")
+        summary = client_account_summary(self.conn, self.person["person_id"])
+        self.assertEqual(summary["total_finalized_invoices"], 1)
+        self.assertEqual(summary["total_billed_cents"], 15000)
+        self.assertEqual(summary["total_paid_cents"], 10000)
+        self.assertEqual(summary["current_balance_cents"], 5000)
+        self.assertEqual(summary["account_status"], "Balance Due")
+
+    # 38. client_account_summary shows Current when fully paid
+    def test_client_account_summary_current(self):
+        final = self._draft_and_finalize(self.session_id)
+        record_invoice_payment(self.conn, invoice_id=final["invoice"]["invoice_id"], payment_date="2026-05-15", amount_cents=15000, payment_method="zelle")
+        summary = client_account_summary(self.conn, self.person["person_id"])
+        self.assertEqual(summary["current_balance_cents"], 0)
+        self.assertEqual(summary["account_status"], "Current")
+
+    # 39. client_account_summary for person with no invoices
+    def test_client_account_summary_no_invoices(self):
+        summary = client_account_summary(self.conn, self.person2["person_id"])
+        self.assertEqual(summary["total_finalized_invoices"], 0)
+        self.assertEqual(summary["total_billed_cents"], 0)
+        self.assertEqual(summary["total_paid_cents"], 0)
+        self.assertEqual(summary["current_balance_cents"], 0)
+        self.assertEqual(summary["account_status"], "Current")
 
 
 if __name__ == "__main__":

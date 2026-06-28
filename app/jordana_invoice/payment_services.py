@@ -628,6 +628,199 @@ def list_outstanding_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return results
 
 
+def _invoice_paid_date_and_methods(conn: sqlite3.Connection, invoice_id: str) -> tuple[str | None, str | None]:
+    """Return (paid_date, payment_method_label) for a fully-paid invoice.
+
+    paid_date is the received_at of the final settling payment.
+    payment_method_label is the method or 'Multiple' if more than one distinct method.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT p.payment_id, p.received_at, p.method
+        FROM payments p
+        JOIN payment_allocations pa ON pa.payment_id = p.payment_id
+        JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+        WHERE li.invoice_id = ? AND pa.status = 'active' AND p.status = 'posted'
+        ORDER BY p.received_at DESC, p.created_at DESC
+        """,
+        (invoice_id,),
+    ).fetchall()
+    if not rows:
+        return None, None
+    paid_date = rows[0]["received_at"]
+    methods = {row["method"] for row in rows}
+    method_label = "Multiple" if len(methods) > 1 else rows[0]["method"]
+    return paid_date, method_label
+
+
+def list_paid_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """List finalized, non-void invoices whose derived balance is zero."""
+    rows = conn.execute(
+        """
+        SELECT i.invoice_id
+        FROM invoices i
+        WHERE i.status = 'finalized'
+        ORDER BY i.invoice_date DESC, i.finalized_at DESC, i.created_at DESC
+        """
+    ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        summary = _invoice_balance_summary(conn, row["invoice_id"])
+        if summary["balance_cents"] > 0:
+            continue
+        paid_date, method_label = _invoice_paid_date_and_methods(conn, row["invoice_id"])
+        summary["paid_date"] = paid_date
+        summary["payment_method"] = method_label
+        results.append(summary)
+    return results
+
+
+def list_all_payments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return a chronological ledger of all recorded payments.
+
+    Sorts newest payment date first, then stable by internal created_at.
+    Each row includes bill_to_name, invoice numbers, and applied amount.
+    """
+    rows = conn.execute(
+        """
+        SELECT
+          p.payment_id,
+          p.billing_party_id,
+          p.amount_cents,
+          p.received_at,
+          p.method,
+          p.reference_number,
+          p.received_from_name,
+          p.administrative_note,
+          p.status,
+          p.source_type,
+          p.created_at,
+          bp.billing_name AS bill_to_name,
+          COALESCE((
+            SELECT GROUP_CONCAT(DISTINCT i.invoice_number)
+            FROM payment_allocations pa2
+            JOIN invoice_line_items li ON li.invoice_line_item_id = pa2.invoice_line_item_id
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE pa2.payment_id = p.payment_id AND pa2.status = 'active' AND p.status = 'posted'
+          ), '') AS invoice_numbers
+        FROM payments p
+        JOIN billing_parties bp ON bp.billing_party_id = p.billing_party_id
+        ORDER BY p.received_at DESC, p.created_at DESC, p.payment_id DESC
+        """
+    ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        applied = conn.execute(
+            """
+            SELECT COALESCE(SUM(pa.amount_cents), 0)
+            FROM payment_allocations pa
+            WHERE pa.payment_id = ? AND pa.status = 'active'
+            """,
+            (row["payment_id"],),
+        ).fetchone()[0]
+        if row["status"] != "posted":
+            applied = 0
+        invoice_nums = row["invoice_numbers"] or ""
+        if invoice_nums and "," in invoice_nums:
+            invoice_display = "Multiple invoices"
+        else:
+            invoice_display = invoice_nums or ""
+        results.append({
+            "payment_id": row["payment_id"],
+            "billing_party_id": row["billing_party_id"],
+            "bill_to_name": row["bill_to_name"],
+            "amount_cents": row["amount_cents"],
+            "received_at": row["received_at"],
+            "method": row["method"],
+            "reference_number": row["reference_number"],
+            "received_from_name": row["received_from_name"],
+            "administrative_note": row["administrative_note"],
+            "status": row["status"],
+            "source_type": row["source_type"],
+            "amount_applied_cents": applied,
+            "invoice_numbers": invoice_display,
+        })
+    return results
+
+
+def get_payment_detail_view(conn: sqlite3.Connection, payment_id: str) -> dict[str, Any]:
+    """Return a payment detail view with related invoice information.
+
+    Does not expose internal UUIDs in the normal display fields.
+    """
+    detail = get_payment_detail(conn, payment_id)
+    payment = detail["payment"]
+    allocations: list[dict[str, Any]] = []
+    for alloc in detail["allocations"]:
+        invoice_info = None
+        if alloc.get("invoice_line_item_id"):
+            row = conn.execute(
+                """
+                SELECT i.invoice_id, i.invoice_number, bp.billing_name AS bill_to_name
+                FROM invoice_line_items li
+                JOIN invoices i ON i.invoice_id = li.invoice_id
+                JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+                WHERE li.invoice_line_item_id = ?
+                """,
+                (alloc["invoice_line_item_id"],),
+            ).fetchone()
+            if row:
+                invoice_info = {
+                    "invoice_id": row["invoice_id"],
+                    "invoice_number": row["invoice_number"],
+                    "bill_to_name": row["bill_to_name"],
+                }
+        allocations.append({
+            "allocation_id": alloc["allocation_id"],
+            "amount_cents": alloc["amount_cents"],
+            "status": alloc["status"],
+            "invoice_info": invoice_info,
+        })
+    return {
+        "payment_id": payment["payment_id"],
+        "billing_party_id": payment["billing_party_id"],
+        "amount_cents": payment["amount_cents"],
+        "received_at": payment["received_at"],
+        "method": payment["method"],
+        "reference_number": payment["reference_number"],
+        "received_from_name": payment["received_from_name"],
+        "administrative_note": payment["administrative_note"],
+        "status": payment["status"],
+        "source_type": payment["source_type"],
+        "allocated_cents": detail["allocated_cents"],
+        "unapplied_cents": detail["unapplied_cents"],
+        "allocations": allocations,
+    }
+
+
+def client_account_summary(conn: sqlite3.Connection, person_id: str) -> dict[str, Any]:
+    """Return billed, paid, and current balance for a person's billing parties.
+
+    Uses finalized, non-void invoices only.
+    Paid amount counts only posted payments with active allocations.
+    """
+    invoice_rows = conn.execute(
+        """
+        SELECT i.invoice_id, i.total_cents
+        FROM invoices i
+        JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id AND bp.person_id = ?
+        WHERE i.status = 'finalized'
+        """,
+        (person_id,),
+    ).fetchall()
+    total_billed = sum(int(r["total_cents"] or 0) for r in invoice_rows)
+    total_paid = sum(_invoice_paid_amount(conn, r["invoice_id"]) for r in invoice_rows)
+    current_balance = max(total_billed - total_paid, 0)
+    account_status = "Current" if current_balance == 0 else "Balance Due"
+    return {
+        "total_finalized_invoices": len(invoice_rows),
+        "total_billed_cents": total_billed,
+        "total_paid_cents": total_paid,
+        "current_balance_cents": current_balance,
+        "account_status": account_status,
+    }
+
+
 def list_invoice_payment_history(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     """Return read-only payment history for one invoice."""
     summary = _invoice_balance_summary(conn, invoice_id)

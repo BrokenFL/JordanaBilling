@@ -156,7 +156,7 @@ Void requires a reason and preserves the number, snapshots, PDF, and checksum. S
 
 ## Client Page Invoice History
 
-The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The **Finalized Invoice Total** reflects non-void finalized invoice totals only. Payment tracking is not yet implemented; session payment status (Unpaid / Paid at time of session) is separate from invoice payment tracking.
+The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The client page now shows account summary cards (Total Finalized Invoices, Total Payments Applied, Current Balance, Account Status) powered by `client_account_summary`. The invoice table includes Payment Status and Paid columns. Session tables use "Payment Handling" with labels "Invoice billing" and "Paid at session".
 
 ## Payment Ledger Foundation
 
@@ -207,7 +207,7 @@ All calculation helpers count only allocations where `payment.status = 'posted'`
 
 ## Payment Tracking Round 1
 
-The `Unpaid` screen now covers the normal payment path only.
+The **Payments** workspace (formerly the "Unpaid" screen) now covers the normal payment path with a tabbed interface.
 
 ### Included
 
@@ -232,6 +232,28 @@ The `Unpaid` screen now covers the normal payment path only.
 - No due dates, overdue labels, aging, reconciliation, receipts, or email confirmations
 - No historical paid-at-session backfill
 - No invoice PDF appearance changes
+
+### Payments Workspace (Round 2)
+
+The sidebar entry formerly labelled "Unpaid" is now **Payments**, a tabbed workspace with three views:
+
+- **Outstanding** — finalized invoices with a positive remaining balance; supports recording payments (same as Round 1)
+- **Paid** — finalized invoices with zero balance, showing paid date and payment method
+- **All Payments** — chronological ledger of every payment with bill-to name, applied amount, and status
+
+Shared calculation functions in `payment_services.py`:
+
+- `list_paid_invoices(conn)` — finalized non-void invoices with zero balance
+- `list_all_payments(conn)` — all payments with applied amounts and bill-to names
+- `get_payment_detail_view(conn, payment_id)` — payment detail with allocations and invoice references
+- `client_account_summary(conn, person_id)` — total billed, total paid, current balance, account status
+
+API endpoints added:
+
+- `GET /api/payments/paid-invoices`
+- `GET /api/payments`
+- `GET /api/payments/{payment_id}`
+- `GET /api/people/{person_id}/account-summary`
 
 ### What Is Not Implemented
 

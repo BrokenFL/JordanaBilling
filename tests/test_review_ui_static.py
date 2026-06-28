@@ -16,23 +16,30 @@ class ReviewUiStaticTests(unittest.TestCase):
 
         self.assertIn('id="peopleNav">Clients</a>', html)
         self.assertIn('id="clientsNav">Billing Relationships</a>', html)
-        self.assertIn('id="unpaidNav">Unpaid</a>', html)
+        self.assertIn('id="paymentsNav">Payments</a>', html)
         self.assertNotIn('id="peopleNav">People</a>', html)
         self.assertNotIn('id="clientsNav">Clients & Accounts</a>', html)
+        self.assertNotIn('id="unpaidNav">Unpaid</a>', html)
 
-    def test_unpaid_workspace_heading_and_columns_exist(self):
+    def test_payments_workspace_heading_and_columns_exist(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
 
-        self.assertIn("Outstanding Invoices &amp; Payments", html)
+        self.assertIn("Payments", html)
         self.assertIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
         self.assertIn('id="unpaidRows"', html)
         self.assertIn('id="unpaidWorkspace"', html)
+        self.assertIn('id="paymentsView"', html)
+        self.assertIn('data-payments-tab="outstanding"', html)
+        self.assertIn('data-payments-tab="paid"', html)
+        self.assertIn('data-payments-tab="all-payments"', html)
+        self.assertIn('id="paidRows"', html)
+        self.assertIn('id="allPaymentsRows"', html)
 
-    def test_unpaid_js_opens_record_payment_form_and_refreshes(self):
+    def test_payments_js_opens_record_payment_form_and_refreshes(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
-        self.assertIn('history.pushState({}, "", "/unpaid");', js)
-        self.assertIn('$("pageTitle").textContent = "Outstanding Invoices & Payments";', js)
+        self.assertIn('history.pushState({}, "", "/payments");', js)
+        self.assertIn('$("pageTitle").textContent = "Payments";', js)
         self.assertIn('Record Payment', js)
         self.assertIn('Bill To<input', js)
         self.assertIn('Invoice Number<input', js)
@@ -198,7 +205,7 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("<th>Duration</th>", person_record)
         self.assertIn("<th>Time Category</th>", person_record)
         self.assertIn("<th>Rate</th>", person_record)
-        self.assertIn("<th>Payment Status</th>", person_record)
+        self.assertIn("<th>Payment Handling</th>", person_record)
         self.assertIn("<th>Review Status</th>", person_record)
         self.assertIn("<th>Open in Review</th>", person_record)
         self.assertIn("<tr>", person_record)
@@ -238,14 +245,14 @@ class ReviewUiStaticTests(unittest.TestCase):
         person_record = js[start:end]
 
         self.assertIn("summary-cards", person_record)
-        self.assertIn("Active Billing Records", person_record)
-        self.assertIn("Approved Uninvoiced Sessions", person_record)
-        self.assertIn("Total Invoiced", person_record)
-        self.assertIn("Finalized Invoice Total", person_record)
-        self.assertIn("summary.active_billing_parties", person_record)
-        self.assertIn("summary.approved_uninvoiced_sessions", person_record)
-        self.assertIn("summary.total_invoiced_cents", person_record)
-        self.assertIn("summary.finalized_invoice_total_cents", person_record)
+        self.assertIn("Total Finalized Invoices", person_record)
+        self.assertIn("Total Payments Applied", person_record)
+        self.assertIn("Current Balance", person_record)
+        self.assertIn("Account Status", person_record)
+        self.assertIn("summary.total_finalized_invoices", person_record)
+        self.assertIn("summary.total_paid_cents", person_record)
+        self.assertIn("summary.current_balance_cents", person_record)
+        self.assertIn("summary.account_status", person_record)
 
     def test_billing_setup_renders_card_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -324,8 +331,10 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("<th>Billing Period</th>", person_record)
         self.assertIn("<th>Issue Date</th>", person_record)
         self.assertIn("<th>Bill To</th>", person_record)
-        self.assertIn("<th>Status</th>", person_record)
+        self.assertIn("<th>Invoice Status</th>", person_record)
+        self.assertIn("<th>Payment Status</th>", person_record)
         self.assertIn("<th>Total</th>", person_record)
+        self.assertIn("<th>Paid</th>", person_record)
         self.assertIn("<th>Balance</th>", person_record)
         self.assertIn("<th>Open</th>", person_record)
 
@@ -1951,6 +1960,61 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         css = Path("app/jordana_invoice/static/review.css").read_text()
         self.assertIn(".copy-contact-title", css)
         self.assertIn(".copy-contact-field-list", css)
+
+    def test_payments_tab_js_functions_exist(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function showPayments()", js)
+        self.assertIn("function setupPaymentsTabs()", js)
+        self.assertIn("function switchPaymentsTab(", js)
+        self.assertIn("async function loadPaidInvoices()", js)
+        self.assertIn("function renderPaidInvoices(", js)
+        self.assertIn("async function loadAllPayments()", js)
+        self.assertIn("function renderAllPayments(", js)
+        self.assertIn("async function openPaymentDetail(", js)
+        self.assertIn("async function openPaidInvoice(", js)
+        self.assertIn("state.payments.activeTab", js)
+
+    def test_payments_paid_invoices_table_columns(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertIn("paid-invoices-table", html)
+        self.assertIn("<th>Paid Date</th>", html)
+        self.assertIn("<th>Payment Method</th>", html)
+
+    def test_payments_all_payments_table_columns(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertIn("all-payments-table", html)
+        self.assertIn("<th>Payment Date</th>", html)
+        self.assertIn("<th>Received From</th>", html)
+        self.assertIn("<th>Amount Applied</th>", html)
+
+    def test_session_terminology_uses_payment_handling(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function paymentHandlingLabel(", js)
+        self.assertIn("Invoice billing", js)
+        self.assertIn("Paid at session", js)
+
+    def test_sessions_table_header_uses_payment_handling(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertIn("<th>Payment Handling</th>", html)
+
+    def test_payments_route_serves_static_html(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('"/payments"', js)
+        self.assertIn("showPayments()", js)
+
+    def test_payments_css_tabs_exist(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn(".payments-tabs", css)
+        self.assertIn(".payments-tab", css)
+        self.assertIn(".payments-tab.active", css)
+        self.assertIn(".payments-panel", css)
 
 
 if __name__ == "__main__":
