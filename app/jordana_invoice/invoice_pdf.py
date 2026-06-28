@@ -240,39 +240,15 @@ def generate_invoice_pdf(
     ]))
     story.append(table)
     story.append(Spacer(1, _footer_pushdown_height(render)))
-    footer = [
-        Table(
-            [[
-                para(render.get("total_label") or "TOTAL DUE", total_label_style),
-                para(render.get("total_display") or format_money(invoice.get("total_cents", 0)), total_amount_style),
-            ]],
-            colWidths=TOTAL_COLUMN_WIDTHS,
-            style=TableStyle([
-                ("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")),
-                ("TOPPADDING", (0, 0), (-1, -1), 12),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ]),
-        ),
-        Spacer(1, 0.18 * inch),
-        Table(
-            [[[
-                Paragraph(_escape(render.get("payment_title") or "Please make all checks payable to:"), payment_title_style),
-                Paragraph(_escape(render.get("payment_name") or ""), body),
-                *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],
-                *([Paragraph(_escape(render.get("payment_zelle_line")), body)] if render.get("payment_zelle_line") else []),
-            ]]],
-            colWidths=[CONTENT_WIDTH],
-            style=TableStyle([
-                ("LINEABOVE", (0, 0), (-1, -1), 0.6, colors.HexColor("#9FB3C8")),
-                ("TOPPADDING", (0, 0), (-1, -1), 12),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ]),
-        ),
-    ]
+    footer = _build_pdf_footer(
+        render,
+        int(invoice.get("total_cents") or 0),
+        body,
+        small,
+        total_label_style,
+        total_amount_style,
+        payment_title_style,
+    )
     story.append(KeepTogether(footer))
     try:
         doc.build(story, onFirstPage=page, onLaterPages=page)
@@ -535,28 +511,155 @@ def generate_draft_pdf_bytes(
     ]))
     story.append(table)
     story.append(Spacer(1, _footer_pushdown_height(render)))
-    footer = [
-        Table(
-            [[
-                para(render.get("total_label") or "TOTAL DUE", total_label_style),
-                para(render.get("total_display") or format_money(invoice.get("total_cents", 0)), total_amount_style),
-            ]],
-            colWidths=TOTAL_COLUMN_WIDTHS,
-            style=TableStyle([
-                ("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")),
-                ("TOPPADDING", (0, 0), (-1, -1), 12),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ]),
-        ),
+    footer = _build_pdf_footer(
+        render,
+        int(invoice.get("total_cents") or 0),
+        body,
+        small,
+        total_label_style,
+        total_amount_style,
+        payment_title_style,
+    )
+    story.append(KeepTogether(footer))
+    doc.build(story, onFirstPage=page, onLaterPages=page)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    if not pdf_bytes:
+        raise RuntimeError("Draft PDF preview generation did not produce valid bytes.")
+    return pdf_bytes
+
+
+def _build_pdf_footer(
+    render: dict[str, Any],
+    total_cents: int,
+    body_style: Any,
+    small_style: Any,
+    total_label_style: Any,
+    total_amount_style: Any,
+    payment_title_style: Any,
+) -> list[Any]:
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+
+    def para(text: str, style=body_style):
+        return Paragraph(text, style)
+
+    summary = render.get("account_summary")
+
+    # Check if there is an active summary with prior unpaid balance or payments applied
+    if summary and (summary.get("prior_unpaid_balance_cents", 0) > 0 or summary.get("current_invoice_paid_cents", 0) > 0):
+        summary_label_style = ParagraphStyle(
+            "SummaryLabel",
+            parent=body_style,
+            alignment=TA_RIGHT,
+        )
+        summary_amount_style = ParagraphStyle(
+            "SummaryAmount",
+            parent=body_style,
+            alignment=TA_RIGHT,
+        )
+
+        total_due_label_style = ParagraphStyle(
+            "TotalDueLabel",
+            parent=total_label_style,
+            fontName="Helvetica-Bold",
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#102A43"),
+        )
+        total_due_amount_style = ParagraphStyle(
+            "TotalDueAmount",
+            parent=total_due_label_style,
+            alignment=TA_RIGHT,
+        )
+
+        summary_rows = [
+            [
+                para("Current Charges", summary_label_style),
+                para(summary["current_invoice_total_display"], summary_amount_style),
+            ],
+            [
+                para("Payments Applied", summary_label_style),
+                para(f"-{summary['current_invoice_paid_display']}", summary_amount_style),
+            ],
+            [
+                para("Current Invoice Balance", summary_label_style),
+                para(summary["current_invoice_balance_display"], summary_amount_style),
+            ],
+            [
+                para("Prior Unpaid Balance", summary_label_style),
+                para(summary["prior_unpaid_balance_display"], summary_amount_style),
+            ],
+            [
+                para("TOTAL AMOUNT DUE", total_due_label_style),
+                para(summary["total_amount_due_display"], total_due_amount_style),
+            ],
+        ]
+
+        summary_table_style = TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            # Line above TOTAL AMOUNT DUE
+            ("LINEABOVE", (0, 4), (1, 4), 1, colors.HexColor("#102A43")),
+            ("TOPPADDING", (0, 4), (-1, 4), 8),
+            # Line below Current Invoice Balance
+            ("LINEBELOW", (0, 2), (1, 2), 0.5, colors.HexColor("#D9E2EC")),
+            ("BOTTOMPADDING", (0, 2), (-1, 2), 6),
+            ("TOPPADDING", (0, 3), (-1, 3), 6),
+        ])
+
+        footer_table = Table(summary_rows, colWidths=TOTAL_COLUMN_WIDTHS, style=summary_table_style)
+
+        prior_list = summary.get("prior_invoices") or []
+        prior_flowables = []
+        if prior_list:
+            summary_small_right = ParagraphStyle(
+                "SummarySmallRight",
+                parent=small_style,
+                alignment=TA_RIGHT,
+            )
+            prior_flowables.append(Spacer(1, 0.08 * inch))
+            prior_flowables.append(Paragraph("<b>Prior unpaid invoices:</b>", summary_small_right))
+            for item in prior_list:
+                remaining_display = f"${int(item['remaining_balance_cents']) / 100:,.2f}"
+                from .invoice_rendering import format_long_date
+                date_display = format_long_date(item["invoice_date"])
+                desc = f"Invoice {item['invoice_number']} &mdash; {date_display} &mdash; {remaining_display} remaining"
+                prior_flowables.append(Paragraph(desc, summary_small_right))
+
+        footer_table_flowables = [footer_table] + prior_flowables
+    else:
+        # Standard TOTAL DUE single row
+        footer_table_flowables = [
+            Table(
+                [[
+                    para(render.get("total_label") or "TOTAL DUE", total_label_style),
+                    para(render.get("total_display") or f"${total_cents / 100:,.2f}", total_amount_style),
+                ]],
+                colWidths=TOTAL_COLUMN_WIDTHS,
+                style=TableStyle([
+                    ("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 12),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ]),
+            )
+        ]
+
+    footer = footer_table_flowables + [
         Spacer(1, 0.18 * inch),
         Table(
             [[[
                 Paragraph(_escape(render.get("payment_title") or "Please make all checks payable to:"), payment_title_style),
-                Paragraph(_escape(render.get("payment_name") or ""), body),
-                *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],
-                *([Paragraph(_escape(render.get("payment_zelle_line")), body)] if render.get("payment_zelle_line") else []),
+                Paragraph(_escape(render.get("payment_name") or ""), body_style),
+                *[Paragraph(_escape(value), body_style) for value in (render.get("payment_lines") or [])],
+                *([Paragraph(_escape(render.get("payment_zelle_line")), body_style)] if render.get("payment_zelle_line") else []),
             ]]],
             colWidths=[CONTENT_WIDTH],
             style=TableStyle([
@@ -568,10 +671,4 @@ def generate_draft_pdf_bytes(
             ]),
         ),
     ]
-    story.append(KeepTogether(footer))
-    doc.build(story, onFirstPage=page, onLaterPages=page)
-    pdf_bytes = buf.getvalue()
-    buf.close()
-    if not pdf_bytes:
-        raise RuntimeError("Draft PDF preview generation did not produce valid bytes.")
-    return pdf_bytes
+    return footer

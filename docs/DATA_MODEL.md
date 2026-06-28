@@ -340,3 +340,36 @@ A local command-line interface is available in `app/jordana_invoice/payment_back
 - No `paid_cents`, `balance_cents`, or settlement-status columns on invoices — paid and balance amounts are derived dynamically from the payment ledger.
 - Paid-at-session sessions remain excluded from invoicing.
 - Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.
+- Receipts, account statements, delivery, credits, and reconciliation remain unimplemented.
+
+## Prior Balance & Account Summary Schema
+
+Finalized invoices store an immutable historical snapshot of the payer's prior unpaid balance and payments applied in the `account_summary_snapshot` column of the `invoices` table.
+
+### `account_summary_snapshot` JSON Structure (Version 1)
+```json
+{
+  "version": 1,
+  "current_invoice_total_cents": 15000,
+  "current_invoice_paid_cents": 0,
+  "current_invoice_balance_cents": 15000,
+  "prior_unpaid_balance_cents": 30000,
+  "total_amount_due_cents": 45000,
+  "prior_invoices": [
+    {
+      "invoice_id": "8a06e93e-2b5d-4f10-b98a-9f5b2f8a12bc",
+      "invoice_number": "2026-0001",
+      "invoice_date": "2026-05-15",
+      "remaining_balance_cents": 30000
+    }
+  ]
+}
+```
+
+- **version** (integer): The schema version of the snapshot. Only version `1` is supported. Unknown or malformed snapshots are treated as unavailable.
+- **current_invoice_total_cents** (integer): Sum of all lines on the current invoice.
+- **current_invoice_paid_cents** (integer): Payments currently allocated to this invoice's line items.
+- **current_invoice_balance_cents** (integer): `max(current_invoice_total_cents - current_invoice_paid_cents, 0)`. Forced to `0` for void invoices.
+- **prior_unpaid_balance_cents** (integer): Sum of the remaining unpaid balances of prior finalized, non-void invoices for the same payer responsibility.
+- **total_amount_due_cents** (integer): `current_invoice_balance_cents + prior_unpaid_balance_cents`.
+- **prior_invoices** (list): Detail list of each prior invoice included in the balance calculation.

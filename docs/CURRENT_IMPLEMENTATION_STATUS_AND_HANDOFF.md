@@ -108,6 +108,13 @@ HTTP server.
 - No historical finalized invoice is silently repointed
 - Void with reason; source sessions become eligible for reissue
 - Invoice library: searchable, filterable, paginated
+- **Prior Unpaid Balance & Account-Summary Presentation**:
+  - Displays current charges, payments applied, current balance, prior unpaid balances from prior finalized non-void invoices, and a final "TOTAL AMOUNT DUE" on HTML print previews and ReportLab PDFs.
+  - Frozen `account_summary_snapshot` JSON snapshot (version 1) is persisted in the database upon finalization.
+  - Deterministic same-date cutoff tie-breaking (using date, draft/finalized status, finalized_at timestamp, and alphabetical UUID).
+  - Graceful fallback for legacy invoices with NULL snapshots (UI shows live payment status and hides the as-finalized snapshot section).
+  - Void invoices are treated as having 0 current balance and are excluded from subsequent prior balance calculations.
+  - Receipts, account statements, delivery, credits, and reconciliation remain unimplemented.
 
 ### PDF Generation
 

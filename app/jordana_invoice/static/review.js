@@ -2750,8 +2750,7 @@ async function showAddSessionsToDraft(data) {
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <div><h3>Add Sessions to Draft</h3><div class="help">Sessions already attached to an invoice are excluded by the backend.</div></div>
     <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${escapeAttr(row.id)}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
-    <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>
-  </div>`;
+    <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>`;
   $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
   $("confirmAddSessions").onclick = async () => {
     const sessionIds = [...document.querySelectorAll("#invoiceWorkspace input:checked")].map(input => input.value);
@@ -2759,6 +2758,51 @@ async function showAddSessionsToDraft(data) {
     const updated = await api(`/api/invoices/${i.invoice_id}/add-sessions`, {method:"POST", body:JSON.stringify({session_ids:sessionIds})});
     await loadInvoices(); renderInvoiceEditor(updated);
   };
+}
+
+function buildPreviewSummaryHtml(render, data, invoice) {
+  let totalSectionHtml = `<div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>`;
+  const summary = render.account_summary;
+
+  if (summary && (summary.prior_unpaid_balance_cents > 0 || summary.current_invoice_paid_cents > 0)) {
+    let priorInvoicesHtml = "";
+    const priorList = summary.prior_invoices || [];
+    if (priorList.length > 0) {
+      const itemsHtml = priorList.map(item => `<div>Invoice ${fmt(item.invoice_number)} &middot; ${fmt(item.invoice_date)} &middot; ${money(centString(item.remaining_balance_cents))} remaining</div>`).join("");
+      priorInvoicesHtml = `
+        <div class="prior-invoices-list" style="margin-top: 10px; font-size: 8.5pt; color: #42526A; text-align: right; line-height: 1.4; width: 100%;">
+          <strong style="color: #102A43;">Prior unpaid invoices:</strong>
+          ${itemsHtml}
+        </div>
+      `;
+    }
+
+    const totalLabelText = (invoice.status === "finalized" || invoice.status === "void")
+      ? "TOTAL AMOUNT DUE (As Finalized)"
+      : "TOTAL AMOUNT DUE";
+
+    totalSectionHtml = `
+      <div class="invoice-summary-block" style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 20px; width: 100%;">
+        <table style="width: auto; margin-bottom: 0; border: none; font-size: 9pt; border-collapse: collapse;">
+          <tr style="background: none;"><td style="border: none; padding: 4px 12px 4px 24px; text-align: left; color: #42526A;">Current Charges</td><td style="border: none; padding: 4px 0; text-align: right; color: #102A43; font-weight: 500; min-width: 100px;">${fmt(summary.current_invoice_total_display)}</td></tr>
+          <tr style="background: none;"><td style="border: none; padding: 4px 12px 4px 24px; text-align: left; color: #42526A;">Payments Applied</td><td style="border: none; padding: 4px 0; text-align: right; color: #102A43; font-weight: 500;">-${fmt(summary.current_invoice_paid_display)}</td></tr>
+          <tr style="background: none; border-bottom: 1px solid #D9E2EC;"><td style="border: none; padding: 4px 12px 8px 24px; text-align: left; color: #42526A;">Current Invoice Balance</td><td style="border: none; padding: 4px 0 8px 0; text-align: right; color: #102A43; font-weight: 500;">${fmt(summary.current_invoice_balance_display)}</td></tr>
+          <tr style="background: none;"><td style="border: none; padding: 8px 12px 8px 24px; text-align: left; color: #42526A;">Prior Unpaid Balance</td><td style="border: none; padding: 8px 0; text-align: right; color: #102A43; font-weight: 500;">${fmt(summary.prior_unpaid_balance_display)}</td></tr>
+          <tr style="background: none; border-top: 1.5px solid #102A43; font-weight: bold; font-size: 11pt;"><td style="border: none; padding: 10px 12px 10px 24px; text-align: left; color: #102A43;">${totalLabelText}</td><td style="border: none; padding: 10px 0; text-align: right; color: #102A43;">${fmt(summary.total_amount_due_display)}</td></tr>
+        </table>
+        ${priorInvoicesHtml}
+      </div>
+    `;
+  } else if ((invoice.status === "finalized" || invoice.status === "void") && !data.as_finalized_summary) {
+    totalSectionHtml = `
+      <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
+      <div style="margin: 16px 0; padding: 10px; background: #F0F4F8; color: #42526A; font-size: 9pt; border-radius: 4px; border: 1px dashed #BCCCDC; width: 100%; text-align: center; line-height: 1.4;">
+        Historical account summary snapshot not available for this legacy invoice.
+      </div>
+    `;
+  }
+
+  return totalSectionHtml;
 }
 
 function renderFinalizationPreview(preview) {
@@ -2798,7 +2842,7 @@ function renderFinalizationPreview(preview) {
         </div>
       </header>
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
-      <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
+      ${buildPreviewSummaryHtml(render, preview, i)}
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
       ${notesHtml}
     </article>
@@ -2847,16 +2891,21 @@ function renderInvoicePreview(data) {
   const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
   const notesHtml = render.notes ? `<div class="invoice-notes"><b>Notes:</b> ${escapeHtml(render.notes)}</div>` : "";
   const voidHtml = i.status === "void" && i.void_reason ? `<div class="invoice-void-info"><strong>Voided:</strong> ${fmt(i.voided_at)} — ${escapeHtml(i.void_reason)}</div>` : "";
-  const paidCents = i.paid_cents || 0;
-  const balanceCents = i.balance_cents || 0;
-  const paymentSummaryHtml = i.status === "finalized"
-    ? `<div class="invoice-payment-summary">
-         <div class="payment-summary-card"><label>Total</label><strong>${money(centString(i.total_cents))}</strong></div>
-         <div class="payment-summary-card"><label>Paid</label><strong>${money(centString(paidCents))}</strong></div>
-         <div class="payment-summary-card"><label>Balance</label><strong>${money(centString(balanceCents))}</strong></div>
-         <div class="payment-summary-card"><label>Payment Status</label><strong>${escapeHtml(paymentStatusLabel(i.payment_status))}</strong></div>
+
+  const paidCents = data.current_status ? data.current_status.current_invoice_paid_cents : (i.paid_cents || 0);
+  const balanceCents = data.current_status ? data.current_status.current_invoice_balance_cents : (i.balance_cents || 0);
+  const paymentSummaryHtml = (i.status === "finalized" || i.status === "void")
+    ? `<div>
+         <div style="font-size: 11px; font-weight: bold; color: #42526A; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Current Status of This Invoice</div>
+         <div class="invoice-payment-summary" style="margin-bottom: 16px;">
+           <div class="payment-summary-card"><label>Total Charges</label><strong>${money(centString(i.total_cents))}</strong></div>
+           <div class="payment-summary-card"><label>Payments Applied</label><strong>${money(centString(paidCents))}</strong></div>
+           <div class="payment-summary-card"><label>Remaining Balance</label><strong>${money(centString(balanceCents))}</strong></div>
+           <div class="payment-summary-card"><label>Payment Status</label><strong>${escapeHtml(paymentStatusLabel(i.payment_status))}</strong></div>
+         </div>
        </div>`
     : "";
+
   const filingDisplay = i.filing_owner_display || i.filing_owner_display_name_snapshot || (data.filing_owner?.selected?.display_name) || "";
   const pdfButtonsHtml = i.status === "finalized"
     ? `<button id="openPdfBtn">Open PDF</button><button id="showPdfInFinderBtn">Show in Finder</button><button id="openClientFolderBtn">Open client invoice folder</button><button id="printPdfBtn">Print PDF</button>`
@@ -2875,7 +2924,7 @@ function renderInvoicePreview(data) {
         <div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice Date:</strong> ${fmt(render.invoice_date_display)}</div><div><strong>Billing Period:</strong> ${fmt(render.billing_period_display)}</div><div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div></div>
       </header>
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
-      <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
+      ${buildPreviewSummaryHtml(render, data, i)}
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
       ${notesHtml}
     </article>

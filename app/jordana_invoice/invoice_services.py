@@ -90,6 +90,139 @@ def _invoice_paid_cents(conn: sqlite3.Connection, invoice_id: str) -> int:
     ).fetchone()[0]
 
 
+def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
+    """Calculate the account summary values for a given invoice.
+
+    This computes:
+      - current_invoice_total_cents (Current Charges)
+      - current_invoice_paid_cents (Payments Applied to Current Invoice)
+      - current_invoice_balance_cents (Current Invoice Balance)
+      - prior_unpaid_balance_cents (Prior Unpaid Balance)
+      - total_amount_due_cents (TOTAL AMOUNT DUE)
+      - prior_invoices (List of prior unpaid invoices: id, number, date, remaining_balance_cents)
+    """
+    invoice_row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    if not invoice_row:
+        raise ValueError("Invoice was not found.")
+    invoice = dict(invoice_row)
+    status = invoice["status"]
+
+    current_total = int(invoice["total_cents"] or 0)
+    current_paid = _invoice_paid_cents(conn, invoice_id)
+    current_balance = max(current_total - current_paid, 0)
+
+    if status == "void":
+        current_balance = 0
+
+    # Retrieve the billing party to determine the billing responsibility
+    party_row = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
+    if not party_row:
+        return {
+            "version": 1,
+            "current_invoice_total_cents": current_total,
+            "current_invoice_paid_cents": current_paid,
+            "current_invoice_balance_cents": current_balance,
+            "prior_unpaid_balance_cents": 0,
+            "total_amount_due_cents": current_balance,
+            "prior_invoices": [],
+        }
+    party = dict(party_row)
+
+    # Query potential candidate invoices for prior balance (finalized and non-void)
+    if party["billing_party_type"] == "person" and party["person_id"]:
+        # Person-linked: match any invoice addressed to any billing party for the same person
+        candidates_rows = conn.execute(
+            """
+            SELECT DISTINCT i.*
+            FROM invoices i
+            JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+            WHERE bp.person_id = ? AND bp.billing_party_type = 'person'
+              AND i.status = 'finalized'
+            """,
+            (party["person_id"],),
+        ).fetchall()
+    else:
+        # Organization-linked: match only invoices with the exact same billing_party_id
+        candidates_rows = conn.execute(
+            """
+            SELECT i.*
+            FROM invoices i
+            WHERE i.bill_to_party_id = ?
+              AND i.status = 'finalized'
+            """,
+            (invoice["bill_to_party_id"],),
+        ).fetchall()
+
+    prior_invoices = []
+    prior_unpaid_cents = 0
+
+    current_date = invoice["invoice_date"]
+    current_finalized_at = invoice.get("finalized_at")
+
+    for row in candidates_rows:
+        cand = dict(row)
+        cand_id = cand["invoice_id"]
+
+        # 1. Skip the current invoice itself
+        if cand_id == invoice_id:
+            continue
+
+        # 2. Check if the candidate is "prior" based on the cutoff rule
+        cand_date = cand["invoice_date"]
+        cand_finalized_at = cand.get("finalized_at")
+
+        is_prior = False
+        if cand_date < current_date:
+            is_prior = True
+        elif cand_date == current_date:
+            # Same date cutoff ordering:
+            if cand_finalized_at and not current_finalized_at:
+                # Candidate is finalized, current is draft
+                is_prior = True
+            elif cand_finalized_at and current_finalized_at:
+                # Both are finalized
+                if cand_finalized_at < current_finalized_at:
+                    is_prior = True
+                elif cand_finalized_at == current_finalized_at:
+                    # Stable tie-breaker using UUID comparison
+                    is_prior = cand_id < invoice_id
+
+        if not is_prior:
+            continue
+
+        # Calculate dynamic remaining balance for the candidate
+        paid = _invoice_paid_cents(conn, cand_id)
+        total = int(cand["total_cents"] or 0)
+        remaining = max(total - paid, 0)
+
+        if remaining > 0:
+            prior_invoices.append({
+                "invoice_id": cand_id,
+                "invoice_number": cand["invoice_number"],
+                "invoice_date": cand_date,
+                "remaining_balance_cents": remaining,
+                "_sort_key": (cand_date, cand_finalized_at or "", cand_id)
+            })
+            prior_unpaid_cents += remaining
+
+    # Sort prior invoices: oldest first
+    prior_invoices.sort(key=lambda x: x["_sort_key"])
+    for item in prior_invoices:
+        del item["_sort_key"]
+
+    total_amount_due = current_balance + prior_unpaid_cents
+
+    return {
+        "version": 1,
+        "current_invoice_total_cents": current_total,
+        "current_invoice_paid_cents": current_paid,
+        "current_invoice_balance_cents": current_balance,
+        "prior_unpaid_balance_cents": prior_unpaid_cents,
+        "total_amount_due_cents": total_amount_due,
+        "prior_invoices": prior_invoices,
+    }
+
+
 def _derive_payment_status(status: str, paid_cents: int, total_cents: int) -> str:
     if status == "void":
         return "void"
@@ -530,6 +663,8 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     total_cents = int(invoice.get("total_cents") or 0)
     invoice["paid_cents"] = paid_cents
     invoice["balance_cents"] = max(total_cents - paid_cents, 0)
+    if invoice["status"] == "void":
+        invoice["balance_cents"] = 0
     invoice["payment_status"] = _derive_payment_status(invoice["status"], paid_cents, total_cents)
     filing = resolve_invoice_filing_owner(conn, invoice_id)
     invoice["filing_owner_display"] = (
@@ -537,17 +672,56 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
         or (filing.get("selected") or {}).get("display_name")
         or ""
     )
+
+    # 1. Parse and validate as_finalized_summary snapshot if finalized
+    as_finalized_summary = None
+    if invoice["status"] in ("finalized", "void"):
+        snapshot_str = invoice.get("account_summary_snapshot")
+        if snapshot_str:
+            import json
+            try:
+                snapshot = json.loads(snapshot_str)
+                if isinstance(snapshot, dict) and snapshot.get("version") == 1:
+                    required_keys = {
+                        "current_invoice_total_cents",
+                        "current_invoice_paid_cents",
+                        "current_invoice_balance_cents",
+                        "prior_unpaid_balance_cents",
+                        "total_amount_due_cents",
+                        "prior_invoices",
+                    }
+                    if required_keys.issubset(snapshot.keys()) and isinstance(snapshot["prior_invoices"], list):
+                        as_finalized_summary = snapshot
+            except Exception:
+                as_finalized_summary = None
+
+    # 2. Construct dynamic current status of this selected invoice
+    current_status = {
+        "current_invoice_total_cents": total_cents,
+        "current_invoice_paid_cents": paid_cents,
+        "current_invoice_balance_cents": invoice["balance_cents"],
+    }
+
+    # 3. Compute dynamic summary for draft, or use snapshot for finalized
+    if invoice["status"] == "draft":
+        effective_summary = calculate_invoice_account_summary(conn, invoice_id)
+    else:
+        effective_summary = as_finalized_summary
+
     return {
         "invoice": invoice,
         "lines": line_dicts,
         "business_profile": profile,
         "billing_party": party,
         "filing_owner": filing,
+        "as_finalized_summary": as_finalized_summary,
+        "current_status": current_status,
         "render_model": build_invoice_render_model(
             invoice,
             line_dicts,
             business_profile=dict(current_profile) if current_profile else None,
             billing_party=party,
+            account_summary=effective_summary,
         ),
     }
 
@@ -1495,6 +1669,13 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         }
         conn.execute(f"UPDATE invoices SET {', '.join(f'{k} = ?' for k in snapshots)} WHERE invoice_id = ?", (*snapshots.values(), invoice_id))
         _recalculate(conn, invoice_id)
+
+        # Compute the frozen account summary and store it
+        account_summary = calculate_invoice_account_summary(conn, invoice_id)
+        import json
+        summary_json = json.dumps(account_summary)
+        conn.execute("UPDATE invoices SET account_summary_snapshot = ? WHERE invoice_id = ?", (summary_json, invoice_id))
+
         frozen = get_invoice(conn, invoice_id)
         root = Path(pdf_root or os.getenv("JORDANA_INVOICES_DIR", "Invoices"))
         client_folder = _filing_owner_folder(conn, root, filing_owner)
