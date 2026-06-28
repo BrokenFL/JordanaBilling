@@ -194,7 +194,7 @@ class LogoResolutionTests(unittest.TestCase):
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
         # The PDF flowable should resolve to the same logo_path
-        flowable = _logo_flowable(render["logo_path"], 1.05 * 72, 0.73 * 72)
+        flowable = _logo_flowable(render["logo_path"], 1.25 * 72, 0.87 * 72)
         self.assertIsNotNone(flowable, "PDF logo flowable should not be None when logo_path is valid")
 
     # --- Test 9: Logo aspect ratio remains preserved ---
@@ -210,7 +210,7 @@ class LogoResolutionTests(unittest.TestCase):
         with PILImage.open(str(DEFAULT_LOGO_PATH)) as img:
             orig_w, orig_h = img.size
         orig_ratio = orig_w / orig_h
-        max_w, max_h = 1.05 * 72, 0.73 * 72
+        max_w, max_h = 1.25 * 72, 0.87 * 72
         flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), max_w, max_h)
         self.assertIsNotNone(flowable)
         rendered_ratio = flowable.drawWidth / flowable.drawHeight
@@ -296,14 +296,14 @@ class LogoResolutionTests(unittest.TestCase):
         from PIL import Image as PILImage
         with PILImage.open(str(DEFAULT_LOGO_PATH)) as img:
             orig_w, orig_h = img.size
-        # New max dimensions: 1.05" x 0.73" = 75.6pt x 52.56pt
-        max_w, max_h = 1.05 * 72, 0.73 * 72
+        # Max dimensions: 1.25" x 0.87" = 90pt x 62.64pt
+        max_w, max_h = 1.25 * 72, 0.87 * 72
         flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), max_w, max_h)
         self.assertIsNotNone(flowable)
         # The rendered width must not exceed the max width
         self.assertLessEqual(flowable.drawWidth, max_w + 0.1)
         # The rendered width should be significantly smaller than the old 3.15" (226.8pt)
-        self.assertLess(flowable.drawWidth, 80, "PDF logo width must be reduced to ~1/3 of former size")
+        self.assertLess(flowable.drawWidth, 95, "PDF logo width must be within the enlarged max")
 
     # --- Test 16: PDF preserves aspect ratio at new size ---
 
@@ -317,7 +317,7 @@ class LogoResolutionTests(unittest.TestCase):
         with PILImage.open(str(DEFAULT_LOGO_PATH)) as img:
             orig_w, orig_h = img.size
         orig_ratio = orig_w / orig_h
-        flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), 1.05 * 72, 0.73 * 72)
+        flowable = _logo_flowable(str(DEFAULT_LOGO_PATH), 1.25 * 72, 0.87 * 72)
         self.assertIsNotNone(flowable)
         rendered_ratio = flowable.drawWidth / flowable.drawHeight
         self.assertAlmostEqual(rendered_ratio, orig_ratio, places=2)

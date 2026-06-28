@@ -63,12 +63,12 @@ def generate_invoice_pdf(
         canvas.restoreState()
 
     doc = SimpleDocTemplate(
-        str(temp_path), pagesize=letter, rightMargin=0.55 * inch, leftMargin=0.55 * inch,
-        topMargin=0.55 * inch, bottomMargin=0.68 * inch, title=f"Invoice {invoice.get('invoice_number') or 'Draft'}",
+        str(temp_path), pagesize=letter, rightMargin=0.50 * inch, leftMargin=0.50 * inch,
+        topMargin=0.50 * inch, bottomMargin=0.55 * inch, title=f"Invoice {invoice.get('invoice_number') or 'Draft'}",
     )
     render = render_model or build_invoice_render_model(invoice, lines)
     story = []
-    logo_flowable = _logo_flowable(render.get("logo_path"), 1.05 * inch, 0.73 * inch)
+    logo_flowable = _logo_flowable(render.get("logo_path"), 1.25 * inch, 0.87 * inch)
     if logo_flowable is None:
         fallback = [para(invoice.get("business_name_snapshot") or "Business", styles["Heading2"])]
         for value in render.get("sender_lines") or []:
@@ -86,13 +86,13 @@ def generate_invoice_pdf(
         ("Billing Period", render.get("billing_period_display") or ""),
     ):
         meta.append(Paragraph(f"<b>{_escape(key)}:</b> {_escape(value)}", small))
-    header = Table([[logo_cell, meta]], colWidths=[4.25 * inch, 2.15 * inch], hAlign="LEFT")
+    header = Table([[logo_cell, meta]], colWidths=[4.8 * inch, 2.7 * inch], hAlign="LEFT")
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-    story.extend([header, Spacer(1, 0.28 * inch), para("BILL TO", label)])
+    story.extend([header, Spacer(1, 0.18 * inch), para("BILL TO", label)])
     for value in render.get("bill_to_lines") or []:
         if value:
             story.append(para(value))
-    story.append(Spacer(1, 0.26 * inch))
+    story.append(Spacer(1, 0.16 * inch))
 
     data = [[para("Date", small), para("Participants", small), para("Service", small), para("Duration", small), para("Amount", small)]]
     for line in render.get("lines") or []:
@@ -103,7 +103,7 @@ def generate_invoice_pdf(
             para(line.get("duration_display")),
             para(line.get("amount_display")),
         ])
-    table = LongTable(data, colWidths=[0.78 * inch, 2.05 * inch, 2.15 * inch, 0.72 * inch, 0.72 * inch], repeatRows=1, hAlign="LEFT")
+    table = LongTable(data, colWidths=[1.00 * inch, 1.65 * inch, 2.90 * inch, 0.85 * inch, 1.10 * inch], repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#102A43")),
@@ -119,9 +119,9 @@ def generate_invoice_pdf(
     story.append(table)
     total = invoice.get("total_cents", 0)
     footer = [
-        Spacer(1, 0.22 * inch),
-        Table([[para(render.get("total_label") or "TOTAL DUE", total_style), para(render.get("total_display") or format_money(total), total_style)]], colWidths=[5.45 * inch, 0.95 * inch], style=TableStyle([("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")), ("TOPPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])),
-        Spacer(1, 0.28 * inch),
+        Spacer(1, 0.16 * inch),
+        Table([[para(render.get("total_label") or "TOTAL DUE", total_style), para(render.get("total_display") or format_money(total), total_style)]], colWidths=[6.40 * inch, 1.10 * inch], style=TableStyle([("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")), ("TOPPADDING", (0, 0), (-1, -1), 9), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])),
+        Spacer(1, 0.20 * inch),
         Paragraph(f"<b>{_escape(render.get('payment_title') or 'Please make all checks payable to:')}</b>", body),
         Paragraph(_escape(render.get("payment_name") or ""), body),
         *[Paragraph(_escape(value), body) for value in (render.get("payment_lines") or [])],

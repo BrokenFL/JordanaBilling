@@ -231,7 +231,7 @@ The **Payments** workspace (formerly the "Unpaid" screen) now covers the normal 
 - No multi-invoice payments
 - No due dates, overdue labels, aging, reconciliation, receipts, or email confirmations
 - No historical paid-at-session backfill
-- No invoice PDF appearance changes
+- No invoice PDF data or logic changes (PDF layout refinement applied in a separate presentation-only round; see INVOICE_TEMPLATE.md for current layout specs)
 
 ### Payments Workspace (Round 2)
 

@@ -288,7 +288,7 @@ def build_print_preview_html(
     )
     logo_html = ""
     if render.get("logo_data_uri"):
-        logo_html = f'<img src="{_esc(render["logo_data_uri"])}" alt="Logo" style="max-width:1.05in;max-height:0.73in;">'
+        logo_html = f'<img src="{_esc(render["logo_data_uri"])}" alt="Logo" style="max-width:1.25in;max-height:0.87in;">'
     sender_lines = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("sender_lines") or []) if line)
     bill_to_lines = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("bill_to_lines") or []) if line)
     line_rows = "".join(
