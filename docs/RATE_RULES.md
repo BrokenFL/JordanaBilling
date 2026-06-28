@@ -77,7 +77,7 @@ The legacy `weekend_evening_policy` rate policy remains in the database for back
 ## Developer Commands
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 seed-rate-rule --amount 150 --effective-from 2026-01-01 --duration-minutes 60 --billing-session-type psychotherapy
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 seed-rate-rule --amount 150 --effective-from 2026-01-01 --duration-minutes 60 --billing-session-type psychotherapy
 ```
 
 ## Review UI Rate Card

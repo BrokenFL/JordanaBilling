@@ -132,7 +132,7 @@ Titles ending in `for <reference>` (e.g., `Caitlin Schneider 530 for Sage`) pres
 The temporary developer command records a review event:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 record-review --candidate-id CANDIDATE_ID --status needs_rate --reason "Waiting for Jordana rate confirmation"
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 record-review --candidate-id CANDIDATE_ID --status needs_rate --reason "Waiting for Jordana rate confirmation"
 ```
 
 Future UI work should call the same service layer instead of writing CSV edits.
@@ -142,7 +142,7 @@ Future UI work should call the same service layer instead of writing CSV edits.
 The first functional UI is available at `/review` through:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
 ```
 
 It supports save without approval, approval validation, proposed client editing before confirmation, billing relationship maintenance, and structured audit records.
@@ -184,11 +184,27 @@ Confirm Client(s), Save Bill To, and Save Session remain independent. None of th
 
 Candidate-only calendar records may appear in the review list when a title needs
 manual relationship review before it is safe to treat it as a client session.
-The first section-level save for one of those rows promotes it into exactly one
-reviewable `sessions` row inside the same backend save flow, then saves the
-confirmed clients, Bill To, or session details against that row. Later section
-saves and approval reuse the same `sessions.candidate_id` link and must not
-create a second session.
+Some candidates remain candidate-only until manual review — they have no
+`sessions` row until the first section-level save.
+
+The first section-level save for one of those rows promotes the candidate into
+exactly one reviewable `sessions` row inside the same backend save flow, then
+saves the confirmed clients, Bill To, or session details against that row. The
+`session_for_candidate` function checks for an existing session by
+`candidate_id`; if none exists, `_ensure_review_session_for_candidate` creates
+exactly one. Later section saves and approval reuse the same
+`sessions.candidate_id` link and must not create a second session.
+
+Multi-participant and single-participant candidates follow the same
+save/approval contract — the candidate-to-session promotion logic is identical
+regardless of participant count.
+
+The UI does not show stale "saved" state after a failed save. On save failure,
+the overlay stays open, the save button is re-enabled, and a sanitized error
+message is shown. On approval failure, the overlay stays open with a sanitized
+error. On success, the overlay closes, stale state is cleared, the item is
+refreshed or removed from the review list, and double submission is prevented
+by disabling the approve button during the API request.
 
 Removing all clients and saving clears the session participants. The parser proposal is not reinserted after that explicit save.
 
@@ -270,7 +286,7 @@ The Invoices view (`#invoices`) provides a searchable, filterable, paginated lib
 - **Date filter** — All / This month / Last month / This quarter / This year / Custom range
 - **Pagination** — prev/next buttons with result count
 
-**Draft invoices** show a "Print Preview" button that opens a side-effect-free HTML page with a DRAFT watermark in a new tab.
+**Draft invoices** show a "Draft PDF" button that opens a side-effect-free inline PDF preview with a DRAFT watermark in a new tab, and a "Print Preview" button that opens a side-effect-free HTML page with a DRAFT watermark.
 
 **Finalized invoices** show "Open PDF" and "Print PDF" buttons that serve the stored final PDF via `/api/invoices/{id}/final-pdf`. The file path is never exposed to the client.
 

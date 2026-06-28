@@ -22,7 +22,7 @@ A partial unique index `idx_invoices_draft_party_month` enforces that at most on
 
 ## Monthly Staging
 
-A backend reconciliation service `stage_approved_sessions_to_monthly_drafts()` reconciles eligible approved sessions into monthly draft invoices grouped by `billing_party_id` + calendar billing month. It is idempotent and uses one `BEGIN IMMEDIATE` transaction per (party, month) group. It reuses existing eligibility rules, line snapshot creation, and the monthly identity columns. Stale draft lines whose session party or date month changed are moved atomically. Finalized and void invoices remain immutable. The service is not yet connected to approval, API, or UI. Paid-at-session sessions remain excluded temporarily.
+A backend reconciliation service `stage_approved_sessions_to_monthly_drafts()` reconciles eligible approved sessions into monthly draft invoices grouped by `billing_party_id` + calendar billing month. It is idempotent and uses one `BEGIN IMMEDIATE` transaction per (party, month) group. It first consolidates duplicate drafts tied to legacy duplicate person-linked billing-party records into one canonical draft, then reuses existing eligibility rules, line snapshot creation, and the monthly identity columns. Stale draft lines whose session party or date month changed are moved atomically. Finalized and void invoices remain immutable. The service is connected to approval (staging runs automatically after candidate approval), the staging API endpoint (`POST /api/invoices/stage`), and the review UI. Paid-at-session sessions remain excluded temporarily.
 
 ## Invoice Line Descriptions
 

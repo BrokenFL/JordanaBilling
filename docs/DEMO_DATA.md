@@ -28,7 +28,7 @@ The script:
 Launch:
 
 ```bash
-PYTHONPATH=app python3 -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
 ```
 
 The review UI displays `DEMO DATA - NOT FOR REAL BILLING` only when `app_metadata.demo_mode=true`.

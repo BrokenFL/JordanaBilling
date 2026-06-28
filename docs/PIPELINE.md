@@ -31,7 +31,7 @@ A file-based lock (`DatabaseLock` in `db.py`) prevents overlapping syncs and mig
 The CSV importer remains available for testing or recovery if remote sync fails:
 
 ```bash
-PYTHONPATH=app python -m jordana_invoice --db data/jordana_invoice.sqlite3 import-csv path/to/Raw_Event_Snapshots.csv --report data/acceptance_report.md
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 import-csv path/to/Raw_Event_Snapshots.csv --report data/acceptance_report.md
 ```
 
 CSV imports and remote sync both use the same parser and duplicate protection.
