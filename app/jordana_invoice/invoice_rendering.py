@@ -329,28 +329,63 @@ def build_print_preview_html(
     summary_html = ""
     summary = render.get("account_summary")
     if summary and (summary.get("prior_unpaid_balance_cents", 0) > 0 or summary.get("current_invoice_paid_cents", 0) > 0):
+        _lbl = "border:none;padding:2px 12px 2px 24px;text-align:left;font-size:9pt;font-weight:normal;color:#42526A;white-space:nowrap;"
+        _amt = "border:none;padding:2px 0;text-align:right;font-size:9pt;font-weight:normal;color:#102A43;white-space:nowrap;min-width:90px;"
+        _tot_lbl = "border:none;padding:6px 12px 6px 24px;text-align:left;font-weight:bold;font-size:11pt;color:#102A43;white-space:nowrap;"
+        _tot_amt = "border:none;padding:6px 0;text-align:right;font-weight:bold;font-size:11pt;color:#102A43;white-space:nowrap;"
+
+        rows_html = (
+            f'<tr><td style="{_lbl}">Current Charges</td><td style="{_amt}">{summary["current_invoice_total_display"]}</td></tr>'
+        )
+        if summary.get("current_invoice_paid_cents", 0) > 0:
+            rows_html += (
+                f'<tr><td style="{_lbl}">Payments Applied</td><td style="{_amt}">-{summary["current_invoice_paid_display"]}</td></tr>'
+            )
+        has_prior = summary.get("prior_unpaid_balance_cents", 0) > 0
+        if has_prior:
+            rows_html += (
+                f'<tr style="border-bottom:0.5pt solid #D9E2EC;">'
+                f'<td style="{_lbl}padding-bottom:4px;">Current Invoice Balance</td>'
+                f'<td style="{_amt}padding-bottom:4px;">{summary["current_invoice_balance_display"]}</td></tr>'
+                f'<tr><td style="{_lbl}padding-top:4px;">Prior Unpaid Balance</td>'
+                f'<td style="{_amt}padding-top:4px;">{summary["prior_unpaid_balance_display"]}</td></tr>'
+            )
+        else:
+            rows_html += (
+                f'<tr><td style="{_lbl}">Current Invoice Balance</td><td style="{_amt}">{summary["current_invoice_balance_display"]}</td></tr>'
+            )
+        rows_html += (
+            f'<tr style="border-top:1pt solid #102A43;">'
+            f'<td style="{_tot_lbl}">TOTAL AMOUNT DUE</td>'
+            f'<td style="{_tot_amt}">{summary["total_amount_due_display"]}</td></tr>'
+        )
+
         prior_list = summary.get("prior_invoices") or []
         prior_invoices_html = ""
-        if prior_list:
-            items_html = "".join(
-                f"<div>Invoice {item['invoice_number']} &middot; {format_long_date(item['invoice_date'])} &middot; {money(item['remaining_balance_cents'])} remaining</div>"
-                for item in prior_list
-            )
-            prior_invoices_html = f"""
-            <div class="prior-invoices-list" style="margin-top: 10px; font-size: 8pt; color: #42526A; text-align: right;">
-              <strong style="color: #102A43;">Prior unpaid invoices:</strong>
-              {items_html}
-            </div>
-            """
+        if prior_list and has_prior:
+            if len(prior_list) == 1:
+                item = prior_list[0]
+                prior_invoices_html = (
+                    f'<div style="margin-top:5px;font-size:8pt;color:#42526A;text-align:right;">'
+                    f'Includes prior invoice {_esc(item["invoice_number"])} dated {format_long_date(item["invoice_date"])} '
+                    f'&mdash; {money(item["remaining_balance_cents"])} remaining</div>'
+                )
+            else:
+                items_html = "".join(
+                    f'<div>Invoice {_esc(item["invoice_number"])} &middot; {format_long_date(item["invoice_date"])} '
+                    f'&mdash; {money(item["remaining_balance_cents"])} remaining</div>'
+                    for item in prior_list
+                )
+                prior_invoices_html = (
+                    f'<div style="margin-top:5px;font-size:8pt;color:#42526A;text-align:right;line-height:1.4;">'
+                    f'<strong style="color:#102A43;">Prior unpaid invoices:</strong>'
+                    f'{items_html}</div>'
+                )
 
         summary_html = f"""
-        <div class="total-row" style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 18px;">
-          <table style="width: auto; border: none; margin-bottom: 0;">
-            <tr style="border: none;"><td style="border: none; padding: 3px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Current Charges</td><td style="border: none; padding: 3px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">{summary["current_invoice_total_display"]}</td></tr>
-            <tr style="border: none;"><td style="border: none; padding: 3px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Payments Applied</td><td style="border: none; padding: 3px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">-{summary["current_invoice_paid_display"]}</td></tr>
-            <tr style="border-bottom: 0.5pt solid #D9E2EC;"><td style="border: none; padding: 3px 10px 6px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Current Invoice Balance</td><td style="border: none; padding: 3px 0 6px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">{summary["current_invoice_balance_display"]}</td></tr>
-            <tr style="border: none;"><td style="border: none; padding: 6px 10px 6px 10px; text-align: left; font-size: 9pt; font-weight: normal; color: #42526A;">Prior Unpaid Balance</td><td style="border: none; padding: 6px 0 6px 0; text-align: right; font-size: 9pt; font-weight: normal; color: #102A43;">{summary["prior_unpaid_balance_display"]}</td></tr>
-            <tr style="border-top: 1pt solid #102A43;"><td style="border: none; padding: 9px 10px; text-align: left; font-weight: bold; font-size: 13pt; color: #102A43;">TOTAL AMOUNT DUE</td><td style="border: none; padding: 9px 0; text-align: right; font-weight: bold; font-size: 13pt; color: #102A43;">{summary["total_amount_due_display"]}</td></tr>
+        <div class="total-row" style="display:flex;flex-direction:column;align-items:flex-end;margin-bottom:14px;">
+          <table style="width:auto;border:none;margin-bottom:0;border-collapse:collapse;">
+            {rows_html}
           </table>
           {prior_invoices_html}
         </div>
