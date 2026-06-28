@@ -877,3 +877,14 @@ tr.empty-row:hover { background: transparent; }
   padding: 10px 16px; margin-bottom: 12px; color: #6a4600;
   font-size: 14px; font-weight: 500;
 }
+
+
+.financial-summary-toolbar { display: flex; justify-content: flex-end; margin: 4px 0 10px; }
+.financial-summary-toolbar .field { width: 190px; }
+.financial-summary-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 16px; }
+.financial-summary-cards .summary-card { min-height: 96px; }
+.summary-card-note { color: var(--muted); font-size: 11px; margin-top: 5px; }
+@media (max-width: 880px) {
+  .financial-summary-cards { grid-template-columns: 1fr; }
+  .financial-summary-toolbar { justify-content: flex-start; }
+}
