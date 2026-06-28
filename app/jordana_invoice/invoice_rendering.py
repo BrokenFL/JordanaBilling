@@ -326,47 +326,39 @@ def build_print_preview_html(
     zelle_html = f"<div>{_esc(render.get('payment_zelle_line'))}</div>" if render.get("payment_zelle_line") else ""
     notes_html = f"<div class=\"notes\"><b>Notes:</b> {_esc(render.get('notes'))}</div>" if render.get("notes") else ""
 
-    summary_html = ""
+    summary_rows_html = ""
+    prior_note_html = ""
     summary = render.get("account_summary")
     if summary and (summary.get("prior_unpaid_balance_cents", 0) > 0 or summary.get("current_invoice_paid_cents", 0) > 0):
-        _lbl = "border:none;padding:2px 12px 2px 24px;text-align:left;font-size:9pt;font-weight:normal;color:#42526A;white-space:nowrap;"
-        _amt = "border:none;padding:2px 0;text-align:right;font-size:9pt;font-weight:normal;color:#102A43;white-space:nowrap;min-width:90px;"
-        _tot_lbl = "border:none;padding:6px 12px 6px 24px;text-align:left;font-weight:bold;font-size:11pt;color:#102A43;white-space:nowrap;"
-        _tot_amt = "border:none;padding:6px 0;text-align:right;font-weight:bold;font-size:11pt;color:#102A43;white-space:nowrap;"
-
-        rows_html = (
-            f'<tr><td style="{_lbl}">Current Charges</td><td style="{_amt}">{summary["current_invoice_total_display"]}</td></tr>'
-        )
-        if summary.get("current_invoice_paid_cents", 0) > 0:
-            rows_html += (
-                f'<tr><td style="{_lbl}">Payments Applied</td><td style="{_amt}">-{summary["current_invoice_paid_display"]}</td></tr>'
-            )
         has_prior = summary.get("prior_unpaid_balance_cents", 0) > 0
+        has_payments = summary.get("current_invoice_paid_cents", 0) > 0
+
+        rows = []
+        rows.append(("Current Charges", summary["current_invoice_total_display"]))
+        if has_payments:
+            rows.append(("Payments Applied", f'-{summary["current_invoice_paid_display"]}'))
+            rows.append(("Current Invoice Balance", summary["current_invoice_balance_display"]))
         if has_prior:
-            rows_html += (
-                f'<tr style="border-bottom:0.5pt solid #D9E2EC;">'
-                f'<td style="{_lbl}padding-bottom:4px;">Current Invoice Balance</td>'
-                f'<td style="{_amt}padding-bottom:4px;">{summary["current_invoice_balance_display"]}</td></tr>'
-                f'<tr><td style="{_lbl}padding-top:4px;">Prior Unpaid Balance</td>'
-                f'<td style="{_amt}padding-top:4px;">{summary["prior_unpaid_balance_display"]}</td></tr>'
+            rows.append(("Prior Unpaid Balance", summary["prior_unpaid_balance_display"]))
+
+        for label, amount in rows:
+            summary_rows_html += (
+                f'<tr><td colspan="4" style="text-align:right">{_esc(label)}</td>'
+                f'<td style="text-align:right">{_esc(amount)}</td></tr>'
             )
-        else:
-            rows_html += (
-                f'<tr><td style="{_lbl}">Current Invoice Balance</td><td style="{_amt}">{summary["current_invoice_balance_display"]}</td></tr>'
-            )
-        rows_html += (
-            f'<tr style="border-top:1pt solid #102A43;">'
-            f'<td style="{_tot_lbl}">TOTAL AMOUNT DUE</td>'
-            f'<td style="{_tot_amt}">{summary["total_amount_due_display"]}</td></tr>'
+        summary_rows_html += (
+            f'<tr style="border-top:1pt solid #102A43;border-bottom:none;">'
+            f'<td colspan="4" style="text-align:right;font-weight:bold;font-size:13pt;padding:9px 5px;border-bottom:none;">TOTAL AMOUNT DUE</td>'
+            f'<td style="text-align:right;font-weight:bold;font-size:13pt;padding:9px 5px;border-bottom:none;">'
+            f'{_esc(summary["total_amount_due_display"])}</td></tr>'
         )
 
         prior_list = summary.get("prior_invoices") or []
-        prior_invoices_html = ""
         if prior_list and has_prior:
             if len(prior_list) == 1:
                 item = prior_list[0]
-                prior_invoices_html = (
-                    f'<div style="margin-top:5px;font-size:8pt;color:#42526A;text-align:right;">'
+                prior_note_html = (
+                    f'<div style="margin-top:4px;font-size:8pt;color:#42526A;">'
                     f'Includes prior invoice {_esc(item["invoice_number"])} dated {format_long_date(item["invoice_date"])} '
                     f'&mdash; {money(item["remaining_balance_cents"])} remaining</div>'
                 )
@@ -376,27 +368,19 @@ def build_print_preview_html(
                     f'&mdash; {money(item["remaining_balance_cents"])} remaining</div>'
                     for item in prior_list
                 )
-                prior_invoices_html = (
-                    f'<div style="margin-top:5px;font-size:8pt;color:#42526A;text-align:right;line-height:1.4;">'
+                prior_note_html = (
+                    f'<div style="margin-top:4px;font-size:8pt;color:#42526A;line-height:1.4;">'
                     f'<strong style="color:#102A43;">Prior unpaid invoices:</strong>'
                     f'{items_html}</div>'
                 )
-
-        summary_html = f"""
-        <div class="total-row" style="display:flex;flex-direction:column;align-items:flex-end;margin-bottom:14px;">
-          <table style="width:auto;border:none;margin-bottom:0;border-collapse:collapse;">
-            {rows_html}
-          </table>
-          {prior_invoices_html}
-        </div>
-        """
     else:
-        summary_html = f"""
-        <div class="total-row"><table><tr>
-          <td>{_esc(render.get('total_label') or 'TOTAL DUE')}</td>
-          <td style="text-align:right">{_esc(render.get('total_display'))}</td>
-        </tr></table></div>
-        """
+        summary_rows_html = (
+            f'<tr style="border-top:1pt solid #102A43;border-bottom:none;">'
+            f'<td colspan="4" style="text-align:right;font-weight:bold;font-size:13pt;padding:9px 5px;border-bottom:none;">'
+            f'{_esc(render.get("total_label") or "TOTAL DUE")}</td>'
+            f'<td style="text-align:right;font-weight:bold;font-size:13pt;padding:9px 5px;border-bottom:none;">'
+            f'{_esc(render.get("total_display"))}</td></tr>'
+        )
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -446,8 +430,8 @@ def build_print_preview_html(
   </div>
   <div class="bill-to"><strong>BILL TO</strong>{bill_to_lines}</div>
   <table><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
-  <tbody>{line_rows}</tbody></table>
-  {summary_html}
+  <tbody>{line_rows}{summary_rows_html}</tbody></table>
+  {prior_note_html}
   <div class="payment-section">
     <b>{_esc(render.get('payment_title') or 'Please make all checks payable to:')}</b>
     <div>{_esc(render.get('payment_name') or '')}</div>
