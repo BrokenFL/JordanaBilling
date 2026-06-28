@@ -1118,20 +1118,20 @@ def restore_candidate(
     return get_review_candidate(conn, candidate_id)
 
 
-def promote_candidate_to_review(
+def _ensure_review_session_for_candidate(
     conn: sqlite3.Connection,
     candidate_id: str,
     *,
     reason: str = "",
-) -> dict[str, Any]:
-    """
-    Manually promote a candidate-only calendar record (no session) into the review queue.
-    Re-parses the preserved raw snapshot, forces classification to client_session,
-    and creates one reviewable session.  Skips candidates that already have a session
-    or are approved/excluded.  Never modifies raw evidence.
-    """
-    init_db(conn)
+) -> sqlite3.Row:
     now = now_iso()
+
+    existing_session = conn.execute(
+        "SELECT * FROM sessions WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if existing_session:
+        return existing_session
 
     candidate = conn.execute(
         "SELECT * FROM calendar_event_candidates WHERE id = ?",
@@ -1143,13 +1143,6 @@ def promote_candidate_to_review(
         raise ValueError(
             f"Candidate is {candidate['review_status']}; cannot promote to review."
         )
-
-    existing_session = conn.execute(
-        "SELECT id FROM sessions WHERE candidate_id = ?",
-        (candidate_id,),
-    ).fetchone()
-    if existing_session:
-        raise ValueError("A session already exists for this candidate.")
 
     snap = conn.execute(
         "SELECT * FROM raw_calendar_snapshots WHERE id = ?",
@@ -1291,6 +1284,36 @@ def promote_candidate_to_review(
         "promoted_to_review",
         {"reason": reason or "Manually promoted to review queue."},
     )
+    session = conn.execute(
+        "SELECT * FROM sessions WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if not session:
+        raise ValueError("Could not create session from candidate; missing required fields.")
+    return session
+
+
+def promote_candidate_to_review(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """
+    Manually promote a candidate-only calendar record (no session) into the review queue.
+    Re-parses the preserved raw snapshot, forces classification to client_session,
+    and creates one reviewable session.  Skips candidates that already have a session
+    or are approved/excluded.  Never modifies raw evidence.
+    """
+    init_db(conn)
+    existing_session = conn.execute(
+        "SELECT id FROM sessions WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if existing_session:
+        raise ValueError("A session already exists for this candidate.")
+
+    _ensure_review_session_for_candidate(conn, candidate_id, reason=reason)
     conn.commit()
     return get_review_candidate(conn, candidate_id)
 
@@ -3525,7 +3548,11 @@ def search_table(
 def session_for_candidate(conn: sqlite3.Connection, candidate_id: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
     if not row:
-        raise ValueError("Session not found for candidate.")
+        row = _ensure_review_session_for_candidate(
+            conn,
+            candidate_id,
+            reason="Created session while saving review candidate.",
+        )
     return row
 
 

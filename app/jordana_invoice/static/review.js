@@ -492,6 +492,14 @@ function markSaved(section, message = "Saved") {
   }
 }
 
+function clearSavedState(section, message = "Save failed") {
+  const id = section === "session" ? "sessionState" : section === "billing" ? "billingState" : "relationshipState";
+  if ($(id)) {
+    $(id).textContent = message;
+    $(id).className = "save-state dirty";
+  }
+}
+
 function renderParticipantChips() {
   const chips = $("participantChips");
   if (!chips) return;
@@ -845,7 +853,8 @@ async function saveSessionSection() {
     await loadList();
     requestAnimationFrame(() => $("approveBtn")?.scrollIntoView({ behavior: "smooth", block: "center" }));
   } catch (error) {
-    alert(`Could not save session: ${error.message}`);
+    clearSavedState("session", "Save failed");
+    alert(`Could not save session: ${sanitizeUiErrorMessage(error.message, "Please check required fields and try again.")}`);
   } finally {
     if (button && document.body.contains(button)) button.disabled = false;
   }
@@ -911,9 +920,9 @@ async function save(approve) {
       if (approveBtn && document.body.contains(approveBtn)) approveBtn.disabled = false;
       const msg = error.message || "";
       if (msg.startsWith("Cannot approve")) {
-        alert(msg);
+        alert(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
       } else {
-        alert("Could not approve session. Please check required fields and try again.");
+        alert(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
       }
     } else {
       alert(error.message);

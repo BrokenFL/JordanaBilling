@@ -1599,7 +1599,17 @@ class ReviewApprovalTests(unittest.TestCase):
 
     def test_approval_sanitizes_error_messages(self):
         self.assertIn('msg.startsWith("Cannot approve")', self.save_fn)
+        self.assertIn("sanitizeUiErrorMessage(msg", self.save_fn)
         self.assertIn("Could not approve session. Please check required fields and try again.", self.save_fn)
+
+    def test_session_save_failure_clears_saved_state(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function saveSessionSection")
+        end = js.index("async function save(approve)", start)
+        save_session_fn = js[start:end]
+
+        self.assertIn("clearSavedState(\"session\", \"Save failed\");", save_session_fn)
+        self.assertIn("sanitizeUiErrorMessage(error.message", save_session_fn)
 
     def test_success_banner_css_exists(self):
         css = Path("app/jordana_invoice/static/review.css").read_text()
