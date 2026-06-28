@@ -247,3 +247,21 @@ Hidden records are recoverable through the intentional hidden-calendar filter.
 ## Invoice Eligibility Boundary
 
 Approval automatically stages the session into the corresponding monthly draft invoice, creating the draft if it does not yet exist. The invoice builder revalidates approval, clients in the session, bill-to, actual charged amount, appointment status, billing treatment, billable classification, raw evidence, and duplicate attachment. Cancelled/no-show sessions require explicit `billable` treatment.
+
+## Invoice Library
+
+The Invoices view (`#invoices`) provides a searchable, filterable, paginated library of all invoices. The table columns include: Number, Invoice Date, Service Period, Bill To, Participants, Status, Payment, Total, Paid, Balance, and Actions.
+
+**Controls**:
+- **Search** — free-text search on invoice number or Bill To name (debounced 300ms)
+- **Status filter** — All / Drafts / Finalized / Void
+- **Payment status filter** — All / Unpaid / Partially Paid / Paid / Void
+- **Bill To filter** — dropdown of all billing parties
+- **Date filter** — All / This month / Last month / This quarter / This year / Custom range
+- **Pagination** — prev/next buttons with result count
+
+**Draft invoices** show a "Print Preview" button that opens a side-effect-free HTML page with a DRAFT watermark in a new tab.
+
+**Finalized invoices** show "Open PDF" and "Print PDF" buttons that serve the stored final PDF via `/api/invoices/{id}/final-pdf`. The file path is never exposed to the client.
+
+See `docs/INVOICE_LIFECYCLE.md` for full API documentation.

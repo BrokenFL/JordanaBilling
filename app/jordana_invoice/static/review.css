@@ -531,6 +531,17 @@ tr.empty-row:hover { background: transparent; }
 .invoice-payment { margin-top: 24px; font-size: 11px; line-height: 1.5; text-align: center; }
 .invoice-payment > div { overflow-wrap: anywhere; }
 .invoice-notes { margin-top: 18px; font-size: 11px; line-height: 1.55; }
+.invoice-void-info { background: #fee; border: 1px solid #c33; color: #c33; padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; }
+.invoice-payment-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.invoice-payment-summary .payment-summary-card { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.invoice-payment-summary .payment-summary-card label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.invoice-payment-summary .payment-summary-card strong { font-size: 14px; }
+.invoice-custom-date-range { display: flex; gap: 12px; margin-bottom: 12px; }
+.invoice-custom-date-range .field { flex: 0 0 200px; }
+.pager { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; }
+.pager span { font-size: 12px; color: var(--muted); }
+.pager button { min-height: 32px; padding: 0 12px; font-size: 16px; }
+.pager button:disabled { opacity: 0.4; cursor: default; }
 @media (max-width: 880px) {
   .invoice-preview-header { grid-template-columns: 1fr; }
   .invoice-preview-title { text-align: left; }

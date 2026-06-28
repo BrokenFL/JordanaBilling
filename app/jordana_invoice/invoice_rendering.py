@@ -263,3 +263,103 @@ def build_invoice_render_model(
 
 def money(cents: Any) -> str:
     return f"${int(cents or 0) / 100:,.2f}"
+
+
+def _esc(value: Any) -> str:
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_print_preview_html(
+    invoice: dict[str, Any],
+    lines: list[dict[str, Any]],
+    *,
+    business_profile: dict[str, Any] | None = None,
+    billing_party: dict[str, Any] | None = None,
+) -> str:
+    """Build a self-contained HTML print-preview page with a DRAFT watermark.
+
+    This function is purely read-only: it does not write to the database,
+    generate PDFs, assign invoice numbers, or change any state.
+    """
+    render = build_invoice_render_model(
+        invoice, lines,
+        business_profile=business_profile,
+        billing_party=billing_party,
+    )
+    logo_html = ""
+    if render.get("logo_data_uri"):
+        logo_html = f'<img src="{_esc(render["logo_data_uri"])}" alt="Logo" style="max-width:1.05in;max-height:0.73in;">'
+    sender_lines = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("sender_lines") or []) if line)
+    bill_to_lines = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("bill_to_lines") or []) if line)
+    line_rows = "".join(
+        f"<tr><td>{_esc(ln.get('service_date_display'))}</td>"
+        f"<td>{_esc(ln.get('participants_display'))}</td>"
+        f"<td>{_esc(ln.get('description_display'))}</td>"
+        f"<td>{_esc(ln.get('duration_display'))}</td>"
+        f"<td style=\"text-align:right\">{_esc(ln.get('amount_display'))}</td></tr>"
+        for ln in (render.get("lines") or [])
+    )
+    payment_lines_html = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("payment_lines") or []))
+    zelle_html = f"<div>{_esc(render.get('payment_zelle_line'))}</div>" if render.get("payment_zelle_line") else ""
+    notes_html = f"<div class=\"notes\"><b>Notes:</b> {_esc(render.get('notes'))}</div>" if render.get("notes") else ""
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice Print Preview — DRAFT</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #102A43; padding: 0.55in; }}
+  .draft-watermark {{ position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg);
+    font-size: 72pt; font-weight: bold; color: rgba(200,80,80,0.15); z-index: 9999;
+    pointer-events: none; white-space: nowrap; letter-spacing: 8px; }}
+  .draft-banner {{ background: #fee; border: 1px solid #c33; color: #c33; padding: 6px 12px;
+    text-align: center; font-weight: bold; margin-bottom: 16px; }}
+  .print-btn-row {{ margin-bottom: 16px; }}
+  .print-btn {{ padding: 6px 18px; font-size: 11pt; cursor: pointer; }}
+  .invoice-header {{ display: flex; justify-content: space-between; margin-bottom: 20px; }}
+  .invoice-header-left {{ max-width: 3.5in; }}
+  .invoice-header-left img {{ margin-bottom: 4px; }}
+  .invoice-header-right {{ text-align: right; }}
+  .invoice-header-right h1 {{ font-size: 26pt; color: #102A43; }}
+  .invoice-header-right div {{ font-size: 8pt; color: #42526A; margin-top: 2px; }}
+  .bill-to {{ margin-bottom: 18px; }}
+  .bill-to strong {{ font-size: 8pt; color: #526171; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 14px; }}
+  th {{ background: #EAF0F6; color: #102A43; font-size: 8pt; text-align: left; padding: 7px 5px;
+    border-bottom: 0.8pt solid #9FB3C8; }}
+  td {{ padding: 7px 5px; border-bottom: 0.3pt solid #D9E2EC; vertical-align: top; }}
+  .total-row {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
+  .total-row table {{ width: auto; }}
+  .total-row td {{ border-top: 1pt solid #102A43; padding: 9px 0; font-weight: bold; font-size: 13pt; }}
+  .payment-section {{ margin-top: 10px; }}
+  .payment-section b {{ font-size: 9pt; }}
+  .notes {{ margin-top: 14px; font-size: 9pt; }}
+  @media print {{ .print-btn-row, .draft-banner {{ display: none; }} .draft-watermark {{ color: rgba(200,80,80,0.08); }} }}
+</style></head><body>
+  <div class="draft-banner">DRAFT — NOT FINAL</div>
+  <div class="draft-watermark">DRAFT</div>
+  <div class="print-btn-row"><button class="print-btn" onclick="window.print()">Print</button></div>
+  <div class="invoice-header">
+    <div class="invoice-header-left">{logo_html}{sender_lines}</div>
+    <div class="invoice-header-right">
+      <h1>INVOICE</h1>
+      <div><strong>Invoice Number:</strong> {_esc(render.get('invoice_number_display'))}</div>
+      <div><strong>Invoice Date:</strong> {_esc(render.get('invoice_date_display'))}</div>
+      <div><strong>Billing Period:</strong> {_esc(render.get('billing_period_display'))}</div>
+    </div>
+  </div>
+  <div class="bill-to"><strong>BILL TO</strong>{bill_to_lines}</div>
+  <table><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
+  <tbody>{line_rows}</tbody></table>
+  <div class="total-row"><table><tr>
+    <td>{_esc(render.get('total_label') or 'TOTAL DUE')}</td>
+    <td style="text-align:right">{_esc(render.get('total_display'))}</td>
+  </tr></table></div>
+  <div class="payment-section">
+    <b>{_esc(render.get('payment_title') or 'Please make all checks payable to:')}</b>
+    <div>{_esc(render.get('payment_name') or '')}</div>
+    {payment_lines_html}{zelle_html}
+  </div>
+  {notes_html}
+</body></html>"""

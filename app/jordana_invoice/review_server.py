@@ -86,6 +86,7 @@ from .invoice_services import (
     update_invoice_line_item,
     void_invoice,
 )
+from .invoice_rendering import build_print_preview_html
 from .payment_services import (
     get_payment_detail_view,
     list_all_payments,
@@ -469,7 +470,24 @@ def make_handler(database_path: str, write_token: str | None = None):
                     self.send_json(eligible_sessions(self.conn(), first(query, "bill_to_party_id"), first(query, "period_start"), first(query, "period_end")))
                     return
                 if parsed.path == "/api/invoices":
-                    self.send_json(list_invoice_records(self.conn(), first(parse_qs(parsed.query), "status")))
+                    query = parse_qs(parsed.query)
+                    self.send_json(list_invoice_records(
+                        self.conn(),
+                        status=first(query, "status") or None,
+                        search=first(query, "search") or None,
+                        bill_to_party_id=first(query, "bill_to_party_id") or None,
+                        participant_person_id=first(query, "participant_person_id") or None,
+                        payment_status=first(query, "payment_status") or None,
+                        invoice_date_from=first(query, "invoice_date_from") or None,
+                        invoice_date_to=first(query, "invoice_date_to") or None,
+                        billing_month=first(query, "billing_month") or None,
+                        service_period_from=first(query, "service_period_from") or None,
+                        service_period_to=first(query, "service_period_to") or None,
+                        sort_by=first(query, "sort_by") or "invoice_date",
+                        sort_dir=first(query, "sort_dir") or "desc",
+                        limit=int(first(query, "limit") or 50),
+                        offset=int(first(query, "offset") or 0),
+                    ))
                     return
                 if parsed.path == "/api/payments/outstanding-invoices":
                     self.send_json({"items": list_outstanding_invoices(self.conn())})
@@ -483,6 +501,51 @@ def make_handler(database_path: str, write_token: str | None = None):
                 if parsed.path.startswith("/api/payments/") and not parsed.path.endswith("/outstanding-invoices") and not parsed.path.endswith("/paid-invoices"):
                     payment_id = parsed.path.strip("/").split("/")[2]
                     self.send_json(get_payment_detail_view(self.conn(), payment_id))
+                    return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/print-preview"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    data = get_invoice(self.conn(), invoice_id)
+                    if data["invoice"]["status"] != "draft":
+                        self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
+                        return
+                    html = build_print_preview_html(
+                        data["invoice"], data["lines"],
+                        business_profile=data.get("business_profile"),
+                        billing_party=data.get("billing_party"),
+                    )
+                    body = html.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self._apply_security_headers()
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/final-pdf"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    row = self.conn().execute("SELECT status, pdf_path FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+                    if not row:
+                        self.send_json({"ok": False, "error": "Invoice was not found."}, status=404)
+                        return
+                    if row["status"] not in ("finalized", "void"):
+                        self.send_json({"ok": False, "error": "Only finalized or void invoices have a PDF."}, status=400)
+                        return
+                    pdf_path_str = row["pdf_path"]
+                    if not pdf_path_str:
+                        self.send_json({"ok": False, "error": "No PDF file is stored for this invoice."}, status=404)
+                        return
+                    pdf_path = Path(pdf_path_str)
+                    if not pdf_path.is_file():
+                        self.send_json({"ok": False, "error": "The PDF file for this invoice is missing from the expected location."}, status=404)
+                        return
+                    body = pdf_path.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Content-Disposition", 'inline')
+                    self._apply_security_headers()
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
                     invoice_id = parsed.path.strip("/").split("/")[2]

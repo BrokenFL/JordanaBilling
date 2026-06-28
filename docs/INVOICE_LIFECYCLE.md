@@ -262,3 +262,46 @@ API endpoints added:
 - No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
 - Payment tracking beyond Round 1 remains unfinished: credits, reversals/voiding controls, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds.
+
+## Invoice Library
+
+The Invoices view now includes a searchable, filterable, paginated invoice library.
+
+### Enhanced List Endpoint
+
+```
+GET /api/invoices
+```
+
+Query parameters (all optional):
+
+- `status` — `draft`, `finalized`, or `void`
+- `search` — free-text search on invoice number or Bill To name
+- `bill_to_party_id` — filter by billing party UUID
+- `participant_person_id` — filter by participant person UUID (joins through `session_participants`)
+- `payment_status` — `unpaid`, `partially_paid`, `paid`, or `void` (derived field, post-filtered)
+- `invoice_date_from` / `invoice_date_to` — invoice date range (ISO date `YYYY-MM-DD`)
+- `billing_month` — filter by `YYYY-MM` billing month
+- `service_period_from` / `service_period_to` — billing period start/end range
+- `sort_by` — `invoice_date` (default), `invoice_number`, `total_cents`, `created_at`, or `bill_to_name`
+- `sort_dir` — `desc` (default) or `asc`
+- `limit` — page size (default 50)
+- `offset` — pagination offset (default 0)
+
+**Response**: a paginated dict `{ items, total, limit, offset }`. Each item includes all invoice columns plus `current_bill_to_name`, `line_count`, `participants_display` (deduplicated), `paid_cents`, `balance_cents`, and `payment_status`.
+
+### Print Preview (Draft Only)
+
+```
+GET /api/invoices/{invoice_id}/print-preview
+```
+
+Returns a self-contained HTML page with a **DRAFT** watermark and banner. Side-effect free: does not write to the database, generate PDFs, assign invoice numbers, or change any state. Only available for draft invoices; finalized or void invoices return HTTP 400.
+
+### Final PDF Serving
+
+```
+GET /api/invoices/{invoice_id}/final-pdf
+```
+
+Serves the stored PDF file for finalized or void invoices. Returns the raw PDF bytes with `Content-Type: application/pdf` and `Content-Disposition: inline`. Does not expose the file path to the client. Returns HTTP 400 for draft invoices, HTTP 404 if the invoice or PDF file is missing.

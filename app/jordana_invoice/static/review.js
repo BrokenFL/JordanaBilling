@@ -46,6 +46,20 @@ const state = {
     allPaymentsItems: [],
     selectedPaidInvoiceId: null,
     selectedPaymentId: null
+  },
+  invoiceLibrary: {
+    items: [],
+    total: 0,
+    offset: 0,
+    limit: 50,
+    search: "",
+    status: "",
+    paymentStatus: "",
+    billToPartyId: "",
+    dateFilter: "",
+    dateFrom: "",
+    dateTo: "",
+    loaded: false
   }
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
@@ -1691,8 +1705,9 @@ async function showInvoices() {
   $("invoicesView").hidden = false;
   $("invoicesNav").classList.add("active");
   $("pageTitle").textContent = "Invoices";
-  $("pageSubtitle").textContent = "Draft, finalize, and preserve invoice history";
+  $("pageSubtitle").textContent = "Search, filter, preview, finalize, and preserve invoice history";
   document.title = "Jordana Billing - Invoices";
+  await loadInvoiceBillToFilter();
   await loadInvoices();
 }
 
@@ -2094,17 +2109,117 @@ async function showSettings() {
   await loadBusinessProfile();
 }
 
+function _invoiceDateRangeParams() {
+  const filter = state.invoiceLibrary.dateFilter;
+  if (!filter) return {};
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  if (filter === "this_month") {
+    const start = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    const next = new Date(y, m + 1, 1);
+    const end = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+    return { invoice_date_from: start, invoice_date_to: end };
+  }
+  if (filter === "last_month") {
+    const prev = new Date(y, m - 1, 1);
+    const start = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`;
+    const end = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    return { invoice_date_from: start, invoice_date_to: end };
+  }
+  if (filter === "this_quarter") {
+    const qStart = Math.floor(m / 3) * 3;
+    const start = `${y}-${String(qStart + 1).padStart(2, "0")}-01`;
+    const qEndMonth = qStart + 3;
+    const next = new Date(y, qEndMonth, 1);
+    const end = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+    return { invoice_date_from: start, invoice_date_to: end };
+  }
+  if (filter === "this_year") {
+    return { invoice_date_from: `${y}-01-01`, invoice_date_to: `${y}-12-31` };
+  }
+  if (filter === "custom") {
+    const params = {};
+    if (state.invoiceLibrary.dateFrom) params.invoice_date_from = state.invoiceLibrary.dateFrom;
+    if (state.invoiceLibrary.dateTo) params.invoice_date_to = state.invoiceLibrary.dateTo;
+    return params;
+  }
+  return {};
+}
+
+function _buildInvoiceQueryParams() {
+  const lib = state.invoiceLibrary;
+  const params = new URLSearchParams();
+  if (lib.status) params.set("status", lib.status);
+  if (lib.search) params.set("search", lib.search);
+  if (lib.billToPartyId) params.set("bill_to_party_id", lib.billToPartyId);
+  if (lib.paymentStatus) params.set("payment_status", lib.paymentStatus);
+  const dateRange = _invoiceDateRangeParams();
+  if (dateRange.invoice_date_from) params.set("invoice_date_from", dateRange.invoice_date_from);
+  if (dateRange.invoice_date_to) params.set("invoice_date_to", dateRange.invoice_date_to);
+  params.set("limit", String(lib.limit));
+  params.set("offset", String(lib.offset));
+  return params.toString();
+}
+
+async function loadInvoiceBillToFilter() {
+  const parties = await api("/api/billing-parties?q=");
+  const select = $("invoiceBillToFilter");
+  const current = select.value;
+  select.innerHTML = '<option value="">All Bill To</option>' + parties.map(p =>
+    `<option value="${escapeAttr(p.billing_party_id)}">${fmt(p.billing_name)}</option>`
+  ).join("");
+  select.value = current;
+}
+
 async function loadInvoices() {
-  const rows = await api(`/api/invoices?status=${encodeURIComponent($("invoiceStatusFilter").value || "")}`);
-  $("invoiceRows").innerHTML = rows.map(row => `
-    <tr data-invoice="${escapeAttr(row.invoice_id)}">
-      <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
-      <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
-      <td>${fmt(row.billing_period_start)} - ${fmt(row.billing_period_end)}</td>
-      <td>${fmt(row.invoice_date)}</td><td>${fmt(row.line_count)}</td><td>${money(centString(row.total_cents))}</td>
-      <td><span class="status-pill ${escapeAttr(row.status)}">${fmt(row.status)}</span></td><td>${fmt(row.delivery_method)}</td>
-    </tr>`).join("") || `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
-  document.querySelectorAll("#invoiceRows tr[data-invoice]").forEach(row => row.onclick = () => openInvoice(row.dataset.invoice));
+  const lib = state.invoiceLibrary;
+  lib.status = $("invoiceStatusFilter").value || "";
+  lib.paymentStatus = $("invoicePaymentStatusFilter").value || "";
+  lib.billToPartyId = $("invoiceBillToFilter").value || "";
+  lib.dateFilter = $("invoiceDateFilter").value || "";
+  lib.dateFrom = $("invoiceDateFrom") ? $("invoiceDateFrom").value : "";
+  lib.dateTo = $("invoiceDateTo") ? $("invoiceDateTo").value : "";
+  lib.search = $("invoiceSearch") ? $("invoiceSearch").value.trim() : "";
+  const qs = _buildInvoiceQueryParams();
+  const result = await api(`/api/invoices?${qs}`);
+  lib.items = result.items || [];
+  lib.total = result.total || 0;
+  lib.loaded = true;
+  renderInvoiceLibrary();
+}
+
+function renderInvoiceLibrary() {
+  const lib = state.invoiceLibrary;
+  const items = lib.items;
+  const tbody = $("invoiceRows");
+  tbody.innerHTML = items.length
+    ? items.map(row => `
+      <tr data-invoice="${escapeAttr(row.invoice_id)}">
+        <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
+        <td>${fmt(row.invoice_date)}</td>
+        <td>${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}</td>
+        <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
+        <td>${escapeHtml(row.participants_display || "—")}</td>
+        <td><span class="status-pill ${escapeAttr(row.status)}">${fmt(row.status)}</span></td>
+        <td><span class="status-pill ${escapeAttr(row.payment_status || "unpaid")}">${escapeHtml(paymentStatusLabel(row.payment_status))}</span></td>
+        <td>${money(centString(row.total_cents))}</td>
+        <td>${money(centString(row.paid_cents || 0))}</td>
+        <td>${money(centString(row.balance_cents || 0))}</td>
+        <td><button class="mini" data-open-invoice="${escapeAttr(row.invoice_id)}">Open</button></td>
+      </tr>`).join("")
+    : `<tr><td colspan="11" class="readonly-note">No invoices found.</td></tr>`;
+  document.querySelectorAll("#invoiceRows [data-open-invoice]").forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); openInvoice(btn.dataset.openInvoice); };
+  });
+  document.querySelectorAll("#invoiceRows tr[data-invoice]").forEach(row => {
+    row.onclick = () => openInvoice(row.dataset.invoice);
+  });
+  const start = lib.offset + 1;
+  const end = Math.min(lib.offset + lib.limit, lib.total);
+  $("invoiceResultCount").textContent = lib.total === 0 ? "No results" : `Showing ${start}–${end} of ${lib.total}`;
+  $("invoicePrevPage").disabled = lib.offset === 0;
+  $("invoiceNextPage").disabled = lib.offset + lib.limit >= lib.total;
 }
 
 async function startInvoiceBuilder() {
@@ -2164,7 +2279,7 @@ async function renderInvoiceEditor(data) {
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Print Preview</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
 
   document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
@@ -2193,6 +2308,10 @@ async function renderInvoiceEditor(data) {
     const draftData = {invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines};
     const preview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
     renderFinalizationPreview(preview);
+  };
+
+  $("printPreviewBtn").onclick = () => {
+    window.open(`/api/invoices/${i.invoice_id}/print-preview`, "_blank");
   };
 }
 
@@ -2493,7 +2612,24 @@ function renderInvoicePreview(data) {
     : "";
   const senderHtml = (render.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
   const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
+  const notesHtml = render.notes ? `<div class="invoice-notes"><b>Notes:</b> ${escapeHtml(render.notes)}</div>` : "";
+  const voidHtml = i.status === "void" && i.void_reason ? `<div class="invoice-void-info"><strong>Voided:</strong> ${fmt(i.voided_at)} — ${escapeHtml(i.void_reason)}</div>` : "";
+  const paidCents = i.paid_cents || 0;
+  const balanceCents = i.balance_cents || 0;
+  const paymentSummaryHtml = i.status === "finalized"
+    ? `<div class="invoice-payment-summary">
+         <div class="payment-summary-card"><label>Total</label><strong>${money(centString(i.total_cents))}</strong></div>
+         <div class="payment-summary-card"><label>Paid</label><strong>${money(centString(paidCents))}</strong></div>
+         <div class="payment-summary-card"><label>Balance</label><strong>${money(centString(balanceCents))}</strong></div>
+         <div class="payment-summary-card"><label>Payment Status</label><strong>${escapeHtml(paymentStatusLabel(i.payment_status))}</strong></div>
+       </div>`
+    : "";
+  const pdfButtonsHtml = i.status === "finalized"
+    ? `<button id="openPdfBtn">Open PDF</button><button id="printPdfBtn">Print PDF</button>`
+    : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
+    ${voidHtml}
+    ${paymentSummaryHtml}
     <article class="invoice-preview">
       <header class="invoice-preview-header">
         <div class="invoice-preview-left">
@@ -2506,14 +2642,39 @@ function renderInvoicePreview(data) {
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}</tbody></table>
       <div class="invoice-total"><span>${fmt(render.total_label)}</span><span>${fmt(render.total_display)}</span></div>
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
+      ${notesHtml}
     </article>
-    <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}</div></div>`;
+    <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
+  if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { window.open(`/api/invoices/${i.invoice_id}/final-pdf`, "_blank"); };
+  if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { window.open(`/api/invoices/${i.invoice_id}/final-pdf`, "_blank"); };
 }
 
 $("newInvoiceBtn").onclick = startInvoiceBuilder;
-$("invoiceStatusFilter").onchange = loadInvoices;
+$("invoiceStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
+$("invoicePaymentStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
+$("invoiceBillToFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
+$("invoiceDateFilter").onchange = () => {
+  state.invoiceLibrary.offset = 0;
+  const custom = $("invoiceDateFilter").value === "custom";
+  $("invoiceCustomDateRange").hidden = !custom;
+  loadInvoices();
+};
+$("invoiceSearch").addEventListener("input", () => {
+  clearTimeout(state.invoiceLibrary._searchTimer);
+  state.invoiceLibrary._searchTimer = setTimeout(() => { state.invoiceLibrary.offset = 0; loadInvoices(); }, 300);
+});
+$("invoiceDateFrom").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
+$("invoiceDateTo").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
+$("invoicePrevPage").onclick = () => {
+  const lib = state.invoiceLibrary;
+  if (lib.offset > 0) { lib.offset = Math.max(0, lib.offset - lib.limit); loadInvoices(); }
+};
+$("invoiceNextPage").onclick = () => {
+  const lib = state.invoiceLibrary;
+  if (lib.offset + lib.limit < lib.total) { lib.offset += lib.limit; loadInvoices(); }
+};
 ["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter"].forEach(id => $(id).addEventListener("input", () => {
   state.sessions.offset = 0;
   loadSessions();

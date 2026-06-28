@@ -296,18 +296,38 @@
 
         <section class="invoice-view" id="invoicesView" hidden>
           <div class="crm-header">
-            <div><h2>Invoices</h2><p>Build drafts from approved sessions, preview, finalize, and preserve history.</p></div>
+            <div><h2>Invoices</h2><p>Search, filter, preview, finalize, and preserve invoice history.</p></div>
             <div class="crm-tools">
+              <input id="invoiceSearch" type="search" placeholder="Search invoice number or Bill To..." />
               <select id="invoiceStatusFilter"><option value="">All statuses</option><option value="draft">Drafts</option><option value="finalized">Finalized</option><option value="void">Void</option></select>
+              <select id="invoicePaymentStatusFilter"><option value="">All payment statuses</option><option value="unpaid">Unpaid</option><option value="partially_paid">Partially Paid</option><option value="paid">Paid</option><option value="void">Void</option></select>
+              <select id="invoiceBillToFilter"><option value="">All Bill To</option></select>
+              <select id="invoiceDateFilter">
+                <option value="">All dates</option>
+                <option value="this_month">This month</option>
+                <option value="last_month">Last month</option>
+                <option value="this_quarter">This quarter</option>
+                <option value="this_year">This year</option>
+                <option value="custom">Custom range</option>
+              </select>
               <button id="newInvoiceBtn" class="save">Create Invoice</button>
             </div>
+          </div>
+          <div id="invoiceCustomDateRange" class="invoice-custom-date-range" hidden>
+            <label class="field">From<input id="invoiceDateFrom" type="date"></label>
+            <label class="field">To<input id="invoiceDateTo" type="date"></label>
           </div>
           <div class="invoice-layout">
             <section>
               <table class="review-table invoice-list-table">
-                <thead><tr><th>Number</th><th>Bill to</th><th>Period</th><th>Date</th><th>Lines</th><th>Total</th><th>Status</th><th>Delivery</th></tr></thead>
+                <thead><tr><th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr></thead>
                 <tbody id="invoiceRows"></tbody>
               </table>
+              <footer class="pager">
+                <span id="invoiceResultCount">Showing 0 results</span>
+                <button id="invoicePrevPage">‹</button>
+                <button id="invoiceNextPage">›</button>
+              </footer>
             </section>
             <aside class="invoice-workspace" id="invoiceWorkspace"><div class="empty-state">Create or open an invoice.</div></aside>
           </div>

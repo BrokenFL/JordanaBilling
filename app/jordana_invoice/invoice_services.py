@@ -75,25 +75,168 @@ def save_business_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dic
     return get_business_profile(conn) or {}
 
 
-def list_invoice_records(conn: sqlite3.Connection, status: str | None = None) -> list[dict[str, Any]]:
+def _invoice_paid_cents(conn: sqlite3.Connection, invoice_id: str) -> int:
+    return conn.execute(
+        """
+        SELECT COALESCE(SUM(pa.amount_cents), 0)
+        FROM payment_allocations pa
+        JOIN payments p ON p.payment_id = pa.payment_id
+        JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+        WHERE li.invoice_id = ? AND pa.status = 'active' AND p.status = 'posted'
+        """,
+        (invoice_id,),
+    ).fetchone()[0]
+
+
+def _derive_payment_status(status: str, paid_cents: int, total_cents: int) -> str:
+    if status == "void":
+        return "void"
+    balance = max(total_cents - paid_cents, 0)
+    if balance == 0:
+        return "paid"
+    if paid_cents == 0:
+        return "unpaid"
+    return "partially_paid"
+
+
+_VALID_SORT_FIELDS = {
+    "invoice_date": "i.invoice_date",
+    "invoice_number": "i.invoice_number",
+    "total_cents": "i.total_cents",
+    "created_at": "i.created_at",
+    "bill_to_name": "bp.billing_name",
+}
+
+
+def list_invoice_records(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    search: str | None = None,
+    bill_to_party_id: str | None = None,
+    participant_person_id: str | None = None,
+    payment_status: str | None = None,
+    invoice_date_from: str | None = None,
+    invoice_date_to: str | None = None,
+    billing_month: str | None = None,
+    service_period_from: str | None = None,
+    service_period_to: str | None = None,
+    sort_by: str = "invoice_date",
+    sort_dir: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
     init_db(conn)
+    conditions: list[str] = []
     params: list[Any] = []
-    where = ""
+
     if status in INVOICE_STATUSES:
-        where = "WHERE i.status = ?"
+        conditions.append("i.status = ?")
         params.append(status)
+
+    search_text = (search or "").strip()
+    if search_text:
+        conditions.append("(i.invoice_number LIKE ? OR bp.billing_name LIKE ?)")
+        params.extend([f"%{search_text}%", f"%{search_text}%"])
+
+    if bill_to_party_id:
+        conditions.append("i.bill_to_party_id = ?")
+        params.append(bill_to_party_id)
+
+    if participant_person_id:
+        conditions.append(
+            "i.invoice_id IN ("
+            " SELECT DISTINCT li.invoice_id FROM invoice_line_items li"
+            " JOIN session_participants sp ON sp.session_id = li.source_session_id"
+            " WHERE sp.person_id = ?)"
+        )
+        params.append(participant_person_id)
+
+    if invoice_date_from:
+        conditions.append("i.invoice_date >= ?")
+        params.append(invoice_date_from)
+
+    if invoice_date_to:
+        conditions.append("i.invoice_date <= ?")
+        params.append(invoice_date_to)
+
+    if billing_month:
+        conditions.append("i.billing_month = ?")
+        params.append(billing_month)
+
+    if service_period_from:
+        conditions.append("i.billing_period_start >= ?")
+        params.append(service_period_from)
+
+    if service_period_to:
+        conditions.append("i.billing_period_end <= ?")
+        params.append(service_period_to)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    sort_col = _VALID_SORT_FIELDS.get(sort_by, "i.invoice_date")
+    sort_direction = "DESC" if (sort_dir or "desc").lower() == "desc" else "ASC"
+    # Secondary sort for stability
+    secondary = "i.invoice_number DESC" if sort_col != "i.invoice_number" else "i.created_at DESC"
+
     rows = conn.execute(
         f"""
-        SELECT i.*, bp.billing_name AS current_bill_to_name, COUNT(li.invoice_line_item_id) AS line_count
+        SELECT i.*, bp.billing_name AS current_bill_to_name,
+               COUNT(DISTINCT li.invoice_line_item_id) AS line_count,
+               GROUP_CONCAT(DISTINCT li.participants_snapshot) AS participants_display
         FROM invoices i
         JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
         LEFT JOIN invoice_line_items li ON li.invoice_id = i.invoice_id
         {where}
         GROUP BY i.invoice_id
-        ORDER BY i.created_at DESC
-        """, params
+        ORDER BY {sort_col} {sort_direction}, {secondary}, i.created_at DESC
+        """,
+        params,
     ).fetchall()
-    return [dict(row) for row in rows]
+
+    # Enrich with payment info and post-filter by payment_status
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        record = dict(row)
+        invoice_id = record["invoice_id"]
+        paid_cents = _invoice_paid_cents(conn, invoice_id)
+        total_cents = int(record.get("total_cents") or 0)
+        balance_cents = max(total_cents - paid_cents, 0)
+        record["paid_cents"] = paid_cents
+        record["balance_cents"] = balance_cents
+        record["payment_status"] = _derive_payment_status(record["status"], paid_cents, total_cents)
+        # Deduplicate participant names from the concatenated snapshot
+        raw_participants = record.get("participants_display") or ""
+        if raw_participants:
+            seen: list[str] = []
+            for name in raw_participants.split(","):
+                name = name.strip()
+                if name and name not in seen:
+                    seen.append(name)
+            record["participants_display"] = ", ".join(seen)
+        else:
+            record["participants_display"] = ""
+        enriched.append(record)
+
+    # Post-filter by payment_status (derived field)
+    valid_payment_statuses = {"paid", "unpaid", "partially_paid", "void"}
+    if payment_status and payment_status in valid_payment_statuses:
+        enriched = [r for r in enriched if r["payment_status"] == payment_status]
+
+    total = len(enriched)
+
+    # Paginate
+    if limit > 0:
+        page_items = enriched[offset:offset + limit]
+    else:
+        page_items = enriched[offset:]
+
+    return {
+        "items": page_items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
@@ -107,6 +250,11 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     party = dict(current_party) if current_party else None
     invoice = dict(row)
     line_dicts = [dict(line) for line in lines]
+    paid_cents = _invoice_paid_cents(conn, invoice_id)
+    total_cents = int(invoice.get("total_cents") or 0)
+    invoice["paid_cents"] = paid_cents
+    invoice["balance_cents"] = max(total_cents - paid_cents, 0)
+    invoice["payment_status"] = _derive_payment_status(invoice["status"], paid_cents, total_cents)
     return {
         "invoice": invoice,
         "lines": line_dicts,
