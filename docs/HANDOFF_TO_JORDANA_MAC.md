@@ -1,229 +1,391 @@
 # Handoff To Jordana Mac
 
-This file is the continuation contract for a future Codex session on Jordana's computer.
+This is the continuation contract for installing, verifying, or continuing development on Jordana's computer. Read `AGENTS.md` and `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md` before making changes.
 
 ## Goal
 
-Continue the local-first invoice system without relying on prior chat history.
+Continue the local-first invoice system without relying on chat history while preserving all private operational data and reviewed billing history.
 
-## Setup
+## Source Of Truth
 
-1. Clone the private GitHub repository onto Jordana's Mac.
-2. Transfer private data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
-3. Open Terminal in the project folder.
-4. Run:
+Use this order:
+
+1. latest explicit approved decision
+2. current repository, schema, migrations, tests, and documentation
+3. `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md`
+4. current private local configuration and transferred operational data
+5. older historical notes
+
+Do not revive obsolete schemas, terminology, side-inspector UI behavior, editable time-category controls, or abandoned workflows.
+
+## Before Any Change
+
+From the actual local checkout, inspect:
+
+```bash
+pwd
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
+git log -1 --oneline
+```
+
+Interpret the state before editing:
+
+- clean and synchronized: proceed
+- dirty: stop and inspect every change
+- behind: use `git pull --ff-only`
+- diverged: stop and investigate
+- locally ahead only because a completed prior round was committed but not pushed: inspect and push it; do not reset or discard it automatically
+
+Also read:
+
+- `AGENTS.md`
+- `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md`
+- `docs/PRIVATE_DATA_TRANSFER.md`
+- `docs/FRESH_INSTALL.md`
+- the documents relevant to the requested change
+
+## Production Handoff Setup
+
+1. Clone the private repository onto Jordana's Mac.
+2. Transfer private production data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
+3. Verify the transfer manifest and SHA-256 checksums.
+4. Place the transferred files in their documented local paths.
+5. Open Terminal in the project folder.
+6. Run:
 
 ```bash
 scripts/setup_jordana_mac.sh
 ```
 
-The setup script creates `.venv`, required folders, initializes or migrates SQLite without overwriting an existing live database, creates a WAL-safe timestamped backup (using the SQLite backup API) when a database already exists, verifies the backup, and runs verification (current full suite is 1490 tests passing, 11 skipped, 0 failures). Schema migrations run only during explicit startup/init/migrate flows — normal API/web requests never run migrations or seed data.
+A production handoff must include the operational SQLite database. Google Sheets contains raw calendar evidence but cannot reconstruct reviewed people, billing relationships, approved sessions, invoices, payments, receipts, or audit history.
 
-## Configure Automated Sync
+Never transfer private production files through GitHub.
 
-1. Copy `.env.example` to `.env`.
-2. Fill in the Apps Script web app URL, ingest API key, database path, and reports directory.
-3. Optionally configure `JORDANA_BACKUP_DIR` to override the default backup location (`~/.jordana_invoice/backups`).
-4. Do not commit or paste the real `.env` into docs or chat.
+Typical private local state includes:
 
-Run a manual sync:
+```text
+.env
+data/jordana_invoice.sqlite3
+data/private/
+Invoices/
+Receipts/
+Reports/
+```
+
+The setup and launcher flows must preserve an existing database, create a verified private backup before pending migrations, and apply only additive migrations. They must never delete, recreate, or silently replace the operational database.
+
+## Configuration
+
+For a production handoff, transfer `.env` securely and verify it locally without exposing its values.
+
+For a new empty development or demo installation only:
+
+```bash
+cp .env.example .env
+```
+
+Required sync configuration includes:
+
+- `JORDANA_APPS_SCRIPT_URL`
+- `JORDANA_INGEST_API_KEY`
+- `JORDANA_DATABASE_PATH`
+- `JORDANA_REPORTS_DIR`
+- optional `JORDANA_BACKUP_DIR`
+
+Do not commit or paste the real `.env`, credentials, Script Properties, spreadsheet IDs, or private paths into documentation, screenshots, logs, GitHub, or chat.
+
+## Current Database State
+
+The current migration head is:
+
+```text
+015_duplicate_repair_reversal_state
+```
+
+Migrations `001` through `015` are registered. `app/jordana_invoice/db.py` is the executable migration source of truth.
+
+Migration safety includes:
+
+- database locking
+- WAL-safe SQLite backup
+- backup integrity verification
+- transactional migration
+- restore on failure
+- no request-path migrations
+- no deletion or reset of the operational database
+
+See `docs/SCHEMA_AUDIT.md` for the current migration list and table responsibilities.
+
+## Verification Baseline
+
+The last documented full-suite baseline is:
+
+```text
+1,943 passing
+11 skipped
+0 failures
+```
+
+That number is a historical baseline, not a substitute for running the current suite. Later commits may add tests. Before completing any new code round, run the current focused tests and full suite locally and report the exact results.
+
+Acceptance testing must use:
+
+```bash
+scripts/run_acceptance_test.sh
+```
+
+Do not manually recreate that workflow with ad hoc commands against the operational database.
+
+## Calendar Synchronization
+
+The app uses one intelligent synchronization path:
+
+- no successful cursor: full read of staged Google Sheet evidence
+- successful cursor: incremental sync
+- startup: sync begins after launch
+- while open: incremental sync repeats every 15 minutes
+- manual Calendar Import action: **Sync Calendar**
+- recovery-only full reread: **Rebuild Calendar Data from Sheet**, with confirmation and a private backup
+
+The cursor is composite: `ingested_at` plus `snapshot_key`.
+
+The app does not trigger the iPhone Shortcut. The Shortcut must separately stage Apple Calendar snapshots into Google Sheets.
+
+All non-all-day events from all calendars are captured. `Jordana Work` is a classification preference, not an ingestion filter.
+
+Normal capture-window labels are:
+
+- `past_3_days`
+- `next_7_days`
+
+Deprecated labels remain readable for compatibility. The June 1–14, 2026 backfill label remains supported for its one-time purpose.
+
+Manual commands:
 
 ```bash
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync-status
 ```
 
-The review app now performs calendar sync automatically after startup. On a
-fresh database, the first successful run is a full reread of staged Sheet
-evidence. Later launches use incremental sync from the saved
-`google_calendar_snapshots` cursor, and the app repeats incremental sync every
-15 minutes while it is open. The visible Calendar Import button is
-`Sync Calendar`; it chooses full or incremental mode automatically. It does not
-trigger the iPhone Shortcut, so the Shortcut must still run separately to stage
-new Calendar rows into Google Sheets. Advanced full reread is available from
-Calendar Import only as `Rebuild Calendar Data from Sheet`, with confirmation
-and a private SQLite backup.
-
-Run a test without writing:
+Dry run:
 
 ```bash
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run
 ```
 
-## Install Hourly Mac Sync
+## Review Workflow
 
-From the project folder, run:
+Routine review focuses on:
 
-```bash
-scripts/install_sync_launch_agent.sh
-```
+- Participants
+- Bill To
+- Duration
+- Session type
+- derived time category
+- Rate
+- Payment Handling
+- Approve
 
-The installer creates required folders, validates `.venv` and `.env`, installs `~/Library/LaunchAgents/com.jordana.billing.sync.plist`, loads the job, and runs one immediate sync.
+Time category is derived from the authoritative calendar date and start time. It is not a normal editable control.
 
-The job runs at login and once every hour. Logs are written to:
+The five active billing session types are:
 
-- `logs/sync.stdout.log`
-- `logs/sync.stderr.log`
+1. Psychotherapy Session
+2. Psychotherapy Session / House Call
+3. Psychotherapy Session / Weekend
+4. Psychotherapy Session / Evening
+5. Custom
 
-To remove it:
+The focused review overlay uses independent actions:
 
-```bash
-scripts/uninstall_sync_launch_agent.sh
-```
+- **Save Client(s)**
+- **Save Bill To**
+- **Save Session Draft**
+- **Approve Session**
 
-## Recover With CSV If Remote Sync Fails
+No section save approves a session.
 
-1. Open the Google Sheet receiving Shortcut uploads.
-2. Export `Raw_Event_Snapshots` as CSV.
-3. Save it locally, for example:
+Successful approval prevents double submission, clears stale state, closes the overlay, refreshes or removes the item, restores focus, and shows confirmation. Invoice-staging warnings do not roll back approval.
 
-```text
-data/imports/Raw_Event_Snapshots_June.csv
-```
+Duplicate resolution uses **Confirm Duplicate & Next** and follows the same completed-action behavior.
 
-4. Run:
+## Billing Relationships
 
-```bash
-jordana-invoice --db data/jordana_invoice.sqlite3 import-csv data/imports/Raw_Event_Snapshots_June.csv --report data/june_acceptance_report.md
-```
+The visible concepts are:
 
-This does not replace automated sync. It is for testing or emergency recovery.
+- Who receives the invoice?
+- Who are they paying for?
+- Bill To
+- Participants
 
-## Rotate The API Key
+The payer is not automatically covered. Session participants remain selectable but are not silently preselected. Changing payer type clears stale covered-client selections. Selected-client chips are the source of truth.
 
-1. Generate or confirm `JORDANA_PENDING_INGEST_API_KEY` in `.env`.
-2. Set Apps Script Script Property `INGEST_API_KEY` to that pending value.
-3. Confirm `JORDANA_SPREADSHEET_ID` points to the existing production spreadsheet.
-4. Deploy the existing Apps Script web app with the source in `integrations/apps_script/Code.gs`.
-5. Promote the same value to `JORDANA_INGEST_API_KEY` in `.env` on the Mac.
-6. Rebuild or update the normal and June backfill Shortcut payloads from the ignored local specs.
-7. Run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run`.
-8. If dry run succeeds, run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync`.
+Saving persists immediately to SQLite. Reopening or refreshing review exposes the saved relationship. Jordana still confirms Bill To for each session.
 
-## What To Review First
+Permanent deletion is intentionally absent; use deactivate and reactivate. Approved sessions are never silently rewritten.
 
-Open the generated report and focus on:
+## Rates
 
-- `client_session` rows needing full-name confirmation
-- Client rate gaps
-- `unresolved` rows
-- Personal/admin rows that should become exclusion aliases
-- Time discrepancies
-- Unknown service modes
-- Missing account or billing-party relationships
-- Missing suggested or approved rates
-- Multi-person titles such as Fred and Bobsey
-- Participants versus Bill to decisions
-- Any changed rate that should become session-only, a future-person exception, or a future joint-session exception
+Rate priority is:
 
-## Do Not Do Yet
+1. session-specific approved override
+2. exact participant-combination exception
+3. person exception
+4. billing-relationship exception
+5. global or default rate
 
-The local prototype now supports invoice drafts, finalization, PDF history, and void/reissue. Configure private identity/branding with `docs/BUSINESS_PROFILE.md` before any private trial. New generated PDFs default to ignored `Invoices/<Client Display Name>/<Month YYYY>/`; this application does not send them.
+When changing a rate, distinguish:
 
-- Do not mark sessions invoice-ready without Jordana review.
-- Do not add clinical notes.
-- Do not infer rates from memory or calendar notes.
-- Do not create visible household accounts just because multiple people attended one session.
+- this session only
+- future sessions for one person
+- future joint sessions for the exact participant combination
 
-## Billing Relationships — Complete (Rounds 1–3)
+Approved session rates are frozen.
 
-Billing Relationships Rounds 1 through 3 are complete and merged into `main` as of commit `2d13942`.
+## Invoices
 
-**What is implemented:**
+Implemented invoice behavior includes:
 
-- Guided billing relationship creation wizard (3-step: invoice recipient → pays for → review and save)
-- Invoice recipient and Pays for are separate concepts in the editor and directory
-- People and organizations can be created in-wizard during relationship setup
-- Relationship editing: change invoice recipient, add/remove covered clients, update billing delivery
-- Deactivate and reactivate billing relationships (no permanent deletion)
-- Session Review integration: launch wizard from a review candidate, preselect participants, attach relationship to session
-- Exact active duplicate prevention during creation and editing
-- In-page confirmation dialogs throughout (no browser `alert()`, `prompt()`, or `confirm()`)
-- Unsaved changes detection in the editor with return-link confirmation
-- XSS-safe rendering of user-provided values in return links
+- monthly draft staging by Bill To and billing month
+- supplement sequencing
+- draft line correction audit
+- optimistic draft revision locking
+- draft HTML and PDF preview
+- two-step finalization
+- immutable finalized snapshots and PDFs
+- void and reissue under a new number
+- prior-balance and account-summary snapshots
+- filing-owner selection
+- optional per-invoice insurance coding
+- invoice library search, filters, and pagination
 
-**What is not implemented:**
+The application does not yet send invoices by email or mail.
 
-- Permanent deletion of billing relationships (by design — deactivation only)
-- Formal client-versus-non-client schema distinction (all active people appear in search)
-- Automatic payer classification
-- Full right-panel redesign
+## Payments
 
-**No schema migration was introduced.** All features use existing tables and columns.
+Implemented payment behavior includes:
 
-**The production database remains local and private.** No real client data is committed to Git.
+- payment ledger
+- allocations
+- allocation reversals
+- payment voiding
+- apply available funds
+- payment correction history
+- manual immutable receipts
+- Outstanding, Paid, and All Payments views
 
-See `docs/CLIENTS_AND_ACCOUNTS.md` for full documentation of all rounds.
+New paid-at-session approvals create or validate one posted payment and allocation transactionally and idempotently, then skip monthly invoice staging.
 
-## Next Development Steps
+The legacy paid-at-session backfill analyzer is dry-run only. There is no historical backfill apply mode.
 
-1. Finish the one-click launcher and synchronization experience.
-2. Re-run June imports and review until clean.
-3. Confirm rate exceptions and bill-to defaults with Jordana.
-4. Keep invoice eligibility tied to reviewed normalized sessions.
+## Candidate Identity And Duplicate Repair
 
-## Phase 2 Backend Pieces Now Present
+Candidate identity matching uses:
 
-- People, account, account-member, billing-party, alias, rate-rule, session-participant, and review-item tables
-- Service-mode and time-category parsing
-- Effective-dated suggested-rate rules
-- Participant-combination rate exceptions through `rate_rule_participants`
-- Simplified Participants and Bill-to review workflow
-- Developer commands for rate seeding, rate policy, and review decisions
-- Phase 2 CSV exports
+1. exact calendar event ID
+2. exact fingerprint
+3. conservative exact structural matching
 
-The next product round should add invoice delivery workflow and dashboard integration. The payment ledger, allocations, corrections (reversal/void/apply-funds), invoice payment history, and Payments workspace are now implemented. Credits, multi-invoice payments, formal reconciliation, and month-close workflows remain unfinished.
+Exact aliases are stored for future resolution.
 
-## Start Review UI
+Duplicate repair supports:
 
-```bash
-PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
-```
+- dry-run planning
+- explicit apply confirmation
+- verified operational-database backup before writes
+- idempotent apply
+- explicit reversal confirmation
+- reversal only when current state still matches the repair-applied state
+- refusal after later edits make reversal unsafe
+- protection of approved, invoiced, paid, audited, and raw-evidence records
 
-Open `http://127.0.0.1:8765/review`.
+Do not run duplicate repair against the operational database without reviewing the plan and confirming a current backup.
 
-The approved UI mockup is saved at `docs/review-ui-approved-mockup.png`.
+## Current Known Limitations
 
-## Git Safety
+- no invoice email or mail delivery and tracking
+- no legacy paid-at-session backfill apply mode
+- no credits, refunds, or write-offs
+- no automated multi-invoice payment allocation
+- no formal reconciliation or month-close workflow
+- no polished production dashboard
+- no formal client-versus-non-client schema distinction
+- no automatic payer classification
+- no permanent billing-relationship deletion
 
-Before pushing or handing off through GitHub, run:
+## Demo And Recovery Safety
 
-```bash
-scripts/git_safety_check.sh
-scripts/privacy_check.sh
-```
-
-Live databases, reports, logs, screenshots with client names, local backups (stored outside the repository in `~/.jordana_invoice/backups` by default), `.env`, and credentials should remain ignored locally.
-## Calendar Intake Note
-
-Do not change the live Shortcut or Apps Script for this calendar-classification round. The Shortcut should continue to send all non-all-day calendars through the existing Google Sheet headers, including the existing `calendar` field.
-
-`Jordana Work` may be configured later as:
-
-```bash
-JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work
-```
-
-That value is a review/classification preference only. It is not a Shortcut filter and it does not reject events from other calendars.
-
-For demo review on a Mac, create the isolated sanitized database:
+Create only an isolated fictional demo database:
 
 ```bash
 scripts/create_demo_database.sh
 PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/demo/jordana_demo.sqlite3 serve-review
 ```
 
-Never import demo rows into a live database.
+Never import demo rows into the operational database.
 
-## Recent Commits
+CSV import is for testing or emergency raw-evidence recovery. It does not replace the transferred operational database or reconstruct prior reviewed billing state.
 
-The following commits completed the backup relocation, test repair, and review/appointment status rounds:
+## Start The Review UI
 
-- `b0377d5` — WAL-safe SQLite backups
-- `db69a3e` — external backup directory
-- `434bc70` — backup path expansion and test isolation
-- `6f57d8a` — demo invoice creation-order fix
-- `c728226` — appointment status rate dimension and cancelled/no-show service labels
-- `d57df55` — reparse unapproved candidates and `for <reference>` title evidence
-- `5571ce5` — candidate-only send-to-review promotion route
-- `a5b179d` — Sessions page Send to Review button for unclassified appointments
+```bash
+PYTHONPATH=app .venv/bin/python -m jordana_invoice \
+  --db data/jordana_invoice.sqlite3 \
+  serve-review
+```
+
+Open:
+
+```text
+http://127.0.0.1:8765/review
+```
+
+## Privacy And Git Safety
+
+Never commit:
+
+- live SQLite databases
+- calendar exports
+- client spreadsheets
+- invoices or receipts
+- credentials, API keys, or `.env`
+- private branding assets
+- logs with names
+- private screenshots
+- database backups
+
+At the end of every completed code round:
+
+1. update documentation
+2. run focused tests
+3. run the full suite
+4. distinguish new failures from pre-existing failures
+5. run privacy and Git-safety checks
+6. inspect the complete diff
+7. confirm no private files are tracked or staged
+8. commit and push only sanitized changes
+9. verify `HEAD == origin/main`
+10. verify a clean worktree
+
+Required checks include:
+
+```bash
+scripts/git_safety_check.sh
+scripts/privacy_check.sh
+```
+
+## Completion Report
+
+Every completed implementation round must report:
+
+- root cause or requested goal
+- files changed
+- tests and exact results
+- documentation changed
+- privacy and Git-safety results
+- commit hash
+- final branch synchronization and worktree state
+- known limitations
+- any local-only private files requiring secure transfer
