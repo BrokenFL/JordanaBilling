@@ -22,8 +22,14 @@ const script = moduleShim.exports;
 assert.strictEqual(script.isPastCaptureWindow_("past_3_days"), true);
 assert.strictEqual(script.isFutureCaptureWindow_("next_7_days"), true);
 assert.strictEqual(script.isBackfillCaptureWindow_(script.BACKFILL_CAPTURE_WINDOW), true);
+assert.strictEqual(script.isBackfillCaptureWindow_("june_2026_backfill"), true);
+assert.strictEqual(
+  script.canonicalCaptureWindow_("june_2026_backfill"),
+  script.BACKFILL_CAPTURE_WINDOW
+);
 assert.strictEqual(script.isSupportedCaptureWindow_("past_7_days"), true);
 assert.strictEqual(script.isSupportedCaptureWindow_("next_2_days"), true);
+assert.strictEqual(script.isSupportedCaptureWindow_("june_2026_backfill_noop"), true);
 assert.strictEqual(script.isSupportedCaptureWindow_("legacy"), true);
 assert.strictEqual(script.isSupportedCaptureWindow_("unsupported"), false);
 
@@ -40,8 +46,8 @@ assert.strictEqual(
 
 const row = script.rawRow_(
   {
-    run_id: "run-1",
-    capture_window: "past_3_days",
+    client_run_key: "run-1",
+    capture_window: "june_2026_backfill",
     batch_name: "batch",
     timezone: "America/New_York",
     payload_version: "2",
@@ -59,6 +65,10 @@ const row = script.rawRow_(
 );
 const rawJson = row[script.RAW_HEADERS.indexOf("raw_json")];
 assert.strictEqual(rawJson.includes("must-not-persist"), false);
-assert.strictEqual(row[script.RAW_HEADERS.indexOf("capture_window")], "past_3_days");
+assert.strictEqual(row[script.RAW_HEADERS.indexOf("run_id")], "run-1");
+assert.strictEqual(
+  row[script.RAW_HEADERS.indexOf("capture_window")],
+  script.BACKFILL_CAPTURE_WINDOW
+);
 
 console.log("Apps Script helper tests passed");

@@ -4,6 +4,8 @@ const INGEST_API_KEY_PROPERTY = "INGEST_API_KEY";
 const SPREADSHEET_ID_PROPERTY = "JORDANA_SPREADSHEET_ID";
 const DEFAULT_SYNC_LIMIT = 500;
 const BACKFILL_CAPTURE_WINDOW = "backfill_2026_06_01_through_2026_06_14";
+const BACKFILL_CAPTURE_WINDOW_ALIASES = ["june_2026_backfill"];
+const NOOP_CAPTURE_WINDOWS = ["june_2026_backfill_noop"];
 
 const RAW_HEADERS = [
   "ingested_at",
@@ -103,17 +105,27 @@ function spreadsheet_() {
 }
 
 function handleCalendarBatch_(payload) {
-  const captureWindow = String(payload.capture_window || "");
+  const captureWindow = canonicalCaptureWindow_(payload.capture_window);
   if (!isSupportedCaptureWindow_(captureWindow)) {
     return { ok: false, error: "Unsupported capture window." };
+  }
+  if (isNoopCaptureWindow_(captureWindow)) {
+    return {
+      ok: true,
+      record_type: "calendar_batch_response",
+      run_id: runId_(payload),
+      capture_window: captureWindow,
+      received: 0,
+    };
   }
   const events = Array.isArray(payload.events) ? payload.events : [];
   const sheet = ensureSheet_(spreadsheet_(), RAW_SHEET_NAME, RAW_HEADERS);
   const existingKeys = existingSnapshotKeys_(sheet);
   const ingestedAt = new Date().toISOString();
   const rows = [];
+  const normalizedPayload = Object.assign({}, payload, { capture_window: captureWindow });
   events.forEach((event, index) => {
-    const row = rawRow_(payload, event || {}, index, ingestedAt);
+    const row = rawRow_(normalizedPayload, event || {}, index, ingestedAt);
     const snapshotKey = row[RAW_HEADERS.indexOf("snapshot_key")];
     if (snapshotKey && existingKeys[snapshotKey]) {
       return;
@@ -127,25 +139,31 @@ function handleCalendarBatch_(payload) {
   return {
     ok: true,
     record_type: "calendar_batch_response",
-    run_id: String(payload.run_id || ""),
+    run_id: runId_(payload),
     capture_window: captureWindow,
     received: rows.length,
   };
 }
 
 function handleRunComplete_(payload) {
-  const captureWindow = String(payload.capture_window || "");
+  const captureWindow = canonicalCaptureWindow_(payload.capture_window);
   if (captureWindow && !isSupportedCaptureWindow_(captureWindow)) {
     return { ok: false, error: "Unsupported capture window." };
   }
   const sheet = ensureSheet_(spreadsheet_(), RUN_LOG_SHEET_NAME, RUN_LOG_HEADERS);
-  const runId = String(payload.run_id || "");
+  const runId = runId_(payload);
   if (!runId) {
     return { ok: false, error: "Missing run id." };
   }
+  if (!captureWindow && hasAggregateRunComplete_(payload)) {
+    return handleAggregateRunComplete_(sheet, payload, runId);
+  }
 
   const found = numberValue_(payload.events_found);
-  const received = numberValue_(payload.events_received);
+  const received =
+    payload.events_received === undefined
+      ? countRowsForRunWindow_(ensureSheet_(spreadsheet_(), RAW_SHEET_NAME, RAW_HEADERS), runId, captureWindow)
+      : numberValue_(payload.events_received);
   const previous = findRunLog_(sheet, runId);
   const row = previous.values || blankRunLog_(runId);
   row[0] = runId;
@@ -160,6 +178,43 @@ function handleRunComplete_(payload) {
     row[5] = received;
   }
   row[8] = runStatus_(row, captureWindow);
+  row[9] = row[8] === "complete" ? "" : "Received count did not match found count.";
+  row[10] = new Date().toISOString();
+
+  if (previous.rowNumber) {
+    sheet.getRange(previous.rowNumber, 1, 1, RUN_LOG_HEADERS.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+  return { ok: true, record_type: "run_complete_response", run_id: runId, status: row[8] };
+}
+
+function handleAggregateRunComplete_(sheet, payload, runId) {
+  const rawSheet = ensureSheet_(spreadsheet_(), RAW_SHEET_NAME, RAW_HEADERS);
+  const previous = findRunLog_(sheet, runId);
+  const row = previous.values || blankRunLog_(runId);
+  const backfillReceived = countRowsForRunWindow_(rawSheet, runId, BACKFILL_CAPTURE_WINDOW);
+  const pastFound = numberValue_(payload.past_events_found);
+  const futureFound = numberValue_(payload.future_events_found);
+  const totalFound = pastFound + futureFound;
+
+  row[0] = runId;
+  row[1] = String(payload.batch_name || row[1] || "");
+  row[2] = row[2] || String(payload.started_at || payload.captured_at || "");
+  row[3] = new Date().toISOString();
+  if (backfillReceived > 0 || isBackfillBatchName_(payload.batch_name)) {
+    row[4] = totalFound;
+    row[5] = backfillReceived;
+    row[6] = 0;
+    row[7] = 0;
+    row[8] = runStatus_(row, BACKFILL_CAPTURE_WINDOW);
+  } else {
+    row[4] = pastFound;
+    row[5] = countRowsForRunWindow_(rawSheet, runId, "past_3_days");
+    row[6] = futureFound;
+    row[7] = countRowsForRunWindow_(rawSheet, runId, "next_7_days");
+    row[8] = row[4] === row[5] && row[6] === row[7] ? "complete" : "partial";
+  }
   row[9] = row[8] === "complete" ? "" : "Received count did not match found count.";
   row[10] = new Date().toISOString();
 
@@ -198,8 +253,8 @@ function handleSyncRequest_(payload) {
 }
 
 function rawRow_(payload, event, index, ingestedAt) {
-  const runId = String(payload.run_id || "");
-  const captureWindow = String(payload.capture_window || "");
+  const runId = runId_(payload);
+  const captureWindow = canonicalCaptureWindow_(payload.capture_window);
   const eventId = String(event.calendar_event_id || event.event_id || "");
   const fingerprint = String(event.event_fingerprint || event.fingerprint || "");
   const startAt = String(event.start_at || event.start_date || "");
@@ -251,23 +306,65 @@ function runStatus_(row, captureWindow) {
 }
 
 function isPastCaptureWindow_(captureWindow) {
-  return ["past_3_days", "past_7_days", BACKFILL_CAPTURE_WINDOW].indexOf(String(captureWindow || "")) !== -1;
+  return ["past_3_days", "past_7_days", BACKFILL_CAPTURE_WINDOW].indexOf(canonicalCaptureWindow_(captureWindow)) !== -1;
 }
 
 function isFutureCaptureWindow_(captureWindow) {
-  return ["next_7_days", "next_2_days"].indexOf(String(captureWindow || "")) !== -1;
+  return ["next_7_days", "next_2_days"].indexOf(canonicalCaptureWindow_(captureWindow)) !== -1;
 }
 
 function isBackfillCaptureWindow_(captureWindow) {
-  return String(captureWindow || "") === BACKFILL_CAPTURE_WINDOW;
+  return canonicalCaptureWindow_(captureWindow) === BACKFILL_CAPTURE_WINDOW;
 }
 
 function isSupportedCaptureWindow_(captureWindow) {
   return (
     isPastCaptureWindow_(captureWindow) ||
     isFutureCaptureWindow_(captureWindow) ||
+    isNoopCaptureWindow_(captureWindow) ||
     String(captureWindow || "") === "legacy"
   );
+}
+
+function canonicalCaptureWindow_(captureWindow) {
+  const value = String(captureWindow || "");
+  if (BACKFILL_CAPTURE_WINDOW_ALIASES.indexOf(value) !== -1) {
+    return BACKFILL_CAPTURE_WINDOW;
+  }
+  return value;
+}
+
+function isNoopCaptureWindow_(captureWindow) {
+  return NOOP_CAPTURE_WINDOWS.indexOf(String(captureWindow || "")) !== -1;
+}
+
+function runId_(payload) {
+  return String((payload && (payload.run_id || payload.client_run_key)) || "");
+}
+
+function hasAggregateRunComplete_(payload) {
+  return (
+    payload &&
+    (payload.past_events_found !== undefined ||
+      payload.future_events_found !== undefined ||
+      payload.past_events_received !== undefined ||
+      payload.future_events_received !== undefined)
+  );
+}
+
+function isBackfillBatchName_(batchName) {
+  return String(batchName || "").toLowerCase().indexOf("backfill") !== -1;
+}
+
+function countRowsForRunWindow_(sheet, runId, captureWindow) {
+  const rows = sheetObjects_(sheet, RAW_HEADERS);
+  const canonical = canonicalCaptureWindow_(captureWindow);
+  return rows.filter((row) => {
+    return (
+      String(row.run_id || "") === String(runId || "") &&
+      canonicalCaptureWindow_(row.capture_window) === canonical
+    );
+  }).length;
 }
 
 function ensureSheet_(spreadsheet, name, headers) {
@@ -377,6 +474,9 @@ if (typeof module !== "undefined") {
     isFutureCaptureWindow_,
     isBackfillCaptureWindow_,
     isSupportedCaptureWindow_,
+    canonicalCaptureWindow_,
+    countRowsForRunWindow_,
+    handleAggregateRunComplete_,
     runStatus_,
     rawRow_,
   };
