@@ -898,21 +898,31 @@ def make_handler(database_path: str, write_token: str | None = None):
                         result = approve_candidate(self.conn(), candidate_id, data)
                         approved_session_id = result.get("session", {}).get("id")
                         if approved_session_id:
-                            try:
-                                staging = stage_approved_sessions_to_monthly_drafts(
-                                    self.conn(), session_ids=[approved_session_id],
-                                )
-                                if staging.get("errors"):
-                                    for err in staging["errors"]:
-                                        err["error"] = sanitize_staging_error_message(err.get("error", ""))
+                            session_row = self.conn().execute("SELECT payment_status FROM sessions WHERE id = ?", (approved_session_id,)).fetchone()
+                            if session_row and session_row["payment_status"] == "paid_at_session":
                                 result["invoice_staging"] = {
-                                    "status": "success" if not staging.get("errors") else "warning",
-                                    "summary": staging,
+                                    "status": "not_required",
+                                    "summary": {
+                                        "errors": [],
+                                        "message": "Paid-at-session session; invoice staging was not required."
+                                    }
                                 }
-                            except DatabaseBusyError:
-                                result["invoice_staging"] = {"status": "unavailable", "summary": None}
-                            except Exception:
-                                result["invoice_staging"] = {"status": "error", "summary": None}
+                            else:
+                                try:
+                                    staging = stage_approved_sessions_to_monthly_drafts(
+                                        self.conn(), session_ids=[approved_session_id],
+                                    )
+                                    if staging.get("errors"):
+                                        for err in staging["errors"]:
+                                            err["error"] = sanitize_staging_error_message(err.get("error", ""))
+                                    result["invoice_staging"] = {
+                                        "status": "success" if not staging.get("errors") else "warning",
+                                        "summary": staging,
+                                    }
+                                except DatabaseBusyError:
+                                    result["invoice_staging"] = {"status": "unavailable", "summary": None}
+                                except Exception:
+                                    result["invoice_staging"] = {"status": "error", "summary": None}
                         self.send_json(result)
                         return
                     if action == "mark":

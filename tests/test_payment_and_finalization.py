@@ -67,13 +67,18 @@ class PaymentStatusTests(unittest.TestCase):
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
             (stable_hash(f"calendar_event_id:event-{key}"),),
         ).fetchone()[0]
-        detail = approve_candidate(self.conn, candidate_id, {
+        payload = {
             "participants": [{"person_id": self.person["person_id"], "display_name": "Pat Client"}],
             "billing_party_id": self.party["billing_party_id"],
             "approved_duration_minutes": 60, "service_mode": "office",
             "time_category": "standard", "approved_rate": amount,
             "payment_status": payment_status, "billing_treatment": "billable",
-        })
+        }
+        if normalize_payment_status(payment_status) == "paid_at_session":
+            payload["amount_received"] = amount
+            payload["payment_date"] = f"2026-05-{10 + len(key):02d}"
+            payload["payment_method"] = "zelle"
+        detail = approve_candidate(self.conn, candidate_id, payload)
         return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
 
     def test_new_session_defaults_to_unpaid(self):

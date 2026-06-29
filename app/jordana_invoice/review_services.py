@@ -611,9 +611,7 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
     }
 
 
-def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    init_db(conn)
-    now = now_iso()
+def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any], now: str) -> dict[str, Any]:
     session = session_for_candidate(conn, candidate_id)
     session_id = session["id"]
     before = dict(session)
@@ -775,60 +773,219 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
         {"before": scrub_session(before), "payload": payload, "unresolved_fields": unresolved},
     )
     add_review_item(conn, candidate_id, session_id, review_status, unresolved, ["Saved changes from review UI."])
-    conn.commit()
     return get_review_candidate(conn, candidate_id)
+
+
+def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    init_db(conn)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        res = _save_interpretation_locked(conn, candidate_id, payload, now_iso())
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    try:
+        write_reports(conn)
+    except Exception:
+        pass
+
+    return res
 
 
 def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    saved = save_interpretation(conn, candidate_id, payload)
-    session = session_for_candidate(conn, candidate_id)
-    participants = get_session_participants(conn, session["id"])
-    unresolved = unresolved_from_values(
-        conn=conn,
-        participants=participants,
-        billing_party_id=session["billing_party_id"],
-        account_id=session["account_id"],
-        duration=session["approved_duration_minutes"] or session["duration_minutes"],
-        billing_session_type=session["billing_session_type"],
-        service_mode=session["service_mode"],
-        time_category=session["time_category"],
-        approved_rate_cents=session["approved_rate_cents"],
-        suggested_rate_cents=session["suggested_rate_cents"],
-        rate_rule_id=session["rate_rule_id"],
-        rate_needs_review=session["rate_needs_review"],
-        payment_status=session["payment_status"],
-        appointment_status=session["appointment_status"],
-        billing_treatment=session["billing_treatment"],
-        custom_service_description=session["custom_service_description"] if "custom_service_description" in session.keys() else None,
-    )
-    if unresolved:
-        raise ValueError("Cannot approve until required fields are complete: " + ", ".join(unresolved))
-    now = now_iso()
-    service = learn_service(conn, session["service_mode"] or "other", increment_usage=True)
-    conn.execute(
-        """
-        UPDATE sessions
-        SET review_status = 'approved',
-            billable_status = 'approved',
-            service_catalog_id = ?,
-            rate_cents_snapshot = approved_rate_cents,
-            approved_rate_rule_id = COALESCE(approved_rate_rule_id, rate_rule_id),
-            approved_rate_source = COALESCE(approved_rate_source, rate_source, 'manual_override'),
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (service["service_catalog_id"], now, session["id"]),
-    )
-    conn.execute(
-        "UPDATE calendar_event_candidates SET review_status = 'approved', updated_at = ? WHERE id = ?",
-        (now, candidate_id),
-    )
-    save_alias_after_approval(conn, session, participants)
-    record_audit(conn, "session", session["id"], "approved", {"candidate_id": candidate_id})
-    add_review_item(conn, candidate_id, session["id"], "approved", [], ["Approved in review UI."])
-    write_reports(conn)
-    conn.commit()
-    return get_review_candidate(conn, candidate_id)
+    init_db(conn)
+
+    # 1. Idempotency/recovery check for already approved session
+    candidate_row = conn.execute("SELECT review_status FROM calendar_event_candidates WHERE id = ?", (candidate_id,)).fetchone()
+    if candidate_row and candidate_row["review_status"] == "approved":
+        session = session_for_candidate(conn, candidate_id)
+        if session["payment_status"] == "paid_at_session":
+            from .payment_services import record_or_validate_paid_at_session_payment_locked
+            
+            try:
+                existing_payment = conn.execute(
+                    "SELECT * FROM payments WHERE source_type = 'paid_at_session_backfill' AND source_session_id = ?",
+                    (session["id"],),
+                ).fetchone()
+
+                if existing_payment is None:
+                    # Case A: no payment exists. Must have confirmed details in payload. Do not invent.
+                    amount_received_str = payload.get("amount_received")
+                    payment_date = payload.get("payment_date")
+                    payment_method = payload.get("payment_method")
+
+                    if amount_received_str is None or str(amount_received_str).strip() == "":
+                        raise ValueError("Amount received is required for paid-at-session recovery.")
+                    if not payment_date or not str(payment_date).strip():
+                        raise ValueError("Payment date is required for paid-at-session recovery.")
+                    if not payment_method or not str(payment_method).strip():
+                        raise ValueError("Payment method is required for paid-at-session recovery.")
+
+                    amount_cents = money_payload_to_cents(amount_received_str)
+                    charge_cents = (
+                        session["rate_cents_snapshot"]
+                        if session["rate_cents_snapshot"] is not None
+                        else session["approved_rate_cents"]
+                    )
+                    if amount_cents is None or amount_cents <= 0:
+                        raise ValueError("Payment amount must be greater than zero.")
+                    if charge_cents is not None and amount_cents != charge_cents:
+                        raise ValueError("Amount received must exactly equal the approved session charge.")
+
+                    method_val = str(payment_method).strip().lower()
+                else:
+                    # Case B/C: payment exists. Validate against it.
+                    amount_cents = existing_payment["amount_cents"]
+                    payment_date = existing_payment["received_at"]
+                    method_val = existing_payment["method"]
+
+                billing_party_id = session["billing_party_id"]
+                if billing_party_id is None:
+                    raise ValueError("Session has no billing party.")
+
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    outcome_data = record_or_validate_paid_at_session_payment_locked(
+                        conn,
+                        session_id=session["id"],
+                        billing_party_id=billing_party_id,
+                        amount_cents=amount_cents,
+                        payment_date=payment_date,
+                        payment_method=method_val,
+                        reference_number=payload.get("reference_number") or (existing_payment["reference_number"] if existing_payment else None),
+                        administrative_note=payload.get("administrative_note") or (existing_payment["administrative_note"] if existing_payment else None),
+                    )
+                    conn.commit()
+                except Exception as err:
+                    conn.rollback()
+                    raise ValueError(f"recoverable inconsistency: {err}") from err
+
+                res = get_review_candidate(conn, candidate_id)
+                res["paid_at_session_outcome"] = outcome_data["outcome"]
+                return res
+            except Exception as err:
+                raise ValueError(f"Recoverable inconsistency: {err}")
+        else:
+            return get_review_candidate(conn, candidate_id)
+
+    # 2. Start a single immediate transaction for first-time approval
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _save_interpretation_locked(conn, candidate_id, payload, now_iso())
+        
+        session = session_for_candidate(conn, candidate_id)
+        participants = get_session_participants(conn, session["id"])
+        
+        unresolved = unresolved_from_values(
+            conn=conn,
+            participants=participants,
+            billing_party_id=session["billing_party_id"],
+            account_id=session["account_id"],
+            duration=session["approved_duration_minutes"] or session["duration_minutes"],
+            billing_session_type=session["billing_session_type"],
+            service_mode=session["service_mode"],
+            time_category=session["time_category"],
+            approved_rate_cents=session["approved_rate_cents"],
+            suggested_rate_cents=session["suggested_rate_cents"],
+            rate_rule_id=session["rate_rule_id"],
+            rate_needs_review=session["rate_needs_review"],
+            payment_status=session["payment_status"],
+            appointment_status=session["appointment_status"],
+            billing_treatment=session["billing_treatment"],
+            custom_service_description=session["custom_service_description"] if "custom_service_description" in session.keys() else None,
+        )
+        if unresolved:
+            raise ValueError("Cannot approve until required fields are complete: " + ", ".join(unresolved))
+            
+        now = now_iso()
+        service = learn_service(conn, session["service_mode"] or "other", increment_usage=True)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'approved',
+                billable_status = 'approved',
+                service_catalog_id = ?,
+                rate_cents_snapshot = approved_rate_cents,
+                approved_rate_rule_id = COALESCE(approved_rate_rule_id, rate_rule_id),
+                approved_rate_source = COALESCE(approved_rate_source, rate_source, 'manual_override'),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (service["service_catalog_id"], now, session["id"]),
+        )
+        conn.execute(
+            "UPDATE calendar_event_candidates SET review_status = 'approved', updated_at = ? WHERE id = ?",
+            (now, candidate_id),
+        )
+        save_alias_after_approval(conn, session, participants)
+        record_audit(conn, "session", session["id"], "approved", {"candidate_id": candidate_id})
+        add_review_item(conn, candidate_id, session["id"], "approved", [], ["Approved in review UI."])
+
+        paid_at_session_outcome = None
+        if session["payment_status"] == "paid_at_session":
+            amount_received_str = payload.get("amount_received")
+            payment_date = payload.get("payment_date")
+            payment_method = payload.get("payment_method")
+            
+            if not session["billing_party_id"]:
+                raise ValueError("Bill-to party is not confirmed.")
+            if payload.get("billing_party_id") and payload.get("billing_party_id") != session["billing_party_id"]:
+                raise ValueError("Payment Bill To party does not match the session billing party.")
+            if amount_received_str is None or str(amount_received_str).strip() == "":
+                raise ValueError("Amount received is required for paid-at-session sessions.")
+            if not payment_date or not str(payment_date).strip():
+                raise ValueError("Payment date is required for paid-at-session sessions.")
+            if not payment_method or not str(payment_method).strip():
+                raise ValueError("Payment method is required for paid-at-session sessions.")
+                
+            amount_cents = money_payload_to_cents(amount_received_str)
+            charge_cents = (
+                session["rate_cents_snapshot"]
+                if session["rate_cents_snapshot"] is not None
+                else session["approved_rate_cents"]
+            )
+            if amount_cents is None or amount_cents <= 0:
+                raise ValueError("Payment amount must be greater than zero.")
+            if amount_cents > charge_cents:
+                raise ValueError("Amount received cannot exceed the approved session charge.")
+            if amount_cents < charge_cents:
+                raise ValueError("Amount received must exactly equal the approved session charge.")
+                
+            method_val = str(payment_method).strip().lower()
+            
+            from .payment_services import record_or_validate_paid_at_session_payment_locked
+            outcome_data = record_or_validate_paid_at_session_payment_locked(
+                conn,
+                session_id=session["id"],
+                billing_party_id=session["billing_party_id"],
+                amount_cents=amount_cents,
+                payment_date=payment_date,
+                payment_method=method_val,
+                reference_number=payload.get("reference_number"),
+                administrative_note=payload.get("administrative_note"),
+            )
+            paid_at_session_outcome = outcome_data["outcome"]
+            
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    report_warning = None
+    try:
+        write_reports(conn)
+    except Exception as err:
+        report_warning = f"Report generation warning: {err}"
+        
+    res = get_review_candidate(conn, candidate_id)
+    if report_warning:
+        res["report_warning"] = report_warning
+    if paid_at_session_outcome:
+        res["paid_at_session_outcome"] = paid_at_session_outcome
+        
+    return res
 
 
 def save_person_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:

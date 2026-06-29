@@ -88,7 +88,7 @@ class IdentityRelationshipTests(unittest.TestCase):
                 "service_mode": "office",
                 "time_category": "evening",
                 "approved_rate": "150.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
         merge_people(self.conn, fred_colin["person_id"], fred["person_id"], "same human")
@@ -106,6 +106,7 @@ class IdentityRelationshipTests(unittest.TestCase):
             "UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?",
             (payer["billing_party_id"], account["account_id"]),
         )
+        self.conn.commit()
         approve_candidate(
             self.conn,
             candidate_id,
@@ -117,7 +118,7 @@ class IdentityRelationshipTests(unittest.TestCase):
                 "service_mode": "office",
                 "time_category": "evening",
                 "approved_rate": "150.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
         new_candidate = self.import_one(key="snap-2")

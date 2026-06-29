@@ -77,9 +77,16 @@ class DryRunBackfillTests(unittest.TestCase):
                 "billing_party_id": pid,
                 "approved_duration_minutes": 60, "service_mode": "office",
                 "time_category": "standard", "approved_rate": amount,
-                "payment_status": payment_status, "billing_treatment": "billable",
+                "payment_status": "unpaid", "billing_treatment": "billable",
             })
-            return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
+            session_id = detail["session"]["id"]
+            if payment_status == "paid_at_session":
+                self.conn.execute(
+                    "UPDATE sessions SET payment_status = 'paid_at_session' WHERE id = ?",
+                    (session_id,),
+                )
+                self.conn.commit()
+            return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         else:
             return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (candidate_id,)).fetchone()
 

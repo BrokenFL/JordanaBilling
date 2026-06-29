@@ -333,15 +333,19 @@ class PaymentSchemaTests(unittest.TestCase):
         reasons = invoice_ineligibility_reasons(self.conn, session)
         self.assertEqual(reasons, [])
 
-        paid_session = self._approved_session("paid1")
         from jordana_invoice.review_services import approve_candidate
-        candidate_id = paid_session["candidate_id"]
+        import_rows(self.conn, [raw_row("paid1", "Pat Client | 60 | Office", "2026-05-10T10:00:00-04:00")], "test")
+        candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash("calendar_event_id:event-paid1"),),
+        ).fetchone()[0]
         detail = approve_candidate(self.conn, candidate_id, {
             "participants": [{"person_id": self.person["person_id"], "display_name": "Pat Client"}],
             "billing_party_id": self.party["billing_party_id"],
             "approved_duration_minutes": 60, "service_mode": "office",
             "time_category": "standard", "approved_rate": "150.00",
             "payment_status": "paid_at_session", "billing_treatment": "billable",
+            "amount_received": "150.00", "payment_date": "2026-05-10", "payment_method": "zelle",
         })
         paid_session_row = self.conn.execute(
             "SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)
