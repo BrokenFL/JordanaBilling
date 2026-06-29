@@ -3061,10 +3061,25 @@ function renderFinalizationPreview(preview, insuranceState) {
     try {
       const res = await fetch(`/api/invoices/${i.invoice_id}/draft-pdf`, {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          "X-Jordana-Write-Token": WRITE_TOKEN,
+        },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to generate PDF"); }
+      if (!res.ok) {
+        let msg = "Failed to generate PDF preview.";
+        try {
+          const err = await res.json();
+          if (err && err.error) msg = err.error;
+        } catch {
+          try {
+            const text = await res.text();
+            if (text && text.length < 200) msg = text;
+          } catch { /* use default */ }
+        }
+        throw new Error(msg);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank");
