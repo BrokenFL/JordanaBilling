@@ -188,6 +188,12 @@ duplicate repair application. It creates lookup indexes only. It does not
 backfill, merge, suppress, delete, or rewrite existing candidate, session,
 invoice, payment, audit, or raw snapshot rows.
 
+Migration `015_duplicate_repair_reversal_state` adds nullable
+`original_state_json` and `applied_state_json` columns to
+`candidate_duplicate_reconciliations`. These columns store the exact reversible
+field state for duplicate-repair apply/reversal. The migration is additive only
+and does not populate or modify existing reconciliation rows.
+
 ### Adding a new migration
 
 1. Append a new `(migration_id, function)` tuple to `MIGRATIONS`.

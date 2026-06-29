@@ -22,7 +22,7 @@ from .google_sync import (
     sync_with_process_lock,
 )
 from .importer import import_csv
-from .duplicate_repair import duplicate_repair_plan
+from .duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
 from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
 from .review import record_review_decision
@@ -169,6 +169,16 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm-apply",
         default="",
         help="Must be exactly APPLY_DUPLICATE_REPAIR when --apply is used.",
+    )
+    duplicate_parser.add_argument(
+        "--reverse",
+        action="store_true",
+        help="Safely reverse applied duplicate repair changes. Requires --confirm-reversal.",
+    )
+    duplicate_parser.add_argument(
+        "--confirm-reversal",
+        default="",
+        help="Must be exactly REVERSE_DUPLICATE_REPAIR when --reverse is used.",
     )
 
     serve_parser = subparsers.add_parser(
@@ -346,6 +356,19 @@ def main(argv: list[str] | None = None) -> int:
         migrate_database(args.db)
         conn = connect(args.db)
         try:
+            if args.apply and args.reverse:
+                print("REFUSED: choose either --apply or --reverse, not both.", file=__import__("sys").stderr)
+                return 1
+            if args.reverse:
+                if args.confirm_reversal != "REVERSE_DUPLICATE_REPAIR":
+                    print(
+                        "REFUSED: --reverse requires --confirm-reversal REVERSE_DUPLICATE_REPAIR",
+                        file=__import__("sys").stderr,
+                    )
+                    return 1
+                result = reverse_duplicate_repair(conn, confirm=True)
+                print(json.dumps(result, sort_keys=True))
+                return 0
             should_apply = bool(args.apply)
             if should_apply and args.confirm_apply != "APPLY_DUPLICATE_REPAIR":
                 print(

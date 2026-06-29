@@ -387,6 +387,8 @@ CREATE TABLE IF NOT EXISTS candidate_duplicate_reconciliations (
   duplicate_session_id TEXT REFERENCES sessions(id),
   status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'reversed', 'manual_review')),
   reason TEXT NOT NULL,
+  original_state_json TEXT,
+  applied_state_json TEXT,
   applied_at TEXT,
   reversed_at TEXT,
   created_at TEXT NOT NULL,
@@ -1531,6 +1533,8 @@ def _apply_migration_014(conn: sqlite3.Connection) -> None:
           duplicate_session_id TEXT REFERENCES sessions(id),
           status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'reversed', 'manual_review')),
           reason TEXT NOT NULL,
+          original_state_json TEXT,
+          applied_state_json TEXT,
           applied_at TEXT,
           reversed_at TEXT,
           created_at TEXT NOT NULL,
@@ -1541,6 +1545,20 @@ def _apply_migration_014(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_candidate_duplicate_reconciliations_canonical
           ON candidate_duplicate_reconciliations(canonical_candidate_id);
         """
+    )
+
+
+MIGRATION_015_DUPLICATE_REPAIR_REVERSAL_STATE = "015_duplicate_repair_reversal_state"
+
+
+def _apply_migration_015(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "candidate_duplicate_reconciliations",
+        {
+            "original_state_json": "TEXT",
+            "applied_state_json": "TEXT",
+        },
     )
 
 
@@ -1559,6 +1577,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_012_INSURANCE_CODING, _apply_migration_012),
     (MIGRATION_013_SYNC_STATE_HARDENING, _apply_migration_013),
     (MIGRATION_014_CANDIDATE_IDENTITY_ALIASES, _apply_migration_014),
+    (MIGRATION_015_DUPLICATE_REPAIR_REVERSAL_STATE, _apply_migration_015),
 ]
 
 

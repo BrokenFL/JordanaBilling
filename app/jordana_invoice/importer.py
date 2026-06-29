@@ -250,6 +250,8 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
     for row in rows:
         key = candidate_key(row)
         resolution = resolve_candidate_identity(conn, row, key)
+        if resolution.ambiguous:
+            key = stable_hash(f"ambiguous_identity:{row['id']}")
         if not resolution.candidate_id and not resolution.ambiguous and not (
             text(row["calendar_event_id"]) or text(row["event_fingerprint"])
         ):
@@ -366,11 +368,46 @@ def resolve_candidate_identity(
 ) -> CandidateIdentityResolution:
     event_id = text(row["calendar_event_id"])
     fingerprint = text(row["event_fingerprint"])
+    resolved: list[CandidateIdentityResolution] = []
     if event_id:
-        return resolve_exact_identity(conn, "calendar_event_id", stable_hash(f"calendar_event_id:{event_id}"), fallback_key)
+        event_resolution = resolve_exact_identity(
+            conn,
+            "calendar_event_id",
+            stable_hash(f"calendar_event_id:{event_id}"),
+            fallback_key,
+        )
+        if event_resolution.ambiguous:
+            return event_resolution
+        if event_resolution.candidate_id:
+            resolved.append(event_resolution)
     if fingerprint:
-        return resolve_exact_identity(conn, "event_fingerprint", stable_hash(f"event_fingerprint:{fingerprint}"), fallback_key)
-    return resolve_structural_identity(conn, row)
+        fingerprint_resolution = resolve_exact_identity(
+            conn,
+            "event_fingerprint",
+            stable_hash(f"event_fingerprint:{fingerprint}"),
+            stable_hash(f"event_fingerprint:{fingerprint}"),
+        )
+        if fingerprint_resolution.ambiguous:
+            return fingerprint_resolution
+        if fingerprint_resolution.candidate_id:
+            resolved.append(fingerprint_resolution)
+    resolved_candidate_ids = {resolution.candidate_id for resolution in resolved}
+    if len(resolved_candidate_ids) == 1:
+        return resolved[0]
+    if len(resolved_candidate_ids) > 1:
+        return CandidateIdentityResolution(None, "ambiguous_identifier_conflict", True)
+
+    if not (event_id and fingerprint):
+        structural_resolution = resolve_structural_identity(
+            conn,
+            row,
+            include_approved=not (event_id or fingerprint),
+        )
+        if structural_resolution.candidate_id:
+            return structural_resolution
+        if structural_resolution.ambiguous:
+            return structural_resolution
+    return CandidateIdentityResolution(None, "new_candidate")
 
 
 def resolve_exact_identity(
@@ -404,7 +441,12 @@ def resolve_exact_identity(
     return CandidateIdentityResolution(None, "new_candidate")
 
 
-def resolve_structural_identity(conn: sqlite3.Connection, row: sqlite3.Row) -> CandidateIdentityResolution:
+def resolve_structural_identity(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    include_approved: bool = True,
+) -> CandidateIdentityResolution:
     alias_value = structural_identity_value(row)
     candidate_ids = {
         alias_row["candidate_id"]
@@ -449,6 +491,21 @@ def resolve_structural_identity(conn: sqlite3.Connection, row: sqlite3.Row) -> C
             ),
         ).fetchall()
     )
+    if not include_approved and candidate_ids:
+        candidate_ids = {
+            candidate_id
+            for candidate_id in candidate_ids
+            if not conn.execute(
+                """
+                SELECT 1
+                FROM sessions
+                WHERE candidate_id = ?
+                  AND review_status = 'approved'
+                LIMIT 1
+                """,
+                (candidate_id,),
+            ).fetchone()
+        }
     if len(candidate_ids) == 1:
         return CandidateIdentityResolution(next(iter(candidate_ids)), "exact_structural")
     if len(candidate_ids) > 1:

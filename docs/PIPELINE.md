@@ -176,13 +176,19 @@ Resolution order is conservative:
 
 1. Exact stable calendar event ID.
 2. Exact event fingerprint.
-3. Exact structural identity only when the incoming snapshot lacks both stable
-   fields and exactly one existing candidate matches normalized title, start,
-   end, duration, and calendar evidence.
+3. Exact structural identity when neither stable identifier resolves uniquely
+   and exactly one existing candidate matches normalized title, start, end,
+   duration, and calendar evidence.
 
-Structural matching is exact, not fuzzy. If more than one existing candidate
-matches, the importer preserves the new row as reviewable and flags identity
-resolution for manual review. Raw snapshots are never edited or deleted.
+Structural matching is exact, not fuzzy. Rows that arrive with both a new event
+ID and a new fingerprint do not collapse solely by structure. Rows with one
+changed or missing stable identifier may structurally reuse only an unapproved
+candidate; rows missing stable identifiers may structurally reuse a protected
+canonical candidate when the match is unique. If event ID and fingerprint
+evidence point to different candidates, or if structural identity matches
+multiple candidates, the importer preserves the new row as reviewable and flags
+identity resolution for manual review. Raw snapshots are never edited or
+deleted.
 
 A local dry-run analyzer is available for existing duplicate candidate/session
 groups:
@@ -192,5 +198,10 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sql
 ```
 
 The command prints sanitized aggregate counts only. Applying a repair is guarded
-behind explicit confirmation and must not be used on live data without a
-reviewed plan and fresh private backup.
+behind explicit confirmation. Reversal has its own separate confirmation phrase.
+For the operational database, apply and reversal both create and verify a private
+SQLite backup immediately before any repair write. Applied reconciliations are
+excluded from later discovery, so a dry run after apply reports zero actions for
+those records. Reversal restores only fields whose current values still match
+the duplicate-repair-applied state; later user or workflow edits make reversal
+unsafe and prevent automatic restoration.

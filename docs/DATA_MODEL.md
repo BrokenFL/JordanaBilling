@@ -65,17 +65,25 @@ aliases that point to the preserved candidate ID without rewriting historical
   and calendar
 
 The importer consults this table before creating a new candidate. Structural
-reuse is allowed only when the incoming row lacks both stable fields and the
-exact structural identity resolves to one unique existing candidate. Ambiguous
-matches remain reviewable.
+reuse is allowed only when exact event ID/fingerprint aliases do not resolve
+uniquely and exact structural identity resolves to one unique existing
+candidate. Fully identified rows with both a new event ID and a new fingerprint
+do not collapse solely by structure. Rows with one changed stable identifier do
+not structurally reuse an approved existing session; identifier-missing rows may
+reuse a protected canonical session when the structural match is unique. If
+event ID and fingerprint point to different candidates, the row is kept
+reviewable as an identity ambiguity.
 
 ## `candidate_duplicate_reconciliations`
 
 Additive reconciliation ledger for future duplicate repair application. It
 records the canonical candidate/session, duplicate candidate/session, status,
-reason, and timestamps. It does not store names or calendar titles. Dry-run
-analysis does not write to this table; apply mode may write here only for
-newly created unapproved duplicates.
+reason, original/applied state snapshots for reversible fields, and timestamps.
+It does not store names or calendar titles. Dry-run analysis does not write to
+this table; apply mode may write here only for newly created unapproved
+duplicates. Applied rows are excluded from future duplicate discovery. Reversal
+sets `status='reversed'` and `reversed_at` only after proving current values
+still match the repair-applied state.
 
 ## `people`
 

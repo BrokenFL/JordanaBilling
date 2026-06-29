@@ -1,9 +1,10 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from jordana_invoice.db import connect, migrate_database
-from jordana_invoice.duplicate_repair import duplicate_repair_plan
+from jordana_invoice.duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
 from jordana_invoice.importer import import_rows
 from jordana_invoice.util import now_iso, stable_hash
 
@@ -158,6 +159,93 @@ class CandidateIdentityTests(unittest.TestCase):
         self.assertEqual(count(self.conn, "calendar_event_candidates"), 2)
         self.assertEqual(count(self.conn, "sessions"), 2)
 
+    def test_changed_fingerprint_with_unique_structural_match_reuses_candidate(self):
+        import_rows(self.conn, [raw_row("snap-1", fingerprint="fp-old")], "test")
+        original = self.conn.execute("SELECT id FROM calendar_event_candidates").fetchone()["id"]
+
+        import_rows(
+            self.conn,
+            [raw_row("snap-2", fingerprint="fp-new", ingested_at="2026-06-29T12:05:30.000Z")],
+            "test",
+        )
+
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+        self.assertEqual(
+            self.conn.execute("SELECT id FROM calendar_event_candidates").fetchone()["id"],
+            original,
+        )
+        self.assertIsNotNone(
+            self.conn.execute(
+                """
+                SELECT 1 FROM candidate_identity_aliases
+                WHERE candidate_id = ? AND alias_type = 'event_fingerprint'
+                """,
+                (original,),
+            ).fetchone()
+        )
+
+    def test_changed_event_id_with_unique_structural_match_reuses_candidate(self):
+        import_rows(self.conn, [raw_row("snap-1", event_id="event-old", fingerprint="")], "test")
+        original = self.conn.execute("SELECT id FROM calendar_event_candidates").fetchone()["id"]
+
+        import_rows(
+            self.conn,
+            [raw_row("snap-2", event_id="event-new", fingerprint="", ingested_at="2026-06-29T12:05:40.000Z")],
+            "test",
+        )
+
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+        self.assertEqual(
+            self.conn.execute("SELECT id FROM calendar_event_candidates").fetchone()["id"],
+            original,
+        )
+
+    def test_event_id_and_fingerprint_resolving_different_candidates_flag_ambiguity(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row("event-row", event_id="event-a", fingerprint="", title="Robin Rivers | 60 | Office"),
+                raw_row(
+                    "fingerprint-row",
+                    event_id="",
+                    fingerprint="fp-b",
+                    title="Casey North | 60 | Office",
+                    start="2026-06-18T10:00:00-04:00",
+                    end="2026-06-18T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:05:50.000Z",
+                ),
+            ],
+            "test",
+        )
+
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "conflict-row",
+                    event_id="event-a",
+                    fingerprint="fp-b",
+                    title="Robin Rivers | 60 | Office",
+                    ingested_at="2026-06-29T12:05:59.000Z",
+                )
+            ],
+            "test",
+        )
+
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 3)
+        ambiguous = self.conn.execute(
+            """
+            SELECT unresolved_fields, review_reasons
+            FROM calendar_event_candidates
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        self.assertIn("identity_resolution", ambiguous["unresolved_fields"])
+        self.assertIn("Ambiguous calendar identity", ambiguous["review_reasons"])
+
     def test_approved_existing_session_values_are_preserved_during_identity_reuse(self):
         import_rows(self.conn, [raw_row("snap-1", fingerprint="fp-approved")], "test")
         session = self.conn.execute("SELECT id FROM sessions").fetchone()
@@ -238,8 +326,10 @@ class DuplicateRepairTests(unittest.TestCase):
         self._make_duplicate_sessions()
 
         duplicate_repair_plan(self.conn, apply=True, confirm=True)
+        before = state_rows(self.conn)
         duplicate_repair_plan(self.conn, apply=True, confirm=True)
 
+        self.assertEqual(state_rows(self.conn), before)
         self.assertEqual(count(self.conn, "candidate_duplicate_reconciliations"), 1)
         self.assertEqual(
             self.conn.execute(
@@ -247,6 +337,98 @@ class DuplicateRepairTests(unittest.TestCase):
             ).fetchone()["c"],
             1,
         )
+
+    def test_post_apply_dry_run_reports_zero_actions_for_repaired_records(self):
+        self._make_duplicate_sessions()
+        duplicate_repair_plan(self.conn, apply=True, confirm=True)
+
+        summary = duplicate_repair_plan(self.conn, apply=False)["summary"]
+
+        self.assertEqual(summary["groups_detected"], 0)
+        self.assertEqual(summary["unapproved_duplicate_candidates_proposed"], 0)
+        self.assertEqual(summary["unapproved_duplicate_sessions_proposed"], 0)
+
+    def test_reversal_restores_only_duplicate_repair_changes(self):
+        self._make_duplicate_sessions()
+        rows = self.conn.execute(
+            """
+            SELECT c.id AS candidate_id, s.id AS session_id
+            FROM calendar_event_candidates c
+            JOIN sessions s ON s.candidate_id = c.id
+            ORDER BY c.created_at, c.id
+            """
+        ).fetchall()
+        duplicate_id = rows[1]["candidate_id"]
+        original = self.conn.execute(
+            "SELECT review_status, reconciliation_status FROM calendar_event_candidates WHERE id = ?",
+            (duplicate_id,),
+        ).fetchone()
+
+        duplicate_repair_plan(self.conn, apply=True, confirm=True)
+        summary = reverse_duplicate_repair(self.conn, confirm=True)
+
+        restored = self.conn.execute(
+            "SELECT review_status, reconciliation_status FROM calendar_event_candidates WHERE id = ?",
+            (duplicate_id,),
+        ).fetchone()
+        self.assertEqual(summary["reconciliations_reversed"], 1)
+        self.assertEqual(restored["review_status"], original["review_status"])
+        self.assertEqual(restored["reconciliation_status"], original["reconciliation_status"])
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT status, reversed_at FROM candidate_duplicate_reconciliations"
+            ).fetchone()["status"],
+            "reversed",
+        )
+
+    def test_second_reversal_causes_no_changes(self):
+        self._make_duplicate_sessions()
+        duplicate_repair_plan(self.conn, apply=True, confirm=True)
+        reverse_duplicate_repair(self.conn, confirm=True)
+        before = state_rows(self.conn)
+
+        summary = reverse_duplicate_repair(self.conn, confirm=True)
+
+        self.assertEqual(state_rows(self.conn), before)
+        self.assertEqual(summary["applied_reconciliations_found"], 0)
+        self.assertEqual(summary["reconciliations_reversed"], 0)
+
+    def test_unsafe_reversal_is_refused(self):
+        rows = self._make_duplicate_sessions()
+        duplicate_id = rows[1]["candidate_id"]
+        duplicate_repair_plan(self.conn, apply=True, confirm=True)
+        self.conn.execute(
+            "UPDATE calendar_event_candidates SET review_status = 'needs_rate' WHERE id = ?",
+            (duplicate_id,),
+        )
+        self.conn.commit()
+
+        summary = reverse_duplicate_repair(self.conn, confirm=True)
+
+        self.assertEqual(summary["unsafe_reversals_refused"], 1)
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM candidate_duplicate_reconciliations").fetchone()["status"],
+            "applied",
+        )
+
+    def test_backup_failure_prevents_operational_apply(self):
+        self._make_duplicate_sessions()
+        old_db_path = os.environ.get("JORDANA_DATABASE_PATH")
+        os.environ["JORDANA_DATABASE_PATH"] = str(self.db_path)
+
+        def fail_backup(_path):
+            raise RuntimeError("backup failed")
+
+        try:
+            with self.assertRaises(RuntimeError):
+                duplicate_repair_plan(self.conn, apply=True, confirm=True, backup_factory=fail_backup)
+        finally:
+            if old_db_path is None:
+                os.environ.pop("JORDANA_DATABASE_PATH", None)
+            else:
+                os.environ["JORDANA_DATABASE_PATH"] = old_db_path
+
+        self.assertEqual(count(self.conn, "candidate_duplicate_reconciliations"), 0)
 
     def test_approved_canonical_is_preserved_and_duplicate_is_proposed(self):
         rows = self._make_duplicate_sessions()
@@ -269,6 +451,15 @@ class DuplicateRepairTests(unittest.TestCase):
 
         self.assertEqual(summary["protected_invoiced_records"], 1)
         self.assertEqual(summary["unapproved_duplicate_sessions_proposed"], 1)
+
+    def test_paid_record_is_protected(self):
+        rows = self._make_duplicate_sessions()
+        self._attach_payment(rows[1]["session_id"])
+
+        summary = duplicate_repair_plan(self.conn, apply=False)["summary"]
+
+        self.assertEqual(summary["protected_paid_records"], 1)
+        self.assertEqual(summary["ambiguous_groups_requiring_manual_review"], 1)
 
     def _attach_invoice_line(self, session_id):
         now = now_iso()
@@ -307,6 +498,39 @@ class DuplicateRepairTests(unittest.TestCase):
         )
         self.conn.commit()
 
+    def _attach_payment(self, session_id):
+        now = now_iso()
+        self.conn.execute(
+            """
+            INSERT INTO billing_parties (
+              billing_party_id, billing_party_type, billing_name,
+              preferred_delivery_method, created_at, updated_at
+            ) VALUES ('party-paid-demo', 'person', 'Demo Payer', 'email', ?, ?)
+            """,
+            (now, now),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO payments (
+              payment_id, billing_party_id, amount_cents, received_at,
+              method, status, created_at, updated_at
+            ) VALUES ('payment-demo', 'party-paid-demo', 15000, '2026-06-30',
+              'other', 'posted', ?, ?)
+            """,
+            (now, now),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO payment_allocations (
+              allocation_id, payment_id, session_id, amount_cents,
+              status, created_at, updated_at
+            ) VALUES ('allocation-demo', 'payment-demo', ?, 15000,
+              'active', ?, ?)
+            """,
+            (session_id, now, now),
+        )
+        self.conn.commit()
+
 
 def count(conn, table):
     return conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
@@ -323,6 +547,51 @@ def snapshot_counts(conn):
             "candidate_duplicate_reconciliations",
             "audit_log",
         )
+    }
+
+
+def state_rows(conn):
+    return {
+        "candidates": [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, review_status, reconciliation_status, updated_at
+                FROM calendar_event_candidates
+                ORDER BY id
+                """
+            ).fetchall()
+        ],
+        "sessions": [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, review_status, billable_status, updated_at
+                FROM sessions
+                ORDER BY id
+                """
+            ).fetchall()
+        ],
+        "review_items": [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT review_item_id, review_status, decision_source, reason, updated_at
+                FROM review_items
+                ORDER BY review_item_id
+                """
+            ).fetchall()
+        ],
+        "reconciliations": [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT duplicate_candidate_id, status, applied_at, reversed_at, updated_at
+                FROM candidate_duplicate_reconciliations
+                ORDER BY duplicate_candidate_id
+                """
+            ).fetchall()
+        ],
     }
 
 

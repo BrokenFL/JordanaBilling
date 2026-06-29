@@ -219,12 +219,17 @@ Calendar evidence remains read-only under View Calendar Evidence.
 ## Duplicate Candidate Repair
 
 Calendar candidate identity repair is intentionally conservative. The importer
-first tries exact event ID, then exact event fingerprint, then exact structural
-identity when a snapshot lacks both stable fields. Structural identity uses
-normalized title, start, end, duration, and calendar. No fuzzy title matching is
-used for automatic reconciliation.
+first evaluates exact event ID, then exact event fingerprint, then exact
+structural identity if neither stable identifier resolves uniquely. Structural
+identity uses normalized title, start, end, duration, and calendar. No fuzzy
+title matching is used for automatic reconciliation. Fully identified rows with
+both a new event ID and a new fingerprint are not merged by structure alone.
+Rows with one changed stable identifier do not structurally reuse approved
+sessions; rows missing stable identifiers can reuse a protected canonical
+session when the structural match is unique.
 
-If structural identity is ambiguous, the candidate remains in review with an
+If event ID and fingerprint resolve to different candidates, or structural
+identity is ambiguous, the candidate remains in review with an
 identity-resolution warning. Existing candidate IDs and candidate keys are not
 rewritten.
 
@@ -238,6 +243,15 @@ Canonical selection prioritizes invoiced records, then approved records, then
 the earliest legitimate candidate/session. Apply mode is guarded and may affect
 only newly created unapproved duplicates. Approved, invoiced, paid, and raw
 snapshot records must not be altered by repair.
+
+Apply and reversal are both idempotent. Applied reconciliations are excluded
+from later duplicate discovery, so repeated dry runs and repeated apply calls do
+not churn timestamps, audit rows, or state. Reversal requires
+`--confirm-reversal REVERSE_DUPLICATE_REPAIR`; it restores only values that were
+changed by duplicate repair and only when no later edit has changed those same
+fields. Unsafe reversals are refused and left for manual review. Operational
+apply/reversal creates and verifies a private SQLite backup immediately before
+repair writes.
 
 ## Reparse Unapproved Candidates
 
