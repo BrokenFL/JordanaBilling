@@ -9,7 +9,10 @@ from jordana_invoice.google_sync import (
     SyncConfig,
     SyncError,
     get_cursor,
+    parse_cursor,
     public_sync_status,
+    should_run_initial_full_sync,
+    sync_calendar_automatically,
     sync_with_connection,
     sync_status_for_connection,
 )
@@ -97,6 +100,77 @@ class SyncTests(unittest.TestCase):
         )
         self.assertEqual(result.rows_imported, 0)
         self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 0)
+
+    def test_dry_run_does_not_write_sync_state_or_rows(self):
+        result = sync_with_connection(
+            self.conn,
+            self.config,
+            dry_run=True,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [row("snap-dry-run")],
+                        "next_cursor": "2026-06-22T02:00:00.000Z",
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+        self.assertEqual(result.rows_fetched, 1)
+        self.assertEqual(result.rows_imported, 0)
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 0)
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM sync_state WHERE source_name = ?",
+                (SOURCE_NAME,),
+            ).fetchone()
+        )
+
+    def test_no_successful_cursor_triggers_full_sync(self):
+        transport = FakeTransport(
+            [
+                {
+                    "ok": True,
+                    "record_type": "sync_response",
+                    "rows": [row("snap-initial")],
+                    "next_cursor": {
+                        "ingested_at": "2026-06-22T02:00:00.000Z",
+                        "snapshot_key": "snap-initial",
+                    },
+                    "has_more": False,
+                }
+            ]
+        )
+        result = sync_calendar_automatically(self.config, transport=transport)
+        self.assertEqual(result.mode, "initial_full")
+        self.assertEqual(transport.calls[0]["after_ingested_at"], EMPTY_CURSOR)
+        self.assertEqual(transport.calls[0]["after_snapshot_key"], "")
+
+    def test_valid_cursor_triggers_incremental_sync(self):
+        self.conn.execute(
+            """
+            INSERT INTO sync_state (source_name, cursor_value, last_success_at)
+            VALUES (?, ?, ?)
+            """,
+            (SOURCE_NAME, "2026-06-22T01:00:00.000Z", "2026-06-22T01:01:00.000Z"),
+        )
+        self.conn.commit()
+        transport = FakeTransport(
+            [
+                {
+                    "ok": True,
+                    "record_type": "sync_response",
+                    "rows": [],
+                    "next_cursor": "2026-06-22T01:00:00.000Z",
+                    "has_more": False,
+                }
+            ]
+        )
+        result = sync_calendar_automatically(self.config, transport=transport)
+        self.assertEqual(result.mode, "incremental")
+        self.assertEqual(transport.calls[0]["after_ingested_at"], "2026-06-22T01:00:00.000Z")
 
     def test_one_page_sync_normalizes_rows(self):
         result = sync_with_connection(
@@ -202,6 +276,88 @@ class SyncTests(unittest.TestCase):
             )
         self.assertEqual(get_cursor(self.conn), "2026-06-22T01:00:00.000Z")
 
+    def test_failed_initial_sync_does_not_create_successful_cursor(self):
+        with self.assertRaises(SyncError):
+            sync_calendar_automatically(
+                self.config,
+                transport=FakeTransport([SyncError("boom")]),
+            )
+        self.assertTrue(should_run_initial_full_sync(self.conn))
+
+    def test_successful_full_sync_stores_composite_cursor(self):
+        sync_with_connection(
+            self.conn,
+            self.config,
+            full=True,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [
+                            row("snap-a", ingested_at="2026-06-22T02:00:00.000Z"),
+                            row("snap-b", ingested_at="2026-06-22T02:00:00.000Z"),
+                        ],
+                        "next_cursor": {
+                            "ingested_at": "2026-06-22T02:00:00.000Z",
+                            "snapshot_key": "snap-b",
+                        },
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+        cursor = parse_cursor(self.conn.execute(
+            "SELECT cursor_value FROM sync_state WHERE source_name = ?",
+            (SOURCE_NAME,),
+        ).fetchone()["cursor_value"])
+        self.assertEqual(cursor.ingested_at, "2026-06-22T02:00:00.000Z")
+        self.assertEqual(cursor.snapshot_key, "snap-b")
+
+    def test_composite_cursor_paginates_equal_timestamps(self):
+        transport = FakeTransport(
+            [
+                {
+                    "ok": True,
+                    "record_type": "sync_response",
+                    "rows": [row("snap-a", ingested_at="2026-06-22T02:00:00.000Z")],
+                    "next_cursor": {
+                        "ingested_at": "2026-06-22T02:00:00.000Z",
+                        "snapshot_key": "snap-a",
+                    },
+                    "has_more": True,
+                },
+                {
+                    "ok": True,
+                    "record_type": "sync_response",
+                    "rows": [row("snap-b", ingested_at="2026-06-22T02:00:00.000Z")],
+                    "next_cursor": {
+                        "ingested_at": "2026-06-22T02:00:00.000Z",
+                        "snapshot_key": "snap-b",
+                    },
+                    "has_more": False,
+                },
+            ]
+        )
+        sync_with_connection(self.conn, self.config, transport=transport)
+        self.assertEqual(transport.calls[1]["after_ingested_at"], "2026-06-22T02:00:00.000Z")
+        self.assertEqual(transport.calls[1]["after_snapshot_key"], "snap-a")
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 2)
+
+    def test_legacy_timestamp_only_cursor_remains_compatible(self):
+        self.conn.execute(
+            """
+            INSERT INTO sync_state (source_name, cursor_value, last_success_at)
+            VALUES (?, ?, ?)
+            """,
+            (SOURCE_NAME, "2026-06-22T01:00:00.000Z", "2026-06-22T01:01:00.000Z"),
+        )
+        self.conn.commit()
+        self.assertFalse(should_run_initial_full_sync(self.conn))
+        cursor = get_cursor(self.conn)
+        self.assertEqual(cursor.ingested_at, "2026-06-22T01:00:00.000Z")
+        self.assertEqual(cursor.snapshot_key, "")
+
     def test_only_completed_runs_response_is_processed(self):
         sync_with_connection(
             self.conn,
@@ -284,12 +440,18 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(
             status,
             {
+                "current_status": "Attention Needed",
                 "last_attempt": "2026-06-23T01:05:00.000Z",
                 "last_success": "2026-06-23T01:06:00.000Z",
+                "last_mode": "Incremental sync",
+                "rows_fetched": 1,
+                "new_raw_snapshots_imported": 1,
+                "duplicate_snapshots_skipped": 0,
+                "review_items_changed": 1,
                 "total_rows_imported": 7,
                 "raw_snapshot_count": 1,
                 "open_review_count": 1,
-                "last_error": "network down",
+                "last_error": "Calendar sync needs attention. Please retry from Calendar Import.",
             },
         )
 

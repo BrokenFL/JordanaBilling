@@ -5,6 +5,7 @@ import hmac
 import json
 import mimetypes
 import secrets
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -13,9 +14,15 @@ from .db import DatabaseBusyError, MigrationError, connect, migrate_database
 from .google_sync import (
     default_transport,
     load_sync_config_for_database,
+    next_sync_time_iso,
     public_sync_status,
+    rebuild_calendar_data_from_sheet,
+    sanitize_sync_error,
+    SyncError,
+    sync_calendar_automatically,
+    sync_interval_minutes_from_env,
     sync_status_for_connection,
-    sync_with_connection,
+    sync_with_process_lock,
 )
 from .review_services import (
     add_account_member,
@@ -135,6 +142,97 @@ _PDF_SAFE_HEADERS = (
 )
 
 
+class CalendarSyncRuntime:
+    def __init__(
+        self,
+        database_path: str,
+        *,
+        transport=default_transport,
+        interval_minutes: int | None = None,
+    ) -> None:
+        self.database_path = database_path
+        self.transport = transport
+        self.interval_minutes = interval_minutes or sync_interval_minutes_from_env()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._status_lock = threading.Lock()
+        self._running = False
+        self._last_error = ""
+        self._next_sync_at = next_sync_time_iso(self.interval_minutes)
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name="jordana-calendar-sync",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _set_running(self, running: bool) -> None:
+        with self._status_lock:
+            self._running = running
+
+    def _record_error(self, message: str) -> None:
+        with self._status_lock:
+            self._last_error = sanitize_sync_error(message)
+
+    def status_overlay(self) -> dict[str, str | bool | int]:
+        with self._status_lock:
+            return {
+                "is_syncing": self._running,
+                "runtime_error": self._last_error,
+                "next_automatic_sync": self._next_sync_at,
+                "interval_minutes": self.interval_minutes,
+            }
+
+    def _run_once(self, *, startup: bool = False) -> None:
+        self._set_running(True)
+        try:
+            config = review_sync_config(self.database_path)
+            if startup:
+                sync_calendar_automatically(config, transport=self.transport)
+            else:
+                sync_with_process_lock(
+                    config,
+                    full=False,
+                    transport=self.transport,
+                    skip_if_running=True,
+                )
+            self._record_error("")
+        except Exception as error:
+            self._record_error(str(error))
+        finally:
+            self._set_running(False)
+
+    def _run(self) -> None:
+        self._run_once(startup=True)
+        while not self._stop.wait(self.interval_minutes * 60):
+            with self._status_lock:
+                self._next_sync_at = next_sync_time_iso(self.interval_minutes)
+            self._run_once(startup=False)
+
+
+def sync_status_payload(conn, runtime: CalendarSyncRuntime | None = None) -> dict:
+    payload = public_sync_status(sync_status_for_connection(conn))
+    if runtime:
+        overlay = runtime.status_overlay()
+        payload["next_automatic_sync"] = overlay["next_automatic_sync"]
+        if overlay["is_syncing"]:
+            payload["current_status"] = "Syncing"
+        elif overlay["runtime_error"]:
+            payload["current_status"] = "Attention Needed"
+            payload["last_error"] = overlay["runtime_error"]
+        payload["sync_interval_minutes"] = overlay["interval_minutes"]
+    return payload
+
+
 def review_sync_config(database_path: str):
     return load_sync_config_for_database(database_path)
 
@@ -224,6 +322,8 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Amount exceeds available unapplied funds.",
             "Amount exceeds the current invoice balance.",
             "This request has already been processed.",
+            "Calendar sync is already running.",
+            "Explicit rebuild confirmation is required.",
             # Billing parties
             "Billing name is required.",
             "Invalid preferred delivery method.",
@@ -263,7 +363,11 @@ def sanitize_staging_error_message(msg: str) -> str:
 
 
 
-def make_handler(database_path: str, write_token: str | None = None):
+def make_handler(
+    database_path: str,
+    write_token: str | None = None,
+    sync_runtime: CalendarSyncRuntime | None = None,
+):
     launch_write_token = write_token or secrets.token_urlsafe(32)
 
     class ReviewHandler(BaseHTTPRequestHandler):
@@ -366,6 +470,9 @@ def make_handler(database_path: str, write_token: str | None = None):
             elif isinstance(error, DatabaseBusyError):
                 status = 503
                 msg = "Database is busy, please try again."
+            elif isinstance(error, SyncError):
+                status = 503
+                msg = sanitize_sync_error(str(error))
             elif is_safe_validation_error(error):
                 status = 400
                 msg = str(error)
@@ -494,7 +601,7 @@ def make_handler(database_path: str, write_token: str | None = None):
                     )
                     return
                 if parsed.path == "/api/sync/status":
-                    self.send_json(public_sync_status(sync_status_for_connection(self.conn())))
+                    self.send_json(sync_status_payload(self.conn(), sync_runtime))
                     return
                 if parsed.path == "/api/service-catalog":
                     self.send_json(list_services(self.conn(), first(parse_qs(parsed.query), "include_inactive") == "1"))
@@ -817,8 +924,7 @@ def make_handler(database_path: str, write_token: str | None = None):
                     self.send_json(save_business_profile(self.conn(), data))
                     return
                 if parsed.path == "/api/sync/run":
-                    result = sync_with_connection(
-                        self.conn(),
+                    result = sync_calendar_automatically(
                         review_sync_config(database_path),
                         transport=REVIEW_SYNC_TRANSPORT,
                     )
@@ -826,7 +932,29 @@ def make_handler(database_path: str, write_token: str | None = None):
                         {
                             "rows_fetched": result.rows_fetched,
                             "rows_imported": result.rows_imported,
-                            "status": public_sync_status(sync_status_for_connection(self.conn())),
+                            "duplicate_snapshots_skipped": result.duplicate_rows_skipped,
+                            "review_items_changed": result.review_items_changed,
+                            "mode": result.mode,
+                            "status": sync_status_payload(self.conn(), sync_runtime),
+                        }
+                    )
+                    return
+                if parsed.path == "/api/sync/rebuild":
+                    if data.get("confirmed") is not True:
+                        raise ValueError("Explicit rebuild confirmation is required.")
+                    result, backup_path = rebuild_calendar_data_from_sheet(
+                        review_sync_config(database_path),
+                        transport=REVIEW_SYNC_TRANSPORT,
+                    )
+                    self.send_json(
+                        {
+                            "rows_fetched": result.rows_fetched,
+                            "rows_imported": result.rows_imported,
+                            "duplicate_snapshots_skipped": result.duplicate_rows_skipped,
+                            "review_items_changed": result.review_items_changed,
+                            "mode": result.mode,
+                            "backup_created": bool(backup_path),
+                            "status": sync_status_payload(self.conn(), sync_runtime),
                         }
                     )
                     return
@@ -1283,9 +1411,15 @@ def serve(database_path: str, host: str = "127.0.0.1", port: int = 8765) -> None
         if error.backup_path:
             print(f"Backup preserved at: {error.backup_path}")
         raise SystemExit(1)
-    server = ThreadingHTTPServer((host, port), make_handler(database_path))
+    sync_runtime = CalendarSyncRuntime(database_path, transport=REVIEW_SYNC_TRANSPORT)
+    server = ThreadingHTTPServer((host, port), make_handler(database_path, sync_runtime=sync_runtime))
     print(f"Review UI running at http://{host}:{port}/review")
-    server.serve_forever()
+    sync_runtime.start()
+    try:
+        server.serve_forever()
+    finally:
+        sync_runtime.stop()
+        server.server_close()
 
 
 def main(argv: list[str] | None = None) -> int:

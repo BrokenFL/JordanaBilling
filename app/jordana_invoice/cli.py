@@ -13,7 +13,14 @@ from .db import (
     migrate_database,
 )
 from .backfill import backfill_phase2
-from .google_sync import SyncError, cli_sync_status, load_config, load_env_file, sync_now
+from .google_sync import (
+    SyncError,
+    cli_sync_status,
+    load_config,
+    load_env_file,
+    sync_calendar_automatically,
+    sync_with_process_lock,
+)
 from .importer import import_csv
 from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
@@ -237,18 +244,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync":
         try:
             config = load_config(args.env)
-            result = sync_now(
-                config,
-                full=args.full,
-                dry_run=args.dry_run,
-            )
+            if args.full:
+                result = sync_with_process_lock(config, full=True, dry_run=args.dry_run)
+            else:
+                result = sync_calendar_automatically(config, dry_run=args.dry_run)
         except SyncError as error:
             print(f"sync failed: {error}")
             return 1
         print(
             "sync complete "
+            f"mode={result.mode} "
             f"rows_fetched={result.rows_fetched} "
             f"rows_imported={result.rows_imported} "
+            f"duplicate_rows_skipped={result.duplicate_rows_skipped} "
             f"dry_run={result.dry_run}"
         )
         return 0

@@ -89,14 +89,32 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice sync
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync-status
 ```
 
-Useful variants:
+`sync` chooses the correct mode automatically. If there is no successful
+`google_calendar_snapshots` cursor, it performs the initial full Sheet sync. If
+a successful cursor exists, it performs an incremental sync. The explicit full
+variant is reserved for recovery:
 
 ```bash
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --full
 ```
 
-`sync` fetches only rows after the saved cursor. `sync --full` asks for all available raw staged rows but still does not duplicate snapshots because `snapshot_key` is unique locally.
+`sync --full` asks for all available raw staged rows but still does not duplicate
+snapshots because `snapshot_key` is unique locally. Successful syncs store a
+durable cursor only after fetched rows, normalization, review updates, and
+report writes all succeed.
+
+When the local review app launches, it opens normally and then starts the same
+intelligent sync in the background. A first installation therefore performs a
+full Sheet sync automatically. Later launches perform incremental sync. While
+the app remains open, it repeats incremental sync every 15 minutes by default:
+
+```bash
+JORDANA_CALENDAR_SYNC_INTERVAL_MINUTES=15
+```
+
+The app never triggers the iPhone Shortcut. The Shortcut must still run
+separately to place new Calendar data into Google Sheets.
 
 Calendar integration maintenance:
 
@@ -138,7 +156,13 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 - `/clients`
 - `/people`
 
-The `Calendar Import` sidebar screen shows local sync status and a single `Sync Now` action. That button pulls snapshot rows already staged by the iPhone Shortcut through Apps Script; it does not trigger the Shortcut and does not edit Apple Calendar.
+The `Calendar Import` sidebar screen shows local sync status and a single
+`Sync Calendar` action. That button pulls snapshot rows already staged by the
+iPhone Shortcut through Apps Script, automatically choosing initial full sync or
+incremental sync from durable cursor state. It does not trigger the Shortcut and
+does not edit Apple Calendar. The Advanced `Rebuild Calendar Data from Sheet`
+action is for recovery only; it creates a private SQLite backup and rereads all
+staged Sheet evidence idempotently.
 
 The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
 

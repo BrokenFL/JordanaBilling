@@ -273,6 +273,11 @@ CREATE TABLE IF NOT EXISTS sync_state (
   last_success_at TEXT,
   last_error TEXT,
   rows_imported INTEGER NOT NULL DEFAULT 0,
+  last_mode TEXT,
+  last_rows_fetched INTEGER NOT NULL DEFAULT 0,
+  last_rows_imported INTEGER NOT NULL DEFAULT 0,
+  last_duplicate_rows INTEGER NOT NULL DEFAULT 0,
+  last_review_items_changed INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT
 );
 
@@ -1443,6 +1448,23 @@ def _apply_migration_012(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_013_SYNC_STATE_HARDENING = "013_sync_state_hardening"
+
+
+def _apply_migration_013(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "sync_state",
+        {
+            "last_mode": "TEXT",
+            "last_rows_fetched": "INTEGER NOT NULL DEFAULT 0",
+            "last_rows_imported": "INTEGER NOT NULL DEFAULT 0",
+            "last_duplicate_rows": "INTEGER NOT NULL DEFAULT 0",
+            "last_review_items_changed": "INTEGER NOT NULL DEFAULT 0",
+        },
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1456,6 +1478,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_010_INVOICE_PRIOR_BALANCE_SNAPSHOTS, _apply_migration_010),
     (MIGRATION_011_PAYMENT_RECEIPTS, _apply_migration_011),
     (MIGRATION_012_INSURANCE_CODING, _apply_migration_012),
+    (MIGRATION_013_SYNC_STATE_HARDENING, _apply_migration_013),
 ]
 
 

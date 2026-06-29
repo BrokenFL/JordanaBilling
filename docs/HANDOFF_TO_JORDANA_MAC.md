@@ -33,6 +33,17 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice sync
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync-status
 ```
 
+The review app now performs calendar sync automatically after startup. On a
+fresh database, the first successful run is a full reread of staged Sheet
+evidence. Later launches use incremental sync from the saved
+`google_calendar_snapshots` cursor, and the app repeats incremental sync every
+15 minutes while it is open. The visible Calendar Import button is
+`Sync Calendar`; it chooses full or incremental mode automatically. It does not
+trigger the iPhone Shortcut, so the Shortcut must still run separately to stage
+new Calendar rows into Google Sheets. Advanced full reread is available from
+Calendar Import only as `Rebuild Calendar Data from Sheet`, with confirmation
+and a private SQLite backup.
+
 Run a test without writing:
 
 ```bash

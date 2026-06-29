@@ -2269,9 +2269,15 @@ async function loadReports() {
 }
 
 function renderSyncStatus(status) {
+  $("syncCurrentStatus").textContent = status.current_status || "Idle";
   $("syncLastAttempt").textContent = fmtDateTime(status.last_attempt);
   $("syncLastSuccess").textContent = fmtDateTime(status.last_success);
-  $("syncTotalRowsImported").textContent = String(status.total_rows_imported || 0);
+  $("syncLastMode").textContent = status.last_mode || "-";
+  $("syncRowsFetched").textContent = String(status.rows_fetched || 0);
+  $("syncNewSnapshotsImported").textContent = String(status.new_raw_snapshots_imported || 0);
+  $("syncDuplicateSnapshotsSkipped").textContent = String(status.duplicate_snapshots_skipped || 0);
+  $("syncReviewItemsChanged").textContent = String(status.review_items_changed || 0);
+  $("syncNextAutomatic").textContent = fmtDateTime(status.next_automatic_sync);
   $("syncRawSnapshotCount").textContent = String(status.raw_snapshot_count || 0);
   $("syncOpenReviewCount").textContent = String(status.open_review_count || 0);
   $("syncLastError").textContent = status.last_error || "-";
@@ -2286,7 +2292,8 @@ function setSyncRunMessage(message, isSuccess = false) {
 function setSyncRunning(isRunning) {
   state.syncRunning = isRunning;
   $("syncNowBtn").disabled = isRunning;
-  $("syncNowBtn").textContent = isRunning ? "Syncing..." : "Sync Now";
+  $("syncNowBtn").textContent = isRunning ? "Syncing..." : "Sync Calendar";
+  if ($("syncRebuildBtn")) $("syncRebuildBtn").disabled = isRunning;
 }
 
 async function loadSyncStatus() {
@@ -2302,8 +2309,9 @@ async function runSyncNow() {
   try {
     const result = await api("/api/sync/run", { method: "POST", body: JSON.stringify({}) });
     renderSyncStatus(result.status);
-    setSyncRunMessage(`Sync complete. Fetched ${result.rows_fetched} row(s); imported ${result.rows_imported} new row(s).`, true);
+    setSyncRunMessage(`Sync complete. Fetched ${result.rows_fetched} row(s); imported ${result.rows_imported} new row(s); skipped ${result.duplicate_snapshots_skipped || 0} duplicate snapshot(s); changed ${result.review_items_changed || 0} review item(s).`, true);
     await refreshDashboardStatus();
+    if (!document.querySelector("[hidden]#calendarImportView")) await loadList();
   } catch (err) {
     setSyncRunMessage(err.message || "Sync failed.");
     try {
@@ -2322,6 +2330,30 @@ async function showCalendarImport() {
   $("pageSubtitle").textContent = "Pull Shortcut snapshots already staged in Google Sheets";
   document.title = "Jordana Billing - Calendar Import";
   await loadSyncStatus();
+}
+
+async function rebuildCalendarDataFromSheet() {
+  if (state.syncRunning) return;
+  const confirmed = confirm("Rebuild Calendar Data from Sheet rereads all staged Sheet evidence, creates a private SQLite backup first, and preserves approved sessions, invoices, rates, Bill To selections, and payments. Continue?");
+  if (!confirmed) return;
+  setSyncRunning(true);
+  $("syncRebuildMessage").textContent = "";
+  try {
+    const result = await api("/api/sync/rebuild", { method: "POST", body: JSON.stringify({ confirmed: true }) });
+    renderSyncStatus(result.status);
+    $("syncRebuildMessage").className = "settings-message success";
+    $("syncRebuildMessage").textContent = `Rebuild complete. Fetched ${result.rows_fetched} row(s); imported ${result.rows_imported} new row(s); skipped ${result.duplicate_snapshots_skipped || 0} duplicate snapshot(s).`;
+    await refreshDashboardStatus();
+    await loadList();
+  } catch (err) {
+    $("syncRebuildMessage").className = "settings-message";
+    $("syncRebuildMessage").textContent = err.message || "Rebuild failed.";
+    try {
+      renderSyncStatus(await api("/api/sync/status"));
+    } catch (_) {}
+  } finally {
+    setSyncRunning(false);
+  }
 }
 
 function businessProfileFromResponse(profile) {
@@ -5109,6 +5141,7 @@ $("newPersonBtn").onclick = async () => {
   location.hash = "people/" + person.person_id;
 };
 document.getElementById("syncNowBtn").onclick = runSyncNow;
+document.getElementById("syncRebuildBtn").onclick = rebuildCalendarDataFromSheet;
 document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
 [
   "businessNameInput",

@@ -166,6 +166,10 @@ Database schema migrations and seed data now run only during explicit startup/in
 - The review server calls `migrate_database()` at startup in `serve()`. If migration fails, the server exits with status 1.
 - CLI commands call `migrate_database()` before connecting when database access is needed.
 - Sync operations (`sync_now`, `get_unresolved_count`) call `migrate_database()` before connecting.
+- Ordinary calendar synchronization uses one intelligent service entry point.
+  Startup and manual Calendar Import sync decide full vs incremental from
+  durable `sync_state` success/cursor data, not from whether the SQLite file or
+  raw rows exist. Periodic in-app sync is incremental-only.
 
 ### Migration list
 

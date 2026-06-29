@@ -47,16 +47,17 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         sync_status.assert_called_once_with(shared_conn)
         self.assertEqual(captured["payload"]["conn_id"], id(shared_conn))
 
-    def test_sync_run_uses_active_review_server_connection(self):
-        shared_conn = object()
+    def test_sync_run_uses_active_review_server_database_path(self):
         handler, captured = self._handler("/api/sync/run", body=json.dumps({}).encode("utf-8"))
-        handler.conn = lambda: shared_conn
 
         class Result:
             rows_fetched = 4
             rows_imported = 2
+            duplicate_rows_skipped = 1
+            review_items_changed = 3
+            mode = "incremental"
 
-        with patch("jordana_invoice.review_server.sync_with_connection", return_value=Result()) as sync_run, patch(
+        with patch("jordana_invoice.review_server.sync_calendar_automatically", return_value=Result()) as sync_run, patch(
             "jordana_invoice.review_server.review_sync_config",
             return_value={"reports_dir": "Reports"},
         ), patch(
@@ -68,9 +69,11 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         ):
             handler.do_POST()
 
-        self.assertIs(sync_run.call_args.args[0], shared_conn)
+        self.assertEqual(sync_run.call_args.args[0], {"reports_dir": "Reports"})
         self.assertEqual(captured["payload"]["rows_fetched"], 4)
         self.assertEqual(captured["payload"]["rows_imported"], 2)
+        self.assertEqual(captured["payload"]["duplicate_snapshots_skipped"], 1)
+        self.assertEqual(captured["payload"]["review_items_changed"], 3)
 
 class ReviewServerSanitizationTests(unittest.TestCase):
     def setUp(self):

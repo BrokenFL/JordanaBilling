@@ -24,6 +24,24 @@ Apps Script returns raw rows from `Raw_Event_Snapshots`, sorted by `ingested_at`
 
 The local `sync_state` table stores the cursor for `source_name = google_calendar_snapshots`. The cursor advances only after the fetched rows, normalization, review queue updates, and CSV report writes complete successfully.
 
+The application uses one intelligent sync entry point. When no successful
+`google_calendar_snapshots` cursor exists, sync is treated as the initial full
+Sheet sync and requests all staged rows. Once a successful cursor exists, sync
+requests only rows newer than that cursor. Failed initial syncs do not mark
+initialization complete, and failed incremental syncs leave the prior cursor in
+place.
+
+New successful cursors store both `ingested_at` and `snapshot_key` so rows that
+share one timestamp remain page-safe and deterministic. Legacy timestamp-only
+cursors remain readable; the next successful sync upgrades the stored cursor
+format.
+
+The local review server starts normally, then triggers intelligent sync in the
+background. While the app is open, it schedules incremental sync every 15
+minutes by default (`JORDANA_CALENDAR_SYNC_INTERVAL_MINUTES`). Scheduled syncs
+never run full sync, never trigger the iPhone Shortcut, and skip cleanly if
+another sync is already running.
+
 A file-based lock (`DatabaseLock` in `db.py`) prevents overlapping syncs and migrations from running concurrently. If another sync or migration holds the lock, the second operation fails cleanly within a bounded timeout (default 30 seconds) with a clear error message. See `docs/SCHEMA_AUDIT.md` for details.
 
 ## 3. Emergency CSV Recovery

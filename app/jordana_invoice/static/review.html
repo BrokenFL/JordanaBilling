@@ -214,26 +214,40 @@
             </div>
           </div>
           <div class="settings-notice">
-            Sync Now pulls snapshots already sent by the iPhone Shortcut. It does not trigger the Shortcut and does not edit Apple Calendar.
+            Sync Calendar pulls snapshots already sent by the iPhone Shortcut. It chooses the right sync mode automatically, does not trigger the Shortcut, and does not edit Apple Calendar.
           </div>
           <div class="calendar-import-layout">
             <section class="settings-card">
               <h3>Sync status</h3>
               <div class="kv sync-status-grid">
+                <label>Status</label><span id="syncCurrentStatus">Idle</span>
                 <label>Last attempt</label><span id="syncLastAttempt">-</span>
                 <label>Last success</label><span id="syncLastSuccess">-</span>
-                <label>Total rows imported</label><span id="syncTotalRowsImported">0</span>
+                <label>Last mode</label><span id="syncLastMode">-</span>
+                <label>Rows fetched</label><span id="syncRowsFetched">0</span>
+                <label>New raw snapshots imported</label><span id="syncNewSnapshotsImported">0</span>
+                <label>Duplicate snapshots skipped</label><span id="syncDuplicateSnapshotsSkipped">0</span>
+                <label>Review items created or updated</label><span id="syncReviewItemsChanged">0</span>
+                <label>Next automatic sync</label><span id="syncNextAutomatic">-</span>
                 <label>Raw snapshot count</label><span id="syncRawSnapshotCount">0</span>
                 <label>Open review count</label><span id="syncOpenReviewCount">0</span>
                 <label>Last error</label><span id="syncLastError">-</span>
               </div>
             </section>
             <section class="settings-card">
-              <h3>Sync now</h3>
+              <h3>Sync Calendar</h3>
               <p class="help">Use this after the Shortcut has already written snapshots to Google Sheets through Apps Script.</p>
               <div class="settings-actions">
-                <button type="button" class="save" id="syncNowBtn">Sync Now</button>
+                <button type="button" class="save" id="syncNowBtn">Sync Calendar</button>
                 <div class="settings-message" id="syncRunMessage" aria-live="polite"></div>
+              </div>
+            </section>
+            <section class="settings-card">
+              <h3>Advanced</h3>
+              <p class="help">Rebuild Calendar Data from Sheet rereads all staged Sheet evidence, creates a private SQLite backup first, and preserves reviewed billing decisions.</p>
+              <div class="settings-actions">
+                <button type="button" id="syncRebuildBtn">Rebuild Calendar Data from Sheet</button>
+                <div class="settings-message" id="syncRebuildMessage" aria-live="polite"></div>
               </div>
             </section>
           </div>

@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
-from jordana_invoice.review_server import REVIEW_SYNC_TRANSPORT, make_handler
+from jordana_invoice.review_server import CalendarSyncRuntime, REVIEW_SYNC_TRANSPORT, make_handler
 import jordana_invoice.review_server as review_server
 
 
@@ -44,8 +44,10 @@ def raw_row(snapshot_key: str, title: str = "Bonnie 5") -> dict[str, str]:
 class FakeTransport:
     def __init__(self, responses):
         self.responses = list(responses)
+        self.calls = []
 
     def __call__(self, url, payload, timeout_seconds):
+        self.calls.append(payload)
         return self.responses.pop(0)
 
 
@@ -83,8 +85,8 @@ class ReviewServerSyncTests(unittest.TestCase):
         self.temp.cleanup()
 
     @contextmanager
-    def server(self):
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(str(self.active_db_path)))
+    def server(self, runtime=None):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(str(self.active_db_path), sync_runtime=runtime))
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -144,6 +146,81 @@ class ReviewServerSyncTests(unittest.TestCase):
         ).fetchone()["count"]
         self.assertEqual(active_count, 2)
         self.assertEqual(env_count, 0)
+        self.assertEqual(result["mode"], "initial_full")
+        self.assertIn("duplicate_snapshots_skipped", result)
+        self.assertIn("review_items_changed", result)
+
+    def test_rebuild_requires_confirmation(self):
+        with self.server() as base_url:
+            request = urllib.request.Request(
+                f"{base_url}/api/sync/rebuild",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Jordana-Write-Token": self.fetch_write_token(base_url),
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(request)
+        err = ctx.exception
+        self.assertEqual(err.code, 400)
+        self.assertEqual(
+            json.loads(err.read().decode("utf-8")),
+            {"ok": False, "error": "Explicit rebuild confirmation is required."},
+        )
+        err.close()
+
+    def test_runtime_startup_runs_exactly_one_intelligent_sync(self):
+        transport = FakeTransport(
+            [
+                {
+                    "ok": True,
+                    "record_type": "sync_response",
+                    "rows": [raw_row("startup-sync")],
+                    "next_cursor": {
+                        "ingested_at": "2026-06-22T02:00:00.000Z",
+                        "snapshot_key": "startup-sync",
+                    },
+                    "has_more": False,
+                }
+            ]
+        )
+        runtime = CalendarSyncRuntime(str(self.active_db_path), transport=transport, interval_minutes=60)
+        runtime.start()
+        try:
+            for _ in range(50):
+                if len(transport.calls) == 1:
+                    break
+                __import__("time").sleep(0.02)
+            self.assertEqual(len(transport.calls), 1)
+            self.assertEqual(transport.calls[0]["after_ingested_at"], "1970-01-01T00:00:00.000Z")
+        finally:
+            runtime.stop()
+
+    def test_scheduled_runtime_run_uses_incremental_cursor(self):
+        self.active_conn.execute(
+            """
+            INSERT INTO sync_state (source_name, cursor_value, last_success_at)
+            VALUES (?, ?, ?)
+            """,
+            ("google_calendar_snapshots", "2026-06-22T01:00:00.000Z", "2026-06-22T01:01:00.000Z"),
+        )
+        self.active_conn.commit()
+        transport = FakeTransport(
+            [
+                {
+                    "ok": True,
+                    "record_type": "sync_response",
+                    "rows": [],
+                    "next_cursor": "2026-06-22T01:00:00.000Z",
+                    "has_more": False,
+                }
+            ]
+        )
+        runtime = CalendarSyncRuntime(str(self.active_db_path), transport=transport, interval_minutes=60)
+        runtime._run_once(startup=False)
+        self.assertEqual(transport.calls[0]["after_ingested_at"], "2026-06-22T01:00:00.000Z")
 
     def test_get_requests_do_not_require_write_token(self):
         with self.server() as base_url:

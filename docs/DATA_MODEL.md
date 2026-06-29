@@ -14,7 +14,16 @@ This lets Simon attend a session while a parent receives the invoice. It also le
 
 One row per remote source. `google_calendar_snapshots` stores the Apps Script cursor, last attempt, last success, last error, and total local rows imported by sync.
 
-The cursor is an `ingested_at` timestamp and advances only after a successful local transaction.
+Legacy cursors may be an `ingested_at` timestamp string. New successful syncs
+store a backward-compatible composite cursor containing `ingested_at` plus
+`snapshot_key`; this prevents rows with the same ingest timestamp from being
+skipped across pagination boundaries. The cursor advances only after a
+successful local transaction and report write.
+
+Additional status fields store the last sync mode, rows fetched, new raw
+snapshots imported, duplicate snapshots skipped, and review items changed.
+These fields power the Calendar Import status summary and do not expose API
+keys, database paths, run IDs, or cursor internals.
 
 ## `import_runs`
 

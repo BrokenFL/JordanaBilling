@@ -185,28 +185,9 @@ fi
 log "Applying migrations..."
 PYTHONPATH=app python -m jordana_invoice --db "$DB_PATH" init-db
 
-# --- Step 9: Run full Google Sheets sync (first run only) ---
-RAW_COUNT=$(PYTHONPATH=app python -c "
-import sqlite3
-conn = sqlite3.connect('$DB_PATH')
-print(conn.execute('SELECT COUNT(*) FROM raw_calendar_snapshots').fetchone()[0])
-" 2>/dev/null || echo "0")
-
-if [[ "$RAW_COUNT" -eq 0 ]]; then
-  log "No data found — running full Google Sheets sync..."
-  if PYTHONPATH=app python -m jordana_invoice sync --full --env "$PROJECT_DIR/.env" >>"$LOG_FILE" 2>&1; then
-    log "Full sync completed."
-  else
-    log "Full sync failed — continuing anyway. You can retry with scripts/full_sync.sh"
-    show_error_dialog "Sync Failed" "Google Sheets sync could not complete. The review UI will still open.
-
-Check logs/bootstrap.log for details. You can retry later by running scripts/full_sync.sh"
-  fi
-else
-  log "Database has $RAW_COUNT raw snapshots — skipping full sync."
-fi
-
-# --- Step 10: Start the local app ---
+# --- Step 9: Start the local app ---
+# The review server opens first, then runs intelligent Sheet sync in the background
+# based on durable sync_state cursor state.
 log "Starting review server on port $PORT..."
 
 # Stop any stale server on the port
@@ -217,7 +198,7 @@ SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 log "Server started (PID $SERVER_PID)."
 
-# --- Step 11: Wait for successful health check ---
+# --- Step 10: Wait for successful health check ---
 log "Waiting for health check..."
 HEALTH_OK=0
 for i in $(seq 1 $MAX_HEALTH_WAIT); do

@@ -4,9 +4,11 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable, Any
 
@@ -27,10 +29,19 @@ from .util import now_iso, text
 SOURCE_NAME = "google_calendar_snapshots"
 DEFAULT_LIMIT = 500
 EMPTY_CURSOR = "1970-01-01T00:00:00.000Z"
+EMPTY_SNAPSHOT_KEY = ""
+SYNC_INTERVAL_ENV = "JORDANA_CALENDAR_SYNC_INTERVAL_MINUTES"
 
 
 class SyncError(RuntimeError):
     pass
+
+
+class SyncAlreadyRunning(SyncError):
+    pass
+
+
+_SYNC_RUN_LOCK = threading.Lock()
 
 
 @dataclass
@@ -49,6 +60,37 @@ class SyncResult:
     next_cursor: str | None
     dry_run: bool
     import_run_id: str | None = None
+    mode: str = "incremental"
+    duplicate_rows_skipped: int = 0
+    review_items_changed: int = 0
+    skipped: bool = False
+
+
+@dataclass(frozen=True)
+class SyncCursor:
+    ingested_at: str
+    snapshot_key: str = EMPTY_SNAPSHOT_KEY
+
+    def as_storage_value(self) -> str:
+        if not self.snapshot_key:
+            return self.ingested_at
+        return json.dumps(
+            {"ingested_at": self.ingested_at, "snapshot_key": self.snapshot_key},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.as_storage_value() == other or (
+                not self.snapshot_key and self.ingested_at == other
+            )
+        if isinstance(other, SyncCursor):
+            return (
+                self.ingested_at == other.ingested_at
+                and self.snapshot_key == other.snapshot_key
+            )
+        return NotImplemented
 
 
 Transport = Callable[[str, dict[str, Any], int], dict[str, Any]]
@@ -155,6 +197,98 @@ def sync_now(
     )
 
 
+def sync_calendar_automatically(
+    config: SyncConfig | None = None,
+    *,
+    dry_run: bool = False,
+    transport: Transport = default_transport,
+    allow_if_running: bool = False,
+) -> SyncResult:
+    acquired = _SYNC_RUN_LOCK.acquire(blocking=False)
+    if not acquired:
+        if allow_if_running:
+            return SyncResult(
+                rows_fetched=0,
+                rows_imported=0,
+                next_cursor=None,
+                dry_run=dry_run,
+                mode="skipped",
+                skipped=True,
+            )
+        raise SyncAlreadyRunning("Calendar sync is already running.")
+    try:
+        config = config or load_config()
+        migrate_database(config.database_path)
+        conn = connect(config.database_path)
+        try:
+            initial = should_run_initial_full_sync(conn)
+            return sync_with_connection(
+                conn,
+                config,
+                full=initial,
+                dry_run=dry_run,
+                transport=transport,
+            )
+        finally:
+            conn.close()
+    finally:
+        _SYNC_RUN_LOCK.release()
+
+
+def rebuild_calendar_data_from_sheet(
+    config: SyncConfig,
+    *,
+    transport: Transport = default_transport,
+) -> tuple[SyncResult, str]:
+    from .db import _create_backup, _verify_backup
+
+    migrate_database(config.database_path)
+    backup_path = _create_backup(Path(config.database_path))
+    _verify_backup(backup_path)
+    result = sync_with_process_lock(
+        config,
+        full=True,
+        transport=transport,
+    )
+    return result, str(backup_path)
+
+
+def sync_with_process_lock(
+    config: SyncConfig,
+    *,
+    full: bool = False,
+    dry_run: bool = False,
+    transport: Transport = default_transport,
+    skip_if_running: bool = False,
+) -> SyncResult:
+    acquired = _SYNC_RUN_LOCK.acquire(blocking=False)
+    if not acquired:
+        if skip_if_running:
+            return SyncResult(
+                rows_fetched=0,
+                rows_imported=0,
+                next_cursor=None,
+                dry_run=dry_run,
+                mode="skipped",
+                skipped=True,
+            )
+        raise SyncAlreadyRunning("Calendar sync is already running.")
+    try:
+        conn = connect(config.database_path)
+        try:
+            return sync_with_connection(
+                conn,
+                config,
+                full=full,
+                dry_run=dry_run,
+                transport=transport,
+            )
+        finally:
+            conn.close()
+    finally:
+        _SYNC_RUN_LOCK.release()
+
+
 def sync_with_connection(
     conn: sqlite3.Connection,
     config: SyncConfig,
@@ -163,11 +297,13 @@ def sync_with_connection(
     transport: Transport = default_transport,
 ) -> SyncResult:
     attempt_at = now_iso()
-    set_sync_attempt(conn, attempt_at)
+    if not dry_run:
+        set_sync_attempt(conn, attempt_at)
 
-    cursor = EMPTY_CURSOR if full else get_cursor(conn)
+    mode = "initial_full" if full else "incremental"
+    cursor = SyncCursor(EMPTY_CURSOR) if full else get_cursor(conn)
     all_rows: list[dict[str, Any]] = []
-    next_cursor: str | None = cursor
+    final_cursor = cursor
 
     try:
         while True:
@@ -176,25 +312,30 @@ def sync_with_connection(
                 {
                     "api_key": config.ingest_api_key,
                     "record_type": "sync_request",
-                    "after_ingested_at": cursor,
+                    "after_ingested_at": cursor.ingested_at,
+                    "after_snapshot_key": cursor.snapshot_key,
                     "limit": DEFAULT_LIMIT,
                 },
                 config.timeout_seconds,
             )
             rows, next_cursor, has_more = validate_sync_response(response)
             all_rows.extend(rows)
+            response_cursor = cursor_from_response(next_cursor, rows)
+            if is_cursor_after(response_cursor, final_cursor):
+                final_cursor = response_cursor
             if not has_more:
                 break
-            if not next_cursor or next_cursor == cursor:
+            if not is_cursor_after(response_cursor, cursor):
                 raise SyncError("Apps Script returned an invalid pagination cursor.")
-            cursor = next_cursor
+            cursor = response_cursor
 
         if dry_run:
             return SyncResult(
                 rows_fetched=len(all_rows),
                 rows_imported=0,
-                next_cursor=next_cursor,
+                next_cursor=final_cursor.as_storage_value(),
                 dry_run=True,
+                mode=mode,
             )
 
         lock = DatabaseLock(config.database_path, timeout_seconds=DEFAULT_LOCK_TIMEOUT_SECONDS)
@@ -206,6 +347,7 @@ def sync_with_connection(
         try:
             with conn:
                 before = count_raw_rows(conn)
+                review_before = count_review_rows(conn)
                 import_run_id = import_rows(
                     conn,
                     all_rows,
@@ -214,8 +356,17 @@ def sync_with_connection(
                     commit=False,
                 )
                 rows_imported = count_raw_rows(conn) - before
-                if next_cursor:
-                    set_sync_success(conn, next_cursor, rows_imported)
+                review_items_changed = abs(count_review_rows(conn) - review_before)
+                if final_cursor.ingested_at:
+                    set_sync_success(
+                        conn,
+                        final_cursor.as_storage_value(),
+                        rows_imported,
+                        rows_fetched=len(all_rows),
+                        duplicate_rows=max(len(all_rows) - rows_imported, 0),
+                        review_items_changed=review_items_changed,
+                        mode=mode,
+                    )
                 backfill_phase2(conn)
                 write_reports(conn, config.reports_dir)
         except sqlite3.OperationalError as error:
@@ -231,15 +382,20 @@ def sync_with_connection(
         return SyncResult(
             rows_fetched=len(all_rows),
             rows_imported=rows_imported,
-            next_cursor=next_cursor,
+            next_cursor=final_cursor.as_storage_value(),
             dry_run=False,
             import_run_id=import_run_id,
+            mode=mode,
+            duplicate_rows_skipped=max(len(all_rows) - rows_imported, 0),
+            review_items_changed=review_items_changed,
         )
     except DatabaseBusyError as error:
-        record_sync_error(conn, attempt_at, error)
+        if not dry_run:
+            record_sync_error(conn, attempt_at, error)
         raise SyncError(str(error)) from error
     except Exception as error:
-        record_sync_error(conn, attempt_at, error)
+        if not dry_run:
+            record_sync_error(conn, attempt_at, error)
         if isinstance(error, SyncError):
             raise
         raise SyncError(str(error)) from error
@@ -247,7 +403,7 @@ def sync_with_connection(
 
 def validate_sync_response(
     response: dict[str, Any],
-) -> tuple[list[dict[str, Any]], str | None, bool]:
+) -> tuple[list[dict[str, Any]], str | dict[str, Any] | None, bool]:
     if not isinstance(response, dict):
         raise SyncError("Apps Script response must be an object.")
     if response.get("ok") is not True:
@@ -265,20 +421,80 @@ def validate_sync_response(
         if not text(row.get("ingested_at")):
             raise SyncError("Every synced row must include ingested_at.")
     next_cursor = response.get("next_cursor")
-    if next_cursor is not None and not isinstance(next_cursor, str):
-        raise SyncError("next_cursor must be a string or null.")
+    if next_cursor is not None and not isinstance(next_cursor, (str, dict)):
+        raise SyncError("next_cursor must be a string, object, or null.")
     has_more = response.get("has_more")
     if not isinstance(has_more, bool):
         raise SyncError("has_more must be boolean.")
     return rows, next_cursor, has_more
 
 
-def get_cursor(conn: sqlite3.Connection) -> str:
+def parse_cursor(value: Any) -> SyncCursor:
+    cursor_value = text(value)
+    if not cursor_value:
+        return SyncCursor(EMPTY_CURSOR)
+    if cursor_value.startswith("{"):
+        try:
+            parsed = json.loads(cursor_value)
+        except json.JSONDecodeError:
+            return SyncCursor(cursor_value)
+        if isinstance(parsed, dict):
+            return SyncCursor(
+                text(parsed.get("ingested_at")) or EMPTY_CURSOR,
+                text(parsed.get("snapshot_key")),
+            )
+    return SyncCursor(cursor_value)
+
+
+def get_cursor(conn: sqlite3.Connection) -> SyncCursor:
     row = conn.execute(
         "SELECT cursor_value FROM sync_state WHERE source_name = ?",
         (SOURCE_NAME,),
     ).fetchone()
-    return text(row["cursor_value"]) if row and row["cursor_value"] else EMPTY_CURSOR
+    return parse_cursor(row["cursor_value"] if row else None)
+
+
+def should_run_initial_full_sync(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        """
+        SELECT cursor_value, last_success_at
+        FROM sync_state
+        WHERE source_name = ?
+        """,
+        (SOURCE_NAME,),
+    ).fetchone()
+    if not row or not text(row["last_success_at"]):
+        return True
+    cursor = parse_cursor(row["cursor_value"])
+    return cursor.ingested_at == EMPTY_CURSOR and not cursor.snapshot_key
+
+
+def cursor_from_response(
+    next_cursor: str | dict[str, Any] | None,
+    rows: list[dict[str, Any]],
+) -> SyncCursor:
+    if isinstance(next_cursor, dict):
+        return SyncCursor(
+            text(next_cursor.get("ingested_at")) or EMPTY_CURSOR,
+            text(next_cursor.get("snapshot_key")),
+        )
+    if isinstance(next_cursor, str) and next_cursor.startswith("{"):
+        return parse_cursor(next_cursor)
+    if rows:
+        return max(
+            (SyncCursor(text(row.get("ingested_at")), text(row.get("snapshot_key"))) for row in rows),
+            key=lambda item: (item.ingested_at, item.snapshot_key),
+        )
+    if isinstance(next_cursor, str) and next_cursor:
+        return SyncCursor(next_cursor)
+    return SyncCursor(EMPTY_CURSOR)
+
+
+def is_cursor_after(candidate: SyncCursor, current: SyncCursor) -> bool:
+    return (candidate.ingested_at, candidate.snapshot_key) > (
+        current.ingested_at,
+        current.snapshot_key,
+    )
 
 
 def set_sync_attempt(conn: sqlite3.Connection, attempt_at: str) -> None:
@@ -300,6 +516,11 @@ def set_sync_success(
     conn: sqlite3.Connection,
     cursor: str,
     rows_imported: int,
+    *,
+    rows_fetched: int = 0,
+    duplicate_rows: int = 0,
+    review_items_changed: int = 0,
+    mode: str = "incremental",
 ) -> None:
     now = now_iso()
     conn.execute(
@@ -309,10 +530,26 @@ def set_sync_success(
             last_success_at = ?,
             last_error = '',
             rows_imported = rows_imported + ?,
+            last_mode = ?,
+            last_rows_fetched = ?,
+            last_rows_imported = ?,
+            last_duplicate_rows = ?,
+            last_review_items_changed = ?,
             updated_at = ?
         WHERE source_name = ?
         """,
-        (cursor, now, rows_imported, now, SOURCE_NAME),
+        (
+            cursor,
+            now,
+            rows_imported,
+            mode,
+            rows_fetched,
+            rows_imported,
+            duplicate_rows,
+            review_items_changed,
+            now,
+            SOURCE_NAME,
+        ),
     )
 
 
@@ -340,6 +577,10 @@ def count_raw_rows(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) AS count FROM raw_calendar_snapshots").fetchone()["count"])
 
 
+def count_review_rows(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("SELECT COUNT(*) AS count FROM review_queue").fetchone()["count"])
+
+
 def sync_status_for_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     row = conn.execute(
         "SELECT * FROM sync_state WHERE source_name = ?",
@@ -361,14 +602,60 @@ def get_sync_status(config: SyncConfig | None = None) -> dict[str, Any]:
 
 
 def public_sync_status(status: dict[str, Any]) -> dict[str, Any]:
+    last_success = text(status.get("last_success_at"))
     return {
+        "current_status": "Attention Needed" if text(status.get("last_error")) else "Idle",
         "last_attempt": text(status.get("last_attempt_at")),
-        "last_success": text(status.get("last_success_at")),
+        "last_success": last_success,
+        "last_mode": public_mode_label(text(status.get("last_mode"))),
+        "rows_fetched": int(status.get("last_rows_fetched") or 0),
+        "new_raw_snapshots_imported": int(status.get("last_rows_imported") or 0),
+        "duplicate_snapshots_skipped": int(status.get("last_duplicate_rows") or 0),
+        "review_items_changed": int(status.get("last_review_items_changed") or 0),
         "total_rows_imported": int(status.get("rows_imported") or 0),
         "raw_snapshot_count": int(status.get("raw_snapshot_count") or 0),
         "open_review_count": int(status.get("unresolved_count") or 0),
-        "last_error": text(status.get("last_error")),
+        "last_error": sanitize_sync_error(text(status.get("last_error"))),
     }
+
+
+def public_mode_label(mode: str) -> str:
+    if mode == "initial_full":
+        return "Initial full sync"
+    if mode == "incremental":
+        return "Incremental sync"
+    return ""
+
+
+def sanitize_sync_error(message: str) -> str:
+    if not message:
+        return ""
+    safe_fragments = (
+        "Calendar sync is already running",
+        "Database is locked",
+        "Database is busy",
+        "Missing environment variables",
+        "Apps Script sync failed",
+        "Apps Script returned",
+        "Invalid JSON response",
+        "Network failure during sync",
+    )
+    if any(fragment in message for fragment in safe_fragments):
+        return message
+    return "Calendar sync needs attention. Please retry from Calendar Import."
+
+
+def sync_interval_minutes_from_env(default: int = 15) -> int:
+    raw = os.environ.get(SYNC_INTERVAL_ENV, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(value, 1)
+
+
+def next_sync_time_iso(minutes: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
 
 
 def get_last_success_time(config: SyncConfig | None = None) -> str:
