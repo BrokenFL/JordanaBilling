@@ -148,6 +148,51 @@ def display_invoice_number(invoice_number: Any, status: Any) -> str:
     return ""
 
 
+def _build_insurance_coding(
+    invoice: dict[str, Any],
+    profile: dict[str, Any],
+    insurance_coding_payload: dict[str, Any] | None,
+) -> list[dict[str, str]] | None:
+    """Build the insurance coding block for the render model.
+
+    For finalized invoices, reads from frozen snapshot columns.
+    For drafts, uses the temporary finalization payload plus live profile settings.
+    Returns a list of 4 line dicts or None when insurance coding is not included.
+    """
+    status = str(invoice.get("status") or "")
+    if status in ("finalized", "void"):
+        if not int(invoice.get("insurance_coding_included") or 0):
+            return None
+        diagnosis = str(invoice.get("insurance_diagnosis_code_snapshot") or "").strip()
+        ein = str(invoice.get("insurance_ein_snapshot") or "").strip()
+        npi = str(invoice.get("insurance_npi_snapshot") or "").strip()
+        sw = str(invoice.get("insurance_sw_snapshot") or "").strip()
+        if not diagnosis:
+            return None
+        return [
+            {"label": "Diagnosis Code", "value": diagnosis},
+            {"label": "EIN", "value": ein},
+            {"label": "NPI", "value": npi},
+            {"label": "SW", "value": sw},
+        ]
+
+    payload = insurance_coding_payload or {}
+    if not payload.get("insurance_coding_included"):
+        return None
+    diagnosis = str(payload.get("insurance_diagnosis_code") or "").strip()
+    ein = str(profile.get("insurance_ein") or "").strip()
+    npi = str(profile.get("insurance_npi") or "").strip()
+    sw = str(profile.get("insurance_sw") or "").strip()
+    if not diagnosis:
+        return None
+    return [
+        {"label": "Diagnosis Code", "value": diagnosis},
+        {"label": "EIN", "value": ein},
+        {"label": "NPI", "value": npi},
+        {"label": "SW", "value": sw},
+    ]
+
+
 def build_invoice_render_model(
     invoice: dict[str, Any],
     lines: list[dict[str, Any]],
@@ -155,6 +200,7 @@ def build_invoice_render_model(
     business_profile: dict[str, Any] | None = None,
     billing_party: dict[str, Any] | None = None,
     account_summary: dict[str, Any] | None = None,
+    insurance_coding_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile = business_profile or {}
     party = billing_party or {}
@@ -254,6 +300,8 @@ def build_invoice_render_model(
             "prior_invoices": account_summary.get("prior_invoices", []),
         }
 
+    insurance_coding = _build_insurance_coding(invoice, profile, insurance_coding_payload)
+
     return {
         "logo_path": logo_path,
         "logo_data_uri": logo_uri,
@@ -279,6 +327,7 @@ def build_invoice_render_model(
         "total_label": str(invoice.get("total_label_snapshot") or profile.get("invoice_total_label") or "TOTAL DUE"),
         "total_display": money(invoice.get("total_cents")),
         "account_summary": summary_model,
+        "insurance_coding": insurance_coding,
     }
 
 
@@ -297,6 +346,7 @@ def build_print_preview_html(
     business_profile: dict[str, Any] | None = None,
     billing_party: dict[str, Any] | None = None,
     account_summary: dict[str, Any] | None = None,
+    insurance_coding_payload: dict[str, Any] | None = None,
 ) -> str:
     """Build a self-contained HTML print-preview page with a DRAFT watermark.
 
@@ -308,6 +358,7 @@ def build_print_preview_html(
         business_profile=business_profile,
         billing_party=billing_party,
         account_summary=account_summary,
+        insurance_coding_payload=insurance_coding_payload,
     )
     logo_html = ""
     if render.get("logo_data_uri"):
@@ -325,6 +376,14 @@ def build_print_preview_html(
     payment_lines_html = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("payment_lines") or []))
     zelle_html = f"<div>{_esc(render.get('payment_zelle_line'))}</div>" if render.get("payment_zelle_line") else ""
     notes_html = f"<div class=\"notes\"><b>Notes:</b> {_esc(render.get('notes'))}</div>" if render.get("notes") else ""
+    insurance_html = ""
+    insurance_coding = render.get("insurance_coding")
+    if insurance_coding:
+        insurance_lines_html = "".join(
+            f'<div>{_esc(item["label"])}: {_esc(item["value"])}</div>'
+            for item in insurance_coding
+        )
+        insurance_html = f'<div class="insurance-coding">{insurance_lines_html}</div>'
 
     summary_rows_html = ""
     prior_note_html = ""
@@ -413,6 +472,8 @@ def build_print_preview_html(
   .total-row td {{ border-top: 1pt solid #102A43; padding: 9px 0; font-weight: bold; font-size: 13pt; }}
   .payment-section {{ margin-top: 10px; }}
   .payment-section b {{ font-size: 9pt; }}
+  .insurance-coding {{ margin-top: 14px; font-size: 9pt; line-height: 1.3; }}
+  .insurance-coding div {{ margin: 0; padding: 0; }}
   .notes {{ margin-top: 14px; font-size: 9pt; }}
   @media print {{ .print-btn-row, .draft-banner {{ display: none; }} .draft-watermark {{ color: rgba(200,80,80,0.08); }} }}
 </style></head><body>
@@ -437,5 +498,6 @@ def build_print_preview_html(
     <div>{_esc(render.get('payment_name') or '')}</div>
     {payment_lines_html}{zelle_html}
   </div>
+  {insurance_html}
   {notes_html}
 </body></html>"""

@@ -249,6 +249,7 @@ def generate_invoice_pdf(
         total_amount_style,
         payment_title_style,
     )
+    footer.extend(_build_insurance_coding_flowables(render, small))
     story.append(KeepTogether(footer))
     try:
         doc.build(story, onFirstPage=page, onLaterPages=page)
@@ -309,6 +310,37 @@ def _footer_pushdown_height(render: dict[str, Any]) -> float:
 
 def _escape(value: Any) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
+
+
+def _build_insurance_coding_flowables(render: dict[str, Any], small_style: Any):
+    """Build the compact insurance coding block for the PDF.
+
+    Returns a list of flowables (Paragraphs) with zero spacing between lines,
+    or an empty list if insurance coding is not present.
+    """
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+
+    insurance_coding = render.get("insurance_coding")
+    if not insurance_coding:
+        return []
+
+    coding_style = ParagraphStyle(
+        "InsuranceCoding",
+        parent=small_style,
+        fontSize=SMALL_FONT_SIZE,
+        leading=SMALL_LEADING,
+        alignment=TA_LEFT,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+
+    flowables = [Spacer(1, 0.14 * 72.0)]
+    for item in insurance_coding:
+        text = f"{_escape(item['label'])}: {_escape(item['value'])}"
+        flowables.append(Paragraph(text, coding_style))
+    return flowables
 
 
 def generate_draft_pdf_bytes(
@@ -520,6 +552,7 @@ def generate_draft_pdf_bytes(
         total_amount_style,
         payment_title_style,
     )
+    footer.extend(_build_insurance_coding_flowables(render, small))
     story.append(KeepTogether(footer))
     doc.build(story, onFirstPage=page, onLaterPages=page)
     pdf_bytes = buf.getvalue()

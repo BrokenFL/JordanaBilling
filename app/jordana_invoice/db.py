@@ -470,6 +470,9 @@ CREATE TABLE IF NOT EXISTS business_profile (
   show_email_below_logo INTEGER NOT NULL DEFAULT 0,
   invoice_total_label TEXT NOT NULL DEFAULT 'TOTAL DUE',
   invoice_number_format TEXT NOT NULL DEFAULT 'YYYY-NNNN',
+  insurance_ein TEXT,
+  insurance_npi TEXT,
+  insurance_sw TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -743,6 +746,11 @@ CREATE TABLE IF NOT EXISTS invoices (
   show_email_below_logo_snapshot INTEGER NOT NULL DEFAULT 0,
   total_label_snapshot TEXT,
   number_format_snapshot TEXT,
+  insurance_coding_included INTEGER NOT NULL DEFAULT 0,
+  insurance_diagnosis_code_snapshot TEXT,
+  insurance_ein_snapshot TEXT,
+  insurance_npi_snapshot TEXT,
+  insurance_sw_snapshot TEXT,
   notes TEXT,
   void_reason TEXT,
   pdf_path TEXT,
@@ -1409,6 +1417,32 @@ def _apply_migration_011(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_012_INSURANCE_CODING = "012_insurance_coding"
+
+
+def _apply_migration_012(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "business_profile",
+        {
+            "insurance_ein": "TEXT",
+            "insurance_npi": "TEXT",
+            "insurance_sw": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "invoices",
+        {
+            "insurance_coding_included": "INTEGER NOT NULL DEFAULT 0",
+            "insurance_diagnosis_code_snapshot": "TEXT",
+            "insurance_ein_snapshot": "TEXT",
+            "insurance_npi_snapshot": "TEXT",
+            "insurance_sw_snapshot": "TEXT",
+        },
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1421,6 +1455,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_009_INVOICE_FILING_OWNER, _apply_migration_009),
     (MIGRATION_010_INVOICE_PRIOR_BALANCE_SNAPSHOTS, _apply_migration_010),
     (MIGRATION_011_PAYMENT_RECEIPTS, _apply_migration_011),
+    (MIGRATION_012_INSURANCE_CODING, _apply_migration_012),
 ]
 
 
@@ -1696,6 +1731,26 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "appointment_status": "TEXT NOT NULL DEFAULT 'scheduled'",
             "custom_service_description": "TEXT",
             "custom_service_code": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "business_profile",
+        {
+            "insurance_ein": "TEXT",
+            "insurance_npi": "TEXT",
+            "insurance_sw": "TEXT",
+        },
+    )
+    add_columns(
+        conn,
+        "invoices",
+        {
+            "insurance_coding_included": "INTEGER NOT NULL DEFAULT 0",
+            "insurance_diagnosis_code_snapshot": "TEXT",
+            "insurance_ein_snapshot": "TEXT",
+            "insurance_npi_snapshot": "TEXT",
+            "insurance_sw_snapshot": "TEXT",
         },
     )
     conn.execute(

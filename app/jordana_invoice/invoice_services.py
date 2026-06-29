@@ -54,6 +54,7 @@ def save_business_profile(conn: sqlite3.Connection, data: dict[str, Any]) -> dic
         "city", "state", "postal_code", "phone", "email", "payee_name", "payment_address_line_1",
         "payment_address_line_2", "payment_city", "payment_state", "payment_postal_code", "zelle_recipient", "logo_path",
         "logo_contains_business_details", "show_email_below_logo", "invoice_total_label", "invoice_number_format",
+        "insurance_ein", "insurance_npi", "insurance_sw",
     )
     values = {field: data.get(field, existing[field] if existing else None) for field in fields}
     if not str(values["business_name"] or "").strip():
@@ -1407,6 +1408,7 @@ def validate_invoice_readiness(
     invoice_id: str,
     *,
     expected_revision: int | None = None,
+    insurance_coding_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One authoritative readiness check for invoice finalization.
 
@@ -1541,6 +1543,19 @@ def validate_invoice_readiness(
     if expected_revision is not None and invoice["revision"] != expected_revision:
         errors.append({"field": "revision", "message": "Invoice has changed since preview. Please review and try again."})
 
+    # 12. Insurance coding validation
+    if insurance_coding_payload and insurance_coding_payload.get("insurance_coding_included"):
+        diagnosis = str(insurance_coding_payload.get("insurance_diagnosis_code") or "").strip()
+        if not diagnosis:
+            errors.append({"field": "insurance_diagnosis_code", "message": "Diagnosis Code is required when insurance coding is enabled."})
+        if profile:
+            if not _present_text(profile["insurance_ein"]):
+                errors.append({"field": "insurance_ein", "message": "EIN is required in Invoice Settings when insurance coding is enabled."})
+            if not _present_text(profile["insurance_npi"]):
+                errors.append({"field": "insurance_npi", "message": "NPI is required in Invoice Settings when insurance coding is enabled."})
+            if not _present_text(profile["insurance_sw"]):
+                errors.append({"field": "insurance_sw", "message": "SW is required in Invoice Settings when insurance coding is enabled."})
+
     return {
         "ready": not errors,
         "errors": errors,
@@ -1594,9 +1609,18 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
     result = get_invoice(conn, invoice_id)
     invoice = result["invoice"]
     lines = result["lines"]
-    readiness = validate_invoice_readiness(conn, invoice_id)
+    readiness = validate_invoice_readiness(
+        conn, invoice_id,
+        insurance_coding_payload=data,
+    )
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
+    insurance_payload = None
+    if data and data.get("insurance_coding_included"):
+        insurance_payload = {
+            "insurance_coding_included": True,
+            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
+        }
     return {
         "invoice": dict(invoice),
         "lines": [dict(line) for line in lines],
@@ -1608,13 +1632,14 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
             [dict(line) for line in lines],
             business_profile=dict(profile) if profile else None,
             billing_party=dict(party) if party else None,
+            insurance_coding_payload=insurance_payload,
         ),
         "preview_revision": invoice["revision"],
         "readiness": readiness,
     }
 
 
-def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None) -> dict[str, Any]:
+def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None, insurance_coding_included: bool = False, insurance_diagnosis_code: str = "") -> dict[str, Any]:
     _draft(conn, invoice_id)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -1629,7 +1654,11 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
     pdf_existed_before = False
     try:
         synchronize_draft_delivery_method(conn, invoice_id)
-        readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision)
+        insurance_payload = {
+            "insurance_coding_included": insurance_coding_included,
+            "insurance_diagnosis_code": insurance_diagnosis_code,
+        }
+        readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision, insurance_coding_payload=insurance_payload)
         if not readiness["ready"]:
             raise ValueError("; ".join(e["message"] for e in readiness["errors"]))
         invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
@@ -1665,6 +1694,11 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "show_email_below_logo_snapshot": profile["show_email_below_logo"],
             "total_label_snapshot": profile["invoice_total_label"],
             "number_format_snapshot": profile["invoice_number_format"],
+            "insurance_coding_included": 1 if insurance_coding_included else 0,
+            "insurance_diagnosis_code_snapshot": insurance_diagnosis_code.strip() if insurance_coding_included else None,
+            "insurance_ein_snapshot": _present_text(profile["insurance_ein"]) if insurance_coding_included else None,
+            "insurance_npi_snapshot": _present_text(profile["insurance_npi"]) if insurance_coding_included else None,
+            "insurance_sw_snapshot": _present_text(profile["insurance_sw"]) if insurance_coding_included else None,
             "status": "finalized", "finalized_at": now, "updated_at": now,
         }
         conn.execute(f"UPDATE invoices SET {', '.join(f'{k} = ?' for k in snapshots)} WHERE invoice_id = ?", (*snapshots.values(), invoice_id))

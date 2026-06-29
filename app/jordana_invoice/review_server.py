@@ -570,11 +570,13 @@ def make_handler(database_path: str, write_token: str | None = None):
                     if data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
                         return
+                    insurance_payload = None
                     html = build_print_preview_html(
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
                         account_summary=(data.get("render_model") or {}).get("account_summary"),
+                        insurance_coding_payload=insurance_payload,
                     )
                     body = html.encode("utf-8")
                     self.send_response(200)
@@ -590,11 +592,13 @@ def make_handler(database_path: str, write_token: str | None = None):
                     if data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
                         return
+                    insurance_payload = None
                     render_model = build_invoice_render_model(
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
                         account_summary=(data.get("render_model") or {}).get("account_summary"),
+                        insurance_coding_payload=insurance_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         data["invoice"], data["lines"],
@@ -658,6 +662,58 @@ def make_handler(database_path: str, write_token: str | None = None):
             if parsed is None:
                 return
             try:
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/print-preview"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    inv_data = get_invoice(self.conn(), invoice_id)
+                    if inv_data["invoice"]["status"] != "draft":
+                        self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
+                        return
+                    insurance_payload = None
+                    if data and data.get("insurance_coding_included"):
+                        insurance_payload = {
+                            "insurance_coding_included": True,
+                            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
+                        }
+                    html = build_print_preview_html(
+                        inv_data["invoice"], inv_data["lines"],
+                        business_profile=inv_data.get("business_profile"),
+                        billing_party=inv_data.get("billing_party"),
+                        account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
+                        insurance_coding_payload=insurance_payload,
+                    )
+                    body = html.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self._apply_security_headers()
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/draft-pdf"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    inv_data = get_invoice(self.conn(), invoice_id)
+                    if inv_data["invoice"]["status"] != "draft":
+                        self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
+                        return
+                    insurance_payload = None
+                    if data and data.get("insurance_coding_included"):
+                        insurance_payload = {
+                            "insurance_coding_included": True,
+                            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
+                        }
+                    render_model = build_invoice_render_model(
+                        inv_data["invoice"], inv_data["lines"],
+                        business_profile=inv_data.get("business_profile"),
+                        billing_party=inv_data.get("billing_party"),
+                        account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
+                        insurance_coding_payload=insurance_payload,
+                    )
+                    body = generate_draft_pdf_bytes(
+                        inv_data["invoice"], inv_data["lines"],
+                        render_model=render_model,
+                    )
+                    self.send_pdf(body, f"Invoice_{invoice_id}_draft.pdf")
+                    return
                 if parsed.path == "/api/people":
                     self.send_json(create_person(self.conn(), data))
                     return
@@ -892,7 +948,12 @@ def make_handler(database_path: str, write_token: str | None = None):
                     if action == "finalize":
                         if not data.get("confirmed"):
                             raise ValueError("Explicit finalization confirmation is required.")
-                        self.send_json(finalize_invoice(self.conn(), invoice_id, expected_revision=data.get("expected_revision")))
+                        self.send_json(finalize_invoice(
+                            self.conn(), invoice_id,
+                            expected_revision=data.get("expected_revision"),
+                            insurance_coding_included=bool(data.get("insurance_coding_included")),
+                            insurance_diagnosis_code=str(data.get("insurance_diagnosis_code") or ""),
+                        ))
                         return
                     if action == "filing-owner":
                         self.send_json(update_invoice_filing_owner(self.conn(), invoice_id, data.get("person_id")))

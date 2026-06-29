@@ -89,7 +89,10 @@ const BUSINESS_PROFILE_DEFAULTS = {
   logo_contains_business_details: false,
   show_email_below_logo: false,
   invoice_total_label: "TOTAL DUE",
-  invoice_number_format: "YYYY-NNNN"
+  invoice_number_format: "YYYY-NNNN",
+  insurance_ein: "",
+  insurance_npi: "",
+  insurance_sw: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -2395,6 +2398,9 @@ function populateBusinessProfileForm(profile) {
   $("showEmailBelowLogoInput").checked = next.show_email_below_logo;
   $("invoiceTotalLabelInput").value = next.invoice_total_label;
   $("invoiceNumberFormatInput").value = next.invoice_number_format;
+  $("insuranceEinInput").value = next.insurance_ein || "";
+  $("insuranceNpiInput").value = next.insurance_npi || "";
+  $("insuranceSwInput").value = next.insurance_sw || "";
   renderBusinessProfileReadiness();
 }
 
@@ -2421,7 +2427,10 @@ function collectBusinessProfilePayload() {
     logo_contains_business_details: $("logoContainsBusinessDetailsInput").checked,
     show_email_below_logo: $("showEmailBelowLogoInput").checked,
     invoice_total_label: $("invoiceTotalLabelInput").value.trim() || BUSINESS_PROFILE_DEFAULTS.invoice_total_label,
-    invoice_number_format: $("invoiceNumberFormatInput").value.trim() || BUSINESS_PROFILE_DEFAULTS.invoice_number_format
+    invoice_number_format: $("invoiceNumberFormatInput").value.trim() || BUSINESS_PROFILE_DEFAULTS.invoice_number_format,
+    insurance_ein: $("insuranceEinInput").value.trim(),
+    insurance_npi: $("insuranceNpiInput").value.trim(),
+    insurance_sw: $("insuranceSwInput").value.trim(),
   };
 }
 
@@ -2675,7 +2684,7 @@ async function renderInvoiceEditor(data) {
     const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
     const draftData = {invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines};
     const preview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
-    renderFinalizationPreview(preview);
+    renderFinalizationPreview(preview, {included: false, diagnosisCode: ""});
   };
 
   $("printPreviewBtn").onclick = () => {
@@ -2948,7 +2957,7 @@ function buildPreviewSummaryHtml(render, data, invoice) {
   return { rowsHtml: fallbackTotal, noteHtml: "" };
 }
 
-function renderFinalizationPreview(preview) {
+function renderFinalizationPreview(preview, insuranceState) {
   const i = preview.invoice;
   const render = preview.render_model || {};
   const logoHtml = render.logo_data_uri
@@ -2965,11 +2974,38 @@ function renderFinalizationPreview(preview) {
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
     : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
   const notesHtml = render.notes ? `<div class="invoice-notes"><b>Notes:</b> ${escapeHtml(render.notes)}</div>` : "";
+  const profile = preview.business_profile || {};
+  const insState = insuranceState || {included: false, diagnosisCode: ""};
+  const insuranceChecked = insState.included ? "checked" : "";
+  const insuranceDiagnosis = escapeAttr(insState.diagnosisCode || "");
+  const insuranceEin = escapeHtml(profile.insurance_ein || "");
+  const insuranceNpi = escapeHtml(profile.insurance_npi || "");
+  const insuranceSw = escapeHtml(profile.insurance_sw || "");
+  const insuranceBlockHtml = insState.included ? `
+      <div class="insurance-coding-preview" style="margin-top:10px;font-size:9pt;line-height:1.3;">
+        <div>Diagnosis Code: ${escapeHtml(insState.diagnosisCode || "")}</div>
+        <div>EIN: ${insuranceEin}</div>
+        <div>NPI: ${insuranceNpi}</div>
+        <div>SW: ${insuranceSw}</div>
+      </div>` : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
     <div class="help">Review the invoice below carefully. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
     <div class="relationship-summary ${filingName ? "success" : ""}"><strong>File invoice under</strong><div>${fmt(filingName || "Selection required")}</div></div>
+    <div class="insurance-coding-section" style="margin:12px 0;padding:10px;border:1px solid #D9E2EC;border-radius:4px;">
+      <label class="checkbox-field"><input id="insuranceCodingCheckbox" type="checkbox" ${insuranceChecked} /><span>Add Insurance Coding</span></label>
+      <div id="insuranceCodingFields" style="margin-top:8px;${insState.included ? "" : "display:none;"}">
+        <label class="field">Diagnosis Code
+          <input id="insuranceDiagnosisCodeInput" type="text" value="${insuranceDiagnosis}" />
+        </label>
+        <div style="margin-top:6px;font-size:9pt;color:#42526A;">
+          <div>EIN: ${insuranceEin}</div>
+          <div>NPI: ${insuranceNpi}</div>
+          <div>SW: ${insuranceSw}</div>
+        </div>
+      </div>
+    </div>
     <article class="invoice-preview">
       <header class="invoice-preview-header">
         <div class="invoice-preview-left">
@@ -2987,16 +3023,55 @@ function renderFinalizationPreview(preview) {
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}${buildPreviewSummaryHtml(render, preview, i).rowsHtml}</tbody></table>
       ${buildPreviewSummaryHtml(render, preview, i).noteHtml}
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
+      ${insuranceBlockHtml}
       ${notesHtml}
     </article>
-    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="draftPdfPreviewBtn">Preview PDF</button><button id="backToDraftBtn">Back to Draft</button></div>
+    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="repreviewBtn">Update Preview</button><button id="draftPdfPreviewBtn">Preview PDF</button><button id="backToDraftBtn">Back to Draft</button></div>
   </div>`;
   const finalizeBtn = $("confirmFinalizeBtn");
   const backBtn = $("backToDraftBtn");
   const errorDiv = $("finalizeError");
+  const insCheckbox = $("insuranceCodingCheckbox");
+  const insFields = $("insuranceCodingFields");
+  const insDiagnosisInput = $("insuranceDiagnosisCodeInput");
+  const repreviewBtn = $("repreviewBtn");
   backBtn.onclick = () => { state.finalizeInProgress = false; renderInvoiceEditor(preview); };
-  if ($("draftPdfPreviewBtn")) $("draftPdfPreviewBtn").onclick = () => {
-    window.open(`/api/invoices/${i.invoice_id}/draft-pdf`, "_blank");
+  if (insCheckbox) insCheckbox.onchange = () => {
+    insFields.style.display = insCheckbox.checked ? "" : "none";
+  };
+  function collectInsurancePayload() {
+    return {
+      insurance_coding_included: insCheckbox ? insCheckbox.checked : false,
+      insurance_diagnosis_code: insDiagnosisInput ? insDiagnosisInput.value.trim() : "",
+    };
+  }
+  if (repreviewBtn) repreviewBtn.onclick = async () => {
+    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
+    const draftData = {invoice_date:$("editInvoiceDate")?.value || i.invoice_date, delivery_method:$("editDelivery")?.value || i.delivery_method, lines, ...collectInsurancePayload()};
+    try {
+      const repreview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
+      renderFinalizationPreview(repreview, {included: collectInsurancePayload().insurance_coding_included, diagnosisCode: collectInsurancePayload().insurance_diagnosis_code});
+    } catch (err) {
+      errorDiv.textContent = err.message || "Failed to update preview.";
+      errorDiv.style.display = "block";
+    }
+  };
+  if ($("draftPdfPreviewBtn")) $("draftPdfPreviewBtn").onclick = async () => {
+    const payload = collectInsurancePayload();
+    try {
+      const res = await fetch(`/api/invoices/${i.invoice_id}/draft-pdf`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to generate PDF"); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch (err) {
+      errorDiv.textContent = err.message || "Failed to generate PDF preview.";
+      errorDiv.style.display = "block";
+    }
   };
   finalizeBtn.onclick = async () => {
     if (state.finalizeInProgress) return;
@@ -3006,7 +3081,8 @@ function renderFinalizationPreview(preview) {
     errorDiv.style.display = "none";
     errorDiv.textContent = "";
     try {
-      const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision})});
+      const ins = collectInsurancePayload();
+      const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision, insurance_coding_included:ins.insurance_coding_included, insurance_diagnosis_code:ins.insurance_diagnosis_code})});
       state.finalizeInProgress = false;
       state.invoice = final;
       finalizeBtn.disabled = true;
@@ -3053,6 +3129,8 @@ function renderInvoicePreview(data) {
   const pdfButtonsHtml = i.status === "finalized"
     ? `<button id="openPdfBtn">Open PDF</button><button id="showPdfInFinderBtn">Show in Finder</button><button id="openClientFolderBtn">Open client invoice folder</button><button id="printPdfBtn">Print PDF</button>`
     : "";
+  const insCoding = render.insurance_coding;
+  const insCodingHtml = insCoding ? `<div class="insurance-coding-preview" style="margin-top:10px;font-size:9pt;line-height:1.3;">${insCoding.map(item => `<div>${escapeHtml(item.label)}: ${escapeHtml(item.value)}</div>`).join("")}</div>` : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     ${voidHtml}
     ${paymentSummaryHtml}
@@ -3069,6 +3147,7 @@ function renderInvoicePreview(data) {
       <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}${buildPreviewSummaryHtml(render, data, i).rowsHtml}</tbody></table>
       ${buildPreviewSummaryHtml(render, data, i).noteHtml}
       <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
+      ${insCodingHtml}
       ${notesHtml}
     </article>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
@@ -5038,7 +5117,10 @@ document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
   "logoContainsBusinessDetailsInput",
   "showEmailBelowLogoInput",
   "invoiceTotalLabelInput",
-  "invoiceNumberFormatInput"
+  "invoiceNumberFormatInput",
+  "insuranceEinInput",
+  "insuranceNpiInput",
+  "insuranceSwInput"
 ].forEach(id => $(id).addEventListener("input", renderBusinessProfileReadiness));
 
 loadList();
