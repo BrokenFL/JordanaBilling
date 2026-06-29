@@ -376,7 +376,17 @@ function renderInspector(data) {
                <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${escapeAttr(s.custom_service_description || "")}"></label>
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
                <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
-               <details class="field wide"><summary>Additional Information</summary><div class="field-grid"><label class="field">Payment Handling<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Invoice billing</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at session</option></select></label></div></details>
+               <label class="field">Payment Handling<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Invoice billing</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at session</option></select></label>
+               <div class="field wide" id="paidAtSessionSection" ${s.payment_status === "paid_at_session" ? "" : "hidden"} style="background: rgba(0,0,0,0.02); padding: 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1); margin-top: 8px;">
+                 <h4 style="margin: 0 0 8px 0;">Paid at Session Details</h4>
+                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
+                   <label class="field">Amount received ($)<input id="paymentAmountInput" type="text" value="${escapeAttr(currentRate)}"></label>
+                   <label class="field">Payment Date<input id="paymentDateInput" type="date" value="${escapeAttr(s.session_date || (s.start_at ? s.start_at.substring(0, 10) : ''))}"></label>
+                   <label class="field">Payment Method<select id="paymentMethodInput"><option value="" selected disabled>Select method...</option><option value="zelle">Zelle</option><option value="check">Check</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="card">Card</option><option value="other">Other</option></select></label>
+                   <label class="field">Reference #<input id="paymentRefInput" placeholder="Optional"></label>
+                   <label class="field">Admin Note<input id="paymentNoteInput" placeholder="Optional"></label>
+                 </div>
+               </div>
                ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
                <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label></div></details>
                ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${escapeAttr(s.rate_override_reason || "")}"></label>` : ""}
@@ -445,7 +455,12 @@ function wireInspector() {
     "approvedRateInput",
     "paymentInput",
     "billingTreatmentInput",
-    "overrideReasonInput"
+    "overrideReasonInput",
+    "paymentAmountInput",
+    "paymentDateInput",
+    "paymentMethodInput",
+    "paymentRefInput",
+    "paymentNoteInput"
   ].forEach(id => {
     const element = $(id);
     if (element) element.addEventListener("input", async () => {
@@ -465,6 +480,40 @@ function syncSessionCustomFields() {
   if ($("customDurationField")) $("customDurationField").hidden = durationChoice !== "custom";
   if ($("customDescField")) $("customDescField").hidden = billingType !== "custom";
   if ($("customCodeField")) $("customCodeField").hidden = billingType !== "custom";
+
+  const paymentHandling = $("paymentInput")?.value;
+  const isPaidAtSession = paymentHandling === "paid_at_session";
+  const paidAtSessionSection = $("paidAtSessionSection");
+  if (paidAtSessionSection) {
+    paidAtSessionSection.hidden = !isPaidAtSession;
+    
+    const paymentAmountInput = $("paymentAmountInput");
+    const paymentDateInput = $("paymentDateInput");
+    const paymentMethodInput = $("paymentMethodInput");
+    const paymentRefInput = $("paymentRefInput");
+    const paymentNoteInput = $("paymentNoteInput");
+
+    if (paymentAmountInput) {
+      paymentAmountInput.disabled = !isPaidAtSession;
+      if (!isPaidAtSession) paymentAmountInput.value = "";
+    }
+    if (paymentDateInput) {
+      paymentDateInput.disabled = !isPaidAtSession;
+      if (!isPaidAtSession) paymentDateInput.value = "";
+    }
+    if (paymentMethodInput) {
+      paymentMethodInput.disabled = !isPaidAtSession;
+      if (!isPaidAtSession) paymentMethodInput.value = "";
+    }
+    if (paymentRefInput) {
+      paymentRefInput.disabled = !isPaidAtSession;
+      if (!isPaidAtSession) paymentRefInput.value = "";
+    }
+    if (paymentNoteInput) {
+      paymentNoteInput.disabled = !isPaidAtSession;
+      if (!isPaidAtSession) paymentNoteInput.value = "";
+    }
+  }
 }
 
 function markDirty(section) {
@@ -889,6 +938,8 @@ async function save(approve) {
       if (staging) {
         if (staging.status === "success") {
           successMsg = "Session approved and added to monthly draft.";
+        } else if (staging.status === "not_required") {
+          successMsg = "Session approved and paid-at-session payment confirmed. Invoice staging was not required.";
         } else if (staging.status === "warning") {
           warningMsg = "Invoice staging warning: staging completed with errors — review invoices when ready.";
         } else if (staging.status === "unavailable") {
@@ -900,6 +951,9 @@ async function save(approve) {
       showReviewSuccess(successMsg);
       if (warningMsg) {
         showReviewWarning(warningMsg);
+      }
+      if (updated.report_warning) {
+        showReviewWarning(updated.report_warning);
       }
       
       if (!document.getElementById("invoicesView").hidden) {
@@ -1090,7 +1144,12 @@ function collectPayload() {
     billable_status: paymentStatus === "paid_at_session" ? "nonbillable" : "approved",
     rate_override_reason: $("overrideReasonInput")?.value || session.rate_override_reason || "",
     rate_scope: rateScope,
-    rate_scope_person_id: rateScopePersonId
+    rate_scope_person_id: rateScopePersonId,
+    amount_received: $("paymentAmountInput")?.value || "",
+    payment_date: $("paymentDateInput")?.value || "",
+    payment_method: $("paymentMethodInput")?.value || "",
+    reference_number: $("paymentRefInput")?.value || "",
+    administrative_note: $("paymentNoteInput")?.value || ""
   };
 }
 

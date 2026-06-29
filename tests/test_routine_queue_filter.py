@@ -457,7 +457,7 @@ class ApprovedQueueFilterTests(unittest.TestCase):
             "billing_session_type": "psychotherapy",
             "time_category": "standard",
             "approved_rate": "150.00",
-            "payment_status": "paid",
+            "payment_status": "unpaid",
         })
         return cid
 

@@ -1154,6 +1154,156 @@ def record_invoice_payment(
         raise
 
 
+def record_or_validate_paid_at_session_payment_locked(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    billing_party_id: str,
+    amount_cents: int,
+    payment_date: str,
+    payment_method: str,
+    reference_number: str | None = None,
+    administrative_note: str | None = None,
+) -> dict[str, Any]:
+    """Atomically record or validate a paid-at-session payment and allocation.
+
+    Must be run inside an active BEGIN IMMEDIATE write transaction. Does NOT commit.
+    """
+    # 1. Query the existing source payment
+    existing = conn.execute(
+        "SELECT * FROM payments WHERE source_type = 'paid_at_session_backfill' AND source_session_id = ?",
+        (session_id,),
+    ).fetchall()
+
+    if not existing:
+        # Validate inputs
+        if not billing_party_id or not text(billing_party_id):
+            raise ValueError("billing_party_id is required.")
+        party = conn.execute(
+            "SELECT billing_party_id FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)
+        ).fetchone()
+        if party is None:
+            raise ValueError("Bill To party was not found.")
+        if not isinstance(amount_cents, int) or amount_cents <= 0:
+            raise ValueError("Payment amount must be greater than zero.")
+        
+        received = _validate_received_at(payment_date)
+        method_val = _validate_payment_method(payment_method, required=True)
+        ref = text(reference_number) if reference_number is not None else None
+        note = text(administrative_note) if administrative_note is not None else None
+
+        payment_id = new_id()
+        now = now_iso()
+        conn.execute(
+            """INSERT INTO payments
+               (payment_id, billing_party_id, amount_cents, received_at, method,
+                reference_number, administrative_note, status, source_type,
+                source_session_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'posted', 'paid_at_session_backfill', ?, ?, ?)""",
+            (payment_id, billing_party_id, amount_cents, received, method_val,
+             ref, note, session_id, now, now),
+        )
+        _audit(conn, "payment", payment_id, "paid_at_session_payment_created", {
+            "amount_cents": amount_cents,
+            "source_type": "paid_at_session_backfill",
+            "source_session_id": session_id,
+        })
+
+        # Create allocation
+        allocation_id = new_id()
+        conn.execute(
+            """INSERT INTO payment_allocations
+               (allocation_id, payment_id, session_id, invoice_line_item_id,
+                amount_cents, status, created_at, updated_at)
+               VALUES (?, ?, ?, NULL, ?, 'active', ?, ?)""",
+            (allocation_id, payment_id, session_id, amount_cents, now, now),
+        )
+        _audit(conn, "payment_allocation", allocation_id, "paid_at_session_allocation_created", {
+            "payment_id": payment_id,
+            "session_id": session_id,
+            "amount_cents": amount_cents,
+        })
+
+        return {"payment_id": payment_id, "outcome": "created"}
+
+    if len(existing) > 1:
+        raise ValueError("Inconsistency: multiple paid-at-session payments exist for this session.")
+
+    payment = existing[0]
+
+    # Validate existing payment details
+    if payment["status"] != "posted":
+        raise ValueError(f"Inconsistency: paid-at-session payment is not posted (status: {payment['status']}).")
+    if payment["billing_party_id"] != billing_party_id:
+        raise ValueError("Inconsistency: paid-at-session payment billing party does not match session.")
+    if payment["amount_cents"] != amount_cents:
+        raise ValueError(
+            f"Inconsistency: paid-at-session payment amount ({payment['amount_cents']}) "
+            f"does not match session charge ({amount_cents})."
+        )
+
+    # Query allocations for this payment
+    allocations = conn.execute(
+        "SELECT * FROM payment_allocations WHERE payment_id = ?",
+        (payment["payment_id"],),
+    ).fetchall()
+
+    active_allocations = [a for a in allocations if a["status"] == "active"]
+
+    # Check for any conflicting active allocations for this session (pointing to other payments)
+    session_allocations = conn.execute(
+        "SELECT * FROM payment_allocations WHERE session_id = ? AND status = 'active'",
+        (session_id,),
+    ).fetchall()
+
+    if not active_allocations:
+        # Validate that no other conflicting allocation exists for this session
+        if session_allocations:
+            raise ValueError("Inconsistency: conflicting active allocations exist for this session.")
+
+        # Repair the missing allocation
+        allocation_id = new_id()
+        now = now_iso()
+        conn.execute(
+            """INSERT INTO payment_allocations
+               (allocation_id, payment_id, session_id, invoice_line_item_id,
+                amount_cents, status, created_at, updated_at)
+               VALUES (?, ?, ?, NULL, ?, 'active', ?, ?)""",
+            (allocation_id, payment["payment_id"], session_id, amount_cents, now, now),
+        )
+        _audit(conn, "payment_allocation", allocation_id, "paid_at_session_allocation_repaired", {
+            "payment_id": payment["payment_id"],
+            "session_id": session_id,
+            "amount_cents": amount_cents,
+        })
+        return {"payment_id": payment["payment_id"], "outcome": "repaired_allocation"}
+
+    if len(active_allocations) == 1:
+        alloc = active_allocations[0]
+        if alloc["session_id"] != session_id:
+            raise ValueError("Inconsistency: active allocation is for a different session.")
+        if alloc["amount_cents"] != amount_cents:
+            raise ValueError(
+                f"Inconsistency: active allocation amount ({alloc['amount_cents']}) "
+                f"does not match session charge ({amount_cents})."
+            )
+        # Check that the session has no other active allocations
+        if len(session_allocations) != 1 or session_allocations[0]["allocation_id"] != alloc["allocation_id"]:
+            raise ValueError("Inconsistency: conflicting active allocations exist for this session.")
+
+        # Reused payment/allocation
+        _audit(conn, "payment", payment["payment_id"], "paid_at_session_payment_reused", {
+            "session_id": session_id,
+        })
+        return {"payment_id": payment["payment_id"], "outcome": "reused"}
+
+    raise ValueError(
+        f"Inconsistency: expected exactly one active allocation for paid-at-session payment, "
+        f"found {len(active_allocations)}."
+    )
+
+
+
 # ---------------------------------------------------------------------------
 # Dry-run backfill analyzer (read-only)
 # ---------------------------------------------------------------------------

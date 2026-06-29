@@ -15,7 +15,7 @@ from jordana_invoice.invoice_services import (
     void_invoice,
 )
 from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
-from jordana_invoice.util import stable_hash
+from jordana_invoice.util import normalize_payment_status, stable_hash
 
 
 def raw_row(key, title, start, status_suffix=""):
@@ -71,12 +71,17 @@ class InvoiceStagingTests(unittest.TestCase):
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
             (stable_hash(f"calendar_event_id:event-{key}"),),
         ).fetchone()[0]
-        detail = approve_candidate(self.conn, candidate_id, {
+        payload = {
             "participants": [{"person_id": self.person["person_id"], "display_name": "Avery Stone"}],
             "billing_party_id": party_id, "approved_duration_minutes": 60,
             "service_mode": "office", "time_category": "standard", "approved_rate": amount,
             "payment_status": payment_status, "billing_treatment": treatment,
-        })
+        }
+        if normalize_payment_status(payment_status) == "paid_at_session":
+            payload["amount_received"] = amount
+            payload["payment_date"] = f"2026-05-{day:02d}"
+            payload["payment_method"] = "zelle"
+        detail = approve_candidate(self.conn, candidate_id, payload)
         if appointment:
             self.conn.execute(
                 "UPDATE sessions SET appointment_status = ?, billing_treatment = ? WHERE id = ?",

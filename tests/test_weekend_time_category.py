@@ -188,7 +188,7 @@ class TestApprovedHistoricalPreserved(unittest.TestCase):
             "service_mode": "phone",
             "time_category": "weekend",
             "approved_rate": "200.00",
-            "payment_status": "paid",
+            "payment_status": "unpaid",
         })
         # Simulate a historical record that was approved before the fix:
         # directly set time_category to weekend_evening as it would have been stored.
@@ -312,7 +312,7 @@ class TestNoInvoiceOrPaymentChanges(unittest.TestCase):
             "service_mode": "phone",
             "time_category": "weekend",
             "approved_rate": "150.00",
-            "payment_status": "paid",
+            "payment_status": "unpaid",
         })
         # Simulate historical record with weekend_evening stored
         conn.execute("UPDATE sessions SET time_category = 'weekend_evening' WHERE candidate_id = ?", (cid,))

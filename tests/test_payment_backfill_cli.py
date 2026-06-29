@@ -70,6 +70,7 @@ class PaymentBackfillCLITests(unittest.TestCase):
             "approved_duration_minutes": 60, "service_mode": "office",
             "time_category": "standard", "approved_rate": "150.00",
             "payment_status": "paid_at_session", "billing_treatment": "billable",
+            "amount_received": "150.00", "payment_date": "2026-05-10", "payment_method": "zelle",
         })
         self.session_id = conn.execute(
             "SELECT id FROM sessions WHERE payment_status = 'paid_at_session'"

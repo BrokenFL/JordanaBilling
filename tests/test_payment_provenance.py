@@ -260,6 +260,7 @@ class PaymentProvenanceTests(unittest.TestCase):
             "approved_duration_minutes": 60, "service_mode": "office",
             "time_category": "standard", "approved_rate": "150.00",
             "payment_status": "paid_at_session", "billing_treatment": "billable",
+            "amount_received": "150.00", "payment_date": "2026-05-15", "payment_method": "zelle",
         })
         paid_session = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
         reasons = invoice_ineligibility_reasons(self.conn, paid_session)

@@ -68,7 +68,7 @@ class SimplifiedReviewRateMemoryTests(unittest.TestCase):
                 "service_mode": "phone",
                 "time_category": "evening",
                 "approved_rate": "150.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
         self.assertEqual(approved["session"]["review_status"], "approved")
@@ -117,7 +117,7 @@ class SimplifiedReviewRateMemoryTests(unittest.TestCase):
                 "service_mode": "phone",
                 "time_category": "standard",
                 "approved_rate": "125.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
         second = self.import_one("snap-b", "Fred 6", "2026-06-19T18:00:00-04:00", "2026-06-19T19:00:00-04:00")
@@ -149,7 +149,7 @@ class SimplifiedReviewRateMemoryTests(unittest.TestCase):
                 "service_mode": "phone",
                 "time_category": "standard",
                 "approved_rate": "175.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
                 "rate_scope": "future_person",
                 "rate_scope_person_id": fred["person_id"],
             },

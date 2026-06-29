@@ -112,7 +112,7 @@ class ReviewServiceTests(unittest.TestCase):
                 "service_mode": "office",
                 "time_category": "standard",
                 "approved_rate": "150.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
         self.assertEqual(approved["session"]["review_status"], "approved")
@@ -429,7 +429,7 @@ class ReviewServiceTests(unittest.TestCase):
                 "billing_session_type": "psychotherapy",
                 "time_category": "standard",
                 "approved_rate": "150.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
         detail = get_review_candidate(self.conn, self.candidate_id)
@@ -1253,7 +1253,7 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
                 "service_mode": "office",
                 "time_category": "standard",
                 "approved_rate": "150.00",
-                "payment_status": "paid",
+                "payment_status": "unpaid",
             },
         )
 

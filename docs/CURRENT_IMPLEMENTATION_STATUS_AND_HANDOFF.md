@@ -138,6 +138,12 @@ HTTP server.
 - `payments` and `payment_allocations` tables (additive migrations)
 - Payment provenance via `source_type` and `source_session_id` (migration 004)
 - Payment corrections: reversal with reason, void with reason, apply available funds (migration 007)
+- **Paid-at-Session Apply Workflow**:
+  - First-time approval of a session marked `paid_at_session` automatically records a posted payment (with source category `paid_at_session_backfill` and correct session/billing party provenance) and allocates it to the session.
+  - Strict in-transaction validation enforces that the amount matches approved rate exactly (full payment only), payment date is valid, and payment method is selected.
+  - Full idempotency check in write transaction prevents duplicate payments/allocations, and repairs missing allocations (self-healing) when safe.
+  - Paid-at-session approvals bypass monthly invoice staging, returning a staging status of `not_required` to the UI.
+  - Report generation is executed post-commit; filesystem failures return a warning without rolling back the transaction.
 - Idempotency keys for correction deduplication
 - `billing_party_id` is the authoritative payment owner
 - Unapplied money computed dynamically (not stored as a column)
@@ -218,8 +224,7 @@ HTTP server.
 - Read-only dry-run backfill analyzer and CLI
 
 **Not implemented:**
-- Paid-at-session backfill apply mode (dry-run only)
-- Paid-at-session eligibility transition (sessions remain excluded from invoicing)
+- Paid-at-session backfill apply mode for legacy pre-workflow sessions (dry-run only; new approvals handle paid-at-session automatically)
 - Credits, multi-invoice payments, formal reconciliation, month-close workflows
 - Invoice delivery (email/mail sending)
 
@@ -236,7 +241,7 @@ HTTP server.
 PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
 ```
 
-- Full suite: 1490+ tests passing, 11 skipped, 0 failures (as of last handoff)
+- Full suite: 1943 tests passing, 11 skipped, 0 failures
 - Acceptance test (uses temporary database, never touches operational DB):
 
 ```bash
@@ -275,7 +280,7 @@ Open: `http://127.0.0.1:8765/review`
 - No formal client-versus-non-client schema distinction (all active people appear in search)
 - No automatic payer classification
 - No invoice delivery (email/mail sending)
-- No paid-at-session backfill apply mode (dry-run only)
+- No paid-at-session backfill apply mode for legacy pre-workflow sessions (dry-run only; new approvals handle paid-at-session automatically)
 - No credits, multi-invoice payments, formal reconciliation, or month-close workflows
 - No polished production dashboard
 - No permanent deletion of billing relationships (by design — deactivation only)
@@ -287,6 +292,6 @@ Open: `http://127.0.0.1:8765/review`
 2. Re-run imports and review until clean
 3. Confirm rate exceptions and bill-to defaults with Jordana
 4. Implement invoice delivery workflow
-5. Implement paid-at-session backfill apply mode
+5. Implement paid-at-session backfill apply mode for legacy pre-workflow sessions
 6. Build dashboard integration
 7. Add credits, multi-invoice payments, reconciliation, and month-close workflows
