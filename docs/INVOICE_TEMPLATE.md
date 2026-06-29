@@ -37,3 +37,23 @@ When an invoice contains prior unpaid balances or payments applied, the standard
 Below the table, if there are prior unpaid invoices, a detailed right-aligned sub-list specifies each prior invoice number, date, and its remaining unpaid balance.
 
 This layout is identical in both the HTML print preview and the ReportLab PDF rendering.
+
+## Optional Insurance Coding Block
+
+When insurance coding is enabled at finalization, a compact four-line block appears at the bottom-left of the invoice content area, after the payment section and before any notes:
+
+```
+Diagnosis Code: <value>
+EIN: <value>
+NPI: <value>
+SW: <value>
+```
+
+- The block is rendered as a single `KeepTogether` unit with zero paragraph spacing and compact leading.
+- There is no blank line or spacer between the Diagnosis Code line and the EIN line.
+- The block appears only on the final page (it is part of the footer `KeepTogether`).
+- EIN, NPI, and SW values come from Invoice Settings and are frozen into the finalized invoice snapshot at finalization time.
+- The diagnosis code is entered per-invoice during finalization and is never persisted on draft invoices.
+- When insurance coding is unchecked, no block appears in preview or final PDF.
+- Draft preview and finalized PDF render the block identically.
+- Later changes to Invoice Settings do not alter existing finalized invoices.

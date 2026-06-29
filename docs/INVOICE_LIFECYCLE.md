@@ -143,6 +143,18 @@ Validation errors are structured as `{field, message}` for UI display. No valida
 
 Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
 
+### Optional Insurance Coding
+
+During finalization, the user may optionally check "Add Insurance Coding" and enter a diagnosis code. When enabled:
+
+- The diagnosis code is required and must be non-empty.
+- EIN, NPI, and SW must exist in Invoice Settings; finalization stops with a clear message if any are missing.
+- All four values (diagnosis code + EIN/NPI/SW from settings) are frozen into the finalized invoice snapshot columns: `insurance_coding_included`, `insurance_diagnosis_code_snapshot`, `insurance_ein_snapshot`, `insurance_npi_snapshot`, `insurance_sw_snapshot`.
+- The diagnosis code is never persisted on draft invoices, people, sessions, or reusable defaults — it exists only in the finalization payload and the finalized snapshot.
+- Preview uses the temporary finalization payload plus current settings; it does not mutate the database.
+- Later settings changes do not affect existing finalized invoices.
+- When unchecked, none of these fields block finalization and no insurance block appears on the PDF.
+
 ### File Invoice Under
 
 `File invoice under` is a separate filing-owner concept from Participants, Bill To, billing relationship/account, and payment owner. Bill To remains the payer and `billing_party_id` remains the payment owner. Filing owner determines the local client folder for newly finalized PDFs.
