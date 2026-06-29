@@ -118,7 +118,7 @@ HTTP server.
   - Deterministic same-date cutoff tie-breaking (using date, draft/finalized status, finalized_at timestamp, and alphabetical UUID).
   - Graceful fallback for legacy invoices with NULL snapshots (UI shows live payment status and hides the as-finalized snapshot section).
   - Void invoices are treated as having 0 current balance and are excluded from subsequent prior balance calculations.
-  - Receipts, account statements, delivery, credits, and reconciliation remain unimplemented.
+  - Account statements, delivery, credits, and reconciliation remain unimplemented. Payment receipts are implemented separately from invoice rendering.
 
 ### PDF Generation
 
@@ -152,6 +152,7 @@ HTTP server.
 - Paid/balance amounts derived dynamically from the ledger (no `paid_cents`/`balance_cents` columns on invoices)
 - Tabbed Payments workspace: Outstanding, Paid, All Payments
 - Payment detail overlay with allocations, correction history, apply-funds, and void forms
+- Payment receipt PDF creation from posted payments: one receipt per payment, manual only, immutable JSON snapshot, stored PDF served from disk
 - Client page account summary cards (Total Finalized, Total Payments Applied, Current Balance, Account Status)
 - Shared financial summaries for draft value, monthly finalized, monthly receipts, and outstanding balance
 - Read-only dry-run backfill analyzer and CLI for paid-at-session sessions
@@ -217,6 +218,7 @@ HTTP server.
 - Apply available funds to finalized invoices
 - Invoice payment history
 - Payment detail overlay with correction history
+- Manual payment receipt preview/create/open/show-in-Finder actions for posted payments
 - Tabbed Payments workspace (Outstanding, Paid, All Payments)
 - Client page account summary
 - Shared financial summary calculations

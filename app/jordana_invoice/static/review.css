@@ -428,6 +428,9 @@ tr.empty-row:hover { background: transparent; }
   font-size: 12px;
   color: #1d3f72;
 }
+.payment-receipt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.receipt-preview-inline { margin-top: 12px; }
+.receipt-preview { transform-origin: top left; }
 .payment-overlay-modal { max-width: 760px; }
 .review-warning-banner {
   background: #fff8e8;

@@ -1998,6 +1998,12 @@ async function openPaymentDetail(paymentId) {
   const hasUnapplied = data.status === "posted" && data.unapplied_cents > 0;
   const activeAllocs = allocs.filter(a => a.status === "active");
   const reversedAllocs = allocs.filter(a => a.status === "reversed");
+  const receipt = data.receipt || null;
+  const receiptActions = receipt
+    ? `<button type="button" id="openReceiptBtn">Open Receipt</button><button type="button" id="showReceiptInFinderBtn">Show in Finder</button>`
+    : data.status === "posted"
+      ? `<button type="button" id="previewReceiptBtn">Preview Receipt</button><button type="button" id="createReceiptBtn" class="save">Create Receipt</button>`
+      : `<span class="help">Receipts are available for posted payments only.</span>`;
 
   const allocRows = allocs.map(a => `
     <tr>
@@ -2034,6 +2040,11 @@ async function openPaymentDetail(paymentId) {
       </div>
       ${data.status === "void" && data.void_reason ? `<p class="payment-detail-void-reason"><strong>Void Reason:</strong> ${escapeHtml(data.void_reason)}</p>` : ""}
       ${data.voided_at ? `<p class="payment-detail-voided-at"><strong>Voided At:</strong> ${fmt(data.voided_at)}</p>` : ""}
+    </div>
+    <div class="payment-detail-section">
+      <h3>Receipt</h3>
+      <div class="payment-receipt-actions">${receiptActions}</div>
+      <div id="paymentReceiptPreview" class="receipt-preview-inline" hidden></div>
     </div>
     <div class="payment-detail-section">
       <h3>Allocations</h3>
@@ -2073,6 +2084,40 @@ async function openPaymentDetail(paymentId) {
   const overlay = $("paymentDetailOverlay");
   overlay.hidden = false;
   $("paymentDetailOverlayClose").onclick = closePaymentDetailOverlay;
+
+  if ($("openReceiptBtn")) $("openReceiptBtn").onclick = () => { window.open(`/api/payments/${encodeURIComponent(paymentId)}/receipt-pdf`, "_blank"); };
+  if ($("showReceiptInFinderBtn")) $("showReceiptInFinderBtn").onclick = async () => {
+    try {
+      await api(`/api/payments/${encodeURIComponent(paymentId)}/receipt-document-action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "show_in_finder" }),
+      });
+    } catch (err) {
+      alert(err.message || "Show in Finder failed.");
+    }
+  };
+  if ($("previewReceiptBtn")) $("previewReceiptBtn").onclick = async () => {
+    try {
+      const preview = await api(`/api/payments/${encodeURIComponent(paymentId)}/receipt-preview`);
+      renderPaymentReceiptPreview(preview.snapshot || {});
+    } catch (err) {
+      alert(err.message || "Receipt preview failed.");
+    }
+  };
+  if ($("createReceiptBtn")) $("createReceiptBtn").onclick = async () => {
+    try {
+      const preview = $("paymentReceiptPreview");
+      const selected = preview && preview.querySelector("[name='receiptFilingOwner']") ? preview.querySelector("[name='receiptFilingOwner']").value : "";
+      await api(`/api/payments/${encodeURIComponent(paymentId)}/receipt`, {
+        method: "POST",
+        body: JSON.stringify({ filing_owner_person_id: selected || null }),
+      });
+      await openPaymentDetail(paymentId);
+      await loadAllPayments();
+    } catch (err) {
+      alert(err.message || "Receipt creation failed.");
+    }
+  };
 
   document.querySelectorAll("[data-reverse-alloc]").forEach(btn => {
     btn.onclick = async () => {
@@ -2129,6 +2174,44 @@ async function openPaymentDetail(paymentId) {
       }
     };
   }
+}
+
+function renderPaymentReceiptPreview(snapshot) {
+  const target = $("paymentReceiptPreview");
+  if (!target) return;
+  const filing = snapshot.filing_owner || {};
+  const eligible = filing.eligible_clients || [];
+  const selected = filing.selected || null;
+  const filingHtml = selected
+    ? `<div class="relationship-summary success"><strong>File receipt under</strong><div>${fmt(selected.display_name)}</div></div>`
+    : eligible.length
+      ? `<label class="field">File receipt under<select name="receiptFilingOwner"><option value="">Select client...</option>${eligible.map(person => `<option value="${escapeAttr(person.person_id)}">${fmt(person.display_name)}</option>`).join("")}</select></label><div class="help">${fmt(filing.message)}</div>`
+      : `<div class="reports-error">${fmt(filing.message || "Filing owner is unresolved.")}</div>`;
+  target.hidden = false;
+  target.innerHTML = `
+    <article class="invoice-preview receipt-preview">
+      <header class="invoice-preview-header">
+        <div class="invoice-preview-left">
+          <div class="invoice-preview-sender">${(snapshot.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+          <div class="invoice-billto"><strong>BILL TO</strong>${(snapshot.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+        </div>
+        <div class="invoice-preview-title">
+          <h3>${fmt(snapshot.document_title || "DRAFT PAYMENT RECEIPT")}</h3>
+          ${snapshot.receipt_number ? `<div><strong>Receipt Number:</strong> ${fmt(snapshot.receipt_number)}</div>` : ""}
+          <div><strong>Payment Date:</strong> ${fmt(snapshot.payment_date_display)}</div>
+          <div><strong>Payment Method:</strong> ${fmt(snapshot.payment_method_display)}</div>
+          ${snapshot.reference_number ? `<div><strong>Reference:</strong> ${fmt(snapshot.reference_number)}</div>` : ""}
+        </div>
+      </header>
+      ${filingHtml}
+      <table class="invoice-preview-table"><thead><tr><th>Invoice / Session</th><th>Date</th><th>Amount Paid</th><th>Remaining Balance</th></tr></thead><tbody>${(snapshot.allocations || []).map(a => `<tr><td>${fmt(a.reference_display)}</td><td>${fmt(a.service_date_display)}</td><td>${money(centString(a.amount_cents))}</td><td>${money(centString(a.remaining_balance_cents))}</td></tr>`).join("")}</tbody></table>
+      <div class="invoice-payment-summary">
+        <div class="payment-summary-card"><label>Amount Received</label><strong>${money(centString(snapshot.amount_cents))}</strong></div>
+        <div class="payment-summary-card"><label>Unapplied</label><strong>${money(centString(snapshot.unapplied_cents))}</strong></div>
+        <div class="payment-summary-card"><label>Status</label><strong>${snapshot.paid_in_full ? "PAID IN FULL" : "Partial payment"}</strong></div>
+      </div>
+    </article>
+  `;
 }
 
 function closePaymentDetailOverlay() {
