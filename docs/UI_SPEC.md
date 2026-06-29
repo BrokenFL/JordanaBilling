@@ -1,93 +1,362 @@
-# Review UI Spec
+# Review UI Specification
 
-## Invoice Workspace
+This document describes the current implemented local UI. Older right-side-inspector and browser-prompt designs are obsolete.
 
-`/invoices` keeps the dense desktop shell and adds one status-filtered invoice list with a focused builder/preview pane. Eligibility and totals come from the backend. Draft descriptions and delivery may be edited; finalization requires explicit confirmation. Finalized records allow history and void-with-reason, not silent editing.
+## Route And Shell
 
-Approved mockup is stored locally at `docs/review-ui-approved-mockup.png` when available. It is intentionally ignored by Git because screenshots may contain client-style data.
-
-## Implemented Route
-
-```text
-/review
-```
-
-Run locally:
-
-```bash
-PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 serve-review
-```
-
-Then open:
+The application runs locally at:
 
 ```text
 http://127.0.0.1:8765/review
 ```
 
-## Implemented Layout
+Start it with:
 
-- Fixed dark left navigation
-- Compact top status bar
-- Dense review list with one session per row
-- Main list uses most of the window
-- Right-side editable inspector
-- Selecting a row updates the inspector in place
-- Routine review does not require modals
+```bash
+PYTHONPATH=app .venv/bin/python -m jordana_invoice \
+  --db data/jordana_invoice.sqlite3 \
+  serve-review
+```
 
-## Implemented Editing
+The desktop shell contains:
 
-The routine inspector supports:
+- fixed left navigation
+- compact top status area
+- full-width Review Queue
+- focused review overlay for one calendar candidate/session
+- separate workspaces for Sessions, Clients, Billing Relationships, Rate Card, Invoices, Payments, Calendar Import, Reports, and Settings
 
-- Clients in this session search/add/reuse/correction/merge
-- Bill-to search/create/reuse
-- duration edits
-- service mode edits
-- time category edits
-- suggested/editable rate edits with a visible explanation
-- rate-change scope: this session only, future sessions for one participant, or future joint sessions for the exact participant set
-- payment status edits
-- save without approval
-- approval with validation
-- personal/admin/nonbillable/duplicate marking
-- collapsed Advanced relationships and shared billing controls for billing relationship members, roles, default payer, shared-rate setup, and opening billing relationship records
-- functional Rate Card section
-- independent Save Client(s), Save Bill To, and Save Session Draft buttons
-- Billing Relationships list and relationship record
-- Clients list and client record
-- return link from CRM record back to the originating review item
+The UI reads and writes SQLite only through localhost API routes. It never edits CSV exports or raw Google Sheet rows.
 
-Routine review should not display backend family-account setup, household names, relationship roles, or billing relationship membership as required fields.
+## Review Queue
 
-## Future UI Work
+The Review Queue resolves one calendar event at a time.
 
-- richer account membership editor
-- billing address inline subform
-- explicit previous/next controls
-- audit history drawer
-- duplicate-link picker
-- deeper rate-rule editing and deactivation controls
+The main table uses these columns:
 
-The next build should keep this dense list plus inspector architecture.
-## Calendar Review UI Additions
+- Status
+- Date
+- Time
+- Clients
+- Calendar
+- Duration
+- Rate
+- Review
 
-Keep the dense desktop review layout. Do not turn the screen into calendar administration.
+The status filter offers:
 
-Additions:
+1. **Needs Review** — default; excludes approved and excluded records
+2. **Approved**
+3. **Excluded**
 
-- demo banner only when SQLite `app_metadata.demo_mode=true`
-- source-calendar filter
-- source calendar and preferred-work indicator
-- calendar-disposition indicator
-- appointment-status badge
-- title-time discrepancy warning with Calendar start preserved
-- cancellation/no-show billing-treatment control
+Calendar filters can show normal review calendars, all calendars, preferred work calendar, other calendars, personal/admin calendars, and hidden calendars. Hidden records remain recoverable.
 
-Backend billing relationship controls remain collapsed under Advanced relationships and shared billing.
+Selecting a row or clicking **Review** opens the focused review overlay. Routine review no longer uses a persistent right-side inspector.
 
-## Sessions Page Actions
+## Review Overlay
 
-The Sessions page includes an Actions column:
+The overlay presents the current candidate/session in this order:
 
-- **Send to Review** — shown only for candidate-only rows with `review_status == needs_classification`. Reuses the existing `/api/review/candidates/{id}/send-to-review` promotion route. After success, the row refreshes and the candidate appears in the Review Queue.
-- **Return to Review** — shown for excluded sessions. Restores the session to `needs_classification` for re-review.
-- No action is shown for approved, finalized/invoiced, or already-in-review rows.
+1. **Clients in this session**
+2. **Bill To**
+3. **Session Details**
+4. **Additional Information**
+5. **Approve Session**
+
+Source calendar evidence remains available in a collapsed read-only section.
+
+The overlay supports:
+
+- focus trapping
+- Escape to close, subject to unsaved-change protection
+- Previous/next navigation where available
+- focus restoration after closing
+- double-submission protection
+- sanitized inline errors
+- no browser `alert()`, `prompt()`, or `confirm()` in the normal workflow
+
+### Clients In This Session
+
+Participants are permanent human records connected to this session.
+
+The UI supports:
+
+- searching existing people
+- confirming parser-proposed names
+- creating a person only after confirmed first and last names
+- multiple participants with one charge
+- removing all participants intentionally
+- exact approved-alias reuse
+- single-participant alias learning after **Save Client(s)**
+
+The UI must not create one mashed-together person from a multi-person calendar title.
+
+### Bill To
+
+Bill To is the person or organization responsible for receiving and paying the invoice. Bill To may differ from the participants.
+
+Routine review offers appropriate existing payer choices and a path to **Change payer or shared billing**. Advanced relationship setup belongs in the Billing Relationships workflow.
+
+Routine review must not require or prominently expose:
+
+- Client / Family Account
+- account codes
+- household labels
+- relationship-role editing
+- backend membership structures
+
+### Session Details
+
+The active UI offers exactly five billing session types:
+
+1. Psychotherapy Session
+2. Psychotherapy Session / House Call
+3. Psychotherapy Session / Weekend
+4. Psychotherapy Session / Evening
+5. Custom
+
+Office, Phone, and FaceTime are appointment methods and may appear as source evidence. They are not selectable billing session types.
+
+The active duration choices are:
+
+- 30 minutes
+- 60 minutes
+- 90 minutes
+- 120 minutes
+- Custom
+
+Custom duration requires the actual minutes. Custom session type requires a custom description and may include an optional administrative code.
+
+The rate field remains editable and can save to one of these scopes:
+
+- this session only
+- future sessions for one client
+- future joint sessions for the exact participant combination
+
+Approved historical rates are never rewritten by later rate-card changes.
+
+### Derived Time Category
+
+Time category is derived from the authoritative calendar date and start time. It is not a normal selectable review field.
+
+Current categories are:
+
+- `standard`
+- `evening`
+- `weekend`
+
+Weekend overrides evening. House Call affects billing session type but does not create a separate editable time-category control.
+
+The UI may display the derived category for clarity. Approval validates the stored derived value.
+
+### Additional Information
+
+The visible label is **Payment Handling**:
+
+- **Invoice billing** — session is eligible for monthly invoice staging after approval
+- **Paid at session** — approval requires the received amount, payment date, and supported payment method; approval records one payment and allocation and skips invoice staging
+
+Appointment status is separate from payment handling.
+
+Cancelled and no-show appointments require a separate billing-treatment decision:
+
+- billable
+- not billable
+- waived
+- unresolved
+
+Cancelled/no-show records remain preserved even when not billed.
+
+## Section-Level Save Behavior
+
+The independent actions are:
+
+- **Save Client(s)**
+- **Save Bill To**
+- **Save Session Draft**
+- **Approve Session**
+
+No section save approves a session.
+
+After a successful section save, the backend refreshes dependent suggestions, checklist state, unresolved fields, payer defaults, and rate suggestions while preserving unrelated unsaved browser fields.
+
+On save failure:
+
+- overlay stays open
+- button re-enables
+- no stale saved state is shown
+- sanitized error is displayed
+- no partial browser state is treated as authoritative
+
+## Approval Behavior
+
+**Approve Session** validates at minimum:
+
+- confirmed participants
+- Bill To
+- duration
+- one of the five billing session types
+- derived time category
+- actual charged rate
+- payment handling
+- cancelled/no-show billing treatment when applicable
+- paid-at-session payment details when applicable
+
+During submission, the approve action is disabled.
+
+On success:
+
+- approval is committed
+- stale selected state is cleared
+- overlay closes
+- the row is removed or refreshed
+- focus is restored
+- a confirmation banner appears
+- no resubmittable stale form remains
+
+For invoice billing, approval then attempts monthly invoice staging. Approval remains successful if staging warns or is temporarily unavailable; the staging warning is shown separately.
+
+For paid-at-session, approval creates or validates the payment/allocation idempotently and reports invoice staging as not required.
+
+On genuine approval failure:
+
+- overlay stays open
+- controls re-enable
+- sanitized error is shown
+- no successful state is falsely displayed
+
+## Duplicate Resolution
+
+The preferred action is **Confirm Duplicate & Next**.
+
+On success:
+
+- the action disables while pending
+- duplicate resolution is persisted
+- overlay closes
+- stale selection is cleared
+- the resolved item is removed or refreshed
+- the next unresolved item opens when supported
+- otherwise focus is restored
+- a success banner appears
+
+On failure:
+
+- overlay stays open
+- action re-enables
+- sanitized error is displayed
+- no partial UI state is treated as complete
+
+## Billing Relationships
+
+Billing Relationships is payer-centered.
+
+Visible concepts are:
+
+- Who receives the invoice?
+- Who are they paying for?
+- Invoice recipient
+- Pays for
+- Billing delivery
+- Status
+
+The guided wizard uses:
+
+1. choose payer type and payer
+2. explicitly select covered clients
+3. review and save
+
+Rules:
+
+- the payer is not automatically covered
+- session participants remain selectable but are not silently preselected
+- changing payer type clears stale covered-client selections
+- selected-client chips are the source of truth
+- removing a chip makes that client searchable again
+- exact active duplicates are blocked or reused explicitly
+- saved relationships persist immediately to SQLite
+- approved sessions are never silently rewritten
+- deactivation preserves history; permanent deletion is not implemented
+
+## Clients Workspace
+
+The Clients workspace uses permanent `people` records and displays:
+
+- names and person code
+- active status
+- billing setup
+- payer relationships
+- approved aliases
+- recent sessions
+- invoice history
+- account summary
+- active rate exceptions
+- administrative billing notes
+
+It must not store clinical notes or rewrite finalized invoice snapshots after a current name change.
+
+## Invoices Workspace
+
+The Invoices workspace provides:
+
+- searchable and filterable invoice library
+- draft, finalized, and void statuses
+- draft line editing with optimistic locking
+- draft HTML print preview
+- real in-memory draft PDF preview marked DRAFT
+- readiness validation before finalization
+- explicit two-step finalization
+- immutable final PDF and snapshots
+- void with reason and reissue under a new number
+- prior unpaid balance and total amount due presentation
+- filing-owner selection when required
+
+Finalized and void invoices are never edited in place.
+
+## Payments Workspace
+
+The Payments workspace provides:
+
+- Outstanding invoices
+- Paid invoices
+- All Payments ledger
+- payment entry
+- allocation history
+- allocation reversal with reason
+- apply available funds
+- payment void with reason
+- immutable manual payment receipts
+- shared financial summaries
+
+Invoice charges remain immutable. Settlement status is derived from the payment ledger.
+
+## Calendar Import And Sessions
+
+Calendar Import shows local sync status and:
+
+- **Sync Calendar** — intelligent full-or-incremental choice based on durable sync state
+- **Rebuild Calendar Data from Sheet** — advanced recovery-only full reread with confirmation and backup
+
+The app never triggers the iPhone Shortcut.
+
+The Sessions workspace is a read-only appointment/session ledger. Candidate-only unresolved rows may offer **Send to Review**. Excluded sessions may offer **Return to Review**. Approved or invoiced records are not silently reopened.
+
+## Security And Rendering
+
+All user-controlled values rendered through `innerHTML` must pass through `escapeHtml`, `escapeAttr`, or the escaped formatting helper.
+
+Derived CSV downloads neutralize spreadsheet formula injection.
+
+Write routes require the local write token and appropriate content type. Errors exposed to the browser must not include SQL, filesystem paths, stack traces, secrets, or private internal diagnostics.
+
+## Current Deferred UI Work
+
+The following are not complete:
+
+- polished production dashboard
+- invoice email/mail delivery and tracking
+- legacy paid-at-session backfill apply UI
+- credits, refunds, reconciliation, and month-close workflows
+- automatic payer classification
+- formal client-versus-non-client schema distinction
+- permanent billing-relationship deletion
