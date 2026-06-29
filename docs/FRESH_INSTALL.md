@@ -1,16 +1,39 @@
 # Fresh Install Guide
 
-This guide covers setting up Jordana Billing on a fresh macOS machine from a clean clone.
+This guide covers installing Jordana Billing on a new macOS computer from a clean clone.
+
+## Choose The Correct Installation Type
+
+There are two different installation paths. Do not confuse them.
+
+### Production handoff or replacement Mac
+
+A production handoff must preserve the operational SQLite database. Google Sheets contains raw calendar evidence, but it does not contain the complete reviewed operational state. Rebuilding only from the Sheet would omit or lose:
+
+- confirmed people and aliases
+- billing relationships and Bill To decisions
+- approved session values and rate snapshots
+- invoice drafts and finalized invoice history
+- payments, allocations, receipts, and correction history
+- audit history and local application settings
+
+Follow `docs/PRIVATE_DATA_TRANSFER.md`. Transfer the live database, `.env`, private branding, generated invoices/receipts, and other private local files through an approved secure method. Never transfer production data through GitHub.
+
+### New development, demo, or intentionally empty installation
+
+A blank database may be created only for a new isolated development/demo installation or when an explicitly approved recovery plan calls for rebuilding raw evidence. A blank database can sync calendar snapshots from Google Sheets, but that is not a substitute for transferring an existing production database.
+
+Use `scripts/create_demo_database.sh` for fictional demo data. Never import demo data into the operational database.
 
 ## Prerequisites
 
-- macOS 12 or later (Apple Silicon or Intel)
-- Python 3.11 or newer (check with `python3 --version`)
-- Internet access for pip and Google Sheets sync
+- macOS 12 or later, Apple Silicon or Intel
+- Python 3.11 or newer
+- Internet access for dependency installation and Google Sheets sync
+- Access to the private GitHub repository
+- For production handoff: the verified private transfer package described in `docs/PRIVATE_DATA_TRANSFER.md`
 
-## Steps
-
-### 1. Clone the repository
+## 1. Clone The Repository
 
 Clone using GitHub Desktop or the command line:
 
@@ -18,146 +41,205 @@ Clone using GitHub Desktop or the command line:
 git clone <repo-url> "Jordana Billing"
 ```
 
-The repository includes `Jordana Billing.app` — a double-clickable launcher.
+The repository includes `Jordana Billing.app`, a double-clickable launcher.
 
-### 2. Add private configuration
+## 2. Place Private Production Files
 
-The only private file needed is `.env` in the project root. It contains:
+For a production handoff, stop before launching and place the verified private files in their documented locations.
 
-- `JORDANA_APPS_SCRIPT_URL` — the Google Apps Script `/exec` web app URL
-- `JORDANA_INGEST_API_KEY` — the ingest API key accepted by Apps Script
-- optional calendar integration administration values documented in `.env.example`
+Minimum production state normally includes:
 
-No Google credentials JSON or OAuth tokens are required. Sync uses a simple HTTP POST to the Apps Script endpoint with the API key.
+```text
+.env
+data/jordana_invoice.sqlite3
+data/private/
+Invoices/
+Receipts/
+Reports/
+```
 
-**Option A: Let the launcher create it**
+Not every installation will already have every generated directory, but the live database must be transferred when preserving an existing production system.
 
-Double-click `Jordana Billing.app`. On first run, it creates `.env` from `.env.example`, resolves all local paths, opens the new file in TextEdit, and shows a dialog naming the two credential values to add. Save the file and double-click the app again.
+Before accepting the database:
 
-**Option B: Create it manually**
+1. Verify the transfer manifest and SHA-256 checksums.
+2. Confirm the database filename and destination path.
+3. Confirm the source backup passed `PRAGMA integrity_check`.
+4. Keep the transfer package outside the Git repository.
+5. Retain the source backup until the new Mac is fully verified.
+
+See `docs/PRIVATE_DATA_TRANSFER.md` for the authoritative secure-transfer procedure.
+
+## 3. Configure `.env`
+
+If `.env` was transferred securely, verify it without pasting its secrets into chat, documentation, source code, or Git.
+
+For a new empty installation, copy the template:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in the two credential values. The `__PROJECT_DIR__` placeholders are resolved automatically on first launch — no need to edit paths manually.
+The required sync values include:
 
-### 3. Double-click the launcher
+- `JORDANA_APPS_SCRIPT_URL`
+- `JORDANA_INGEST_API_KEY`
+- `JORDANA_DATABASE_PATH`
+- `JORDANA_REPORTS_DIR`
+- optional `JORDANA_BACKUP_DIR`
+
+The launcher can create `.env` from `.env.example`, resolve `__PROJECT_DIR__` placeholders, open the file in TextEdit, and identify missing required values. It validates `.env` as data and does not execute it as shell code.
+
+## 4. Double-Click The Launcher
 
 Double-click **Jordana Billing.app** in Finder.
 
-The app is ad-hoc code-signed and uses `NSDocumentsFolderUsageDescription` for macOS TCC compliance. When launched, it opens a Terminal window to run the setup scripts — this is required because macOS TCC restricts apps launched via LaunchServices from directly reading files in protected locations like `~/Documents`. Terminal already has the necessary TCC permissions.
+The app is ad-hoc code-signed and delegates setup to Terminal because macOS privacy controls may restrict direct access to files under `~/Documents`. The Terminal window is expected and may be closed after the browser opens successfully.
 
-**First launch** performs:
+### First launch with a transferred production database
 
-1. Searches for Python 3.11+ in known locations (`/opt/homebrew/bin/python3`, `/usr/local/bin/python3`, `/usr/bin/python3`, `command -v python3`) — no manual PATH configuration required
-2. Creates a project-local virtual environment (`.venv`) using the discovered Python
-3. Installs pinned dependencies
-4. Creates `.env` from template if missing, resolves local paths, and opens it in TextEdit
-5. Validates `.env` without executing it as shell code
-6. Creates a blank SQLite database if missing — **existing databases are preserved and never deleted**
-7. Applies existing migrations safely
-8. Runs a full Google Sheets sync (only if database is empty)
-9. Starts the local review server on `127.0.0.1:8765`
-10. Waits for a successful health check
-11. Opens the review UI in the default browser
+The launcher must:
 
-**Later launches** start quickly:
+1. Locate Python 3.11 or newer.
+2. Create the project-local `.venv`.
+3. Install pinned dependencies.
+4. Validate `.env`.
+5. Detect and preserve the existing operational database.
+6. Create and verify a private SQLite backup before any pending migration.
+7. Apply only pending additive migrations.
+8. Start the local review server at `127.0.0.1:8765`.
+9. Run intelligent calendar sync using the existing durable cursor.
+10. Open the review UI in the default browser.
 
-- Applies only pending safe migrations
-- Starts the server
-- Opens the browser
-- Does not repeat a full import unnecessarily
-- Preserves all local data
+It must not delete, recreate, replace, or treat the transferred database as a clean installation.
 
-### 4. Verify
+### First launch without a database
 
-The review UI opens automatically at `http://127.0.0.1:8765/review`.
+For an explicitly empty installation, the launcher creates a new SQLite database, applies migrations, and performs an initial full read of staged Google Sheet evidence. This reconstructs raw calendar evidence and proposed review records only. It does not reconstruct prior human review, invoices, payments, or other production-only SQLite state.
 
-## No Database Required for Transfer
+### Later launches
 
-A fresh installation starts with no database. The first launch creates it, applies migrations, and imports the configured Google Sheet. Never copy a database between machines — each Mac creates its own from the Google Sheet source.
+Later launches:
 
-If an existing database is found (e.g., from a reused checkout), the launcher reports that it will be preserved and does **not** call it a "clean" or "new" installation. Existing databases are never deleted or reset automatically.
+- preserve all local data
+- apply only pending safe migrations
+- start the server and open the browser
+- trigger intelligent sync after startup
+- use incremental sync when a successful cursor exists
+- repeat incremental sync while the app remains open
+- never trigger the iPhone Shortcut
 
-## Terminal Window
+## 5. Verify The Installation
 
-The launcher opens a Terminal window when run. This is intentional — macOS TCC (Transparency, Consent, and Control) restricts apps launched via LaunchServices from reading files in protected locations like `~/Documents`. Terminal already has the necessary TCC permissions, so the launcher delegates script execution to it. The Terminal window can be closed after the review UI opens in the browser.
+The review UI should open at:
 
-## No Terminal Required
+```text
+http://127.0.0.1:8765/review
+```
 
-The entire setup is double-click driven. The only manual step is pasting two credential values into the `.env` file that the launcher opens automatically in TextEdit.
+Run the repository verification script when performing a production handoff:
 
-## Command Reference (optional)
+```bash
+scripts/verify_install.sh
+```
 
-These scripts are available for Terminal use but are not required:
+For a transferred production database, also verify:
+
+1. `PRAGMA integrity_check` returns `ok`.
+2. Expected migration IDs are present through the current repository migration.
+3. Manifest row counts match the source package.
+4. Existing approved sessions, invoices, payments, and audit history are visible.
+5. Stored finalized PDFs and receipts open from their existing records.
+6. A manual calendar sync succeeds without duplicating snapshots or sessions.
+7. A fresh private backup is created on the new Mac.
+
+Do not run destructive reset scripts against the operational database.
+
+## Calendar Synchronization
+
+The app uses one intelligent sync path:
+
+- no successful cursor: initial full read of staged Sheet evidence
+- successful cursor present: incremental sync
+- periodic in-app sync: incremental only
+- Advanced **Rebuild Calendar Data from Sheet**: recovery-only full reread with confirmation and a private database backup
+
+The app does not launch the iPhone Shortcut. The Shortcut remains responsible for placing new Apple Calendar snapshots into Google Sheets.
+
+## Optional Command Reference
+
+These scripts are available for terminal use:
 
 | Command | Purpose |
-|---------|---------|
+|---|---|
 | `scripts/bootstrap.sh` | First-run setup and launch |
 | `scripts/start_jordana.sh` | Subsequent launch |
 | `scripts/stop_jordana.sh` | Stop the review server |
-| `scripts/health_check.sh` | Check if server is healthy |
-| `scripts/full_sync.sh` | Full Google Sheets sync |
-| `scripts/backup_db.sh` | Backup the SQLite database |
-| `scripts/reset_test_db.sh` | Test-only database reset (requires confirmation) |
-| `scripts/build_launcher.sh --force` | Rebuild the .app bundle |
+| `scripts/health_check.sh` | Check server health |
+| `scripts/full_sync.sh` | Recovery-oriented full Sheet sync |
+| `scripts/backup_db.sh` | Create a private SQLite backup |
+| `scripts/reset_test_db.sh` | Reset a test database only; requires confirmation |
+| `scripts/build_launcher.sh --force` | Rebuild the `.app` bundle |
 | `scripts/verify_install.sh` | Verify installation integrity |
 | `scripts/git_safety_check.sh` | Check for staged private files |
 | `scripts/privacy_check.sh` | Check for tracked private files |
 
-## Private Files Required Separately
+## Private Files
 
-These files must be provided manually and are never committed to Git:
+The following remain local and must never be committed:
 
-- `.env` — API keys and local paths (auto-created from template on first launch)
-- `data/jordana_invoice.sqlite3` — local database (created on first run)
-- `Reports/` — generated CSV reports
-- `logs/` — sanitized application logs
-- `Invoices/` — generated PDF invoices
+- `.env`
+- `data/jordana_invoice.sqlite3`
+- `data/private/`
+- raw imports and Google credentials
+- `Reports/`
+- `logs/`
+- `Invoices/`
+- `Receipts/`
+- SQLite backups
+- Shortcut exports or secret-bearing Shortcut build specifications
 
 ## Troubleshooting
 
-### "Python 3.11 or newer is required"
+### Python 3.11 or newer is required
 
-The launcher searches these locations in order:
-
-1. `/opt/homebrew/bin/python3` (Homebrew on Apple Silicon)
-2. `/usr/local/bin/python3` (Homebrew on Intel)
-3. `/usr/bin/python3` (system Python)
-4. `command -v python3` (PATH fallback)
-
-If none has Python 3.11+, install from [python.org](https://www.python.org/downloads/) or via Homebrew:
+The launcher searches common Homebrew, system, and `PATH` locations. Install a current Python from python.org or Homebrew when necessary:
 
 ```bash
 brew install python@3.12
 ```
 
-### "Configuration Created" dialog
+### Configuration created or incomplete
 
-The launcher created `.env` from the template and opened it in TextEdit. Fill in:
+Fill in the missing variables identified by the launcher, save `.env`, and launch the app again. Do not paste live values into GitHub, documentation, screenshots, or chat.
 
-- `JORDANA_APPS_SCRIPT_URL` — your Google Apps Script web app URL
-- `JORDANA_INGEST_API_KEY` — your Apps Script ingest API key
+### Startup failed
 
-Save the file, then double-click `Jordana Billing.app` again.
+Inspect the sanitized local logs:
 
-### "Configuration Incomplete" dialog
+```text
+logs/bootstrap.log
+logs/start.log
+```
 
-A required variable in `.env` is empty. The dialog names the exact variable and the file path.
+Common causes include:
 
-### "Startup Failed" dialog
+- missing or invalid `.env` values
+- unavailable network during sync
+- port `8765` already in use
+- a migration failure
+- an unreadable or missing transferred file
 
-Check `logs/bootstrap.log` or `logs/start.log` for details. Common causes:
+A sync failure should not delete or reset the database. Migration failure should stop startup and preserve or restore the pre-migration database from the verified private backup.
 
-- Network failure during Google Sheets sync (server still starts)
-- Port 8765 already in use (stop with `scripts/stop_jordana.sh`)
-- Database migration error (check `data/backups/` for automatic backups)
+### Server does not open in the browser
 
-### Server does not open in browser
+Open manually:
 
-Open manually: `http://127.0.0.1:8765/review`
+```text
+http://127.0.0.1:8765/review
+```
 
-## Apple Silicon Notes
+## Apple Silicon
 
-The launcher works natively on Apple Silicon. Python 3.11+ from python.org or Homebrew provides arm64 binaries. No Rosetta required.
+The launcher runs natively on Apple Silicon when Python 3.11 or newer is installed. Rosetta is not required.
