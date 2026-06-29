@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .calendar_preferences import CalendarDisposition, classify_calendar
+from .capture_windows import completed_run_windows
 from .db import OperationalImportAuthorization, assert_csv_import_safe
 from .parser import ParseResult, parse_event
 from .rates import suggest_rate
@@ -131,11 +132,7 @@ def count_completed_runs(rows: list[dict[str, object]]) -> int:
         window = text(row.get("capture_window"))
         if run_id and window:
             run_windows[run_id].add(window)
-    return sum(
-        1
-        for windows in run_windows.values()
-        if {"next_2_days", "past_7_days"}.issubset(windows)
-    )
+    return sum(1 for windows in run_windows.values() if completed_run_windows(windows))
 
 
 def insert_raw_snapshot(

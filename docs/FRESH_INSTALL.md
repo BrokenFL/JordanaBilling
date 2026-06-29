@@ -26,6 +26,7 @@ The only private file needed is `.env` in the project root. It contains:
 
 - `JORDANA_APPS_SCRIPT_URL` — the Google Apps Script `/exec` web app URL
 - `JORDANA_INGEST_API_KEY` — the ingest API key accepted by Apps Script
+- optional calendar integration administration values documented in `.env.example`
 
 No Google credentials JSON or OAuth tokens are required. Sync uses a simple HTTP POST to the Apps Script endpoint with the API key.
 

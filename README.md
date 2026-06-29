@@ -11,6 +11,8 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 ## Current Scope
 
 - Authenticated Google Apps Script sync
+- Normal Shortcut capture window of 3 days back and 7 days ahead
+- One-time June 1-14, 2026 backfill capture label support
 - Google Sheets CSV importer for testing and emergency recovery
 - Raw snapshot preservation
 - Completed-run validation from capture windows
@@ -96,6 +98,16 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --full
 
 `sync` fetches only rows after the saved cursor. `sync --full` asks for all available completed rows but still does not duplicate snapshots because `snapshot_key` is unique locally.
 
+Calendar integration maintenance:
+
+```bash
+scripts/validate_calendar_integration_config.py
+scripts/generate_calendar_shortcut_specs.py
+scripts/configure_apps_script.py
+```
+
+See `docs/CALENDAR_INTEGRATION.md` for the Apps Script Script Properties, Shortcut payload labels, June backfill scope, and remaining device-side deployment steps.
+
 After a successful sync the app updates:
 
 - `Reports/Jordana_Client_Sessions_2026.csv`
@@ -140,7 +152,7 @@ Calendar filters can show all calendars, the preferred work calendar, other cale
 
 ## Calendar Entry Standard
 
-The Shortcut still imports all non-all-day events from all calendars. `Jordana Work` is a preferred classification signal, not an ingestion restriction. Calendar start time remains authoritative, and title time is validation evidence only.
+The Shortcut still imports all non-all-day events from all calendars. `Jordana Work` is a preferred classification signal, not an ingestion restriction. Normal capture uses `past_3_days` and `next_7_days`. Calendar start time remains authoritative, and title time is validation evidence only.
 
 Preferred structured titles:
 

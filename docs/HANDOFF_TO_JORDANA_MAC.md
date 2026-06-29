@@ -80,11 +80,14 @@ This does not replace automated sync. It is for testing or emergency recovery.
 
 ## Rotate The API Key
 
-1. Change the accepted key in Apps Script.
-2. Deploy a new Apps Script web app version.
-3. Update `JORDANA_INGEST_API_KEY` in `.env` on the Mac.
-4. Run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run`.
-5. If dry run succeeds, run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync`.
+1. Generate or confirm `JORDANA_PENDING_INGEST_API_KEY` in `.env`.
+2. Set Apps Script Script Property `INGEST_API_KEY` to that pending value.
+3. Confirm `JORDANA_SPREADSHEET_ID` points to the existing production spreadsheet.
+4. Deploy the existing Apps Script web app with the source in `integrations/apps_script/Code.gs`.
+5. Promote the same value to `JORDANA_INGEST_API_KEY` in `.env` on the Mac.
+6. Rebuild or update the normal and June backfill Shortcut payloads from the ignored local specs.
+7. Run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run`.
+8. If dry run succeeds, run `PYTHONPATH=app .venv/bin/python -m jordana_invoice sync`.
 
 ## What To Review First
 

@@ -4,7 +4,7 @@ This document supersedes all prior uploaded PDF handoffs and provides the
 authoritative current state of the Jordana Billing system as of the
 `main` branch commit listed below.
 
-**Authoritative main commit hash:** `d73ce94`
+**Authoritative main commit hash:** see the current `main` branch on GitHub.
 
 ## Current Architecture
 
@@ -55,11 +55,14 @@ HTTP server.
 
 - Apple Shortcut captures calendar snapshots to Google Sheets
 - Authenticated sync from Apps Script endpoint to local SQLite
+- Normal capture labels prepared for `past_3_days` and `next_7_days`
+- June 1-14, 2026 one-time backfill label support prepared locally
 - CSV importer preserved for testing and emergency recovery
 - Raw snapshot preservation (never edited in place)
 - Duplicate collapse by `calendar_event_id` or `event_fingerprint`
 - Source-calendar classification and review filtering
 - `JORDANA_PREFERRED_WORK_CALENDAR` as classification signal (not ingestion filter)
+- Sanitized Apps Script source is represented in `integrations/apps_script/Code.gs`; live deployment must preserve the existing Apps Script project and use Script Properties.
 
 ### Review Workflow
 

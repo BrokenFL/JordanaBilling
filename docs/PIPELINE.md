@@ -2,9 +2,9 @@
 
 ## 1. Capture Calendar Evidence
 
-The Apple Shortcut sends calendar snapshots to Google Apps Script. Google Sheets stores those rows in `Raw_Event_Snapshots`, and `Run_Log` records when both capture windows have completed.
+The Apple Shortcut sends calendar snapshots to Google Apps Script. Google Sheets stores those rows in `Raw_Event_Snapshots`, and `Run_Log` records when capture windows have completed.
 
-Google Sheets is the raw cloud staging and audit layer. The local app never deletes or modifies Sheet rows.
+Google Sheets is the raw cloud staging and audit layer. The local app never deletes or modifies Sheet rows. Normal capture now uses `past_3_days` and `next_7_days`; deprecated `past_7_days` and `next_2_days` rows remain readable during transition.
 
 ## 2. Sync Completed Rows
 
@@ -49,10 +49,12 @@ Raw rows are never edited in place.
 
 ## 5. Validate Completed Runs
 
-Apps Script filters sync rows to completed runs using `Run_Log`. The local importer also counts completed runs by grouping rows by `run_id`. A run is treated as complete when it has both:
+Apps Script filters sync rows to completed runs using `Run_Log`. The local importer also counts completed runs by grouping rows by `run_id`. A normal recurring run is treated as complete when it has one supported past label and one supported future label:
 
-- `next_2_days`
-- `past_7_days`
+- `past_3_days` or deprecated `past_7_days`
+- `next_7_days` or deprecated `next_2_days`
+
+The June 1-14, 2026 backfill uses `backfill_2026_06_01_through_2026_06_14` and is treated as a coherent one-time historical past batch.
 
 This is a local validation signal only. It does not approve billing.
 
