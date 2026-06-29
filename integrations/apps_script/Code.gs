@@ -231,15 +231,7 @@ function handleSyncRequest_(payload) {
   const after = String(payload.after_ingested_at || "1970-01-01T00:00:00.000Z");
   const spreadsheet = spreadsheet_();
   const rawSheet = ensureSheet_(spreadsheet, RAW_SHEET_NAME, RAW_HEADERS);
-  const runLogSheet = ensureSheet_(spreadsheet, RUN_LOG_SHEET_NAME, RUN_LOG_HEADERS);
-  const completeRuns = completeRunIds_(runLogSheet);
-  const rows = sheetObjects_(rawSheet, RAW_HEADERS)
-    .filter((row) => completeRuns[String(row.run_id || "")])
-    .filter((row) => String(row.ingested_at || "") > after)
-    .sort((a, b) => {
-      const byTime = String(a.ingested_at || "").localeCompare(String(b.ingested_at || ""));
-      return byTime || String(a.snapshot_key || "").localeCompare(String(b.snapshot_key || ""));
-    });
+  const rows = syncRows_(sheetObjects_(rawSheet, RAW_HEADERS), after);
   const page = rows.slice(0, limit);
   const nextCursor = page.length ? String(page[page.length - 1].ingested_at || after) : after;
   return {
@@ -250,6 +242,15 @@ function handleSyncRequest_(payload) {
     has_more: rows.length > page.length,
     timestamp: new Date().toISOString(),
   };
+}
+
+function syncRows_(rawRows, after) {
+  return rawRows
+    .filter((row) => String(row.ingested_at || "") > after)
+    .sort((a, b) => {
+      const byTime = String(a.ingested_at || "").localeCompare(String(b.ingested_at || ""));
+      return byTime || String(a.snapshot_key || "").localeCompare(String(b.snapshot_key || ""));
+    });
 }
 
 function rawRow_(payload, event, index, ingestedAt) {
@@ -479,5 +480,6 @@ if (typeof module !== "undefined") {
     handleAggregateRunComplete_,
     runStatus_,
     rawRow_,
+    syncRows_,
   };
 }

@@ -71,4 +71,29 @@ assert.strictEqual(
   script.BACKFILL_CAPTURE_WINDOW
 );
 
+const syncRows = script.syncRows_(
+  [
+    {
+      ingested_at: "2026-06-22T02:03:00.000Z",
+      snapshot_key: "partial-run-row",
+      run_id: "run-without-complete-log",
+    },
+    {
+      ingested_at: "2026-06-22T02:01:00.000Z",
+      snapshot_key: "older-row",
+      run_id: "older-run",
+    },
+    {
+      ingested_at: "2026-06-22T02:03:00.000Z",
+      snapshot_key: "another-row-same-time",
+      run_id: "another-run",
+    },
+  ],
+  "2026-06-22T02:00:00.000Z"
+);
+assert.deepStrictEqual(
+  syncRows.map((syncRow) => syncRow.snapshot_key),
+  ["older-row", "another-row-same-time", "partial-run-row"]
+);
+
 console.log("Apps Script helper tests passed");

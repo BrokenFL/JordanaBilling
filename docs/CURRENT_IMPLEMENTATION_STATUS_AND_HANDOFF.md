@@ -13,7 +13,7 @@ workflow, and invoice prototype running on macOS with SQLite and a Python
 HTTP server.
 
 - **Capture:** Apple Shortcut → Google Apps Script → Google Sheets
-- **Sync:** Python client pulls completed runs from Apps Script into local SQLite
+- **Sync:** Python client pulls raw staged snapshots from Apps Script into local SQLite
 - **Review:** Local web UI at `http://127.0.0.1:8765/review`
 - **Database:** SQLite at `data/jordana_invoice.sqlite3`
 - **Reports:** Local CSV exports after sync

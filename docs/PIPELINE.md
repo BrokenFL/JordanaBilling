@@ -6,7 +6,7 @@ The Apple Shortcut sends calendar snapshots to Google Apps Script. Google Sheets
 
 Google Sheets is the raw cloud staging and audit layer. The local app never deletes or modifies Sheet rows. Normal capture now uses `past_3_days` and `next_7_days`; deprecated `past_7_days` and `next_2_days` rows remain readable during transition.
 
-## 2. Sync Completed Rows
+## 2. Sync Staged Rows
 
 The Python sync client sends an authenticated POST request to the Apps Script web app:
 
@@ -20,7 +20,7 @@ The Python sync client sends an authenticated POST request to the Apps Script we
 
 The API key is sent in the POST body from `.env` and is not stored in SQLite or local reports.
 
-Apps Script returns only rows whose `run_id` exists in `Run_Log` with status `complete`. Rows are sorted by `ingested_at` and `snapshot_key`.
+Apps Script returns raw rows from `Raw_Event_Snapshots`, sorted by `ingested_at` and `snapshot_key`. `Run_Log` remains an audit and validation signal, but it is not a server-side gate for first-run sync. This lets a new Mac rebuild the local SQLite database from the Sheet even when older Shortcut runs were captured before the current `Run_Log` contract existed.
 
 The local `sync_state` table stores the cursor for `source_name = google_calendar_snapshots`. The cursor advances only after the fetched rows, normalization, review queue updates, and CSV report writes complete successfully.
 
@@ -49,7 +49,7 @@ Raw rows are never edited in place.
 
 ## 5. Validate Completed Runs
 
-Apps Script filters sync rows to completed runs using `Run_Log`. The local importer also counts completed runs by grouping rows by `run_id`. A normal recurring run is treated as complete when it has one supported past label and one supported future label:
+The local importer counts completed runs by grouping rows by `run_id`. A normal recurring run is treated as complete when it has one supported past label and one supported future label:
 
 - `past_3_days` or deprecated `past_7_days`
 - `next_7_days` or deprecated `next_2_days`

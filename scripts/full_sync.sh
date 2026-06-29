@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Full Google Sheets sync wrapper.
-# Fetches all available completed rows from Apps Script.
+# Fetches all available raw staged rows from Apps Script.
 # Idempotent: snapshot_key uniqueness prevents duplicate imports.
 #
 set -euo pipefail

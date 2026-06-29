@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sync_parser = subparsers.add_parser(
         "sync",
-        help="Pull completed calendar snapshots from Google Apps Script.",
+        help="Pull calendar snapshots from Google Apps Script.",
     )
     sync_parser.add_argument(
         "--full",

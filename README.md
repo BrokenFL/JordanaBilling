@@ -4,7 +4,7 @@ Local-first calendar evidence importer, billing review workflow, and invoice pro
 
 Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot rows, preserves the raw evidence, collapses duplicate event versions, proposes classifications, parses Jordana's shorthand, and opens review items for anything uncertain.
 
-Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull completed runs from the Apps Script endpoint into local SQLite.
+Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull raw staged snapshots from the Apps Script endpoint into local SQLite.
 
 Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. The payment ledger is now implemented with payment creation, allocation across invoice lines, reversal/void corrections, apply-available-funds, invoice payment history, and a tabbed Payments workspace. Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.
 
@@ -96,7 +96,7 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --dry-run
 PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --full
 ```
 
-`sync` fetches only rows after the saved cursor. `sync --full` asks for all available completed rows but still does not duplicate snapshots because `snapshot_key` is unique locally.
+`sync` fetches only rows after the saved cursor. `sync --full` asks for all available raw staged rows but still does not duplicate snapshots because `snapshot_key` is unique locally.
 
 Calendar integration maintenance:
 
@@ -138,7 +138,7 @@ The Review Queue resolves one calendar event at a time. Quick fixes stay in the 
 - `/clients`
 - `/people`
 
-The `Calendar Import` sidebar screen shows local sync status and a single `Sync Now` action. That button only pulls completed snapshot rows already staged by the iPhone Shortcut through Apps Script; it does not trigger the Shortcut and does not edit Apple Calendar.
+The `Calendar Import` sidebar screen shows local sync status and a single `Sync Now` action. That button pulls snapshot rows already staged by the iPhone Shortcut through Apps Script; it does not trigger the Shortcut and does not edit Apple Calendar.
 
 The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
 
