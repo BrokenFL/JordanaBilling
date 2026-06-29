@@ -255,6 +255,10 @@ Expected output:
 
 See `docs/SCHEMA_AUDIT.md` for the current authoritative tables, legacy compatibility tables, known overlaps, and prerequisites before any destructive migration.
 
+## Write Endpoint Contracts
+
+See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every backend write HTTP endpoint, including method, path, handler, service calls, auth requirements, request fields, response shapes, error codes, affected database tables, idempotency, and existing test coverage. Characterization tests are in `tests/test_write_endpoint_contracts.py`.
+
 ## Downloadable Report Link
 
 The latest session export is:

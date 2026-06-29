@@ -118,12 +118,14 @@ Migration safety includes:
 
 See `docs/SCHEMA_AUDIT.md` for the current migration list and table responsibilities.
 
+See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every backend write HTTP endpoint and its current request/response contract. Characterization tests are in `tests/test_write_endpoint_contracts.py`.
+
 ## Verification Baseline
 
 The last documented full-suite baseline is:
 
 ```text
-1,943 passing
+2,072 passing
 11 skipped
 0 failures
 ```
