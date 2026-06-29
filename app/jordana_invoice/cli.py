@@ -22,6 +22,7 @@ from .google_sync import (
     sync_with_process_lock,
 )
 from .importer import import_csv
+from .duplicate_repair import duplicate_repair_plan
 from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
 from .review import record_review_decision
@@ -147,6 +148,27 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser(
         "normalize-existing",
         help="Backfill Phase 2 normalization fields for existing imported rows.",
+    )
+
+    duplicate_parser = subparsers.add_parser(
+        "duplicate-repair",
+        help="Analyze duplicate calendar candidates and produce a sanitized repair plan.",
+    )
+    duplicate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Analyze only and perform no writes. This is the default.",
+    )
+    duplicate_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply safe duplicate reconciliation actions. Requires --confirm-apply.",
+    )
+    duplicate_parser.add_argument(
+        "--confirm-apply",
+        default="",
+        help="Must be exactly APPLY_DUPLICATE_REPAIR when --apply is used.",
     )
 
     serve_parser = subparsers.add_parser(
@@ -318,6 +340,25 @@ def main(argv: list[str] | None = None) -> int:
         updated = backfill_phase2(conn)
         conn.commit()
         print(f"normalized_existing={updated}")
+        return 0
+
+    if args.command == "duplicate-repair":
+        migrate_database(args.db)
+        conn = connect(args.db)
+        try:
+            should_apply = bool(args.apply)
+            if should_apply and args.confirm_apply != "APPLY_DUPLICATE_REPAIR":
+                print(
+                    "REFUSED: --apply requires --confirm-apply APPLY_DUPLICATE_REPAIR",
+                    file=__import__("sys").stderr,
+                )
+                return 1
+            result = duplicate_repair_plan(conn, apply=should_apply, confirm=should_apply)
+        finally:
+            conn.close()
+        print(json.dumps(result["summary"], sort_keys=True))
+        if not should_apply:
+            print("dry_run=true writes_performed=false")
         return 0
 
     if args.command == "serve-review":

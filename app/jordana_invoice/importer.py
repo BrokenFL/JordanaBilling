@@ -4,6 +4,7 @@ import csv
 import json
 import sqlite3
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -48,6 +49,13 @@ RAW_HEADER_MAP = {
     "payload_version": "payload_version",
     "raw_json": "raw_json",
 }
+
+
+@dataclass(frozen=True)
+class CandidateIdentityResolution:
+    candidate_id: str | None = None
+    reason: str = "new_candidate"
+    ambiguous: bool = False
 
 
 def import_csv(
@@ -233,12 +241,43 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
         (import_run_id,),
     ).fetchall()
 
-    keys: set[str] = set()
+    same_batch_structural_keys: dict[str, set[str]] = defaultdict(set)
     for row in rows:
-        keys.add(candidate_key(row))
+        if text(row["calendar_event_id"]) or text(row["event_fingerprint"]):
+            same_batch_structural_keys[structural_identity_value(row)].add(candidate_key(row))
 
-    for key in sorted(keys):
-        group = raw_snapshots_for_candidate_key(conn, key)
+    grouped: dict[str, dict[str, object]] = {}
+    for row in rows:
+        key = candidate_key(row)
+        resolution = resolve_candidate_identity(conn, row, key)
+        if not resolution.candidate_id and not resolution.ambiguous and not (
+            text(row["calendar_event_id"]) or text(row["event_fingerprint"])
+        ):
+            batch_keys = same_batch_structural_keys.get(structural_identity_value(row), set())
+            if len(batch_keys) == 1:
+                key = next(iter(batch_keys))
+                resolution = CandidateIdentityResolution(None, "exact_structural_same_batch")
+        group_token = f"candidate:{resolution.candidate_id}" if resolution.candidate_id else f"key:{key}"
+        if group_token not in grouped:
+            grouped[group_token] = {
+                "key": key,
+                "resolution": resolution,
+                "rows": [],
+            }
+        grouped[group_token]["rows"].append(row)
+
+    for group_info in sorted(grouped.values(), key=lambda item: str(item["key"])):
+        key = str(group_info["key"])
+        resolution = group_info["resolution"]
+        incoming_group = list(group_info["rows"])
+        if isinstance(resolution, CandidateIdentityResolution) and resolution.candidate_id:
+            candidate = conn.execute(
+                "SELECT candidate_key FROM calendar_event_candidates WHERE id = ?",
+                (resolution.candidate_id,),
+            ).fetchone()
+            if candidate:
+                key = candidate["candidate_key"]
+        group = raw_snapshots_for_identity_group(conn, key, incoming_group)
         latest = sorted(
             group,
             key=lambda r: (
@@ -250,6 +289,16 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
         parse_result = parse_event(dict(latest))
         calendar_disposition = classify_calendar(conn, latest["calendar_name"])
         parse_result = apply_calendar_signal(parse_result, calendar_disposition)
+        if isinstance(resolution, CandidateIdentityResolution) and resolution.ambiguous:
+            parse_result.fields_requiring_review = sorted(
+                set(parse_result.fields_requiring_review + ["identity_resolution"])
+            )
+            parse_result.unresolved_fields = sorted(
+                set(parse_result.unresolved_fields + ["identity_resolution"])
+            )
+            parse_result.review_reasons = sorted(
+                set(parse_result.review_reasons + ["Ambiguous calendar identity; manual review required."])
+            )
         candidate_id = insert_candidate(
             conn,
             import_run_id,
@@ -258,6 +307,12 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
             group,
             parse_result,
             calendar_disposition,
+        )
+        record_candidate_identity_aliases(
+            conn,
+            candidate_id,
+            group,
+            resolution if isinstance(resolution, CandidateIdentityResolution) else None,
         )
         inserted_session = maybe_insert_session(conn, candidate_id, latest, parse_result)
         if not inserted_session:
@@ -280,6 +335,127 @@ def candidate_key(row: sqlite3.Row) -> str:
     return stable_hash("|".join(part for part in stable_parts if part))
 
 
+def structural_identity_value(row: sqlite3.Row) -> str:
+    stable_parts = [
+        text(row["event_title"]).lower(),
+        text(row["start_at"]),
+        text(row["end_at"]),
+        text(row["duration_minutes"]),
+        text(row["calendar_name"]).lower(),
+    ]
+    return stable_hash("structural:" + "|".join(part for part in stable_parts if part))
+
+
+def identity_aliases_for_row(row: sqlite3.Row) -> list[tuple[str, str]]:
+    aliases: list[tuple[str, str]] = []
+    calendar_event_id = text(row["calendar_event_id"])
+    if calendar_event_id:
+        aliases.append(("calendar_event_id", stable_hash(f"calendar_event_id:{calendar_event_id}")))
+    event_fingerprint = text(row["event_fingerprint"])
+    if event_fingerprint:
+        aliases.append(("event_fingerprint", stable_hash(f"event_fingerprint:{event_fingerprint}")))
+    if text(row["event_title"]) and text(row["start_at"]) and text(row["end_at"]) and text(row["calendar_name"]):
+        aliases.append(("structural", structural_identity_value(row)))
+    return aliases
+
+
+def resolve_candidate_identity(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    fallback_key: str,
+) -> CandidateIdentityResolution:
+    event_id = text(row["calendar_event_id"])
+    fingerprint = text(row["event_fingerprint"])
+    if event_id:
+        return resolve_exact_identity(conn, "calendar_event_id", stable_hash(f"calendar_event_id:{event_id}"), fallback_key)
+    if fingerprint:
+        return resolve_exact_identity(conn, "event_fingerprint", stable_hash(f"event_fingerprint:{fingerprint}"), fallback_key)
+    return resolve_structural_identity(conn, row)
+
+
+def resolve_exact_identity(
+    conn: sqlite3.Connection,
+    alias_type: str,
+    alias_value: str,
+    candidate_key_value: str,
+) -> CandidateIdentityResolution:
+    candidate_ids = {
+        row["candidate_id"]
+        for row in conn.execute(
+            """
+            SELECT candidate_id
+            FROM candidate_identity_aliases
+            WHERE alias_type = ? AND alias_value = ?
+            """,
+            (alias_type, alias_value),
+        ).fetchall()
+    }
+    candidate_ids.update(
+        row["id"]
+        for row in conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (candidate_key_value,),
+        ).fetchall()
+    )
+    if len(candidate_ids) == 1:
+        return CandidateIdentityResolution(next(iter(candidate_ids)), f"exact_{alias_type}")
+    if len(candidate_ids) > 1:
+        return CandidateIdentityResolution(None, f"ambiguous_{alias_type}", True)
+    return CandidateIdentityResolution(None, "new_candidate")
+
+
+def resolve_structural_identity(conn: sqlite3.Connection, row: sqlite3.Row) -> CandidateIdentityResolution:
+    alias_value = structural_identity_value(row)
+    candidate_ids = {
+        alias_row["candidate_id"]
+        for alias_row in conn.execute(
+            """
+            SELECT candidate_id
+            FROM candidate_identity_aliases
+            WHERE alias_type = 'structural' AND alias_value = ?
+            """,
+            (alias_value,),
+        ).fetchall()
+    }
+    candidate_ids.update(
+        candidate_row["id"]
+        for candidate_row in conn.execute(
+            """
+            SELECT c.id
+            FROM calendar_event_candidates c
+            JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
+            WHERE lower(trim(coalesce(c.title, ''))) = lower(trim(?))
+              AND c.start_at = ?
+              AND c.end_at = ?
+              AND coalesce(c.calendar_duration_minutes, -1) = coalesce(?, -1)
+              AND lower(trim(coalesce(c.calendar_name, ''))) = lower(trim(?))
+              AND lower(trim(coalesce(r.event_title, ''))) = lower(trim(?))
+              AND r.start_at = ?
+              AND r.end_at = ?
+              AND coalesce(r.duration_minutes, -1) = coalesce(?, -1)
+              AND lower(trim(coalesce(r.calendar_name, ''))) = lower(trim(?))
+            """,
+            (
+                text(row["event_title"]),
+                text(row["start_at"]),
+                text(row["end_at"]),
+                parse_int(row["duration_minutes"]),
+                text(row["calendar_name"]),
+                text(row["event_title"]),
+                text(row["start_at"]),
+                text(row["end_at"]),
+                parse_int(row["duration_minutes"]),
+                text(row["calendar_name"]),
+            ),
+        ).fetchall()
+    )
+    if len(candidate_ids) == 1:
+        return CandidateIdentityResolution(next(iter(candidate_ids)), "exact_structural")
+    if len(candidate_ids) > 1:
+        return CandidateIdentityResolution(None, "ambiguous_structural", True)
+    return CandidateIdentityResolution(None, "new_candidate")
+
+
 def raw_snapshots_for_candidate_key(conn: sqlite3.Connection, key: str) -> list[sqlite3.Row]:
     rows = conn.execute(
         """
@@ -288,6 +464,50 @@ def raw_snapshots_for_candidate_key(conn: sqlite3.Connection, key: str) -> list[
         """
     ).fetchall()
     return [row for row in rows if candidate_key(row) == key]
+
+
+def raw_snapshots_for_identity_group(
+    conn: sqlite3.Connection,
+    key: str,
+    incoming_rows: list[sqlite3.Row],
+) -> list[sqlite3.Row]:
+    by_id = {row["id"]: row for row in raw_snapshots_for_candidate_key(conn, key)}
+    for row in incoming_rows:
+        by_id[row["id"]] = row
+    return list(by_id.values())
+
+
+def record_candidate_identity_aliases(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    group: list[sqlite3.Row],
+    resolution: CandidateIdentityResolution | None,
+) -> None:
+    reason = resolution.reason if resolution else "new_candidate"
+    now = now_iso()
+    for row in group:
+        for alias_type, alias_value in identity_aliases_for_row(row):
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO candidate_identity_aliases (
+                  alias_id, candidate_id, alias_type, alias_value,
+                  source_raw_snapshot_id, resolution_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (new_id(), candidate_id, alias_type, alias_value, row["id"], reason, now),
+            )
+            if cursor.rowcount:
+                audit(
+                    conn,
+                    "calendar_event_candidate",
+                    candidate_id,
+                    "identity_alias_recorded",
+                    {
+                        "alias_type": alias_type,
+                        "resolution_reason": reason,
+                        "source_raw_snapshot_id": row["id"],
+                    },
+                )
 
 
 def apply_calendar_signal(result: ParseResult, disposition: CalendarDisposition) -> ParseResult:
@@ -857,25 +1077,84 @@ def maybe_insert_review_item(
     )
     priority = 1 if result.classification in {"unresolved", "client_session"} else 2
     now = now_iso()
-    review_id = new_id()
-    conn.execute(
+    existing_review = conn.execute(
         """
-        INSERT INTO review_queue (
-          id, candidate_id, review_type, priority, reason, fields,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        SELECT review_item_id
+        FROM review_items
+        WHERE candidate_id = ?
+          AND reviewed_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
         """,
-        (
-            review_id,
-            candidate_id,
-            review_type,
-            priority,
-            result.explanation,
-            json_dumps(unresolved_fields),
-            now,
-            now,
-        ),
-    )
+        (candidate_id,),
+    ).fetchone()
+    if existing_review:
+        conn.execute(
+            """
+            UPDATE review_items
+            SET session_id = ?,
+                review_status = ?,
+                unresolved_fields = ?,
+                review_reasons = ?,
+                updated_at = ?
+            WHERE review_item_id = ?
+            """,
+            (
+                session_id,
+                review_status,
+                json_dumps(unresolved_fields),
+                json_dumps(result.review_reasons or [result.explanation]),
+                now,
+                existing_review["review_item_id"],
+            ),
+        )
+        audit(conn, "review_item", existing_review["review_item_id"], "updated", result.as_dict())
+        return
+
+    existing_queue = conn.execute(
+        """
+        SELECT id
+        FROM review_queue
+        WHERE candidate_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (candidate_id,),
+    ).fetchone()
+    if existing_queue:
+        review_id = existing_queue["id"]
+        conn.execute(
+            """
+            UPDATE review_queue
+            SET review_type = ?,
+                priority = ?,
+                reason = ?,
+                fields = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (review_type, priority, result.explanation, json_dumps(unresolved_fields), now, review_id),
+        )
+    else:
+        review_id = new_id()
+        conn.execute(
+            """
+            INSERT INTO review_queue (
+              id, candidate_id, review_type, priority, reason, fields,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                review_id,
+                candidate_id,
+                review_type,
+                priority,
+                result.explanation,
+                json_dumps(unresolved_fields),
+                now,
+                now,
+            ),
+        )
     conn.execute(
         """
         INSERT INTO review_items (

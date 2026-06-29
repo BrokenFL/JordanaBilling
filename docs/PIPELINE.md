@@ -164,3 +164,33 @@ Candidate collapse now prefers stable identity in this order:
 3. fallback title/start/end/calendar evidence
 
 Later title corrections, cancellations, time moves, or calendar moves update the current candidate/session while preserving every raw snapshot version.
+
+## Candidate Identity Alias Layer
+
+The importer now records additive identity aliases for each candidate. Aliases
+preserve the existing candidate ID and candidate key while letting later
+snapshots resolve to the same candidate when one capture lacks an event ID or
+fingerprint.
+
+Resolution order is conservative:
+
+1. Exact stable calendar event ID.
+2. Exact event fingerprint.
+3. Exact structural identity only when the incoming snapshot lacks both stable
+   fields and exactly one existing candidate matches normalized title, start,
+   end, duration, and calendar evidence.
+
+Structural matching is exact, not fuzzy. If more than one existing candidate
+matches, the importer preserves the new row as reviewable and flags identity
+resolution for manual review. Raw snapshots are never edited or deleted.
+
+A local dry-run analyzer is available for existing duplicate candidate/session
+groups:
+
+```bash
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 duplicate-repair --dry-run
+```
+
+The command prints sanitized aggregate counts only. Applying a repair is guarded
+behind explicit confirmation and must not be used on live data without a
+reviewed plan and fresh private backup.

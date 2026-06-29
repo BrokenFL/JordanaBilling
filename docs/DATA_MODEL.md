@@ -53,6 +53,30 @@ Collapsed event candidates built from raw snapshots. Stores parser output, class
 
 Phase 2 fields include confidence label, unresolved fields, review reasons, candidate people, service mode, rate group, evening/weekend category, and reconciliation status.
 
+## `candidate_identity_aliases`
+
+Additive identity-resolution table for calendar candidates. It stores exact
+aliases that point to the preserved candidate ID without rewriting historical
+`candidate_key` values:
+
+- `calendar_event_id`
+- `event_fingerprint`
+- exact structural identity hash from normalized title, start, end, duration,
+  and calendar
+
+The importer consults this table before creating a new candidate. Structural
+reuse is allowed only when the incoming row lacks both stable fields and the
+exact structural identity resolves to one unique existing candidate. Ambiguous
+matches remain reviewable.
+
+## `candidate_duplicate_reconciliations`
+
+Additive reconciliation ledger for future duplicate repair application. It
+records the canonical candidate/session, duplicate candidate/session, status,
+reason, and timestamps. It does not store names or calendar titles. Dry-run
+analysis does not write to this table; apply mode may write here only for
+newly created unapproved duplicates.
+
 ## `people`
 
 Actual humans with permanent UUIDs. Person codes are optional human-readable helpers and are generated only after first and last names are confirmed. The code is not the primary key and is not silently changed when a name changes.

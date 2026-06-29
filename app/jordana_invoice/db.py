@@ -362,6 +362,41 @@ CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_candidate_key
 CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter
   ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name);
 
+CREATE TABLE IF NOT EXISTS candidate_identity_aliases (
+  alias_id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL REFERENCES calendar_event_candidates(id),
+  alias_type TEXT NOT NULL CHECK (alias_type IN ('calendar_event_id', 'event_fingerprint', 'structural')),
+  alias_value TEXT NOT NULL,
+  source_raw_snapshot_id TEXT REFERENCES raw_calendar_snapshots(id),
+  resolution_reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(alias_type, alias_value, candidate_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_identity_alias_lookup
+  ON candidate_identity_aliases(alias_type, alias_value);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_identity_alias_candidate
+  ON candidate_identity_aliases(candidate_id);
+
+CREATE TABLE IF NOT EXISTS candidate_duplicate_reconciliations (
+  reconciliation_id TEXT PRIMARY KEY,
+  canonical_candidate_id TEXT NOT NULL REFERENCES calendar_event_candidates(id),
+  duplicate_candidate_id TEXT NOT NULL REFERENCES calendar_event_candidates(id),
+  canonical_session_id TEXT REFERENCES sessions(id),
+  duplicate_session_id TEXT REFERENCES sessions(id),
+  status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'reversed', 'manual_review')),
+  reason TEXT NOT NULL,
+  applied_at TEXT,
+  reversed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(duplicate_candidate_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_duplicate_reconciliations_canonical
+  ON candidate_duplicate_reconciliations(canonical_candidate_id);
+
 CREATE TABLE IF NOT EXISTS people (
   person_id TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
@@ -1465,6 +1500,50 @@ def _apply_migration_013(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_014_CANDIDATE_IDENTITY_ALIASES = "014_candidate_identity_aliases"
+
+
+def _apply_migration_014(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_identity_aliases (
+          alias_id TEXT PRIMARY KEY,
+          candidate_id TEXT NOT NULL REFERENCES calendar_event_candidates(id),
+          alias_type TEXT NOT NULL CHECK (alias_type IN ('calendar_event_id', 'event_fingerprint', 'structural')),
+          alias_value TEXT NOT NULL,
+          source_raw_snapshot_id TEXT REFERENCES raw_calendar_snapshots(id),
+          resolution_reason TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(alias_type, alias_value, candidate_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_candidate_identity_alias_lookup
+          ON candidate_identity_aliases(alias_type, alias_value);
+
+        CREATE INDEX IF NOT EXISTS idx_candidate_identity_alias_candidate
+          ON candidate_identity_aliases(candidate_id);
+
+        CREATE TABLE IF NOT EXISTS candidate_duplicate_reconciliations (
+          reconciliation_id TEXT PRIMARY KEY,
+          canonical_candidate_id TEXT NOT NULL REFERENCES calendar_event_candidates(id),
+          duplicate_candidate_id TEXT NOT NULL REFERENCES calendar_event_candidates(id),
+          canonical_session_id TEXT REFERENCES sessions(id),
+          duplicate_session_id TEXT REFERENCES sessions(id),
+          status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'reversed', 'manual_review')),
+          reason TEXT NOT NULL,
+          applied_at TEXT,
+          reversed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(duplicate_candidate_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_candidate_duplicate_reconciliations_canonical
+          ON candidate_duplicate_reconciliations(canonical_candidate_id);
+        """
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1479,6 +1558,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_011_PAYMENT_RECEIPTS, _apply_migration_011),
     (MIGRATION_012_INSURANCE_CODING, _apply_migration_012),
     (MIGRATION_013_SYNC_STATE_HARDENING, _apply_migration_013),
+    (MIGRATION_014_CANDIDATE_IDENTITY_ALIASES, _apply_migration_014),
 ]
 
 

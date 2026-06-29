@@ -216,6 +216,29 @@ Active billing relationships are unique by payer identity plus normalized covere
 
 Calendar evidence remains read-only under View Calendar Evidence.
 
+## Duplicate Candidate Repair
+
+Calendar candidate identity repair is intentionally conservative. The importer
+first tries exact event ID, then exact event fingerprint, then exact structural
+identity when a snapshot lacks both stable fields. Structural identity uses
+normalized title, start, end, duration, and calendar. No fuzzy title matching is
+used for automatic reconciliation.
+
+If structural identity is ambiguous, the candidate remains in review with an
+identity-resolution warning. Existing candidate IDs and candidate keys are not
+rewritten.
+
+For existing duplicates, the developer CLI can produce a sanitized dry-run plan:
+
+```bash
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 duplicate-repair --dry-run
+```
+
+Canonical selection prioritizes invoiced records, then approved records, then
+the earliest legitimate candidate/session. Apply mode is guarded and may affect
+only newly created unapproved duplicates. Approved, invoiced, paid, and raw
+snapshot records must not be altered by repair.
+
 ## Reparse Unapproved Candidates
 
 Historical unapproved candidates can be reparsed through `POST /api/review/reparse-candidates`. This re-runs the parser on all candidates whose review status is not `approved` or `excluded`, updates parsed fields, and writes audit entries. Raw snapshots are never modified. Approved and excluded candidates are skipped.

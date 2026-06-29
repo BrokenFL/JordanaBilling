@@ -181,6 +181,13 @@ Migration `003_payment_ledger_foundation` adds two new tables — `payments` and
 
 Migration `004_payment_provenance` adds `source_type TEXT NOT NULL DEFAULT 'manual' CHECK (source_type IN ('manual', 'paid_at_session_backfill'))` and `source_session_id TEXT REFERENCES sessions(id)` to the `payments` table using `add_columns`. Creates the partial unique index `idx_payments_paid_at_session_source` on `payments(source_session_id)` WHERE `source_type = 'paid_at_session_backfill' AND source_session_id IS NOT NULL`. This index ensures idempotency for future paid-at-session backfill across all payment statuses. No payment or allocation records are created by this migration.
 
+Migration `014_candidate_identity_aliases` adds two additive tables:
+`candidate_identity_aliases` for exact event-ID, fingerprint, and structural
+identity aliases, and `candidate_duplicate_reconciliations` for future audited
+duplicate repair application. It creates lookup indexes only. It does not
+backfill, merge, suppress, delete, or rewrite existing candidate, session,
+invoice, payment, audit, or raw snapshot rows.
+
 ### Adding a new migration
 
 1. Append a new `(migration_id, function)` tuple to `MIGRATIONS`.
