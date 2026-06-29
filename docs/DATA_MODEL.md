@@ -340,7 +340,7 @@ A local command-line interface is available in `app/jordana_invoice/payment_back
 - No `paid_cents`, `balance_cents`, or settlement-status columns on invoices — paid and balance amounts are derived dynamically from the payment ledger.
 - Paid-at-session sessions remain excluded from invoicing.
 - Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.
-- Receipts, account statements, delivery, credits, and reconciliation remain unimplemented.
+- Account statements, delivery, credits, and reconciliation remain unimplemented. Manual one-payment receipts are implemented separately with immutable receipt snapshots.
 
 ## Prior Balance & Account Summary Schema
 

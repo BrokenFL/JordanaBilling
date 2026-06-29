@@ -23,6 +23,7 @@ shortcut-backups/
 docs/review-ui-approved-mockup.png
 *.pdf
 Invoices/
+Receipts/
 data/private/
 credentials*.json
 *credentials*

@@ -104,6 +104,11 @@ from .payment_services import (
     reverse_allocation,
     void_payment,
 )
+from .receipt_services import (
+    create_payment_receipt,
+    preview_payment_receipt,
+    trusted_receipt_document_action,
+)
 from .csv_reports import (
     available_report_types,
     available_years,
@@ -531,9 +536,33 @@ def make_handler(database_path: str, write_token: str | None = None):
                 if parsed.path == "/api/payments":
                     self.send_json({"items": list_all_payments(self.conn())})
                     return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-preview"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    query = parse_qs(parsed.query)
+                    self.send_json(preview_payment_receipt(
+                        self.conn(),
+                        payment_id,
+                        filing_owner_person_id=first(query, "filing_owner_person_id") or None,
+                    ))
+                    return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-pdf"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    receipt = self.conn().execute("SELECT * FROM payment_receipts WHERE payment_id = ?", (payment_id,)).fetchone()
+                    if not receipt:
+                        self.send_json({"ok": False, "error": "Receipt was not found."}, status=404)
+                        return
+                    pdf_path = Path(receipt["pdf_path"])
+                    if not pdf_path.is_file():
+                        self.send_json({"ok": False, "error": "The PDF file for this receipt is missing from the expected location."}, status=404)
+                        return
+                    self.send_pdf(pdf_path.read_bytes(), pdf_path.name or f"Receipt_{receipt['receipt_number']}.pdf")
+                    return
                 if parsed.path.startswith("/api/payments/") and not parsed.path.endswith("/outstanding-invoices") and not parsed.path.endswith("/paid-invoices"):
                     payment_id = parsed.path.strip("/").split("/")[2]
-                    self.send_json(get_payment_detail_view(self.conn(), payment_id))
+                    detail = get_payment_detail_view(self.conn(), payment_id)
+                    receipt = self.conn().execute("SELECT * FROM payment_receipts WHERE payment_id = ?", (payment_id,)).fetchone()
+                    detail["receipt"] = dict(receipt) if receipt else None
+                    self.send_json(detail)
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/print-preview"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
@@ -803,6 +832,24 @@ def make_handler(database_path: str, write_token: str | None = None):
                             idempotency_key=data.get("idempotency_key"),
                         )
                     )
+                    return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(
+                        create_payment_receipt(
+                            self.conn(),
+                            payment_id,
+                            filing_owner_person_id=data.get("filing_owner_person_id"),
+                        )
+                    )
+                    return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-document-action"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    receipt = self.conn().execute("SELECT receipt_id FROM payment_receipts WHERE payment_id = ?", (payment_id,)).fetchone()
+                    if not receipt:
+                        self.send_json({"ok": False, "error": "Receipt was not found."}, status=404)
+                        return
+                    self.send_json(trusted_receipt_document_action(self.conn(), receipt["receipt_id"], data.get("action") or ""))
                     return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/void"):
                     payment_id = parsed.path.strip("/").split("/")[2]

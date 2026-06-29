@@ -216,6 +216,14 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - Round 1 invoice-payment helpers: `list_outstanding_invoices`, `list_invoice_payment_history`, and `record_invoice_payment`.
 - `dry_run_paid_at_session_backfill` — Read-only analyzer that classifies `paid_at_session` sessions into eligibility categories and returns a sanitized aggregate report. Performs no writes. Classification order: already backfilled, not approved, missing Bill To, missing/invalid amount, missing/invalid date, existing manual allocation conflict, eligible. Amount priority: `rate_cents_snapshot` then `approved_rate_cents`. Date priority: `session_date` then `start_at`.
 
+`receipt_services.py` provides manual payment receipt support:
+
+- `preview_payment_receipt` builds a draft receipt snapshot from the current posted payment ledger without reserving a number, inserting a row, writing a file, or advancing the receipt sequence.
+- `create_payment_receipt` creates one finalized receipt per posted payment. Repeated create requests return the existing receipt.
+- Finalized receipts store one immutable `snapshot_json` and serve the stored PDF; they are not re-rendered from live payment or allocation state.
+- Receipt PDFs are stored under `Receipts/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`.
+- Invoice-linked payments inherit invoice filing ownership. Paid-at-session payments without invoices resolve an eligible session participant; ambiguous ownership blocks final creation.
+
 ### Dry-Run CLI
 
 A local CLI command is available for running the dry-run analyzer against a specified database:
@@ -258,7 +266,7 @@ The **Payments** workspace (formerly the "Unpaid" screen) now covers the normal 
 
 - No overpayments or unapplied credits
 - No multi-invoice payments
-- No due dates, overdue labels, aging, reconciliation, receipts, or email confirmations
+- No due dates, overdue labels, aging, reconciliation, automatic receipts, bulk receipts, or email confirmations
 - No historical paid-at-session backfill
 - No invoice PDF data or logic changes (PDF layout refinement applied in a separate presentation-only round; see INVOICE_TEMPLATE.md for current layout specs)
 
@@ -402,8 +410,8 @@ Determining whether an invoice is "prior" relative to the current one uses a str
 
 ### Unimplemented Features
 The following features are **not implemented** in this round and remain out of scope:
-- Receipts and receipt numbering
-- Paid Invoice or Paid Receipt documents
+- Automatic receipts, bulk receipts, and receipt correction workflows
+- Paid Invoice documents
 - Optional prior-invoice PDF packets
 - Email or mail delivery and delivery tracking
 - Paid-at-session backfill apply mode (dry-run only)

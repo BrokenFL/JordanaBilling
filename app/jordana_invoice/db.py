@@ -703,6 +703,12 @@ CREATE TABLE IF NOT EXISTS invoice_sequences (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS receipt_sequences (
+  sequence_year INTEGER PRIMARY KEY,
+  last_value INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS invoices (
   invoice_id TEXT PRIMARY KEY,
   invoice_number TEXT UNIQUE,
@@ -756,6 +762,29 @@ CREATE INDEX IF NOT EXISTS idx_invoices_status_date
 
 CREATE INDEX IF NOT EXISTS idx_invoices_bill_to_period
   ON invoices(bill_to_party_id, billing_period_start, billing_period_end);
+
+CREATE TABLE IF NOT EXISTS payment_receipts (
+  receipt_id TEXT PRIMARY KEY,
+  payment_id TEXT NOT NULL UNIQUE REFERENCES payments(payment_id),
+  receipt_number TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'finalized' CHECK (status IN ('finalized')),
+  payment_received_at TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  filing_owner_person_id TEXT REFERENCES people(person_id),
+  filing_owner_person_code_snapshot TEXT,
+  filing_owner_display_name_snapshot TEXT,
+  snapshot_json TEXT NOT NULL,
+  pdf_path TEXT NOT NULL,
+  pdf_sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_receipts_payment
+  ON payment_receipts(payment_id);
+
+CREATE INDEX IF NOT EXISTS idx_payment_receipts_filing_owner
+  ON payment_receipts(filing_owner_person_id, created_at);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_draft_party_month
   ON invoices(bill_to_party_id, billing_month)
@@ -1341,6 +1370,45 @@ def _apply_migration_010(conn: sqlite3.Connection) -> None:
     })
 
 
+MIGRATION_011_PAYMENT_RECEIPTS = "011_payment_receipts"
+
+
+def _apply_migration_011(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS receipt_sequences (
+          sequence_year INTEGER PRIMARY KEY,
+          last_value INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS payment_receipts (
+          receipt_id TEXT PRIMARY KEY,
+          payment_id TEXT NOT NULL UNIQUE REFERENCES payments(payment_id),
+          receipt_number TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'finalized' CHECK (status IN ('finalized')),
+          payment_received_at TEXT NOT NULL,
+          amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+          filing_owner_person_id TEXT REFERENCES people(person_id),
+          filing_owner_person_code_snapshot TEXT,
+          filing_owner_display_name_snapshot TEXT,
+          snapshot_json TEXT NOT NULL,
+          pdf_path TEXT NOT NULL,
+          pdf_sha256 TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payment_receipts_payment"
+        " ON payment_receipts(payment_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payment_receipts_filing_owner"
+        " ON payment_receipts(filing_owner_person_id, created_at)"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1352,6 +1420,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_008_BILLING_RELATIONSHIP_KEYS, _apply_migration_008),
     (MIGRATION_009_INVOICE_FILING_OWNER, _apply_migration_009),
     (MIGRATION_010_INVOICE_PRIOR_BALANCE_SNAPSHOTS, _apply_migration_010),
+    (MIGRATION_011_PAYMENT_RECEIPTS, _apply_migration_011),
 ]
 
 
