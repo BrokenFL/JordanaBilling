@@ -544,6 +544,39 @@ class PaidAtSessionApplyTests(unittest.TestCase):
             approve_candidate(self.conn, cid, payload)
         self.assertIn("billing party does not match", str(ctx.exception))
 
+    # 15d. Mismatched payment with no allocation is rejected and no allocation is created
+    def test_mismatched_payment_without_allocation_not_repaired(self):
+        cid = self._import_candidate("s1")
+        payload = {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Casey Sample"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "200.00",
+            "payment_status": "paid_at_session",
+            "billing_treatment": "billable",
+            "amount_received": "200.00",
+            "payment_date": "2026-07-10",
+            "payment_method": "zelle",
+        }
+        res = approve_candidate(self.conn, cid, payload)
+        session_id = res["session"]["id"]
+
+        # Mutilate: set payment amount to $150 (mismatch) AND delete allocation
+        self.conn.execute("UPDATE payments SET amount_cents = 15000 WHERE source_session_id = ?", (session_id,))
+        self.conn.execute("DELETE FROM payment_allocations WHERE session_id = ?", (session_id,))
+        self.conn.commit()
+
+        # Retry: should reject due to amount mismatch, NOT repair the allocation
+        with self.assertRaises(ValueError) as ctx:
+            approve_candidate(self.conn, cid, payload)
+        self.assertIn("does not match session charge", str(ctx.exception))
+
+        # Confirm no allocation was created
+        allocs = self.conn.execute("SELECT * FROM payment_allocations WHERE session_id = ?", (session_id,)).fetchall()
+        self.assertEqual(len(allocs), 0)
+
     # 16. Conflicting allocation is not silently rewritten
     def test_conflicting_allocation_fails_repair(self):
         cid = self._import_candidate("s1")
@@ -664,6 +697,36 @@ class PaidAtSessionApplyTests(unittest.TestCase):
                 ("payment-2", self.party["billing_party_id"], 20000, "2026-07-10", "zelle", "paid_at_session_backfill", session_id, "posted"),
             )
         self.conn.rollback()
+
+    # 20. Recovery error messages are not double-wrapped
+    def test_recovery_error_no_double_wrap(self):
+        cid = self._import_candidate("s1")
+        payload = {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Casey Sample"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "200.00",
+            "payment_status": "paid_at_session",
+            "billing_treatment": "billable",
+            "amount_received": "200.00",
+            "payment_date": "2026-07-10",
+            "payment_method": "zelle",
+        }
+        res = approve_candidate(self.conn, cid, payload)
+        session_id = res["session"]["id"]
+
+        # Mutilate: void the payment to trigger a recovery error
+        self.conn.execute("UPDATE payments SET status = 'void' WHERE source_session_id = ?", (session_id,))
+        self.conn.commit()
+
+        with self.assertRaises(ValueError) as ctx:
+            approve_candidate(self.conn, cid, payload)
+        msg = str(ctx.exception)
+        # Must not contain doubled text
+        self.assertNotIn("Recoverable inconsistency: Recoverable inconsistency", msg)
+        self.assertNotIn("recoverable inconsistency: recoverable inconsistency", msg)
 
 
 if __name__ == "__main__":

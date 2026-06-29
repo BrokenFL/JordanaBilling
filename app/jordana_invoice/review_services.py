@@ -836,7 +836,17 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
 
                     method_val = str(payment_method).strip().lower()
                 else:
-                    # Case B/C: payment exists. Validate against it.
+                    # Case B/C: payment exists. Validate against session charge.
+                    charge_cents = (
+                        session["rate_cents_snapshot"]
+                        if session["rate_cents_snapshot"] is not None
+                        else session["approved_rate_cents"]
+                    )
+                    if charge_cents is not None and existing_payment["amount_cents"] != charge_cents:
+                        raise ValueError(
+                            f"Existing paid-at-session payment amount ({existing_payment['amount_cents']}) "
+                            f"does not match session charge ({charge_cents})."
+                        )
                     amount_cents = existing_payment["amount_cents"]
                     payment_date = existing_payment["received_at"]
                     method_val = existing_payment["method"]
@@ -858,15 +868,17 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
                         administrative_note=payload.get("administrative_note") or (existing_payment["administrative_note"] if existing_payment else None),
                     )
                     conn.commit()
-                except Exception as err:
+                except Exception:
                     conn.rollback()
-                    raise ValueError(f"recoverable inconsistency: {err}") from err
+                    raise
 
                 res = get_review_candidate(conn, candidate_id)
                 res["paid_at_session_outcome"] = outcome_data["outcome"]
                 return res
+            except ValueError:
+                raise
             except Exception as err:
-                raise ValueError(f"Recoverable inconsistency: {err}")
+                raise ValueError(f"Recoverable inconsistency: {err}") from err
         else:
             return get_review_candidate(conn, candidate_id)
 
