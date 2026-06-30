@@ -262,13 +262,28 @@ scripts/privacy_check.sh
 
 ## Privacy And Git Safety Rules
 
-- Never commit `.env`, API keys, live databases, real CSV reports, Google credentials, invoice PDFs, logs, screenshots with client names, shortcut backups, or raw Google Sheet exports
+- Never commit `.env`, API keys, live databases, real CSV reports, Google credentials, invoice PDFs, logs, screenshots with client names, shortcut backups, raw Google Sheet exports, or real diagnosis codes
 - Use sanitized fictional records for demo data only
 - Keep private business profiles, branding assets, and generated PDFs outside Git
 - Before any GitHub push, run `scripts/git_safety_check.sh`
 - Do not commit live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, or credentials
 - The operational SQLite database at `data/jordana_invoice.sqlite3` contains real data; never delete, overwrite, truncate, or recreate it
 - For acceptance testing, always use `scripts/run_acceptance_test.sh` (creates a temporary database)
+
+## Policy Decision: Diagnosis-Code Storage (2026-06-30)
+
+The former categorical prohibition on diagnosis-code storage has been superseded **only** for structured insurance diagnosis codes. The application may store a structured diagnosis code only when required for administrative insurance billing or reimbursement documentation. Diagnosis codes must be limited to the minimum necessary billing information. The application must not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, clinical interpretations, or other unnecessary protected health information.
+
+Additional rules:
+
+- Diagnosis codes are local operational data; real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, or committed databases.
+- Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them.
+- Standard self-pay invoices should not include diagnosis codes.
+- Diagnosis-code values must not be silently inferred from calendar text or session descriptions.
+- Approved invoice snapshots must remain historically stable.
+- Removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records.
+
+This decision is consistent with migration 012 (`012_insurance_coding`), which added the `insurance_diagnosis_code_snapshot` column to the `invoices` table, and with the invoice finalization code, which freezes the diagnosis code into the finalized snapshot only when insurance coding is explicitly enabled.
 
 ## Local Run Command
 
@@ -289,7 +304,7 @@ Open: `http://127.0.0.1:8765/review`
 - No credits, multi-invoice payments, formal reconciliation, or month-close workflows
 - No polished production dashboard
 - No permanent deletion of billing relationships (by design — deactivation only)
-- No clinical notes beyond raw calendar evidence
+- No clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, or session-content notes beyond raw calendar evidence (structured insurance diagnosis codes are permitted per the policy decision above)
 
 ## Recommended Next Steps
 

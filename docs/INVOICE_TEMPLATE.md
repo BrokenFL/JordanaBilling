@@ -1,6 +1,6 @@
 # Invoice Template
 
-The ReportLab letter template contains a logo or business fallback, `INVOICE`, number/date/period, `BILL TO`, Date/Participants/Service/Duration/Amount columns, configured `TOTAL DUE`, and one restrained footer-style payment block. The Bill To block shows the delivery destination implied by the invoice delivery method: mailing address for mail, `Via Email: ...` for email, or both in that order. The payment block shows the check instructions plus `Or send payment via Zelle to: ...`. It has no due date, diagnosis, clinical note, insurance code, or treatment summary.
+The ReportLab letter template contains a logo or business fallback, `INVOICE`, number/date/period, `BILL TO`, Date/Participants/Service/Duration/Amount columns, configured `TOTAL DUE`, and one restrained footer-style payment block. The Bill To block shows the delivery destination implied by the invoice delivery method: mailing address for mail, `Via Email: ...` for email, or both in that order. The payment block shows the check instructions plus `Or send payment via Zelle to: ...`. It has no due date, clinical note, or treatment summary. Standard self-pay invoices do not include diagnosis codes or insurance coding; optional insurance coding may be added at finalization when required for administrative insurance billing (see Optional Insurance Coding Block below).
 
 ## PDF Layout (US Letter Portrait)
 

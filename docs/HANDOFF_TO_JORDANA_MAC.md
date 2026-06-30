@@ -374,6 +374,7 @@ Never commit:
 - logs with names
 - private screenshots
 - database backups
+- real diagnosis codes
 
 At the end of every completed code round:
 

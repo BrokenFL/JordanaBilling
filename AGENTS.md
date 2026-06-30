@@ -9,7 +9,7 @@ This project is a local-first billing normalization app for Jordana.
 - Treat SQLite as the local application database.
 - Keep ambiguous data reviewable and reversible.
 - Do not generate invoices from unapproved or ineligible sessions.
-- Do not add clinical notes.
+- Do not add clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations. A structured diagnosis code may be stored only when required for administrative insurance billing or reimbursement documentation.
 - Do not silently classify uncertain records.
 - Use internal UUID primary keys.
 - Keep secrets in `.env`; never put the real API key in source or docs.

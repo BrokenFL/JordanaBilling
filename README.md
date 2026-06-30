@@ -223,7 +223,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - Calendar import and review commands do not generate invoices automatically.
 - Phase 2 includes local PDF invoice generation and immutable finalization snapshots plus an implemented payment ledger with corrections.
 - No polished production dashboard is built yet.
-- Do not store clinical notes beyond the raw calendar evidence already imported.
+- Do not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations beyond the raw calendar evidence already imported. A structured diagnosis code may be stored only when required for administrative insurance billing or reimbursement documentation; it must not be silently inferred from calendar text or session descriptions.
 - Do not rewrite historical finalized invoice values when rates change later.
 - Every approved session must store the actual charged amount; future rate rules must not rewrite it.
 - Do not expose household/account labels as routine review fields when Participants and Bill to are enough.
