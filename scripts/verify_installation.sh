@@ -6,6 +6,7 @@ set -euo pipefail
 
 APP_PATH="${JORDANA_INSTALL_APP_DEST:-$HOME/Applications/Jordana Billing.app}"
 APP_SUPPORT_DIR="${JORDANA_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Jordana Billing}"
+DOCUMENTS_ROOT="${JORDANA_DOCUMENTS_ROOT:-$HOME/Documents/Jordana Billing}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -19,12 +20,16 @@ done
 VENV_PYTHON="$APP_PATH/Contents/Resources/runtime/venv/bin/python"
 CONFIG_FILE="$APP_SUPPORT_DIR/config/.env"
 DB_PATH="$APP_SUPPORT_DIR/data/jordana_invoice.sqlite3"
+REPORTS_DIR="$DOCUMENTS_ROOT/Session Lists"
+CLIENT_FILES_DIR="$DOCUMENTS_ROOT/Client Files"
 
 [[ -d "$APP_PATH" ]] || { echo "Missing app bundle" >&2; exit 1; }
 [[ -x "$APP_PATH/Contents/MacOS/launcher" ]] || { echo "Missing app launcher" >&2; exit 1; }
 [[ -x "$VENV_PYTHON" ]] || { echo "Missing installed Python runtime" >&2; exit 1; }
 [[ -f "$CONFIG_FILE" ]] || { echo "Missing private configuration" >&2; exit 1; }
 [[ -f "$DB_PATH" ]] || { echo "Missing private database" >&2; exit 1; }
+[[ -d "$REPORTS_DIR" && -w "$REPORTS_DIR" ]] || { echo "Session Lists folder is missing or not writable" >&2; exit 1; }
+[[ -d "$CLIENT_FILES_DIR" && -w "$CLIENT_FILES_DIR" ]] || { echo "Client Files folder is missing or not writable" >&2; exit 1; }
 
 "$VENV_PYTHON" - <<PY
 import importlib.resources

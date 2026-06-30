@@ -11,6 +11,9 @@ WHEELHOUSE="$RELEASE_DIR/wheelhouse"
 MANIFEST="$RELEASE_DIR/release_manifest.json"
 APP_DEST="${JORDANA_INSTALL_APP_DEST:-$HOME/Applications/$APP_NAME}"
 APP_SUPPORT_DIR="${JORDANA_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Jordana Billing}"
+DOCUMENTS_ROOT="${JORDANA_DOCUMENTS_ROOT:-$HOME/Documents/Jordana Billing}"
+REPORTS_DIR="$DOCUMENTS_ROOT/Session Lists"
+CLIENT_FILES_DIR="$DOCUMENTS_ROOT/Client Files"
 CONFIG_DEST="$APP_SUPPORT_DIR/config/.env"
 DB_DEST="$APP_SUPPORT_DIR/data/jordana_invoice.sqlite3"
 CONFIG_SOURCE=""
@@ -72,7 +75,7 @@ if not required.startswith(major_minor + "."):
     )
 PY
 
-mkdir -p "$(dirname "$APP_DEST")" "$APP_SUPPORT_DIR/config" "$APP_SUPPORT_DIR/data" "$APP_SUPPORT_DIR/backups" "$APP_SUPPORT_DIR/logs" "$APP_SUPPORT_DIR/runtime" "$APP_SUPPORT_DIR/Reports"
+mkdir -p "$(dirname "$APP_DEST")" "$APP_SUPPORT_DIR/config" "$APP_SUPPORT_DIR/data" "$APP_SUPPORT_DIR/backups" "$APP_SUPPORT_DIR/logs" "$APP_SUPPORT_DIR/runtime" "$REPORTS_DIR" "$CLIENT_FILES_DIR"
 
 if [[ -n "$CONFIG_SOURCE" ]]; then
   [[ -f "$CONFIG_SOURCE" ]] || fail "Private config source does not exist."

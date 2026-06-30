@@ -24,6 +24,9 @@ final class SetupController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var supportRoot: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Jordana Billing")
     }
+    private var documentsRoot: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents/Jordana Billing")
+    }
     private var configPath: URL {
         supportRoot.appendingPathComponent("config/.env")
     }
@@ -83,7 +86,7 @@ final class SetupController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         title.font = .boldSystemFont(ofSize: 22)
         root.addArrangedSubview(title)
 
-        let intro = NSTextField(wrappingLabelWithString: "This installs the private local billing app to ~/Applications and keeps configuration and the SQLite database in Application Support. Existing private config and data are preserved.")
+        let intro = NSTextField(wrappingLabelWithString: "This installs the private local billing app to ~/Applications, keeps configuration and the SQLite database in Application Support, and writes reports, invoices, and receipts under ~/Documents/Jordana Billing. Existing private config, data, and generated output folders are preserved.")
         intro.preferredMaxLayoutWidth = 500
         root.addArrangedSubview(intro)
 
@@ -164,6 +167,8 @@ final class SetupController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             messages.append("Existing database found and will be preserved.")
             cleanStart.isEnabled = false
         }
+        messages.append("Generated reports will be saved under \(documentsRoot.appendingPathComponent("Session Lists").path).")
+        messages.append("Invoices and receipts will be saved under \(documentsRoot.appendingPathComponent("Client Files").path).")
         status.stringValue = messages.joined(separator: "\n")
     }
 

@@ -246,6 +246,29 @@ class TestInstallerAuthority(unittest.TestCase):
         self.assertIn("scripts/install_release.sh", handoff)
         self.assertIn("Application Support/Jordana Billing", handoff)
 
+    def test_installed_launcher_exports_documents_output_defaults(self) -> None:
+        launcher = (PROJECT_DIR / "scripts" / "launch_installed_app.sh").read_text()
+        self.assertIn('DOCUMENTS_ROOT="${JORDANA_DOCUMENTS_ROOT:-$HOME/Documents/Jordana Billing}"', launcher)
+        self.assertIn('DEFAULT_REPORTS_DIR="$DOCUMENTS_ROOT/Session Lists"', launcher)
+        self.assertIn('DEFAULT_CLIENT_FILES_DIR="$DOCUMENTS_ROOT/Client Files"', launcher)
+        self.assertIn('values.setdefault("JORDANA_REPORTS_DIR", str(default_reports.resolve()))', launcher)
+        self.assertIn('values.setdefault("JORDANA_INVOICES_DIR", str(default_client_files.resolve()))', launcher)
+        self.assertIn('values.setdefault("JORDANA_RECEIPTS_DIR", str(default_client_files.resolve()))', launcher)
+        self.assertIn('if os.environ.get(key):', launcher)
+        self.assertIn('values[key] = os.environ[key]', launcher)
+        self.assertIn('mkdir -p "$JORDANA_REPORTS_DIR" "$JORDANA_INVOICES_DIR" "$JORDANA_RECEIPTS_DIR" "$JORDANA_BACKUP_DIR"', launcher)
+
+    def test_installer_and_verifier_use_documents_output_folders(self) -> None:
+        installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text()
+        verifier = (PROJECT_DIR / "scripts" / "verify_installation.sh").read_text()
+        for script in (installer, verifier):
+            self.assertIn('DOCUMENTS_ROOT="${JORDANA_DOCUMENTS_ROOT:-$HOME/Documents/Jordana Billing}"', script)
+            self.assertIn('Session Lists', script)
+            self.assertIn('Client Files', script)
+        self.assertNotIn('$APP_SUPPORT_DIR/Reports', installer)
+        self.assertIn('[[ -d "$REPORTS_DIR" && -w "$REPORTS_DIR" ]]', verifier)
+        self.assertIn('[[ -d "$CLIENT_FILES_DIR" && -w "$CLIENT_FILES_DIR" ]]', verifier)
+
 
 class TestPortOwnershipSafety(unittest.TestCase):
     """Verify launcher scripts do not kill unrelated processes."""

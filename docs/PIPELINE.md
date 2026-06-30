@@ -126,10 +126,15 @@ Sessions can point to an optional client account, billing party, one or more par
 
 After a successful sync, the app writes:
 
-- `Reports/Jordana_Client_Sessions_2026.csv`
-- `Reports/Jordana_Client_Summary_2026.csv`
+- `Reports/Jordana_Client_Sessions_<YEAR>.csv`
+- `Reports/Jordana_Client_Summary_<YEAR>.csv`
+- `Reports/Jordana_Session_Log_<YEAR>.csv`
+- `Reports/Jordana_All_Appointments.csv`
 
 Report writes are atomic: each file is written to a temporary file, validated, then moved into place.
+Installed releases set the report directory to
+`~/Documents/Jordana Billing/Session Lists`; development checkouts keep the
+repo-local `Reports/` default unless overridden.
 
 ## 11. Relationship And Rate Normalization
 

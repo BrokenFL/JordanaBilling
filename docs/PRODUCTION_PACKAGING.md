@@ -35,10 +35,25 @@ Private operational data:
   backups/
   logs/
   runtime/
-  Reports/
 ```
 
-The SQLite database, private config, backups, reports, generated invoices, receipts, and logs must not live inside the app bundle or the Git repository.
+User-facing generated files:
+
+```text
+~/Documents/Jordana Billing/
+  Session Lists/
+    Jordana_All_Appointments.csv
+    Jordana_Session_Log_<YEAR>.csv
+    Jordana_Client_Sessions_<YEAR>.csv
+    Jordana_Client_Summary_<YEAR>.csv
+  Client Files/<Client Display Name>/<Month YYYY>/
+    Invoice_<number>.pdf
+    Receipt_<number>.pdf
+```
+
+The SQLite database, private config, backups, logs, runtime state, generated
+reports, invoices, and receipts must not live inside the app bundle or the Git
+repository. Reinstall/update preserves the Documents output folders.
 
 ## Build A Release
 

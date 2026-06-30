@@ -34,9 +34,8 @@ Jordana_Private_Transfer/
   config/.env
   data/jordana_invoice.sqlite3
   backups/
-  Reports/
-  Invoices/
-  Receipts/
+  Session Lists/
+  Client Files/
   credentials/
   imports/
   TRANSFER_MANIFEST.txt
@@ -91,7 +90,11 @@ copied into documentation, fixtures, screenshots, logs, examples, or Git.
   config/.env
   data/jordana_invoice.sqlite3
   backups/
-  Reports/
+  logs/
+  runtime/
+~/Documents/Jordana Billing/
+  Session Lists/
+  Client Files/
 ```
 
 4. Verify SHA-256 checksums against `TRANSFER_MANIFEST.txt`.

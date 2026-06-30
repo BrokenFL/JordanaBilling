@@ -18,7 +18,7 @@ There are four CSV export types. Each can be generated on demand via the localho
 Current file:
 
 ```text
-Reports/Jordana_Client_Sessions_2026.csv
+Reports/Jordana_Client_Sessions_<YEAR>.csv
 ```
 
 Columns:
@@ -54,7 +54,7 @@ Columns:
 Current file:
 
 ```text
-Reports/Jordana_Client_Summary_2026.csv
+Reports/Jordana_Client_Summary_<YEAR>.csv
 ```
 
 Columns:
@@ -125,7 +125,10 @@ This applies to both disk exports (via `write_rows()`) and on-demand API downloa
 
 Exports are written atomically: temporary file first, validation second, replacement last. Approved historical amounts come from `sessions.approved_rate_cents` or `sessions.rate_cents_snapshot`, not from recomputing current rate rules.
 
-The `Reports/` directory is gitignored and must never be committed.
+Development checkout disk exports default to the gitignored `Reports/`
+directory. Installed releases set `JORDANA_REPORTS_DIR` to
+`~/Documents/Jordana Billing/Session Lists`, which is also outside Git. Disk
+exports must never be committed.
 
 ## On-demand download API
 

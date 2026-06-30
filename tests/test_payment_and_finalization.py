@@ -748,6 +748,27 @@ class FilingOwnerTests(unittest.TestCase):
         self.assertNotIn("July 2026", final["invoice"]["pdf_path"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_invoice_uses_configured_documents_client_files_root(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "1" * 64
+
+        fake_pdf.side_effect = write_pdf
+        client_files = self.root / "Documents" / "Jordana Billing" / "Client Files"
+        client = self._person("Docs", "Client")
+        party = self._party("Docs Client", client["person_id"])
+        session = self._session("docsroot", [{"person_id": client["person_id"], "display_name": "Docs Client"}], party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        with patch.dict("os.environ", {"JORDANA_INVOICES_DIR": str(client_files)}):
+            final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"])
+
+        self.assertEqual(
+            Path(final["invoice"]["pdf_path"]),
+            client_files / "Docs Client" / "May 2026" / "Invoice_2026-0001.pdf",
+        )
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_sanitized_display_name_folder_is_deterministic(self, fake_pdf):
         def write_pdf(_invoice, _lines, output_path, **_kwargs):
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -792,6 +813,36 @@ class FilingOwnerTests(unittest.TestCase):
         self.assertEqual(fake_open.call_args.args[0], ["open", str((self.root / "Invoices" / "Finder Client").resolve(strict=False))])
         trusted_invoice_document_action(self.conn, "old-doc-action", "show_in_finder", pdf_root=self.root / "Invoices")
         self.assertEqual(fake_open.call_args.args[0], ["open", "-R", str(old_pdf.resolve(strict=False))])
+
+    def test_document_actions_reject_paths_outside_configured_invoice_root(self):
+        client = self._person("Outside", "Client")
+        party = self._party("Outside Client", client["person_id"])
+        bad_pdf = self.root / "Other Files" / "Outside Client" / "Invoice_2026-0001.pdf"
+        bad_pdf.parent.mkdir(parents=True, exist_ok=True)
+        bad_pdf.write_bytes(b"pdf")
+        now = "2026-06-01T00:00:00"
+        self.conn.execute(
+            """
+            INSERT INTO invoices (
+              invoice_id, invoice_number, status, bill_to_party_id, billing_period_start,
+              billing_period_end, invoice_date, total_cents, delivery_method,
+              filing_owner_person_id, filing_owner_person_code_snapshot,
+              filing_owner_display_name_snapshot, pdf_path, pdf_sha256,
+              created_at, updated_at, finalized_at
+            ) VALUES ('outside-doc-action', '2026-0001', 'finalized', ?, '2026-05-01',
+              '2026-05-31', '2026-05-31', 1000, 'email', ?, ?, 'Outside Client',
+              ?, ?, ?, ?, ?)
+            """,
+            (party["billing_party_id"], client["person_id"], client["person_code"], str(bad_pdf), "b" * 64, now, now, now),
+        )
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "outside the configured invoice folder"):
+            trusted_invoice_document_action(
+                self.conn,
+                "outside-doc-action",
+                "open_pdf",
+                pdf_root=self.root / "Documents" / "Jordana Billing" / "Client Files",
+            )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_storage_failure_rolls_back_and_removes_partial_file(self, fake_pdf):

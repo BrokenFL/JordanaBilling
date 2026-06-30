@@ -80,8 +80,13 @@ config/.env
 data/jordana_invoice.sqlite3
 backups/
 logs/
-Reports/
+runtime/
 ```
+
+Installed user-facing generated files live under
+`~/Documents/Jordana Billing/Session Lists/` and
+`~/Documents/Jordana Billing/Client Files/`. They remain outside Git and
+outside the app bundle.
 
 The setup and launcher flows must preserve an existing database, create a verified private backup before pending migrations, and apply only additive migrations. They must never delete, recreate, or silently replace the operational database.
 

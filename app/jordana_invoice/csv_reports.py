@@ -60,16 +60,17 @@ SUMMARY_COLUMNS = [
 def write_reports(
     conn: sqlite3.Connection,
     reports_dir: str | Path = "Reports",
-    year: int = 2026,
+    year: int | None = None,
 ) -> tuple[Path, Path, Path, Path]:
     target_dir = Path(reports_dir)
+    report_year = current_eastern_year() if year is None else int(year)
     target_dir.mkdir(parents=True, exist_ok=True)
-    session_path = target_dir / f"Jordana_Client_Sessions_{year}.csv"
-    summary_path = target_dir / f"Jordana_Client_Summary_{year}.csv"
-    simple_path = target_dir / f"Jordana_Session_Log_{year}.csv"
+    session_path = target_dir / f"Jordana_Client_Sessions_{report_year}.csv"
+    summary_path = target_dir / f"Jordana_Client_Summary_{report_year}.csv"
+    simple_path = target_dir / f"Jordana_Session_Log_{report_year}.csv"
     appointment_path = target_dir / "Jordana_All_Appointments.csv"
 
-    session_rows = build_session_rows(conn, year)
+    session_rows = build_session_rows(conn, report_year)
     summary_rows = build_summary_rows(session_rows)
     appointment_rows = build_appointment_ledger_csv_rows(conn)
 
@@ -78,6 +79,14 @@ def write_reports(
     atomic_write_csv(simple_path, SIMPLE_COLUMNS, build_simple_rows(session_rows))
     atomic_write_csv(appointment_path, APPOINTMENT_LEDGER_COLUMNS, appointment_rows)
     return session_path, summary_path, simple_path, appointment_path
+
+
+def current_eastern_year(now: datetime | None = None) -> int:
+    eastern = ZoneInfo("America/New_York")
+    moment = now or datetime.now(eastern)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=eastern)
+    return moment.astimezone(eastern).year
 
 
 SIMPLE_COLUMNS = [

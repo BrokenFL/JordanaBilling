@@ -55,7 +55,6 @@ Minimum production state normally includes:
 config/.env
 data/jordana_invoice.sqlite3
 backups/
-Reports/
 ```
 
 Not every installation will already have every generated directory, but the live database must be transferred when preserving an existing production system.
@@ -200,10 +199,9 @@ The following remain local and must never be committed:
 - `~/Library/Application Support/Jordana Billing/data/jordana_invoice.sqlite3`
 - `~/Library/Application Support/Jordana Billing/backups/`
 - raw imports and Google credentials
-- `~/Library/Application Support/Jordana Billing/Reports/`
 - `~/Library/Application Support/Jordana Billing/logs/`
-- `Invoices/`
-- `Receipts/`
+- `~/Documents/Jordana Billing/Session Lists/`
+- `~/Documents/Jordana Billing/Client Files/`
 - SQLite backups
 - Shortcut exports or secret-bearing Shortcut build specifications
 

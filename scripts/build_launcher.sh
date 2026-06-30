@@ -57,7 +57,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>LSUIElement</key>
   <false/>
   <key>NSDocumentsFolderUsageDescription</key>
-  <string>Jordana Billing needs access to the Documents folder to read configuration, preserve the local database, and launch the local billing app.</string>
+  <string>Jordana Billing saves session lists, invoices, and receipts in the Documents folder.</string>
 </dict>
 </plist>
 PLIST

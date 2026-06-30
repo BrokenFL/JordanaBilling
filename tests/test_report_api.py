@@ -3,7 +3,7 @@ import io
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -14,9 +14,11 @@ from jordana_invoice.csv_reports import (
     SIMPLE_COLUMNS,
     available_report_types,
     available_years,
+    current_eastern_year,
     default_report_year,
     generate_report_csv,
     report_filename,
+    write_reports,
 )
 from jordana_invoice.appointment_ledger import APPOINTMENT_LEDGER_COLUMNS
 from jordana_invoice.db import connect, init_db
@@ -381,8 +383,6 @@ class WriteReportsUnchangedTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_write_reports_still_produces_four_files(self):
-        from jordana_invoice.csv_reports import write_reports
-
         import_rows(
             self.conn,
             [raw_row("snap-1", "Bonnie 5", "2026-06-23T17:00:00-04:00")],
@@ -394,6 +394,36 @@ class WriteReportsUnchangedTests(unittest.TestCase):
         self.assertEqual(len(paths), 4)
         for path in paths:
             self.assertTrue(path.exists())
+
+    def test_write_reports_default_year_uses_current_eastern_year(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row("snap-2026", "Bonnie 5", "2026-06-23T17:00:00-04:00"),
+                raw_row("snap-2027", "Bonnie 6", "2027-06-23T17:00:00-04:00"),
+            ],
+            "test",
+        )
+        reports_dir = self.root / "Reports"
+        with patch("jordana_invoice.csv_reports.current_eastern_year", return_value=2027):
+            paths = write_reports(self.conn, reports_dir=reports_dir)
+
+        self.assertEqual(paths[0].name, "Jordana_Client_Sessions_2027.csv")
+        self.assertTrue((reports_dir / "Jordana_All_Appointments.csv").exists())
+        with (reports_dir / "Jordana_Client_Sessions_2027.csv").open() as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertTrue(rows)
+        self.assertTrue(all(row["session_date"].startswith("2027") for row in rows))
+
+    def test_current_eastern_year_handles_december_to_january_boundary(self):
+        self.assertEqual(
+            current_eastern_year(datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc)),
+            2026,
+        )
+        self.assertEqual(
+            current_eastern_year(datetime(2027, 1, 1, 5, 0, tzinfo=timezone.utc)),
+            2027,
+        )
 
 
 if __name__ == "__main__":

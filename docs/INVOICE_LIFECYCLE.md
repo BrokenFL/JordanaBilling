@@ -173,15 +173,16 @@ Billing relationships may store `default_filing_owner_person_id`. It must refere
 
 Finalization freezes `filing_owner_person_id`, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, and `pdf_path`. Later person-name or relationship changes do not move or rename finalized invoices. Existing finalized invoices keep their existing path/checksum/snapshots and are not backfilled by guessing.
 
-New finalized PDFs are stored as:
+New finalized PDFs are stored under the configured invoice root. Installed
+releases set that root to `~/Documents/Jordana Billing/Client Files`:
 
-`Invoices/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf`
+`Client Files/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf`
 
 The month folder uses `billing_month` when present. If `billing_month` is absent, it falls back to `billing_period_start`. It never uses the wall-clock date or PDF creation date. Path parts are sanitized, the stable person code remains frozen internally, and organization names are not used as the folder when the invoice is filed under a client.
 
 When two different filing-owner people would otherwise use the same sanitized display-name folder, the later conflicting folder is disambiguated with the permanent person code:
 
-`Invoices/<Client Display Name> [<PERSON_CODE>]/<Month YYYY>/Invoice_<number>.pdf`
+`Client Files/<Client Display Name> [<PERSON_CODE>]/<Month YYYY>/Invoice_<number>.pdf`
 
 If an existing plain display-name folder is present but SQLite cannot prove that it belongs to the same filing-owner person, new finalization uses the code-disambiguated folder instead of guessing from the folder name.
 
@@ -235,7 +236,7 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `preview_payment_receipt` builds a draft receipt snapshot from the current posted payment ledger without reserving a number, inserting a row, writing a file, or advancing the receipt sequence.
 - `create_payment_receipt` creates one finalized receipt per posted payment. Repeated create requests return the existing receipt.
 - Finalized receipts store one immutable `snapshot_json` and serve the stored PDF; they are not re-rendered from live payment or allocation state.
-- Receipt PDFs are stored under `Receipts/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`.
+- Receipt PDFs are stored under the configured receipt root. Installed releases set that root to `~/Documents/Jordana Billing/Client Files`, using `Client Files/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`.
 - Invoice-linked payments inherit invoice filing ownership. Paid-at-session payments without invoices resolve an eligible session participant; ambiguous ownership blocks final creation.
 
 ### Dry-Run CLI

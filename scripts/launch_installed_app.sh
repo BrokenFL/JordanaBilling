@@ -9,6 +9,9 @@
 set -euo pipefail
 
 APP_SUPPORT_DIR="${JORDANA_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Jordana Billing}"
+DOCUMENTS_ROOT="${JORDANA_DOCUMENTS_ROOT:-$HOME/Documents/Jordana Billing}"
+DEFAULT_REPORTS_DIR="$DOCUMENTS_ROOT/Session Lists"
+DEFAULT_CLIENT_FILES_DIR="$DOCUMENTS_ROOT/Client Files"
 CONFIG_FILE="${JORDANA_CONFIG_FILE:-$APP_SUPPORT_DIR/config/.env}"
 DB_PATH="${JORDANA_DATABASE_PATH:-$APP_SUPPORT_DIR/data/jordana_invoice.sqlite3}"
 LOG_DIR="$APP_SUPPORT_DIR/logs"
@@ -59,7 +62,7 @@ fail_launcher() {
 }
 
 load_private_env() {
-  "$VENV_PYTHON" - "$CONFIG_FILE" "$DB_PATH" "$APP_SUPPORT_DIR" <<'PY'
+  "$VENV_PYTHON" - "$CONFIG_FILE" "$DB_PATH" "$APP_SUPPORT_DIR" "$DEFAULT_REPORTS_DIR" "$DEFAULT_CLIENT_FILES_DIR" <<'PY'
 import os
 import sqlite3
 import sys
@@ -68,6 +71,8 @@ from pathlib import Path
 config = Path(sys.argv[1]).expanduser()
 db_path = Path(sys.argv[2]).expanduser()
 support = Path(sys.argv[3]).expanduser()
+default_reports = Path(sys.argv[4]).expanduser()
+default_client_files = Path(sys.argv[5]).expanduser()
 if not config.is_file():
     raise SystemExit("MISSING_CONFIG\tPrivate configuration is missing at ~/Library/Application Support/Jordana Billing/config/.env.")
 values = {}
@@ -93,7 +98,12 @@ except sqlite3.Error:
 if not integrity or integrity[0] != "ok":
     raise SystemExit("DATABASE_UNREADABLE\tThe operational SQLite database did not pass integrity_check.")
 values["JORDANA_DATABASE_PATH"] = str(db_path.resolve())
-values.setdefault("JORDANA_REPORTS_DIR", str((support / "Reports").resolve()))
+for key in ("JORDANA_REPORTS_DIR", "JORDANA_INVOICES_DIR", "JORDANA_RECEIPTS_DIR", "JORDANA_BACKUP_DIR"):
+    if os.environ.get(key):
+        values[key] = os.environ[key]
+values.setdefault("JORDANA_REPORTS_DIR", str(default_reports.resolve()))
+values.setdefault("JORDANA_INVOICES_DIR", str(default_client_files.resolve()))
+values.setdefault("JORDANA_RECEIPTS_DIR", str(default_client_files.resolve()))
 values.setdefault("JORDANA_BACKUP_DIR", str((support / "backups").resolve()))
 for key, value in sorted(values.items()):
     print(f"{key}={value}")
@@ -276,7 +286,7 @@ wait_for_health_or_fail() {
 "$VENV_PYTHON" -c 'import jordana_invoice' >/dev/null 2>&1 || fail_launcher "Application Package Missing" "Jordana Billing is not installed in the private app runtime."
 
 export_private_env
-mkdir -p "$JORDANA_REPORTS_DIR" "$JORDANA_BACKUP_DIR"
+mkdir -p "$JORDANA_REPORTS_DIR" "$JORDANA_INVOICES_DIR" "$JORDANA_RECEIPTS_DIR" "$JORDANA_BACKUP_DIR"
 
 log_message "Starting installed Jordana Billing."
 handle_existing_server_or_port

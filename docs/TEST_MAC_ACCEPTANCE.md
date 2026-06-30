@@ -28,7 +28,7 @@ shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 9. Enter the ingest API key. Expected result: the key field is hidden and the key is not displayed afterward. On a reinstall with existing private config, this field is disabled so secrets do not need to be re-entered.
 10. Check the clean-start database confirmation. Expected explanation: unresolved review evidence will sync; historical invoices, payments, clients, approved sessions, and billing relationships will not be imported. On a reinstall where `~/Library/Application Support/Jordana Billing/data/jordana_invoice.sqlite3` already exists, clean-start initialization is disabled and the setup app says the existing database will be preserved.
 11. Click Install.
-12. Expected result: setup installs `~/Applications/Jordana Billing.app`, writes `~/Library/Application Support/Jordana Billing/config/.env` with permissions `600`, creates the clean database only after confirmation, runs verification, and reports success.
+12. Expected result: setup installs `~/Applications/Jordana Billing.app`, writes `~/Library/Application Support/Jordana Billing/config/.env` with permissions `600`, creates `~/Documents/Jordana Billing/Session Lists` and `~/Documents/Jordana Billing/Client Files`, creates the clean database only after confirmation, runs verification, and reports success.
 13. Click Open Jordana Billing. Expected result: the browser opens only after health readiness.
 14. Confirm unresolved review items load after sync.
 15. Confirm there are no old invoices, payments, clients, approved sessions, or billing relationships.
@@ -39,12 +39,13 @@ shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 20. Temporarily move `config/.env` aside and test the missing config error. Restore the file afterward.
 21. Temporarily move `data/jordana_invoice.sqlite3` aside and test the missing DB error. Restore the file afterward.
 22. Reinstall the same release and confirm existing config and DB are preserved. Expected result: Apps Script URL and ingest API-key fields are disabled, clean-start initialization is disabled, and installation remains possible without re-entering secrets.
-23. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support.
+23. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support and user-facing generated folders remain in Documents.
 
 ## Evidence To Record
 
 - Release filename and checksum result.
 - Confirmation that `.env` permissions are `600`.
+- Confirmation that the Documents Session Lists and Client Files folders exist and are writable.
 - Setup app success message.
 - Whether Gatekeeper required right-click Open or Security & Privacy approval.
 - Confirmation that no Rosetta prompt appeared.

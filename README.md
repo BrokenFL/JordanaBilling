@@ -104,8 +104,10 @@ Create a real `.env` from `.env.example` and fill in:
 ```bash
 JORDANA_APPS_SCRIPT_URL=
 JORDANA_INGEST_API_KEY=
-JORDANA_DATABASE_PATH=/Users/brookesnader/Documents/Jordana Billing/data/jordana_invoice.sqlite3
-JORDANA_REPORTS_DIR=/Users/brookesnader/Documents/Jordana Billing/Reports
+JORDANA_DATABASE_PATH=__PROJECT_DIR__/data/jordana_invoice.sqlite3
+JORDANA_REPORTS_DIR=__PROJECT_DIR__/Reports
+JORDANA_INVOICES_DIR=Invoices
+JORDANA_RECEIPTS_DIR=Receipts
 JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work
 # Optional backup directory. Defaults to ~/.jordana_invoice/backups if unset.
 JORDANA_BACKUP_DIR=
@@ -157,9 +159,20 @@ See `docs/CALENDAR_INTEGRATION.md` for the Apps Script Script Properties, Shortc
 
 After a successful sync the app updates:
 
-- `Reports/Jordana_Client_Sessions_2026.csv`
-- `Reports/Jordana_Client_Summary_2026.csv`
+- `Reports/Jordana_Client_Sessions_<YEAR>.csv`
+- `Reports/Jordana_Client_Summary_<YEAR>.csv`
+- `Reports/Jordana_Session_Log_<YEAR>.csv`
 - `Reports/Jordana_All_Appointments.csv`
+
+Automatic sync uses the current year in `America/New_York` for the annual
+session reports. The all-appointments report remains continuously refreshed
+without a year in the filename.
+
+Installed releases set user-facing output defaults to
+`~/Documents/Jordana Billing/Session Lists` for CSV reports and
+`~/Documents/Jordana Billing/Client Files` for finalized invoice and receipt
+PDFs. Operational data remains under
+`~/Library/Application Support/Jordana Billing`.
 
 The reports are written atomically so a failed write does not leave a partial CSV behind.
 
@@ -299,8 +312,8 @@ See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every backend
 
 ## Downloadable Report Link
 
-The latest session export is:
+For a development checkout, the latest session export is:
 
 ```text
-/Users/brookesnader/Documents/Jordana Billing/Reports/Jordana_Client_Sessions_2026.csv
+Reports/Jordana_Client_Sessions_<YEAR>.csv
 ```

@@ -16,6 +16,7 @@ from jordana_invoice.google_sync import (
     sync_with_connection,
     sync_status_for_connection,
 )
+from jordana_invoice.csv_reports import current_eastern_year
 
 
 def row(
@@ -398,8 +399,9 @@ class SyncTests(unittest.TestCase):
                 ]
             ),
         )
-        self.assertTrue((self.reports_dir / "Jordana_Client_Sessions_2026.csv").exists())
-        self.assertTrue((self.reports_dir / "Jordana_Client_Summary_2026.csv").exists())
+        year = current_eastern_year()
+        self.assertTrue((self.reports_dir / f"Jordana_Client_Sessions_{year}.csv").exists())
+        self.assertTrue((self.reports_dir / f"Jordana_Client_Summary_{year}.csv").exists())
         self.assertTrue((self.reports_dir / "Jordana_All_Appointments.csv").exists())
         self.assertFalse(list(self.reports_dir.glob("*.tmp")))
 

@@ -22,6 +22,7 @@ from jordana_invoice.payment_services import (
 from jordana_invoice.receipt_services import (
     create_payment_receipt,
     preview_payment_receipt,
+    trusted_receipt_document_action,
 )
 from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
 from jordana_invoice.util import stable_hash
@@ -204,6 +205,47 @@ class PaymentReceiptTests(unittest.TestCase):
         path = Path(result["receipt"]["pdf_path"])
         self.assertEqual(path.parts[-4:], ("Receipts", "Pat Client", "May 2026", "Receipt_R-2026-0001.pdf"))
         self.assertEqual(result["receipt"]["filing_owner_person_id"], self.person["person_id"])
+
+    def test_receipt_uses_configured_documents_client_files_root(self):
+        session = self._approved_session("docs-receipt")
+        invoice = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(self.conn, invoice_id=invoice, payment_date="2026-05-15", amount_cents=15000, payment_method="zelle")["payment"]
+        client_files = self.root / "Documents" / "Jordana Billing" / "Client Files"
+        with patch("jordana_invoice.receipt_services.generate_receipt_pdf") as fake_pdf:
+            fake_pdf.side_effect = lambda snapshot, path: (Path(path).parent.mkdir(parents=True, exist_ok=True), Path(path).write_bytes(b"%PDF receipt"), "2" * 64)[-1]
+            with patch.dict("os.environ", {"JORDANA_RECEIPTS_DIR": str(client_files)}):
+                result = create_payment_receipt(self.conn, payment["payment_id"])
+
+        self.assertEqual(
+            Path(result["receipt"]["pdf_path"]),
+            client_files / "Pat Client" / "May 2026" / "Receipt_R-2026-0001.pdf",
+        )
+
+    def test_receipt_document_actions_reject_paths_outside_configured_root(self):
+        session = self._approved_session("outside-receipt")
+        payment = create_payment(self.conn, billing_party_id=self.party["billing_party_id"], amount_cents=15000, received_at="2026-05-15")
+        allocate_payment_to_session(self.conn, payment_id=payment["payment_id"], session_id=session["id"], amount_cents=15000)
+        outside_pdf = self.root / "Other Files" / "Pat Client" / "Receipt_R-2026-0001.pdf"
+        outside_pdf.parent.mkdir(parents=True, exist_ok=True)
+        outside_pdf.write_bytes(b"pdf")
+        self.conn.execute(
+            """INSERT INTO payment_receipts (
+              receipt_id, payment_id, receipt_number, status, payment_received_at,
+              amount_cents, filing_owner_person_id, filing_owner_person_code_snapshot,
+              filing_owner_display_name_snapshot, snapshot_json, pdf_path, pdf_sha256,
+              created_at, updated_at
+            ) VALUES ('outside-receipt-id', ?, 'R-2026-0001', 'finalized', '2026-05-15',
+              15000, ?, ?, 'Pat Client', '{}', ?, ?, '2026-05-15T00:00:00', '2026-05-15T00:00:00')""",
+            (payment["payment_id"], self.person["person_id"], self.person["person_code"], str(outside_pdf), "c" * 64),
+        )
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "outside the configured receipt folder"):
+            trusted_receipt_document_action(
+                self.conn,
+                "outside-receipt-id",
+                "open_pdf",
+                pdf_root=self.root / "Documents" / "Jordana Billing" / "Client Files",
+            )
 
     def test_existing_invoice_pdf_row_remains_unchanged(self):
         session = self._approved_session("invoice-unchanged")
