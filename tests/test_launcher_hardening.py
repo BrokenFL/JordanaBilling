@@ -57,15 +57,18 @@ class TestLauncherExecutablePermission(unittest.TestCase):
         self.assertTrue(mode & stat.S_IXGRP, "launcher not group-executable")
         self.assertTrue(mode & stat.S_IXOTH, "launcher not other-executable")
 
-    def test_launcher_is_shell_script(self) -> None:
+    @unittest.skipUnless(sys.platform == "darwin", "file is only available on macOS")
+    def test_launcher_is_native_arm64_executable(self) -> None:
         launcher = APP_BUNDLE / "Contents" / "MacOS" / "launcher"
-        content = launcher.read_text()
-        self.assertTrue(
-            content.startswith("#!/usr/bin/env bash"),
-            "launcher does not start with bash shebang",
+        result = subprocess.run(
+            ["file", str(launcher)],
+            capture_output=True,
+            text=True,
         )
-        self.assertIn('exec "$RESOURCE_DIR/launch_installed_app.sh"', content)
-        self.assertNotIn("tell application \"Terminal\"", content)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Mach-O", result.stdout)
+        self.assertIn("arm64", result.stdout)
+        self.assertNotIn("x86_64 executable", result.stdout)
 
 
 class TestInfoPlist(unittest.TestCase):
@@ -329,14 +332,14 @@ class TestIconBuild(unittest.TestCase):
         self.assertNotIn("creating new database", common)
 
     def test_launcher_logs_to_file(self) -> None:
-        """Launcher writes log entries to launcher.log."""
-        launcher = (APP_BUNDLE / "Contents" / "MacOS" / "launcher").read_text()
-        self.assertIn("LOG_FILE", launcher)
-        self.assertIn("launcher.log", launcher)
+        """Native launcher delegates to the installed shell helper."""
+        source = (PACKAGING_DIR / "NativeLauncher.swift").read_text()
+        self.assertIn("launch_installed_app", source)
+        self.assertIn("Jordana Billing Has Not Been Installed Yet", source)
 
     def test_existing_database_not_deleted(self) -> None:
         """Neither launcher nor bootstrap deletes an existing database."""
-        launcher = (APP_BUNDLE / "Contents" / "MacOS" / "launcher").read_text()
+        launcher = (PACKAGING_DIR / "NativeLauncher.swift").read_text()
         bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
         for dangerous in ['rm -f "$DB_PATH"', 'rm "$DB_PATH"', "rm -f $DB_PATH", "unlink"]:
             self.assertNotIn(dangerous, launcher, f"launcher contains: {dangerous}")
@@ -352,6 +355,7 @@ class TestBashSyntaxCheck(unittest.TestCase):
         "scripts/build_launcher.sh",
         "scripts/build_app_icon.sh",
         "scripts/build_release.sh",
+        "scripts/build_setup_wizard.sh",
         "scripts/install_release.sh",
         "scripts/launch_installed_app.sh",
         "scripts/launcher_common.sh",
@@ -361,8 +365,8 @@ class TestBashSyntaxCheck(unittest.TestCase):
         "scripts/verify_installation.sh",
     ]
 
-    def test_launcher_syntax(self) -> None:
-        launcher = APP_BUNDLE / "Contents" / "MacOS" / "launcher"
+    def test_installed_launch_helper_syntax(self) -> None:
+        launcher = APP_BUNDLE / "Contents" / "Resources" / "launch_installed_app.sh"
         result = subprocess.run(
             ["bash", "-n", str(launcher)],
             capture_output=True,
@@ -400,7 +404,7 @@ class TestBuildLauncherSigns(unittest.TestCase):
     def test_build_launcher_delegates_to_installed_launcher(self) -> None:
         """build_launcher.sh template delegates daily launch to the installed launcher."""
         build_script = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text()
-        self.assertIn('exec "$RESOURCE_DIR/launch_installed_app.sh"', build_script)
+        self.assertIn("NativeLauncher.swift", build_script)
         self.assertIn("launch_installed_app.sh", build_script)
         self.assertNotIn('exec "$PROJECT_DIR/scripts/bootstrap.sh"', build_script)
         self.assertNotIn("DB_EXISTS", build_script)
@@ -414,7 +418,7 @@ class TestBuildLauncherSigns(unittest.TestCase):
 
     def test_launcher_does_not_use_terminal(self) -> None:
         """Committed launcher does not require Terminal."""
-        launcher = (APP_BUNDLE / "Contents" / "MacOS" / "launcher").read_text()
+        launcher = (PACKAGING_DIR / "NativeLauncher.swift").read_text()
         self.assertNotIn("tell application", launcher)
         self.assertNotIn("Terminal", launcher)
         self.assertNotIn("do script", launcher)

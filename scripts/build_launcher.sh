@@ -17,6 +17,7 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICNS_PATH="$PROJECT_DIR/packaging/macos/AppIcon.icns"
+LAUNCHER_SOURCE="$PROJECT_DIR/packaging/macos/NativeLauncher.swift"
 
 if [[ -d "$APP_DIR" && "${1:-}" != "--force" ]]; then
   echo "Jordana Billing.app already exists. Use --force to rebuild."
@@ -61,30 +62,18 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-cat > "$MACOS_DIR/launcher" <<'LAUNCHER'
-#!/usr/bin/env bash
-set -euo pipefail
-
-BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RESOURCE_DIR="$BUNDLE_DIR/Resources"
-APP_SUPPORT_DIR="${JORDANA_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Jordana Billing}"
-LOG_DIR="$APP_SUPPORT_DIR/logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/launcher.log"
-
-{
-  printf '[%s] Double-click launcher invoked.\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  exec "$RESOURCE_DIR/launch_installed_app.sh"
-} >> "$LOG_FILE" 2>&1
-LAUNCHER
-
-chmod +x "$MACOS_DIR/launcher"
+swiftc -target arm64-apple-macos12 "$LAUNCHER_SOURCE" -o "$MACOS_DIR/launcher"
 cp "$ICNS_PATH" "$RESOURCES_DIR/AppIcon.icns"
 cp "$PROJECT_DIR/scripts/launch_installed_app.sh" "$RESOURCES_DIR/launch_installed_app.sh"
 chmod +x "$RESOURCES_DIR/launch_installed_app.sh"
 
 xattr -cr "$APP_DIR" 2>/dev/null || true
-codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+xattr -dr com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+xattr -dr com.apple.fileprovider.fpfs#P "$APP_DIR" 2>/dev/null || true
+rm -rf "$APP_DIR/Contents/_CodeSignature"
+dot_clean -m "$APP_DIR" 2>/dev/null || true
+xattr -c "$APP_DIR" 2>/dev/null || true
+codesign --force --deep --sign - --timestamp=none "$APP_DIR" 2>/dev/null || true
 
 echo "Built: $APP_DIR"
 echo "Double-click to launch."
