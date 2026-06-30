@@ -53,14 +53,17 @@ class ApiUtilStaticTests(unittest.TestCase):
     # --- POST / write request behavior ---
 
     def test_post_request_adds_write_token_header(self):
-        self.assertIn('headers["X-Jordana-Write-Token"] = getWriteToken()', self.api_js)
+        self.assertIn('headers["X-Jordana-Write-Token"] = WRITE_TOKEN', self.api_js)
 
-    def test_write_token_read_from_bootstrap(self):
-        self.assertIn("window.__JORDANA_BOOTSTRAP__?.writeToken", self.api_js)
+    def test_write_token_captured_once_at_load(self):
+        self.assertIn('const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || ""', self.api_js)
+
+    def test_write_token_not_reread_per_request(self):
+        self.assertNotIn("getWriteToken", self.api_js)
 
     def test_write_token_not_in_urls(self):
         self.assertNotIn("writeToken", self.api_js.replace(
-            'window.__JORDANA_BOOTSTRAP__?.writeToken || ""', ""))
+            'const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || ""', ""))
 
     def test_write_token_not_logged(self):
         self.assertNotIn("console.log", self.api_js)
@@ -119,7 +122,7 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     def test_sanitize_function_exported_from_api_module(self):
         self.assertIn("sanitizeUiErrorMessage", self.api_js)
-        self.assertIn("window.JordanaAPI = { api, ApiError, sanitizeUiErrorMessage }", self.api_js)
+        self.assertIn("window.JordanaAPI = { api, sanitizeUiErrorMessage }", self.api_js)
 
     def test_sanitize_preserves_fallback_default(self):
         self.assertIn('"An unexpected error occurred."', self.api_js)
@@ -138,25 +141,8 @@ class ApiUtilStaticTests(unittest.TestCase):
         self.assertIn("sanitizeUiErrorMessage(msg", self.review_js)
         self.assertIn("sanitizeUiErrorMessage(error.message", self.review_js)
 
-    # --- ApiError class (for future use) ---
-
-    def test_api_error_class_exists(self):
-        self.assertIn("class ApiError extends Error", self.api_js)
-
-    def test_api_error_has_name(self):
-        self.assertIn('this.name = "ApiError"', self.api_js)
-
-    def test_api_error_has_status(self):
-        self.assertIn("this.status = status", self.api_js)
-
-    def test_api_error_has_body(self):
-        self.assertIn("this.body = body", self.api_js)
-
-    def test_api_error_not_used_by_api_function(self):
-        api_fn_start = self.api_js.index("async function api(")
-        api_fn_end = self.api_js.index("window.JordanaAPI")
-        api_fn = self.api_js[api_fn_start:api_fn_end]
-        self.assertNotIn("ApiError", api_fn)
+    def test_api_error_class_not_present(self):
+        self.assertNotIn("ApiError", self.api_js)
 
     # --- No payload logging ---
 

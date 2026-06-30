@@ -353,7 +353,7 @@ Write routes require the local write token and appropriate content type. Errors 
 
 The shared frontend request utility lives at `app/jordana_invoice/static/js/api.js`.
 
-It is loaded as a classic script (IIFE) before `review.js` via `<script src="/static/js/api.js"></script>` in `review.html`. The server injects the bootstrap write-token script between `api.js` and `review.js`; the token is read at call time, not at load time.
+It is loaded as a classic script (IIFE) before `review.js` via `<script src="/static/js/api.js"></script>` in `review.html`. The server injects the bootstrap write-token script before `api.js`; the token is captured once at module load time.
 
 ### Exports
 
@@ -361,11 +361,10 @@ The module assigns `window.JordanaAPI` with:
 
 - **`api(path, options)`** — async fetch helper. Sets `Content-Type: application/json` on all requests. Adds `X-Jordana-Write-Token` for POST/PUT/PATCH/DELETE. Parses response as JSON. Throws `Error(json.error || "Request failed")` when `!res.ok || json.ok === false`. Returns the parsed JSON object unchanged.
 - **`sanitizeUiErrorMessage(message, fallback)`** — sanitizes error messages for UI display. Returns fallback for messages containing `/`, `traceback`, or `select `.
-- **`ApiError`** — lightweight custom error class with `status` and `body` properties, for future use. Not yet used by the `api()` function to preserve current error behavior.
 
 ### Token Behavior
 
-- Write token is read from `window.__JORDANA_BOOTSTRAP__?.writeToken` at call time.
+- Write token is captured once from `window.__JORDANA_BOOTSTRAP__?.writeToken` at module load time.
 - Only POST/PUT/PATCH/DELETE methods receive the token.
 - GET requests do not receive the write-token header.
 - The token is never placed in URLs, query strings, logs, or error messages.
