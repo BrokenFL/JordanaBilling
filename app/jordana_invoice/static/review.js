@@ -3,6 +3,7 @@ let paymentOverlayReturnFocus = null;
 let approvalInProgress = false;
 let duplicateInProgress = false;
 const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
+const { api, sanitizeUiErrorMessage } = window.JordanaAPI;
 
 const state = {
   items: [],
@@ -140,18 +141,6 @@ const participantState = (p) => ({
   source: p.source || "",
   relationship_role: p.relationship_role
 });
-
-async function api(path, options = {}) {
-  const method = (options.method || "GET").toUpperCase();
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-    headers["X-Jordana-Write-Token"] = WRITE_TOKEN;
-  }
-  const res = await fetch(path, { ...options, method, headers });
-  const json = await res.json();
-  if (!res.ok || json.ok === false) throw new Error(json.error || "Request failed");
-  return json;
-}
 
 function currentLocalMonth() {
   const now = new Date();
@@ -1257,14 +1246,6 @@ function paymentStatusLabel(status) {
     reversed: "Reversed",
     void: "Void"
   }[status] || escapeHtml(status) || "Unknown");
-}
-function sanitizeUiErrorMessage(message, fallback = "An unexpected error occurred.") {
-  const raw = String(message || "").trim();
-  if (!raw) return fallback;
-  if (raw.includes("/") || raw.toLowerCase().includes("traceback") || raw.toLowerCase().includes("select ")) {
-    return fallback;
-  }
-  return raw;
 }
 function safeList(raw) { try { return Array.isArray(raw) ? raw : JSON.parse(raw || "[]"); } catch { return []; } }
 function startRange(s) {
