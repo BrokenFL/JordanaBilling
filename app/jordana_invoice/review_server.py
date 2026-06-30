@@ -124,6 +124,17 @@ from .csv_reports import (
     report_filename,
 )
 from .service_catalog import list_services, set_service_active
+from .request_validation import (
+    RequestValidationError,
+    parse_approve_session_request,
+    parse_save_interpretation_request,
+    parse_save_person_section_request,
+    parse_save_relationship_section_request,
+    parse_save_billing_section_request,
+    parse_save_session_draft_request,
+    parse_mark_candidate_request,
+    parse_restore_candidate_request,
+)
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -238,6 +249,8 @@ def review_sync_config(database_path: str):
 
 
 def is_safe_validation_error(error: Exception) -> bool:
+    if isinstance(error, RequestValidationError):
+        return True
     if isinstance(error, (BillingPartyNotFoundError, BillingPartyTypeError, DatabaseBusyError)):
         return True
     if isinstance(error, ValueError):
@@ -1112,26 +1125,32 @@ def make_handler(
                     candidate_id = parts[3]
                     action = parts[4] if len(parts) > 4 else "save"
                     if action == "save":
-                        self.send_json(save_interpretation(self.conn(), candidate_id, data))
+                        req = parse_save_interpretation_request(data)
+                        self.send_json(save_interpretation(self.conn(), candidate_id, req.to_payload()))
                         return
                     if action == "save-person":
-                        self.send_json(save_person_section(self.conn(), candidate_id, data))
+                        req = parse_save_person_section_request(data)
+                        self.send_json(save_person_section(self.conn(), candidate_id, req.to_payload()))
                         return
                     if action == "save-relationship":
-                        self.send_json(save_relationship_section(self.conn(), candidate_id, data))
+                        req = parse_save_relationship_section_request(data)
+                        self.send_json(save_relationship_section(self.conn(), candidate_id, req.to_payload()))
                         return
                     if action == "save-billing":
-                        self.send_json(save_billing_section(self.conn(), candidate_id, data))
+                        req = parse_save_billing_section_request(data)
+                        self.send_json(save_billing_section(self.conn(), candidate_id, req.to_payload()))
                         return
                     if action == "save-session":
-                        self.send_json(save_session_draft(self.conn(), candidate_id, data))
+                        req = parse_save_session_draft_request(data)
+                        self.send_json(save_session_draft(self.conn(), candidate_id, req.to_payload()))
                         return
                     if action == "refresh":
                         refresh_candidate_suggestions(self.conn(), candidate_id)
                         self.send_json(get_review_candidate(self.conn(), candidate_id))
                         return
                     if action == "approve":
-                        result = approve_candidate(self.conn(), candidate_id, data)
+                        req = parse_approve_session_request(data)
+                        result = approve_candidate(self.conn(), candidate_id, req.to_payload())
                         approved_session_id = result.get("session", {}).get("id")
                         if approved_session_id:
                             session_row = self.conn().execute("SELECT payment_status FROM sessions WHERE id = ?", (approved_session_id,)).fetchone()
@@ -1162,21 +1181,23 @@ def make_handler(
                         self.send_json(result)
                         return
                     if action == "mark":
+                        req = parse_mark_candidate_request(data)
                         self.send_json(
                             mark_candidate(
                                 self.conn(),
                                 candidate_id,
-                                classification=data.get("classification", "personal"),
-                                reason=data.get("reason", ""),
+                                classification=req.classification,
+                                reason=req.reason,
                             )
                         )
                         return
                     if action == "restore":
+                        req = parse_restore_candidate_request(data)
                         self.send_json(
                             restore_candidate(
                                 self.conn(),
                                 candidate_id,
-                                reason=data.get("reason", ""),
+                                reason=req.reason,
                             )
                         )
                         return

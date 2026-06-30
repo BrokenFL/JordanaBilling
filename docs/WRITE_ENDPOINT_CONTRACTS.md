@@ -991,3 +991,121 @@ Test commands and results are recorded in the completion report for this round.
 
 This round documents current behavior and does not yet standardize validation,
 response envelopes, or error handling.
+
+---
+
+## Round 4A.2: Request Validation Helpers for High-Risk Review Write Endpoints
+
+Round 4A.2 adds small, explicit request-parsing and validation helpers for the
+four highest-risk review write workflows. All existing endpoint paths, payload
+keys, response shapes, status codes, business rules, and user-visible behavior
+are preserved exactly.
+
+### New Module
+
+`app/jordana_invoice/request_validation.py`
+
+This module provides frozen dataclass request types and explicit parser
+functions that validate request shape and supported primitive values only.
+Business validation (database-backed and billing-domain decisions) remains
+in the service layer.
+
+### Request Types
+
+| Dataclass | Frozen | Purpose |
+|-----------|--------|---------|
+| `ApproveSessionRequest` | yes | Wraps validated approval payload |
+| `SaveSectionRequest` | yes | Wraps validated section-level save payload |
+| `MarkCandidateRequest` | yes | Wraps validated mark/duplicate-resolution payload with extracted `classification` and `reason` |
+| `RestoreCandidateRequest` | yes | Wraps validated restore payload with extracted `reason` |
+
+### Parser Functions
+
+| Parser | Endpoint | Validates |
+|--------|----------|-----------|
+| `parse_approve_session_request` | POST `/api/review/candidates/{id}/approve` | participants list-of-dicts, billing_party_id non-empty str, duration int (not bool), service_mode str, time_category str, approved_rate str-or-int (not bool), payment_status str, billing_treatment str, amount_received str-or-int, payment_date str, payment_method str, reference_number str, administrative_note str, billing_session_type str, rate_scope str, rate_override_reason str, account_id str, billable_status str, duration_choice str, custom_duration_minutes int, custom_service_description str, custom_service_code str, suggested_rate str-or-int, appointment_method str |
+| `parse_save_interpretation_request` | POST `/api/review/candidates/{id}/save` | Same field set as approval (general save accepts all session fields) |
+| `parse_save_person_section_request` | POST `/api/review/candidates/{id}/save-person` | person dict, person_id non-empty str, first_name str, last_name str, display_name str |
+| `parse_save_relationship_section_request` | POST `/api/review/candidates/{id}/save-relationship` | participants list-of-dicts, account_id non-empty str, primary_person_id non-empty str, default_billing_party_id non-empty str, billing_party_id non-empty str |
+| `parse_save_billing_section_request` | POST `/api/review/candidates/{id}/save-billing` | billing_party_id non-empty str, bill_to_person_id non-empty str, billing_party dict |
+| `parse_save_session_draft_request` | POST `/api/review/candidates/{id}/save-session` | approved_duration_minutes int, duration_minutes int, duration_choice str, custom_duration_minutes int, billing_session_type str, custom_service_description str, custom_service_code str, approved_rate str-or-int, suggested_rate str-or-int, rate_scope str, rate_override_reason str, payment_status str, billing_treatment str, billable_status str, amount_received str-or-int, payment_date str, payment_method str, reference_number str, administrative_note str, service_mode str |
+| `parse_mark_candidate_request` | POST `/api/review/candidates/{id}/mark` | classification str from allowed set (personal, administrative, nonbillable, duplicate, client_session), reason str; defaults classification to "personal" and reason to "" |
+| `parse_restore_candidate_request` | POST `/api/review/candidates/{id}/restore` | reason str; defaults to "" |
+
+### Legacy Aliases Preserved
+
+All legacy aliases continue to be accepted by the service layer. The parsers
+validate the alias keys with the same type rules as the primary keys:
+
+- `duration_minutes` accepted alongside `approved_duration_minutes`
+- `approved_rate` accepted as string dollars or integer cents (not boolean)
+- `suggested_rate` accepted as string or integer
+- `amount_received` accepted as string or integer
+- `payment_status` accepted as string (service normalizes via `_LEGACY_PAYMENT_MAP`)
+
+### Error Handling
+
+`RequestValidationError` is a subclass of `ValueError`. The
+`is_safe_validation_error` function in `review_server.py` recognizes it as a
+safe validation error, so parser error messages are returned to the client as
+400 responses with `{"ok": false, "error": "..."}` — not sanitized to
+"An unexpected error occurred."
+
+### Unknown Field Behavior
+
+Unknown fields are passed through silently by all parsers, preserving the
+current behavior where the service layer ignores unrecognized keys.
+
+### Write-Token Enforcement
+
+Write-token enforcement occurs before request body parsing in the handler,
+so validation helpers are only called after the token check passes. A missing
+or incorrect token returns 403 before any validation runs.
+
+### No Persistence on Validation Failure
+
+When a parser raises `RequestValidationError`, the handler returns a 400
+response immediately. The service function is never called, so no database
+writes occur on validation failure.
+
+### Preserved Contracts
+
+All 59 existing write-endpoint contract tests in
+`tests/test_write_endpoint_contracts.py` continue to pass without
+modification. No endpoint paths, payload keys, response shapes, status codes,
+business rules, or user-visible behavior have changed.
+
+### New Tests
+
+`tests/test_request_validation.py` — 102 focused tests covering:
+
+- valid payload acceptance for each parser
+- wrong top-level JSON type rejection
+- wrong field type rejection (string vs int vs list vs dict)
+- empty identifier rejection
+- invalid enum-like value rejection (mark classification)
+- boolean incorrectly supplied where integer expected
+- legacy alias acceptance (duration_minutes, approved_rate)
+- unknown field pass-through
+- sanitized error behavior (messages preserved, not generic)
+- no persistence on validation failure (service function not called)
+- unchanged success response contracts (status 200, response shape)
+- unchanged failure response contracts (status 400, ok=false, error key)
+- write-token enforcement before validation (403 before 400)
+- restore endpoint findings (known inconsistency documented)
+
+### Restore Endpoint Findings
+
+The `restore_candidate` service function commits the restore, then calls
+`refresh_candidate_suggestions` which may raise an exception. The handler
+sanitizes this to a 400 response even though the restore succeeded. This
+inconsistency is preserved as current behavior and documented as a deferred
+issue for a future round.
+
+### Deferred Issues
+
+- Restore endpoint: `refresh_candidate_suggestions` failure after successful
+  restore returns 400 instead of 200 (documented above)
+- The remaining write endpoints listed in the Round 4A.1 gaps section are not
+  yet hardened; this round covers only the four scoped high-risk review write
+  workflows

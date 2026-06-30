@@ -120,6 +120,8 @@ See `docs/SCHEMA_AUDIT.md` for the current migration list and table responsibili
 
 See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every backend write HTTP endpoint and its current request/response contract. Characterization tests are in `tests/test_write_endpoint_contracts.py`.
 
+Round 4A.2 added explicit request-parsing and validation helpers for the four highest-risk review write endpoints (approve, save/section saves, mark/duplicate resolution, restore). The helpers are in `app/jordana_invoice/request_validation.py` and use frozen dataclasses with explicit parser functions. All existing endpoint paths, payload keys, response shapes, status codes, and business rules are preserved. Focused tests are in `tests/test_request_validation.py` (102 tests). See the Round 4A.2 section in `docs/WRITE_ENDPOINT_CONTRACTS.md` for details.
+
 ## Verification Baseline
 
 The last documented full-suite baseline is:
