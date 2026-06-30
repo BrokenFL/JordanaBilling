@@ -52,6 +52,20 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 
 ## Quick Start
 
+For Jordana's Mac, use the double-click launcher or the authoritative installer:
+
+```bash
+scripts/bootstrap.sh
+```
+
+`scripts/bootstrap.sh` creates or repairs `.venv`, installs the package, validates
+private configuration, verifies the configured SQLite database exists and is
+readable, starts the local app only when port ownership is safe, waits for
+health, and opens the browser. It does not create, replace, delete, or raw-copy
+the operational database.
+
+For development-only experiments with a disposable database:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -226,7 +240,10 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - `app/jordana_invoice/static/` - local review UI.
 - `launchd/` and `scripts/` - hourly macOS sync agent installer and remover.
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
-- `scripts/setup_jordana_mac.sh`, `scripts/verify_install.sh`, and `scripts/privacy_check.sh` - setup and safety utilities for Mac handoff.
+- `scripts/bootstrap.sh` - authoritative macOS installer and launcher.
+- `scripts/setup_jordana_mac.sh` - retired non-destructive stub that points to `bootstrap.sh`.
+- `scripts/verify_install.sh` and `scripts/privacy_check.sh` - verification and safety utilities for Mac handoff.
+- `packaging/macos/AppIcon-source.png` and `packaging/macos/AppIcon.icns` - approved launcher icon source and generated macOS icon.
 - `data/samples/` - small June-style fixture for acceptance testing.
 - `tests/` - parser tests for known shorthand examples.
 

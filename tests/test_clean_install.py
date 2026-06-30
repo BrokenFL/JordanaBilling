@@ -240,12 +240,13 @@ class CleanInstallTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, f"build_launcher.sh --force failed: {result.stderr}")
         app_dir = PROJECT_DIR / "Jordana Billing.app"
         self.assertTrue(app_dir.exists())
+        self.assertTrue((app_dir / "Contents" / "Resources" / "AppIcon.icns").exists())
 
     def test_14_env_auto_resolve(self) -> None:
         """bootstrap.sh auto-resolves __PROJECT_DIR__ in .env."""
-        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
-        self.assertIn("__PROJECT_DIR__", bootstrap, "bootstrap.sh does not handle __PROJECT_DIR__")
-        self.assertIn("sed", bootstrap, "bootstrap.sh does not use sed to resolve paths")
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertIn("__PROJECT_DIR__", common, "launcher_common.sh does not handle __PROJECT_DIR__")
+        self.assertIn("sed", common, "launcher_common.sh does not use sed to resolve paths")
 
 
 if __name__ == "__main__":

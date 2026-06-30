@@ -1,44 +1,42 @@
 #!/usr/bin/env bash
 #
-# Stop the Jordana Billing review server.
-# Reads PID from logs/review_server.pid and sends SIGTERM.
-# Falls back to killing any process on port 8765.
+# Stop only a verified Jordana Billing review server owned by this checkout.
 #
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_FILE="$PROJECT_DIR/logs/stop.log"
+mkdir -p "$PROJECT_DIR/logs"
+
+# shellcheck source=launcher_common.sh
+. "$PROJECT_DIR/scripts/launcher_common.sh"
+
+ensure_runtime_paths
 cd "$PROJECT_DIR"
+LOG_FILE="$PROJECT_DIR/logs/stop.log"
 
-PID_FILE="$PROJECT_DIR/logs/review_server.pid"
-PORT=8765
-
-if [[ -f "$PID_FILE" ]]; then
-  PID="$(cat "$PID_FILE")"
-  if kill -0 "$PID" 2>/dev/null; then
-    kill "$PID" 2>/dev/null || true
-    # Wait up to 5 seconds for graceful shutdown
-    for i in $(seq 1 5); do
-      if ! kill -0 "$PID" 2>/dev/null; then
-        break
-      fi
-      sleep 1
-    done
-    # Force kill if still running
-    if kill -0 "$PID" 2>/dev/null; then
-      kill -9 "$PID" 2>/dev/null || true
-    fi
-    echo "Stopped server (PID $PID)."
-  else
-    echo "PID $PID is not running — cleaning up stale PID file."
-  fi
-  rm -f "$PID_FILE"
-else
-  # Fallback: kill anything on the port
-  PID_ON_PORT="$(lsof -ti ":${PORT}" 2>/dev/null || true)"
-  if [[ -n "$PID_ON_PORT" ]]; then
-    kill $PID_ON_PORT 2>/dev/null || true
-    echo "Stopped process on port $PORT (PID $PID_ON_PORT)."
-  else
-    echo "No server running on port $PORT."
-  fi
+if [[ ! -f "$PID_FILE" ]]; then
+  echo "No Jordana Billing PID file found. No process was stopped."
+  exit 0
 fi
+
+PID="$(tr -dc '0-9' < "$PID_FILE")"
+if pid_is_app_owned "$PID"; then
+  kill "$PID" >/dev/null 2>&1 || true
+  for _ in $(seq 1 5); do
+    if ! pid_is_running "$PID"; then
+      break
+    fi
+    sleep 1
+  done
+  if pid_is_running "$PID"; then
+    echo "Jordana Billing did not stop gracefully. Leaving PID file for Brooke to inspect."
+    exit 1
+  fi
+  remove_stale_pid_files
+  echo "Stopped Jordana Billing server (PID $PID)."
+  exit 0
+fi
+
+remove_stale_pid_files
+echo "Removed stale or untrusted Jordana Billing PID metadata. No process was stopped."

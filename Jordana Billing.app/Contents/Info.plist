@@ -9,9 +9,9 @@
   <key>CFBundleIdentifier</key>
   <string>com.jordana.billing.launcher</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>2</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
+  <string>1.1</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleExecutable</key>
@@ -25,6 +25,6 @@
   <key>LSUIElement</key>
   <false/>
   <key>NSDocumentsFolderUsageDescription</key>
-  <string>Jordana Billing needs access to the Documents folder to run setup scripts, read configuration, and manage the local database.</string>
+  <string>Jordana Billing needs access to the Documents folder to read configuration, preserve the local database, and launch the local billing app.</string>
 </dict>
 </plist>

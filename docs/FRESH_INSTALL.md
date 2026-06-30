@@ -90,11 +90,16 @@ The required sync values include:
 
 The launcher can create `.env` from `.env.example`, resolve `__PROJECT_DIR__` placeholders, open the file in TextEdit, and identify missing required values. It validates `.env` as data and does not execute it as shell code.
 
-## 4. Double-Click The Launcher
+## 4. Install And Launch
 
 Double-click **Jordana Billing.app** in Finder.
 
-The app is ad-hoc code-signed and delegates setup to Terminal because macOS privacy controls may restrict direct access to files under `~/Documents`. The Terminal window is expected and may be closed after the browser opens successfully.
+The app is ad-hoc code-signed and runs the authoritative installer,
+`scripts/bootstrap.sh`, without requiring Jordana to use Terminal. Brooke may
+run `scripts/bootstrap.sh` directly while installing or repairing the system.
+
+`scripts/setup_jordana_mac.sh` is retired. It is kept only as a non-destructive
+stub that exits and points maintainers to `scripts/bootstrap.sh`.
 
 ### First launch with a transferred production database
 
@@ -115,7 +120,14 @@ It must not delete, recreate, replace, or treat the transferred database as a cl
 
 ### First launch without a database
 
-For an explicitly empty installation, the launcher creates a new SQLite database, applies migrations, and performs an initial full read of staged Google Sheet evidence. This reconstructs raw calendar evidence and proposed review records only. It does not reconstruct prior human review, invoices, payments, or other production-only SQLite state.
+For production, a missing configured SQLite database is an error. The launcher
+will stop with a clear message instead of creating a replacement blank database.
+
+For an explicitly empty development or demo installation, create the disposable
+database manually with the CLI or `scripts/create_demo_database.sh`, then launch
+the app. Rebuilding from Google Sheets reconstructs raw calendar evidence and
+proposed review records only. It does not reconstruct prior human review,
+invoices, payments, or other production-only SQLite state.
 
 ### Later launches
 
@@ -128,6 +140,8 @@ Later launches:
 - use incremental sync when a successful cursor exists
 - repeat incremental sync while the app remains open
 - never trigger the iPhone Shortcut
+- reuse an already-running app-owned healthy local server
+- fail safely when another application owns port `8765`
 
 ## 5. Verify The Installation
 
@@ -180,6 +194,7 @@ These scripts are available for terminal use:
 | `scripts/backup_db.sh` | Create a private SQLite backup |
 | `scripts/reset_test_db.sh` | Reset a test database only; requires confirmation |
 | `scripts/build_launcher.sh --force` | Rebuild the `.app` bundle |
+| `scripts/build_app_icon.sh` | Rebuild `packaging/macos/AppIcon.icns` from the approved icon source |
 | `scripts/verify_install.sh` | Verify installation integrity |
 | `scripts/git_safety_check.sh` | Check for staged private files |
 | `scripts/privacy_check.sh` | Check for tracked private files |
@@ -226,11 +241,33 @@ Common causes include:
 
 - missing or invalid `.env` values
 - unavailable network during sync
-- port `8765` already in use
+- port `8765` already in use by another application
 - a migration failure
 - an unreadable or missing transferred file
 
 A sync failure should not delete or reset the database. Migration failure should stop startup and preserve or restore the pre-migration database from the verified private backup.
+
+### Port 8765 is in use
+
+The launcher never kills an unrelated process on port `8765`. If a verified
+Jordana Billing server is already healthy, it opens the browser and exits. If
+another process owns the port, it stops and asks Brooke to close the other app
+or investigate.
+
+### Launcher icon
+
+The approved icon source lives at:
+
+```text
+packaging/macos/AppIcon-source.png
+```
+
+The reproducible generated icon lives at:
+
+```text
+packaging/macos/AppIcon.icns
+Jordana Billing.app/Contents/Resources/AppIcon.icns
+```
 
 ### Server does not open in the browser
 
