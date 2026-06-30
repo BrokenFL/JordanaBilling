@@ -18,6 +18,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,8 @@ from unittest.mock import patch
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_DIR = PROJECT_DIR / "app"
 BOOTSTRAP_PATH = PROJECT_DIR / "scripts" / "bootstrap.sh"
+LAUNCHER_COMMON_PATH = PROJECT_DIR / "scripts" / "launcher_common.sh"
+VALIDATOR_PATH = PROJECT_DIR / "scripts" / "validate_launcher_environment.py"
 
 
 def _read_env_values(path: Path) -> dict[str, str]:
@@ -82,10 +85,100 @@ class InstallerEnvSafetyTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_bootstrap_uses_python_env_parser(self) -> None:
-        content = BOOTSTRAP_PATH.read_text(encoding="utf-8")
-        self.assertIn("load_env_file", content)
-        self.assertNotIn('. "$PROJECT_DIR/.env"', content)
-        self.assertIn('open -a TextEdit "$PROJECT_DIR/.env"', content)
+        """bootstrap.sh reaches the approved Python env parser through launcher_common.sh."""
+        bootstrap = BOOTSTRAP_PATH.read_text(encoding="utf-8")
+        common = LAUNCHER_COMMON_PATH.read_text(encoding="utf-8")
+        validator = VALIDATOR_PATH.read_text(encoding="utf-8")
+
+        # bootstrap.sh sources the shared launcher library and calls the validator
+        self.assertIn("launcher_common.sh", bootstrap)
+        self.assertIn("validate_private_configuration", bootstrap)
+
+        # The shared library invokes the Python validator, not shell-sourcing .env
+        self.assertIn("validate_launcher_environment.py", common)
+        self.assertNotIn('. "$ENV_FILE"', common)
+        self.assertNotIn('source "$ENV_FILE"', common)
+
+        # The Python validator uses load_env_file to parse .env as data
+        self.assertIn("load_env_file", validator)
+
+        # ensure_env_file opens TextEdit for user editing when creating .env
+        self.assertIn("open -a TextEdit", common)
+
+    def test_env_not_shell_sourced_in_launcher_scripts(self) -> None:
+        """No launcher script shell-sources or executes .env."""
+        scripts = [
+            BOOTSTRAP_PATH,
+            LAUNCHER_COMMON_PATH,
+            PROJECT_DIR / "scripts" / "start_jordana.sh",
+        ]
+        forbidden = [
+            '. "$PROJECT_DIR/.env"',
+            '. "$ENV_FILE"',
+            'source "$PROJECT_DIR/.env"',
+            'source "$ENV_FILE"',
+        ]
+        for path in scripts:
+            content = path.read_text(encoding="utf-8")
+            for pattern in forbidden:
+                self.assertNotIn(pattern, content, f"{pattern!r} found in {path}")
+
+    def test_missing_config_fails_safely(self) -> None:
+        """validate_launcher_environment.py reports MISSING_CONFIG when required keys are absent."""
+        with tempfile.TemporaryDirectory(prefix="jordana_env_test_") as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text("# no configuration\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(APP_DIR)
+            result = subprocess.run(
+                [sys.executable, str(VALIDATOR_PATH), str(PROJECT_DIR), str(env_path)],
+                capture_output=True, text=True, env=env, cwd=str(PROJECT_DIR),
+            )
+            self.assertIn("MISSING_CONFIG", result.stdout)
+
+    def test_missing_database_fails_safely(self) -> None:
+        """validate_launcher_environment.py reports MISSING_DATABASE when DB file is absent."""
+        with tempfile.TemporaryDirectory(prefix="jordana_env_test_") as tmp:
+            env_path = Path(tmp) / ".env"
+            db_path = Path(tmp) / "nonexistent.sqlite3"
+            env_path.write_text(
+                f"JORDANA_APPS_SCRIPT_URL=https://example.test/exec\n"
+                f"JORDANA_INGEST_API_KEY=test-key\n"
+                f"JORDANA_DATABASE_PATH={db_path}\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(APP_DIR)
+            result = subprocess.run(
+                [sys.executable, str(VALIDATOR_PATH), str(PROJECT_DIR), str(env_path)],
+                capture_output=True, text=True, env=env, cwd=str(PROJECT_DIR),
+            )
+            self.assertIn("MISSING_DATABASE", result.stdout)
+
+    def test_secrets_not_echoed_by_validator(self) -> None:
+        """validate_launcher_environment.py does not print secret values."""
+        with tempfile.TemporaryDirectory(prefix="jordana_env_test_") as tmp:
+            env_path = Path(tmp) / ".env"
+            db_path = Path(tmp) / "test.sqlite3"
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE t (x)")
+            conn.close()
+            secret_value = "jb_supersecret_test_key_12345"
+            env_path.write_text(
+                f"JORDANA_APPS_SCRIPT_URL=https://example.test/exec\n"
+                f"JORDANA_INGEST_API_KEY={secret_value}\n"
+                f"JORDANA_DATABASE_PATH={db_path}\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(APP_DIR)
+            result = subprocess.run(
+                [sys.executable, str(VALIDATOR_PATH), str(PROJECT_DIR), str(env_path)],
+                capture_output=True, text=True, env=env, cwd=str(PROJECT_DIR),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn(secret_value, result.stdout)
+            self.assertNotIn(secret_value, result.stderr)
 
     def test_python_env_parser_preserves_values_with_spaces(self) -> None:
         from jordana_invoice.google_sync import load_env_file
