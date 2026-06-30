@@ -22,6 +22,18 @@ DMG_ROOT="$BUILD_ROOT/$RELEASE_NAME-dmg"
 PAYLOAD_DIR="$DMG_ROOT/ReleasePayload"
 WHEELHOUSE="$RELEASE_DIR/wheelhouse"
 
+clean_and_sign_app() {
+  local app_path="$1"
+  xattr -cr "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  rm -rf "$app_path/Contents/_CodeSignature"
+  dot_clean -m "$app_path" 2>/dev/null || true
+  xattr -c "$app_path" 2>/dev/null || true
+  codesign --force --deep --sign - --timestamp=none "$app_path" >/dev/null 2>&1 || true
+  codesign --verify --deep --strict "$app_path"
+}
+
 rm -rf "$RELEASE_DIR" "$DMG_ROOT" "$DMG_PATH" "$DMG_PATH.sha256"
 mkdir -p "$WHEELHOUSE" "$RELEASE_DIR/scripts" "$RELEASE_DIR/docs" "$RELEASE_DIR/config"
 
@@ -103,6 +115,8 @@ PY
 mkdir -p "$DMG_ROOT"
 ditto --norsrc "$BUILD_ROOT/Install Jordana Billing.app" "$DMG_ROOT/Install Jordana Billing.app"
 mv "$RELEASE_DIR" "$PAYLOAD_DIR"
+clean_and_sign_app "$DMG_ROOT/Install Jordana Billing.app"
+clean_and_sign_app "$PAYLOAD_DIR/Jordana Billing.app"
 cat > "$DMG_ROOT/README.txt" <<EOF
 Jordana Billing test release
 

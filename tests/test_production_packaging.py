@@ -129,6 +129,8 @@ class NativeSetupWizardContractTest(unittest.TestCase):
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
         self.assertIn('ditto --norsrc "$BUILD_ROOT/Install Jordana Billing.app" "$DMG_ROOT/Install Jordana Billing.app"', builder)
         self.assertIn('mv "$RELEASE_DIR" "$PAYLOAD_DIR"', builder)
+        self.assertIn("clean_and_sign_app", builder)
+        self.assertIn("codesign --verify --deep --strict", builder)
         self.assertIn("Do not open the app inside ReleasePayload directly", builder)
 
     def test_checksum_generation_rejects_absolute_paths(self) -> None:
