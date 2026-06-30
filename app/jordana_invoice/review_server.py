@@ -134,6 +134,45 @@ from .request_validation import (
     parse_save_session_draft_request,
     parse_mark_candidate_request,
     parse_restore_candidate_request,
+    parse_create_person_request,
+    parse_update_person_request,
+    parse_save_person_alias_request,
+    parse_merge_people_request,
+    parse_create_account_request,
+    parse_create_account_from_client_request,
+    parse_update_account_request,
+    parse_update_billing_relationship_request,
+    parse_remove_account_member_request,
+    parse_add_account_member_request,
+    parse_setup_billing_relationship_request,
+    parse_normalize_payer_request,
+    parse_create_billing_party_request,
+    parse_update_billing_party_request,
+    parse_copy_contact_request,
+    parse_create_rate_rule_request,
+    parse_preview_rate_request,
+    parse_replace_rate_rule_request,
+    parse_end_rate_rule_request,
+    parse_create_invoice_draft_request,
+    parse_stage_invoices_request,
+    parse_update_invoice_draft_request,
+    parse_update_invoice_line_item_request,
+    parse_add_sessions_to_draft_request,
+    parse_remove_line_from_draft_request,
+    parse_preview_finalize_request,
+    parse_finalize_invoice_request,
+    parse_void_invoice_request,
+    parse_update_invoice_filing_owner_request,
+    parse_document_action_request,
+    parse_print_preview_request,
+    parse_record_payment_request,
+    parse_reverse_allocation_request,
+    parse_apply_funds_request,
+    parse_void_payment_request,
+    parse_create_payment_receipt_request,
+    parse_save_business_profile_request,
+    parse_sync_run_request,
+    parse_sync_rebuild_request,
 )
 
 
@@ -788,11 +827,12 @@ def make_handler(
                     if inv_data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
                         return
+                    req = parse_print_preview_request(data)
                     insurance_payload = None
-                    if data and data.get("insurance_coding_included"):
+                    if req.to_payload().get("insurance_coding_included"):
                         insurance_payload = {
                             "insurance_coding_included": True,
-                            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
+                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
                         }
                     html = build_print_preview_html(
                         inv_data["invoice"], inv_data["lines"],
@@ -815,11 +855,12 @@ def make_handler(
                     if inv_data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
                         return
+                    req = parse_print_preview_request(data)
                     insurance_payload = None
-                    if data and data.get("insurance_coding_included"):
+                    if req.to_payload().get("insurance_coding_included"):
                         insurance_payload = {
                             "insurance_coding_included": True,
-                            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
+                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
                         }
                     render_model = build_invoice_render_model(
                         inv_data["invoice"], inv_data["lines"],
@@ -835,44 +876,50 @@ def make_handler(
                     self.send_pdf(body, f"Invoice_{invoice_id}_draft.pdf")
                     return
                 if parsed.path == "/api/people":
-                    self.send_json(create_person(self.conn(), data))
+                    req = parse_create_person_request(data)
+                    self.send_json(create_person(self.conn(), req.to_payload()))
                     return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/aliases"):
                     person_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_save_person_alias_request(data)
                     self.send_json(
                         save_person_alias(
                             self.conn(),
                             person_id,
-                            raw_alias=data.get("raw_alias", ""),
-                            approved_by_user=bool(data.get("approved_by_user", True)),
-                            alias_id=data.get("alias_id"),
+                            raw_alias=req.raw_alias,
+                            approved_by_user=req.approved_by_user,
+                            alias_id=req.to_payload().get("alias_id"),
                         )
                     )
                     return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/merge"):
                     survivor_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_merge_people_request(data)
                     self.send_json(
                         merge_people(
                             self.conn(),
                             survivor_id,
-                            data["duplicate_person_id"],
-                            data.get("reason", ""),
+                            req.duplicate_person_id,
+                            req.reason,
                         )
                     )
                     return
                 if parsed.path.startswith("/api/people/"):
                     person_id = parsed.path.rsplit("/", 1)[-1]
-                    self.send_json(update_person(self.conn(), person_id, data))
+                    req = parse_update_person_request(data)
+                    self.send_json(update_person(self.conn(), person_id, req.to_payload()))
                     return
                 if parsed.path == "/api/accounts":
-                    self.send_json(create_account(self.conn(), data["account_name"], data.get("account_type", "individual")))
+                    req = parse_create_account_request(data)
+                    self.send_json(create_account(self.conn(), req.account_name, req.account_type))
                     return
                 if parsed.path == "/api/accounts/from-client":
+                    req = parse_create_account_from_client_request(data)
                     result = create_account_or_return_existing(
                         self.conn(),
-                        data["person_id"],
-                        data["account_name"],
-                        data.get("account_type", "individual"),
+                        req.person_id,
+                        req.account_name,
+                        req.to_payload().get("account_type", "individual"),
                     )
                     if result["existing"]:
                         self.send_json({"ok": False, "existing": True, "error": "A billing relationship already exists for this client.", "account_id": result["account"]["account_id"], "account_name": result["account"]["account_name"]}, status=409)
@@ -890,23 +937,28 @@ def make_handler(
                         self.send_json(reactivate_account(self.conn(), account_id))
                         return
                     if action == "update-billing-relationship":
-                        self.send_json(update_billing_relationship(self.conn(), account_id, data))
+                        req = parse_update_billing_relationship_request(data)
+                        self.send_json(update_billing_relationship(self.conn(), account_id, req.to_payload()))
                         return
                     if action == "remove-member":
-                        remove_account_member(self.conn(), account_id, data["person_id"])
+                        req = parse_remove_account_member_request(data)
+                        remove_account_member(self.conn(), account_id, req.person_id)
                         self.send_json({"ok": True})
                         return
-                    self.send_json(update_account(self.conn(), account_id, data))
+                    req = parse_update_account_request(data)
+                    self.send_json(update_account(self.conn(), account_id, req.to_payload()))
                     return
                 if parsed.path == "/api/billing-parties":
-                    self.send_json(create_billing_party(self.conn(), data))
+                    req = parse_create_billing_party_request(data)
+                    self.send_json(create_billing_party(self.conn(), req.to_payload()))
                     return
                 if parsed.path.startswith("/api/billing-parties/") and parsed.path.endswith("/copy-contact"):
                     parts = parsed.path.strip("/").split("/")
                     target_id = parts[2]
-                    source_id = data.get("source_billing_party_id") or ""
-                    confirmed_fields = data.get("confirmed_fields")
-                    copy_delivery = bool(data.get("copy_delivery_method", False))
+                    req = parse_copy_contact_request(data)
+                    source_id = req.source_billing_party_id
+                    confirmed_fields = req.to_payload().get("confirmed_fields")
+                    copy_delivery = bool(req.to_payload().get("copy_delivery_method", False))
                     self.send_json(apply_copy_contact_details(
                         self.conn(), target_id, source_id,
                         confirmed_fields=confirmed_fields,
@@ -915,26 +967,32 @@ def make_handler(
                     return
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
-                    self.send_json(update_billing_party(self.conn(), billing_party_id, data))
+                    req = parse_update_billing_party_request(data)
+                    self.send_json(update_billing_party(self.conn(), billing_party_id, req.to_payload()))
                     return
                 if parsed.path == "/api/rate-rules":
-                    self.send_json(create_rate_rule_from_payload(self.conn(), data))
+                    req = parse_create_rate_rule_request(data)
+                    self.send_json(create_rate_rule_from_payload(self.conn(), req.to_payload()))
                     return
                 if parsed.path == "/api/rate-rules/preview":
-                    self.send_json(preview_rate_suggestion(self.conn(), data))
+                    req = parse_preview_rate_request(data)
+                    self.send_json(preview_rate_suggestion(self.conn(), req.to_payload()))
                     return
                 if parsed.path.startswith("/api/rate-rules/"):
                     parts = parsed.path.strip("/").split("/")
                     rule_id = parts[2]
                     action = parts[3] if len(parts) > 3 else ""
                     if action == "replace":
-                        self.send_json(replace_rate_rule_from_payload(self.conn(), rule_id, data))
+                        req = parse_replace_rate_rule_request(data)
+                        self.send_json(replace_rate_rule_from_payload(self.conn(), rule_id, req.to_payload()))
                         return
                     if action == "end":
-                        self.send_json(end_rate_rule(self.conn(), rule_id, data.get("effective_through") or ""))
+                        req = parse_end_rate_rule_request(data)
+                        self.send_json(end_rate_rule(self.conn(), rule_id, req.effective_through))
                         return
                 if parsed.path == "/api/business-profile":
-                    self.send_json(save_business_profile(self.conn(), data))
+                    req = parse_save_business_profile_request(data)
+                    self.send_json(save_business_profile(self.conn(), req.to_payload()))
                     return
                 if parsed.path == "/api/sync/run":
                     result = sync_calendar_automatically(
@@ -953,7 +1011,8 @@ def make_handler(
                     )
                     return
                 if parsed.path == "/api/sync/rebuild":
-                    if data.get("confirmed") is not True:
+                    req = parse_sync_rebuild_request(data)
+                    if not req.confirmed:
                         raise ValueError("Explicit rebuild confirmation is required.")
                     result, backup_path = rebuild_calendar_data_from_sheet(
                         review_sync_config(database_path),
@@ -976,32 +1035,29 @@ def make_handler(
                     self.send_json(set_service_active(self.conn(), parts[2], parts[3] != "deactivate"))
                     return
                 if parsed.path == "/api/invoices":
-                    self.send_json(create_invoice_draft(self.conn(), data))
+                    req = parse_create_invoice_draft_request(data)
+                    self.send_json(create_invoice_draft(self.conn(), req.to_payload()))
                     return
                 if parsed.path == "/api/invoices/stage":
-                    session_ids = data.get("session_ids")
-                    if session_ids is not None:
-                        if not isinstance(session_ids, list):
-                            raise ValueError("session_ids must be a list.")
-                        for sid in session_ids:
-                            if not isinstance(sid, str) or not sid.strip():
-                                raise ValueError("Each session_id must be a non-empty string.")
+                    req = parse_stage_invoices_request(data)
+                    session_ids = req.to_payload().get("session_ids")
                     self.send_json(
                         stage_approved_sessions_to_monthly_drafts(self.conn(), session_ids=session_ids)
                     )
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_record_payment_request(data)
                     self.send_json(
                         record_invoice_payment(
                             self.conn(),
                             invoice_id=invoice_id,
-                            payment_date=data.get("payment_date") or "",
-                            amount_cents=data.get("amount_cents"),
-                            payment_method=data.get("payment_method") or "",
-                            reference_number=data.get("reference_number"),
-                            received_from_name=data.get("received_from_name"),
-                            administrative_note=data.get("administrative_note"),
+                            payment_date=req.to_payload().get("payment_date") or "",
+                            amount_cents=req.to_payload().get("amount_cents"),
+                            payment_method=req.to_payload().get("payment_method") or "",
+                            reference_number=req.to_payload().get("reference_number"),
+                            received_from_name=req.to_payload().get("received_from_name"),
+                            administrative_note=req.to_payload().get("administrative_note"),
                         )
                     )
                     return
@@ -1009,34 +1065,37 @@ def make_handler(
                     parts = parsed.path.strip("/").split("/")
                     if len(parts) == 5 and parts[4] == "reverse":
                         allocation_id = parts[3]
+                        req = parse_reverse_allocation_request(data)
                         self.send_json(
                             reverse_allocation(
                                 self.conn(),
                                 allocation_id,
-                                reason=data.get("reason") or "",
-                                idempotency_key=data.get("idempotency_key"),
+                                reason=req.reason,
+                                idempotency_key=req.to_payload().get("idempotency_key"),
                             )
                         )
                         return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/apply-funds"):
                     payment_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_apply_funds_request(data)
                     self.send_json(
                         apply_available_funds(
                             self.conn(),
                             payment_id,
-                            invoice_id=data.get("invoice_id") or "",
-                            amount_cents=data.get("amount_cents"),
-                            idempotency_key=data.get("idempotency_key"),
+                            invoice_id=req.invoice_id,
+                            amount_cents=req.amount_cents,
+                            idempotency_key=req.to_payload().get("idempotency_key"),
                         )
                     )
                     return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt"):
                     payment_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_create_payment_receipt_request(data)
                     self.send_json(
                         create_payment_receipt(
                             self.conn(),
                             payment_id,
-                            filing_owner_person_id=data.get("filing_owner_person_id"),
+                            filing_owner_person_id=req.to_payload().get("filing_owner_person_id"),
                         )
                     )
                     return
@@ -1046,16 +1105,18 @@ def make_handler(
                     if not receipt:
                         self.send_json({"ok": False, "error": "Receipt was not found."}, status=404)
                         return
-                    self.send_json(trusted_receipt_document_action(self.conn(), receipt["receipt_id"], data.get("action") or ""))
+                    req = parse_document_action_request(data)
+                    self.send_json(trusted_receipt_document_action(self.conn(), receipt["receipt_id"], req.action))
                     return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/void"):
                     payment_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_void_payment_request(data)
                     self.send_json(
                         void_payment(
                             self.conn(),
                             payment_id,
-                            reason=data.get("reason") or "",
-                            idempotency_key=data.get("idempotency_key"),
+                            reason=req.reason,
+                            idempotency_key=req.to_payload().get("idempotency_key"),
                         )
                     )
                     return
@@ -1064,58 +1125,68 @@ def make_handler(
                     invoice_id = parts[2]
                     action = parts[3] if len(parts) > 3 else "update"
                     if action == "update-line":
+                        req = parse_update_invoice_line_item_request(data)
                         self.send_json(
                             update_invoice_line_item(
                                 self.conn(),
                                 invoice_id,
-                                line_id=data["invoice_line_item_id"],
-                                description=data["description"],
-                                amount_cents=data["amount_cents"],
-                                amount_scope=data["amount_scope"],
-                                reason=data["reason"],
-                                expected_revision=data["expected_revision"],
+                                line_id=req.invoice_line_item_id,
+                                description=req.description,
+                                amount_cents=req.amount_cents,
+                                amount_scope=req.amount_scope,
+                                reason=req.reason,
+                                expected_revision=req.expected_revision,
                             )
                         )
                         return
                     if action == "add-sessions":
-                        self.send_json(add_sessions_to_draft(self.conn(), invoice_id, data.get("session_ids") or []))
+                        req = parse_add_sessions_to_draft_request(data)
+                        self.send_json(add_sessions_to_draft(self.conn(), invoice_id, req.session_ids))
                         return
                     if action == "remove-line":
-                        self.send_json(remove_line_from_draft(self.conn(), invoice_id, data["invoice_line_item_id"]))
+                        req = parse_remove_line_from_draft_request(data)
+                        self.send_json(remove_line_from_draft(self.conn(), invoice_id, req.invoice_line_item_id))
                         return
                     if action == "preview-finalize":
-                        self.send_json(preview_finalization(self.conn(), invoice_id, data=data))
+                        req = parse_preview_finalize_request(data)
+                        self.send_json(preview_finalization(self.conn(), invoice_id, data=req.to_payload()))
                         return
                     if action == "finalize":
-                        if not data.get("confirmed"):
+                        req = parse_finalize_invoice_request(data)
+                        if not req.confirmed:
                             raise ValueError("Explicit finalization confirmation is required.")
                         self.send_json(finalize_invoice(
                             self.conn(), invoice_id,
-                            expected_revision=data.get("expected_revision"),
-                            insurance_coding_included=bool(data.get("insurance_coding_included")),
-                            insurance_diagnosis_code=str(data.get("insurance_diagnosis_code") or ""),
+                            expected_revision=req.to_payload().get("expected_revision"),
+                            insurance_coding_included=bool(req.to_payload().get("insurance_coding_included")),
+                            insurance_diagnosis_code=str(req.to_payload().get("insurance_diagnosis_code") or ""),
                         ))
                         return
                     if action == "filing-owner":
-                        self.send_json(update_invoice_filing_owner(self.conn(), invoice_id, data.get("person_id")))
+                        req = parse_update_invoice_filing_owner_request(data)
+                        self.send_json(update_invoice_filing_owner(self.conn(), invoice_id, req.to_payload().get("person_id")))
                         return
                     if action == "document-action":
-                        self.send_json(trusted_invoice_document_action(self.conn(), invoice_id, data.get("action") or ""))
+                        req = parse_document_action_request(data)
+                        self.send_json(trusted_invoice_document_action(self.conn(), invoice_id, req.action))
                         return
                     if action == "void":
-                        self.send_json(void_invoice(self.conn(), invoice_id, data.get("reason") or ""))
+                        req = parse_void_invoice_request(data)
+                        self.send_json(void_invoice(self.conn(), invoice_id, req.reason))
                         return
-                    self.send_json(update_invoice_draft(self.conn(), invoice_id, data))
+                    req = parse_update_invoice_draft_request(data)
+                    self.send_json(update_invoice_draft(self.conn(), invoice_id, req.to_payload()))
                     return
                 if parsed.path == "/api/account-members":
+                    req = parse_add_account_member_request(data)
                     self.send_json(
                         {
                             "account_member_id": add_account_member(
                                 self.conn(),
-                                data["account_id"],
-                                data["person_id"],
-                                data.get("relationship_role", "primary"),
-                                bool(data.get("is_primary")),
+                                req.account_id,
+                                req.person_id,
+                                req.to_payload().get("relationship_role", "primary"),
+                                bool(req.to_payload().get("is_primary")),
                             )
                         }
                     )
@@ -1219,17 +1290,14 @@ def make_handler(
                     self.send_json({"ok": True, **result})
                     return
                 if parsed.path == "/api/billing-relationships/setup":
-                    self.send_json(setup_billing_relationship(self.conn(), data))
+                    req = parse_setup_billing_relationship_request(data)
+                    self.send_json(setup_billing_relationship(self.conn(), req.to_payload()))
                     return
                 if parsed.path == "/api/billing-relationships/normalize-payer":
-                    person_id = data.get("person_id")
-                    if not person_id:
-                        self.send_json({"ok": False, "error": "person_id is required."}, status=400)
-                        return
-                    canonical_bp_id = data.get("canonical_billing_party_id")
+                    req = parse_normalize_payer_request(data)
                     result = normalize_duplicate_payer_billing_parties(
-                        self.conn(), person_id,
-                        canonical_billing_party_id=canonical_bp_id,
+                        self.conn(), req.person_id,
+                        canonical_billing_party_id=req.to_payload().get("canonical_billing_party_id"),
                     )
                     self.send_json({"ok": True, **result})
                     return

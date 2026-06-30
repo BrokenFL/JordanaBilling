@@ -463,7 +463,7 @@ class TestMergePeopleContract(WriteEndpointContractTestBase):
             {"reason": "no id"},
         )
         self.assertEqual(captured["status"], 400)
-        self.assertEqual(captured["payload"]["error"], "An unexpected error occurred.")
+        self.assertEqual(captured["payload"]["error"], "duplicate_person_id is required.")
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +482,7 @@ class TestCreateAccountContract(WriteEndpointContractTestBase):
     def test_create_account_missing_name_returns_400_sanitized(self):
         _, captured = self._post("/api/accounts", {"account_type": "household"})
         self.assertEqual(captured["status"], 400)
-        self.assertEqual(captured["payload"]["error"], "An unexpected error occurred.")
+        self.assertEqual(captured["payload"]["error"], "account_name is required.")
 
 
 class TestDeactivateAccountContract(WriteEndpointContractTestBase):

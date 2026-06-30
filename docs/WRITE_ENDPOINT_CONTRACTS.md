@@ -1107,6 +1107,97 @@ issue for a future round.
 
 - Restore endpoint: `refresh_candidate_suggestions` failure after successful
   restore returns 400 instead of 200 (documented above)
-- The remaining write endpoints listed in the Round 4A.1 gaps section are not
-  yet hardened; this round covers only the four scoped high-risk review write
-  workflows
+
+## Round 4A.3: Remaining Write Endpoint Parsers
+
+### Scope
+
+All remaining write endpoints not covered in Round 4A.2 now have request
+validation parsers in `request_validation.py` and are wired into
+`review_server.py`. The parsers validate shape (JSON object, field types,
+enum-like choices) before the service layer is called.
+
+### New Parsers Added
+
+**People, aliases, merges:**
+- `parse_create_person_request` — POST /api/people
+- `parse_update_person_request` — POST /api/people/{id}
+- `parse_save_person_alias_request` — POST /api/people/{id}/aliases
+- `parse_merge_people_request` — POST /api/people/{id}/merge
+
+**Accounts:**
+- `parse_create_account_request` — POST /api/accounts
+- `parse_create_account_from_client_request` — POST /api/accounts/from-client
+- `parse_update_account_request` — POST /api/accounts/{id}
+- `parse_update_billing_relationship_request` — POST /api/accounts/{id}/update-billing-relationship
+- `parse_remove_account_member_request` — POST /api/accounts/{id}/remove-member
+- `parse_add_account_member_request` — POST /api/account-members
+
+**Billing relationships and parties:**
+- `parse_setup_billing_relationship_request` — POST /api/billing-relationships/setup
+- `parse_normalize_payer_request` — POST /api/billing-relationships/normalize-payer
+- `parse_create_billing_party_request` — POST /api/billing-parties
+- `parse_update_billing_party_request` — POST /api/billing-parties/{id}
+- `parse_copy_contact_request` — POST /api/billing-parties/{id}/copy-contact
+
+**Rate rules:**
+- `parse_create_rate_rule_request` — POST /api/rate-rules
+- `parse_preview_rate_request` — POST /api/rate-rules/preview
+- `parse_replace_rate_rule_request` — POST /api/rate-rules/{id}/replace
+- `parse_end_rate_rule_request` — POST /api/rate-rules/{id}/end
+
+**Invoices:**
+- `parse_create_invoice_draft_request` — POST /api/invoices
+- `parse_stage_invoices_request` — POST /api/invoices/stage
+- `parse_update_invoice_draft_request` — POST /api/invoices/{id}
+- `parse_update_invoice_line_item_request` — POST /api/invoices/{id}/update-line
+- `parse_add_sessions_to_draft_request` — POST /api/invoices/{id}/add-sessions
+- `parse_remove_line_from_draft_request` — POST /api/invoices/{id}/remove-line
+- `parse_preview_finalize_request` — POST /api/invoices/{id}/preview-finalize
+- `parse_finalize_invoice_request` — POST /api/invoices/{id}/finalize
+- `parse_void_invoice_request` — POST /api/invoices/{id}/void
+- `parse_update_invoice_filing_owner_request` — POST /api/invoices/{id}/filing-owner
+- `parse_document_action_request` — POST /api/invoices/{id}/document-action
+- `parse_print_preview_request` — POST /api/invoices/{id}/print-preview and /draft-pdf
+
+**Payments:**
+- `parse_record_payment_request` — POST /api/invoices/{id}/payments
+- `parse_reverse_allocation_request` — POST /api/payments/allocations/{id}/reverse
+- `parse_apply_funds_request` — POST /api/payments/{id}/apply-funds
+- `parse_void_payment_request` — POST /api/payments/{id}/void
+- `parse_create_payment_receipt_request` — POST /api/payments/{id}/receipt
+- `parse_document_action_request` (shared) — POST /api/payments/{id}/receipt-document-action
+
+**Business profile:**
+- `parse_save_business_profile_request` — POST /api/business-profile
+
+**Sync:**
+- `parse_sync_run_request` — POST /api/sync/run
+- `parse_sync_rebuild_request` — POST /api/sync/rebuild
+
+### Design Principles
+
+- **Shape validation only**: Parsers validate JSON object type, field types,
+  and enum-like choices. Business rules (e.g., "Payment date is required",
+  "A void reason is required") remain in the service layer.
+- **Unknown field pass-through**: Unknown fields are preserved in the payload
+  dict and passed through to the service, matching existing behavior.
+- **RequestValidationError is safe**: All parser errors raise
+  `RequestValidationError`, which `send_error_response` maps to HTTP 400
+  with the message preserved (not sanitized to "An unexpected error occurred.").
+- **No behavioral change**: Existing success and failure response contracts
+  are unchanged. Tests in `test_write_endpoint_contracts.py` verify this.
+
+### Test Coverage
+
+`tests/test_request_validation_round3.py` — 103 focused tests covering:
+
+- valid payload acceptance for each parser
+- missing required field rejection
+- wrong top-level JSON type rejection
+- wrong field type rejection (bool for int, non-string for string)
+- enum-like value validation (payer_kind, delivery_method, billing_party_type)
+- unknown field pass-through
+- default values (confirmed=false, reason="", account_type="individual")
+- `RequestValidationError` recognized as safe validation error
+
