@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build a reproducible offline release directory and zip for clean-Mac testing.
+# Build a reproducible offline release directory and DMG for clean-Mac testing.
 #
 set -euo pipefail
 
@@ -17,14 +17,17 @@ COMMIT="$(git rev-parse --short=12 HEAD)"
 BUILD_ROOT="$PROJECT_DIR/build/release"
 RELEASE_NAME="JordanaBilling-${VERSION}-${COMMIT}-macos-arm64"
 RELEASE_DIR="$BUILD_ROOT/$RELEASE_NAME"
-ZIP_PATH="$BUILD_ROOT/$RELEASE_NAME.zip"
+DMG_PATH="$BUILD_ROOT/$RELEASE_NAME.dmg"
+DMG_ROOT="$BUILD_ROOT/$RELEASE_NAME-dmg"
+PAYLOAD_DIR="$DMG_ROOT/ReleasePayload"
 WHEELHOUSE="$RELEASE_DIR/wheelhouse"
 
-rm -rf "$RELEASE_DIR" "$ZIP_PATH"
+rm -rf "$RELEASE_DIR" "$DMG_ROOT" "$DMG_PATH" "$DMG_PATH.sha256"
 mkdir -p "$WHEELHOUSE" "$RELEASE_DIR/scripts" "$RELEASE_DIR/docs" "$RELEASE_DIR/config"
 
 "$PROJECT_DIR/scripts/build_launcher.sh" --force >/dev/null
-cp -R "$PROJECT_DIR/Jordana Billing.app" "$RELEASE_DIR/Jordana Billing.app"
+"$PROJECT_DIR/scripts/build_setup_wizard.sh" "$BUILD_ROOT/Install Jordana Billing.app" >/dev/null
+ditto --norsrc "$PROJECT_DIR/Jordana Billing.app" "$RELEASE_DIR/Jordana Billing.app"
 cp "$PROJECT_DIR/scripts/install_release.sh" "$RELEASE_DIR/scripts/install_release.sh"
 cp "$PROJECT_DIR/scripts/create_private_config.sh" "$RELEASE_DIR/scripts/create_private_config.sh"
 cp "$PROJECT_DIR/scripts/launch_installed_app.sh" "$RELEASE_DIR/scripts/launch_installed_app.sh"
@@ -72,7 +75,7 @@ manifest = {
         "builder_python": platform.python_version(),
     },
     "artifact": {
-        "type": "zip",
+        "type": "dmg",
         "contains_private_data": False,
     },
     "checksums": checksums,
@@ -97,6 +100,27 @@ for path in release.rglob("*"):
         raise SystemExit(f"Forbidden private artifact file type: {path}")
 PY
 
-(cd "$BUILD_ROOT" && zip -qr "$ZIP_PATH" "$RELEASE_NAME")
-shasum -a 256 "$ZIP_PATH" > "$ZIP_PATH.sha256"
-echo "$ZIP_PATH"
+mkdir -p "$DMG_ROOT"
+ditto --norsrc "$BUILD_ROOT/Install Jordana Billing.app" "$DMG_ROOT/Install Jordana Billing.app"
+mv "$RELEASE_DIR" "$PAYLOAD_DIR"
+cat > "$DMG_ROOT/README.txt" <<EOF
+Jordana Billing test release
+
+Double-click "Install Jordana Billing.app" to install. Do not open the app inside ReleasePayload directly.
+
+This test release is not notarized. Gatekeeper may require right-click Open.
+EOF
+
+hdiutil create -volname "Jordana Billing" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG_PATH" >/dev/null
+(cd "$BUILD_ROOT" && shasum -a 256 "$(basename "$DMG_PATH")" > "$(basename "$DMG_PATH").sha256")
+python3 - "$DMG_PATH.sha256" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+target = text.split(maxsplit=1)[1].strip()
+if target.startswith("/") or "/Users/" in text:
+    raise SystemExit(f"Malformed checksum path: {text!r}")
+PY
+echo "$DMG_PATH"

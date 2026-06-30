@@ -48,22 +48,13 @@ Also read:
 
 ## Production Handoff Setup
 
-1. Build a versioned release artifact from the development Mac.
-2. Transfer the release zip and private production data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
+1. Build a versioned DMG release artifact from the development Mac.
+2. Transfer the release DMG and private production data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
 3. Verify the release checksum and the private transfer manifest/checksums.
-4. Unzip the release on Jordana's Mac.
-5. Open Terminal in the unzipped release folder.
-6. Run the private config helper:
-
-```bash
-scripts/create_private_config.sh
-```
-
-7. Run the one-time installer:
-
-```bash
-scripts/install_release.sh --database /secure/path/jordana_invoice.sqlite3
-```
+4. Open the DMG on Jordana's Mac.
+5. Double-click `Install Jordana Billing.app`.
+6. Enter the private Apps Script URL and hidden ingest API key.
+7. Install the app. For a true clean-start test, explicitly confirm clean-start database initialization.
 
 `scripts/install_release.sh` is the production installer for release artifacts.
 The older `scripts/setup_jordana_mac.sh` path is retired. `scripts/bootstrap.sh`
@@ -96,13 +87,13 @@ creation during normal launch.
 
 ## Configuration
 
-For a production handoff, create or verify `.env` locally without exposing its values:
-
-```bash
-scripts/create_private_config.sh
-```
-
-The helper stores the private config at `~/Library/Application Support/Jordana Billing/config/.env`, hides API-key input, and sets file permissions to `600`.
+For a production handoff, create or verify `.env` through
+`Install Jordana Billing.app` without exposing its values. The setup app stores
+the private config at
+`~/Library/Application Support/Jordana Billing/config/.env`, hides API-key
+input, and sets file permissions to `600`. The CLI helper
+`scripts/create_private_config.sh` remains available for Brooke/support use
+inside the payload, but it is not the normal Jordana setup path.
 
 Required production release configuration includes:
 

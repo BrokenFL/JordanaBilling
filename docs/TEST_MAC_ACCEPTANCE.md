@@ -7,63 +7,56 @@ Use this checklist on Brooke's spare clean Mac before installing anything on Jor
 - macOS 12 or later on Apple Silicon.
 - The Python major/minor version listed in `release_manifest.json` installed once.
 - Access to the private GitHub repository release page.
-- The versioned release zip and matching `.sha256` file from the private pre-release.
+- The versioned release DMG and matching `.sha256` file from the private pre-release.
 - The private Apps Script URL and ingest API key available locally, not in GitHub, email, chat, screenshots, or logs.
 
 ## Steps
 
 1. Sign into GitHub with an account authorized for the private `BrokenFL/JordanaBilling` repository.
 2. Open the repository's Releases page.
-3. Download the test release zip and matching `.sha256` file.
-4. Verify checksum:
+3. Download the test release DMG and matching `.sha256` file.
+4. Verify checksum. Expected result: the command prints `OK` and the checksum file names only the DMG filename, not Brooke's local build path.
 
 ```bash
-shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.zip.sha256
+shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
-5. Unzip the release.
-6. Create the private config:
-
-```bash
-cd JordanaBilling-<version>-<commit>-macos-arm64
-scripts/create_private_config.sh
-```
-
-The helper writes `~/Library/Application Support/Jordana Billing/config/.env` with permissions `600`. It hides the API key while typing and does not print the key.
-
-7. Install with a disposable first-time test DB:
-
-```bash
-scripts/install_release.sh --init-empty-db
-```
-
-8. Confirm the app exists at `~/Applications/Jordana Billing.app`.
-9. Confirm private data exists under `~/Library/Application Support/Jordana Billing/`.
-10. Double-click the app and confirm the browser opens only after health readiness.
-11. Turn Wi-Fi off and repeat a Wi-Fi-off launch. Startup should still work; calendar sync may show an internet-dependent sync error.
-12. Restart the Mac and launch again.
-13. Double-click twice and confirm the second launch reuses the existing healthy server rather than creating a duplicate.
-14. Start an unrelated process on port `8765`, then launch. Expected result: Jordana Billing refuses to stop or reuse it.
-15. Temporarily move `config/.env` aside and test the missing config error. Restore the file afterward.
-16. Temporarily move `data/jordana_invoice.sqlite3` aside and test the missing DB error. Restore the file afterward.
-17. Reinstall the same release and confirm existing config and DB are preserved.
-18. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support.
+5. Open the DMG. Expected result: the top level shows `Install Jordana Billing.app`; the daily app is not the obvious first item.
+6. Double-click `Install Jordana Billing.app`. If Gatekeeper blocks it, use right-click Open or Security & Privacy approval. Do not bypass Gatekeeper silently.
+7. Confirm no Rosetta prompt appears. Stop if macOS asks to install Rosetta.
+8. Enter the Apps Script URL.
+9. Enter the ingest API key. Expected result: the key field is hidden and the key is not displayed afterward.
+10. Check the clean-start database confirmation. Expected explanation: unresolved review evidence will sync; historical invoices, payments, clients, approved sessions, and billing relationships will not be imported.
+11. Click Install.
+12. Expected result: setup installs `~/Applications/Jordana Billing.app`, writes `~/Library/Application Support/Jordana Billing/config/.env` with permissions `600`, creates the clean database only after confirmation, runs verification, and reports success.
+13. Click Open Jordana Billing. Expected result: the browser opens only after health readiness.
+14. Confirm unresolved review items load after sync.
+15. Confirm there are no old invoices, payments, clients, approved sessions, or billing relationships.
+16. Restart the Mac and launch `~/Applications/Jordana Billing.app` again.
+17. Double-click twice and confirm the second launch reuses the existing healthy server rather than creating a duplicate.
+18. From another macOS user account, leave Jordana Billing running on port `8765`, then try launching from this account. Expected result: a clear message says Jordana Billing is already running under another macOS user account. It must not kill the other process.
+19. Start an unrelated process on port `8765`, then launch. Expected result: Jordana Billing refuses to stop or reuse it.
+20. Temporarily move `config/.env` aside and test the missing config error. Restore the file afterward.
+21. Temporarily move `data/jordana_invoice.sqlite3` aside and test the missing DB error. Restore the file afterward.
+22. Reinstall the same release and confirm existing config and DB are preserved.
+23. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support.
 
 ## Evidence To Record
 
 - Release filename and checksum result.
 - Confirmation that `.env` permissions are `600`.
-- Installer success output.
+- Setup app success message.
 - Whether Gatekeeper required right-click Open or Security & Privacy approval.
+- Confirmation that no Rosetta prompt appeared.
 - Offline launch result.
 - Restart launch result.
 - Duplicate-launch result.
-- Port-conflict, missing-config, and missing-DB error wording.
+- Cross-user, port-conflict, missing-config, and missing-DB error wording.
 - Reinstall result confirming data preservation.
 
 ## Stop Conditions
 
-Stop before Jordana's Mac if any step creates a blank DB unexpectedly, overwrites private config, starts without the expected DB, requires PyPI/GitHub during launch, kills an unrelated process, exposes secrets in output, or fails to launch after reboot.
+Stop before Jordana's Mac if any step creates a blank DB unexpectedly, overwrites private config, starts without the expected DB, requires PyPI/GitHub during launch, asks to install Rosetta, kills an unrelated process, exposes secrets in output, or fails to launch after reboot.
 
 ## Rollback
 

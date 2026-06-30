@@ -29,19 +29,19 @@ Use `scripts/create_demo_database.sh` for fictional demo data. Never import demo
 
 - macOS 12 or later on Apple Silicon
 - The Python major/minor version listed in `release_manifest.json` installed once
-- A versioned release artifact from `scripts/build_release.sh`
+- A versioned DMG release artifact from `scripts/build_release.sh`
 - Internet access for Google Sheets sync during application use
 - For production handoff: the verified private transfer package described in `docs/PRIVATE_DATA_TRANSFER.md`
 
 ## 1. Transfer The Release
 
-Transfer the release zip and checksum file to the target Mac, then verify:
+Transfer the release DMG and checksum file to the target Mac, then verify:
 
 ```bash
-shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.zip.sha256
+shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
-Unzip the release. A production install does not require Git or a source clone.
+Open the DMG. A production install does not require Terminal, Git, or a source clone.
 
 ## 2. Place Private Production Files
 
@@ -72,29 +72,23 @@ See `docs/PRIVATE_DATA_TRANSFER.md` for the authoritative secure-transfer proced
 
 Never upload `.env` to GitHub. Never send secrets in email, chat, logs, screenshots, or release assets.
 
-On the target Mac, run the helper from the unzipped release:
-
-```bash
-scripts/create_private_config.sh
-```
+On the target Mac, double-click `Install Jordana Billing.app` from the DMG.
 
 It asks for:
 
 - `JORDANA_APPS_SCRIPT_URL`
 - `JORDANA_INGEST_API_KEY`
 
-The API key input is hidden. The helper writes
+The API key input is hidden. The setup app writes
 `~/Library/Application Support/Jordana Billing/config/.env` with permissions
 `600`. The installer finds that standard path automatically and preserves it
 across reinstall/update.
 
 ## 4. Install And Launch
 
-Run the one-time installer from the unzipped release:
-
-```bash
-scripts/install_release.sh --database /secure/path/jordana_invoice.sqlite3
-```
+Run the one-time setup app from the DMG. It installs
+`~/Applications/Jordana Billing.app`, creates the private runtime from the
+offline wheelhouse, and runs installation verification.
 
 After installation, double-click `~/Applications/Jordana Billing.app` in Finder.
 The app is ad-hoc code-signed, not notarized, so Gatekeeper may require
@@ -119,10 +113,11 @@ It must not delete, recreate, replace, or treat the transferred database as a cl
 For production, a missing configured SQLite database is an error. The launcher
 will stop with a clear message instead of creating a replacement blank database.
 
-For an explicitly empty clean-Mac test, use `scripts/install_release.sh
---init-empty-db`. Rebuilding from Google Sheets reconstructs raw calendar
+For an explicitly empty clean-Mac test, choose the clean-start database option
+inside the setup app. Rebuilding from Google Sheets reconstructs raw calendar
 evidence and proposed review records only. It does not reconstruct prior human
-review, invoices, payments, or other production-only SQLite state.
+review, invoices, payments, clients, billing relationships, or other
+production-only SQLite state.
 
 ### Later launches
 
@@ -182,6 +177,7 @@ These scripts are available for terminal use:
 | Command | Purpose |
 |---|---|
 | `scripts/install_release.sh` | One-time release installer |
+| `scripts/build_setup_wizard.sh` | Build the native setup app for release artifacts |
 | `scripts/update_release.sh` | Deliberate update path with pre-update DB backup |
 | `scripts/verify_installation.sh` | Verify installed app, runtime, config, DB, and static assets |
 | `scripts/build_release.sh` | Development checkout command to create the release artifact |

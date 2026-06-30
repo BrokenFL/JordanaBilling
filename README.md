@@ -52,25 +52,25 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 
 ## Quick Start
 
-For production or clean-Mac testing, build and install a versioned offline release artifact:
+For production or clean-Mac testing, build and install a versioned offline DMG release artifact:
 
 ```bash
 scripts/build_release.sh
 ```
 
-The release installer copies `Jordana Billing.app` to `~/Applications`, creates
-an offline private runtime inside the app from the shipped wheelhouse, and keeps
-private configuration and the operational database under
-`~/Library/Application Support/Jordana Billing/`. Daily double-click launch
-validates and starts the installed app only; it does not run pip, repair `.venv`,
-install editable packages, use Git, access PyPI, or create a blank production
-database. See `docs/PRODUCTION_PACKAGING.md` and
-`docs/TEST_MAC_ACCEPTANCE.md`.
+The release DMG contains `Install Jordana Billing.app` plus an internal
+`ReleasePayload` folder. The setup app collects the Apps Script URL and ingest
+API key in a native macOS window, writes private configuration under
+`~/Library/Application Support/Jordana Billing/`, asks before initializing a
+clean-start database, installs `Jordana Billing.app` to `~/Applications`, and
+runs install verification. Daily double-click launch validates and starts the
+installed app only; it does not run pip, repair `.venv`, install editable
+packages, use Git, access PyPI, or create a blank production database. See
+`docs/PRODUCTION_PACKAGING.md` and `docs/TEST_MAC_ACCEPTANCE.md`.
 
-On the clean Mac, download the private GitHub pre-release, verify the checksum,
-run `scripts/create_private_config.sh` to create the private `.env` in
-Application Support, then run `scripts/install_release.sh --init-empty-db` for
-the disposable acceptance test. Never upload `.env` or real secrets to GitHub.
+On the clean Mac, download the private GitHub pre-release DMG and matching
+checksum, verify the checksum, open the DMG, and double-click
+`Install Jordana Billing.app`. Never upload `.env` or real secrets to GitHub.
 
 For local development checkouts only, `scripts/bootstrap.sh` remains available
 to create or repair the repo-local `.venv` and launch from source.
@@ -251,9 +251,10 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - `app/jordana_invoice/static/` - local review UI.
 - `launchd/` and `scripts/` - hourly macOS sync agent installer and remover.
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
-- `scripts/build_release.sh` - builds the versioned offline production release artifact.
+- `scripts/build_release.sh` - builds the versioned offline production DMG artifact.
+- `scripts/build_setup_wizard.sh` - builds the native no-Terminal setup app for the DMG.
 - `scripts/install_release.sh` - one-time production installer copied into release artifacts.
-- `scripts/create_private_config.sh` - interactive private config helper for the target Mac.
+- `scripts/create_private_config.sh` - support-only interactive private config helper.
 - `scripts/launch_installed_app.sh` - daily installed-app launcher; no package installation or Git/PyPI access.
 - `scripts/bootstrap.sh` - development-checkout bootstrap and source launcher.
 - `scripts/setup_jordana_mac.sh` - retired non-destructive stub.

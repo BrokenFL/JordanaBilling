@@ -4,10 +4,11 @@ Production packaging separates one-time installation from normal daily launch.
 
 ## Strategy
 
-V1 uses an offline pinned runtime install:
+V1 uses an offline pinned runtime install with a native macOS setup app:
 
-- Brooke builds a versioned zip release from this repo.
-- The release contains `Jordana Billing.app`, installer scripts, a local wheelhouse, `requirements-production.lock`, `release_manifest.json`, docs, a sanitized config example, and checksums.
+- Brooke builds a versioned DMG release from this repo.
+- The DMG root contains `Install Jordana Billing.app` and concise instructions.
+- The internal `ReleasePayload` folder contains `Jordana Billing.app`, installer scripts, a local wheelhouse, `requirements-production.lock`, `release_manifest.json`, docs, a sanitized config example, and checksums.
 - The installer creates a private virtual environment inside the installed app bundle and installs only from the shipped wheelhouse.
 - Normal double-click launch uses that installed runtime and never runs pip, Git, dependency repair, or package installation.
 
@@ -46,8 +47,8 @@ scripts/build_release.sh
 The build writes:
 
 ```text
-build/release/JordanaBilling-<version>-<commit>-macos-arm64.zip
-build/release/JordanaBilling-<version>-<commit>-macos-arm64.zip.sha256
+build/release/JordanaBilling-<version>-<commit>-macos-arm64.dmg
+build/release/JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
 The artifact is inspected during build for forbidden private files such as `.env`, SQLite databases, PDFs, invoices, receipts, reports, and private data folders.
@@ -56,49 +57,43 @@ The artifact is inspected during build for forbidden private files such as `.env
 
 Never upload `.env` to GitHub and never send secrets in email, chat, logs, screenshots, or release assets.
 
-On the spare Mac, create the private config from inside the unzipped release:
+The authoritative user path is the native setup app:
 
-```bash
-scripts/create_private_config.sh
-```
+1. Open the DMG.
+2. Double-click `Install Jordana Billing.app`.
+3. Enter the Apps Script URL.
+4. Enter the ingest API key in the hidden field.
+5. Confirm whether to initialize a clean-start database.
+6. Click Install.
 
-The helper asks for:
+The setup app asks for:
 
 - `JORDANA_APPS_SCRIPT_URL`
 - `JORDANA_INGEST_API_KEY`
 
-The API key input is hidden. The helper writes:
+The API key input is hidden. The setup app writes:
 
 ```text
 ~/Library/Application Support/Jordana Billing/config/.env
 ```
 
-with permissions `600`. The config is not stored inside the `.app`, release ZIP, GitHub, SQLite database, or browser storage. The installed launcher reads it at startup, validates the required keys, and exports them only to the local server process. The file persists across app restarts, Mac restarts, reinstalls, and updates. Removing the app bundle does not delete the config.
+with permissions `600`. The config is not stored inside the `.app`, release DMG, GitHub, SQLite database, or browser storage. The installed launcher reads it at startup, validates the required keys, and exports them only to the local server process. The file persists across app restarts, Mac restarts, reinstalls, and updates. Removing the app bundle does not delete the config.
 
-To rotate the key, rerun `scripts/create_private_config.sh` and type `OVERWRITE` when prompted, or edit the Application Support config locally. Delete any temporary source file after confirming the Application Support config exists.
+The CLI helper `scripts/create_private_config.sh` remains available inside the payload for support use, but the GUI setup app is the user-facing workflow.
 
 ## One-Time Install
 
-After unzipping the release on the target Mac:
-
-```bash
-cd JordanaBilling-<version>-<commit>-macos-arm64
-scripts/install_release.sh --database /secure/path/jordana_invoice.sqlite3
-```
-
-For a disposable clean-Mac test only, Brooke may initialize an empty database explicitly:
-
-```bash
-scripts/install_release.sh --init-empty-db
-```
+After opening the DMG, run `Install Jordana Billing.app`. It installs to
+`~/Applications/Jordana Billing.app`, builds the private runtime from the
+offline wheelhouse, preserves existing private config and database files, and
+runs `scripts/verify_installation.sh`.
 
 The installer preserves existing `config/.env` and `data/jordana_invoice.sqlite3`. It fails rather than creating a replacement database unless `--init-empty-db` is supplied and confirmed.
 
-For the spare clean-Mac test, after running `scripts/create_private_config.sh`, use:
-
-```bash
-scripts/install_release.sh --init-empty-db
-```
+For the spare clean-Mac test, check the clean-start confirmation in the setup
+app. Clean-start creates an empty database only after explicit confirmation.
+It lets unresolved review evidence sync from Google Sheets but does not import
+old invoices, payments, approved sessions, clients, or billing relationships.
 
 ## Daily Launch
 
@@ -109,6 +104,10 @@ Jordana double-clicks:
 ```
 
 Daily launch validates the installed runtime, private config, private database, port ownership, and health readiness. It may apply safe application migrations through the app startup contract, but it does not install packages, repair the runtime, access GitHub, access PyPI, or create a blank production database.
+
+If the app inside `ReleasePayload` is opened directly before setup, it displays
+that Jordana Billing has not been installed yet and points the user back to
+`Install Jordana Billing.app`.
 
 ## Update
 
@@ -129,3 +128,19 @@ Do not delete `~/Library/Application Support/Jordana Billing` unless Brooke expl
 ## Gatekeeper
 
 The app is ad-hoc signed, not notarized. A clean Mac may report the app as from an unidentified developer and require right-click Open or Security & Privacy approval. Do not bypass Gatekeeper silently.
+
+## Port Conflicts
+
+Before startup the launcher probes `http://127.0.0.1:8765/api/health`. If a
+healthy Jordana Billing endpoint responds but the owning PID is not visible to
+the current macOS user, the launcher does not start another server and does not
+kill anything. It reports that Jordana Billing is already running under another
+macOS user account. If a non-Jordana service or non-HTTP listener occupies the
+port, launch stops with a sanitized port-conflict message.
+
+## Safari Downloads
+
+The authoritative release artifact is the DMG. Safari does not expand it into a
+release folder and move the original artifact to Trash the way it can with ZIP
+downloads. Verify the `.dmg.sha256` file against the downloaded `.dmg` from the
+same folder.

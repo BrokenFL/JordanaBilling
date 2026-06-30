@@ -108,7 +108,7 @@ fi
 
 TMP_APP="${APP_DEST}.installing"
 rm -rf "$TMP_APP"
-cp -R "$SOURCE_APP" "$TMP_APP"
+ditto --norsrc "$SOURCE_APP" "$TMP_APP"
 rm -rf "$TMP_APP/Contents/Resources/runtime/venv"
 mkdir -p "$TMP_APP/Contents/Resources/runtime"
 "$PYTHON_BIN" -m venv "$TMP_APP/Contents/Resources/runtime/venv"

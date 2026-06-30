@@ -55,7 +55,11 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("SHA256SUMS", builder)
         self.assertIn("wheelhouse", builder)
         self.assertIn("requirements-production.lock", builder)
-        self.assertIn("create_private_config.sh", builder)
+        self.assertIn("build_setup_wizard.sh", builder)
+        self.assertIn("Install Jordana Billing.app", builder)
+        self.assertIn("ReleasePayload", builder)
+        self.assertIn("hdiutil create", builder)
+        self.assertIn('shasum -a 256 "$(basename "$DMG_PATH")"', builder)
         self.assertIn("docs/TEST_MAC_ACCEPTANCE.md", builder)
         self.assertIn("config/example.env", builder)
         self.assertIn("Private artifact path found", builder)
@@ -74,8 +78,8 @@ class ProductionPackagingContractTest(unittest.TestCase):
         text = doc.read_text(encoding="utf-8")
         for phrase in [
             "Verify checksum",
-            "Wi-Fi-off launch",
-            "create_private_config.sh",
+            "Install Jordana Billing",
+            "Rosetta prompt",
             "missing config",
             "missing DB",
             "Reinstall",
@@ -87,9 +91,58 @@ class ProductionPackagingContractTest(unittest.TestCase):
         doc = (PROJECT_DIR / "docs" / "PRODUCTION_PACKAGING.md").read_text(encoding="utf-8")
         self.assertIn("Private Configuration Setup", doc)
         self.assertIn("~/Library/Application Support/Jordana Billing/config/.env", doc)
-        self.assertIn("scripts/create_private_config.sh", doc)
+        self.assertIn("Install Jordana Billing.app", doc)
         self.assertIn("The API key input is hidden", doc)
-        self.assertIn("not stored inside the `.app`, release ZIP, GitHub, SQLite database, or browser storage", doc)
+        self.assertIn("not stored inside the `.app`, release DMG, GitHub, SQLite database, or browser storage", doc)
+
+
+class NativeSetupWizardContractTest(unittest.TestCase):
+    def test_setup_wizard_uses_native_secure_field(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        self.assertIn("NSSecureTextField", source)
+        self.assertIn("validURL", source)
+        self.assertIn("Initialize a clean production database?", source)
+        self.assertIn("Existing private config found and will be preserved.", source)
+        self.assertIn("Existing database found and will be preserved.", source)
+
+    def test_setup_wizard_does_not_pass_secrets_as_arguments(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        self.assertIn("JORDANA_INGEST_API_KEY=", source)
+        self.assertIn("process.arguments = initEmptyDb ? [script.path, \"--init-empty-db\", \"--yes\"] : [script.path]", source)
+        self.assertNotIn("--api-key", source)
+        self.assertNotIn("apiKey]", source)
+
+    def test_setup_wizard_cancel_does_not_write_before_install(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        self.assertIn("@objc private func install()", source)
+        self.assertIn("if alert.runModal() != .alertFirstButtonReturn", source)
+        self.assertLess(source.index("if alert.runModal() != .alertFirstButtonReturn"), source.index("try self.writeConfig"))
+
+    def test_setup_wizard_builder_creates_native_app(self) -> None:
+        builder = (PROJECT_DIR / "scripts" / "build_setup_wizard.sh").read_text(encoding="utf-8")
+        self.assertIn("swiftc -target arm64-apple-macos12", builder)
+        self.assertIn("CFBundleExecutable", builder)
+        self.assertIn("InstallJordanaBilling", builder)
+        self.assertIn("codesign", builder)
+
+    def test_release_dmg_payload_hides_daily_app_from_root(self) -> None:
+        builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
+        self.assertIn('ditto --norsrc "$BUILD_ROOT/Install Jordana Billing.app" "$DMG_ROOT/Install Jordana Billing.app"', builder)
+        self.assertIn('mv "$RELEASE_DIR" "$PAYLOAD_DIR"', builder)
+        self.assertIn("Do not open the app inside ReleasePayload directly", builder)
+
+    def test_checksum_generation_rejects_absolute_paths(self) -> None:
+        builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
+        self.assertIn("basename \"$DMG_PATH\"", builder)
+        self.assertIn("Malformed checksum path", builder)
+        self.assertNotIn('shasum -a 256 "$DMG_PATH" >', builder)
+
+    def test_installed_launcher_probes_health_before_lsof_only_decision(self) -> None:
+        launcher = (PROJECT_DIR / "scripts" / "launch_installed_app.sh").read_text(encoding="utf-8")
+        self.assertIn("http_service_status", launcher)
+        self.assertIn("port_accepts_tcp", launcher)
+        self.assertIn("Jordana Billing is already running under another macOS user account", launcher)
+        self.assertLess(launcher.index("status=\"$(http_service_status"), launcher.index("port_pid=\"$(pid_on_port)\""))
 
 
 class PrivateConfigHelperTest(unittest.TestCase):
