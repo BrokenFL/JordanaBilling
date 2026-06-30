@@ -162,6 +162,39 @@ if data.get("ok") is not True or data.get("status") != "healthy":
 PY
 }
 
+http_service_status() {
+  "$VENV_PYTHON" - "$HEALTH_URL" <<'PY'
+import json
+import sys
+import urllib.request
+
+try:
+    with urllib.request.urlopen(sys.argv[1], timeout=2) as response:
+        body = response.read().decode("utf-8", "replace")
+except Exception:
+    raise SystemExit(1)
+try:
+    data = json.loads(body)
+except Exception:
+    print("http_other")
+    raise SystemExit(0)
+if data.get("ok") is True and data.get("status") == "healthy":
+    print("jordana")
+else:
+    print("http_other")
+PY
+}
+
+port_accepts_tcp() {
+  "$VENV_PYTHON" - "$PORT" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+
+with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2):
+    pass
+PY
+}
+
 pid_on_port() {
   lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
 }
@@ -183,7 +216,7 @@ open_review_url() {
 }
 
 handle_existing_server_or_port() {
-  local pid port_pid
+  local pid port_pid status
   if [[ -f "$PID_FILE" ]]; then
     pid="$(tr -dc '0-9' < "$PID_FILE")"
     if pid_is_app_owned "$pid"; then
@@ -195,6 +228,21 @@ handle_existing_server_or_port() {
       fail_launcher "Local Server Not Ready" "A Jordana Billing process is running, but the health check did not pass."
     fi
     remove_stale_pid_files
+  fi
+
+  status="$(http_service_status 2>/dev/null || true)"
+  if [[ "$status" == "jordana" ]]; then
+    port_pid="$(pid_on_port)"
+    if [[ -n "$port_pid" ]] && pid_looks_like_jordana "$port_pid"; then
+      write_pid_metadata "$port_pid"
+      open_review_url
+      exit 0
+    fi
+    fail_launcher "Jordana Billing Already Running" "Jordana Billing is already running under another macOS user account. Log out of that account or stop the other session, then try again."
+  elif [[ "$status" == "http_other" ]]; then
+    fail_launcher "Port ${PORT} Is In Use" "Port ${PORT} is already being used by another application. Jordana Billing did not stop or reuse that process."
+  elif port_accepts_tcp; then
+    fail_launcher "Port ${PORT} Is In Use" "Port ${PORT} is already occupied, but it did not return a Jordana Billing health response. Jordana Billing did not stop or reuse that process."
   fi
 
   port_pid="$(pid_on_port)"
