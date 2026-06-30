@@ -31,6 +31,9 @@ clean_and_sign_app() {
   dot_clean -m "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
   codesign --force --deep --sign - --timestamp=none "$app_path" >/dev/null 2>&1 || true
+  xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -c "$app_path" 2>/dev/null || true
   codesign --verify --deep --strict "$app_path"
 }
 
