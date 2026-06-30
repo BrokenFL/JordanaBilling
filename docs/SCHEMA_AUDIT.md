@@ -135,6 +135,14 @@ The invoice schema supports:
 - immutable finalized PDFs and invoice values
 - void and reissue rather than editing a finalized invoice
 
+Structured diagnosis-code storage is limited to optional invoice-specific
+insurance billing or reimbursement. Diagnosis codes must be intentionally
+entered or approved by Jordana, never inferred from calendar text, participant
+names, session descriptions, or other application data. Finalized diagnosis-code
+snapshots remain frozen; corrections use the existing correction, void, or
+reissue process. Real diagnosis codes must never be committed to GitHub,
+fixtures, screenshots, logs, demo data, examples, or documentation.
+
 ### Payments and receipts
 
 - `payments` — posted and void payment records with provenance

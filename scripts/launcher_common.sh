@@ -138,7 +138,7 @@ validate_private_configuration() {
 
 ensure_venv_exists() {
   if [[ ! -x "$PROJECT_DIR/.venv/bin/python" ]]; then
-    fail_launcher "Python Environment Not Found" "The local Python environment is missing. Run scripts/bootstrap.sh once, or double-click Jordana Billing.app after Python 3.11+ is installed."
+    fail_launcher "Python Environment Not Found" "The source-checkout Python environment is missing. Run scripts/bootstrap.sh once with Python 3.11+ installed. Versioned release installs use the Python major/minor recorded in release_manifest.json."
   fi
   VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 }
@@ -153,7 +153,7 @@ prepare_bootstrap_environment() {
   local python_bin
   python_bin="$(find_python || true)"
   if [[ -z "$python_bin" ]]; then
-    fail_launcher "Python Required" "Python 3.11 or newer was not found. Install Python from python.org or Homebrew, then launch again."
+    fail_launcher "Python Required" "Python 3.11 or newer was not found for this source checkout. Install Python from python.org or Homebrew, then launch again. Versioned release installs use the Python major/minor recorded in release_manifest.json."
   fi
   log_message "Using Python: $("$python_bin" --version 2>&1)"
   if [[ ! -d "$PROJECT_DIR/.venv" ]]; then

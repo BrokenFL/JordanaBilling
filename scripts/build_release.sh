@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build a reproducible offline release directory and DMG for clean-Mac testing.
+# Build a versioned offline-installable release directory and DMG for clean-Mac testing.
 #
 set -euo pipefail
 

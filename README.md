@@ -1,12 +1,10 @@
 # Jordana Invoice System
 
-Local-first calendar evidence importer, billing review workflow, and invoice prototype.
+Local-first calendar evidence importer, billing review workflow, invoice system, and payment ledger for Jordana's single-user macOS workflow.
 
-Phase 1 does **not** create final invoices. It imports Apple Calendar snapshot rows, preserves the raw evidence, collapses duplicate event versions, proposes classifications, parses Jordana's shorthand, and opens review items for anything uncertain.
+The current implementation imports Apple Calendar snapshot rows through Google Sheets, preserves the raw evidence, collapses duplicate event versions, proposes classifications, parses Jordana's shorthand, and keeps ambiguous records reviewable. Approved sessions can be staged into draft invoices, finalized with immutable snapshots and local PDFs, voided and reissued, and tracked through payments, allocations, corrections, receipts, prior balances, filing ownership, and optional invoice-specific insurance coding.
 
-Phase 1.1 removes the normal manual CSV step. The Apple Shortcut still writes to Google Sheets through Google Apps Script, but the Mac can now pull raw staged snapshots from the Apps Script endpoint into local SQLite.
-
-Phase 2 strengthens the normalization layer. The current prototype adds invoice drafts, immutable finalization snapshots, numbering, void/reissue, history, and local PDFs on top of approved sessions. It does not implement invoice delivery. The payment ledger is now implemented with payment creation, allocation across invoice lines, reversal/void corrections, apply-available-funds, invoice payment history, and a tabbed Payments workspace. Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.
+This is not a general multi-user billing platform. It is implemented and tested locally, with clean-Mac acceptance and final production handoff still tracked separately. Invoice delivery by email/mail, credits/refunds/write-offs, automated multi-invoice allocation, reconciliation, month-close, and a polished dashboard remain known limitations.
 
 ## Current Scope
 
@@ -68,9 +66,15 @@ installed app only; it does not run pip, repair `.venv`, install editable
 packages, use Git, access PyPI, or create a blank production database. See
 `docs/PRODUCTION_PACKAGING.md` and `docs/TEST_MAC_ACCEPTANCE.md`.
 
-On the clean Mac, download the private GitHub pre-release DMG and matching
-checksum, verify the checksum, open the DMG, and double-click
-`Install Jordana Billing.app`. Never upload `.env` or real secrets to GitHub.
+The V1 release installer requires the Python major/minor version recorded in
+the release's `release_manifest.json`; Brooke may need to install that matching
+Python once before handing the computer to Jordana. Normal daily app use does
+not require Terminal, Git, GitHub, PyPI, pip, or a source checkout.
+
+On the clean Mac, download the private release DMG and matching checksum, verify
+the checksum, open the DMG, and double-click `Install Jordana Billing.app`.
+Never upload `.env`, databases, real diagnosis codes, or real secrets to
+GitHub.
 
 For local development checkouts only, `scripts/bootstrap.sh` remains available
 to create or repair the repo-local `.venv` and launch from source.
@@ -232,9 +236,10 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - SQLite is the local application database.
 - Ambiguous rows stay reviewable and reversible.
 - Calendar import and review commands do not generate invoices automatically.
-- Phase 2 includes local PDF invoice generation and immutable finalization snapshots plus an implemented payment ledger with corrections.
+- Invoice staging/finalization, local PDF generation, immutable snapshots, payment ledger corrections, receipts, and optional invoice-specific insurance coding are implemented.
 - No polished production dashboard is built yet.
-- Do not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations beyond the raw calendar evidence already imported. A structured diagnosis code may be stored only when required for administrative insurance billing or reimbursement documentation; it must not be silently inferred from calendar text or session descriptions.
+- Do not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations beyond the raw calendar evidence already imported.
+- Structured diagnosis codes may be stored only when Jordana intentionally enters or approves them for invoice-specific insurance billing or reimbursement documentation. They must never be inferred from calendar text, participant names, session descriptions, or other application data, should not appear on ordinary self-pay invoices, and real values must never be committed to GitHub, fixtures, screenshots, logs, demo data, examples, or documentation.
 - Do not rewrite historical finalized invoice values when rates change later.
 - Every approved session must store the actual charged amount; future rate rules must not rewrite it.
 - Do not expose household/account labels as routine review fields when Participants and Bill to are enough.
@@ -251,13 +256,13 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - `app/jordana_invoice/static/` - local review UI.
 - `launchd/` and `scripts/` - hourly macOS sync agent installer and remover.
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
-- `scripts/build_release.sh` - builds the versioned offline production DMG artifact.
+- `scripts/build_release.sh` - builds the versioned production DMG artifact with pinned dependencies, an offline wheelhouse, release manifest, and checksummed DMG.
 - `scripts/build_setup_wizard.sh` - builds the native no-Terminal setup app for the DMG.
 - `scripts/install_release.sh` - one-time production installer copied into release artifacts.
 - `scripts/create_private_config.sh` - support-only interactive private config helper.
 - `scripts/launch_installed_app.sh` - daily installed-app launcher; no package installation or Git/PyPI access.
 - `scripts/bootstrap.sh` - development-checkout bootstrap and source launcher.
-- `scripts/setup_jordana_mac.sh` - retired non-destructive stub.
+- `scripts/setup_jordana_mac.sh` - retired non-destructive stub; not a production handoff path.
 - `scripts/verify_install.sh` and `scripts/privacy_check.sh` - verification and safety utilities for Mac handoff.
 - `packaging/macos/AppIcon-source.png` and `packaging/macos/AppIcon.icns` - approved launcher icon source and generated macOS icon.
 - `data/samples/` - small June-style fixture for acceptance testing.

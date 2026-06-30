@@ -3,7 +3,7 @@
 This is a private clean-Mac test release for Brooke's spare Mac. It is a pre-release and is not approved for Jordana's production Mac.
 
 - Required Mac: Apple Silicon.
-- Required Python runtime: see `release_manifest.json`; this test release is expected to require Python 3.14.x.
+- Required Python runtime: see `release_manifest.json` for the exact required major/minor family for this artifact.
 - After download, installation uses the shipped wheelhouse and can run offline.
 - Normal daily launch does not require Git, GitHub, PyPI, pip, or a source checkout.
 - No private configuration, database, credentials, invoices, receipts, reports, logs, or client data are included.

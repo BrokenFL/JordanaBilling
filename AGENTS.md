@@ -9,7 +9,9 @@ This project is a local-first billing normalization app for Jordana.
 - Treat SQLite as the local application database.
 - Keep ambiguous data reviewable and reversible.
 - Do not generate invoices from unapproved or ineligible sessions.
-- Do not add clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations. A structured diagnosis code may be stored only when required for administrative insurance billing or reimbursement documentation.
+- Do not add clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations.
+- Structured diagnosis codes may be stored only when Jordana intentionally enters or approves them for invoice-specific insurance billing or reimbursement documentation. They must never be inferred from calendar text, participant names, session descriptions, or other application data, and they should not appear on ordinary self-pay invoices.
+- Finalized invoice diagnosis-code snapshots remain historically frozen; corrections after finalization must use the existing void/reissue or correction process. Real diagnosis codes must never be committed to GitHub, fixtures, screenshots, logs, demo data, examples, or documentation.
 - Do not silently classify uncertain records.
 - Use internal UUID primary keys.
 - Keep secrets in `.env`; never put the real API key in source or docs.
@@ -64,26 +66,24 @@ A verified SQLite backup is created automatically before any mutation.
 Read these files before making changes:
 
 1. `README.md`
-2. `docs/PIPELINE.md`
-3. `docs/CALENDAR_SHORTHAND_RULES.md`
-4. `docs/DATA_MODEL.md`
-5. `docs/RATE_RULES.md`
-6. `docs/REVIEW_WORKFLOW.md`
-7. `docs/CSV_EXPORTS.md`
-8. `docs/SECTION_LEVEL_SAVES.md`
-9. `docs/CLIENT_CODES.md`
-10. `docs/CLIENTS_AND_ACCOUNTS.md`
-11. `docs/PEOPLE.md`
-12. `docs/PRIVATE_DATA_TRANSFER.md`
-13. `docs/HANDOFF_TO_JORDANA_MAC.md`
-14. `docs/SCHEMA_AUDIT.md`
-15. `docs/CALENDAR_ENTRY_STANDARD.md`
-16. `docs/DEMO_DATA.md`
-17. `docs/INVOICE_MODEL.md`
-18. `docs/INVOICE_LIFECYCLE.md`
-19. `docs/INVOICE_TEMPLATE.md`
-20. `docs/SERVICE_CATALOG.md`
-21. `docs/BUSINESS_PROFILE.md`
+2. `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md`
+3. `docs/HANDOFF_TO_JORDANA_MAC.md`
+4. `docs/FRESH_INSTALL.md`
+5. `docs/PRIVATE_DATA_TRANSFER.md`
+6. `docs/PRODUCTION_PACKAGING.md`
+7. `docs/TEST_MAC_ACCEPTANCE.md`
+8. `docs/WRITE_ENDPOINT_CONTRACTS.md`
+9. `docs/CALENDAR_INTEGRATION.md`
+10. `docs/SCHEMA_AUDIT.md`
+11. `docs/REVIEW_WORKFLOW.md`
+12. `docs/CLIENTS_AND_ACCOUNTS.md`
+13. `docs/PEOPLE.md`
+14. `docs/INVOICE_LIFECYCLE.md`
+15. `docs/INVOICE_TEMPLATE.md`
+16. `docs/BUSINESS_PROFILE.md`
+17. `docs/DATA_MODEL.md`
+18. `docs/RATE_RULES.md`
+19. `docs/CALENDAR_SHORTHAND_RULES.md`
 
 ## Verification
 

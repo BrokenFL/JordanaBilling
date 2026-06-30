@@ -1093,20 +1093,17 @@ business rules, or user-visible behavior have changed.
 - unchanged success response contracts (status 200, response shape)
 - unchanged failure response contracts (status 400, ok=false, error key)
 - write-token enforcement before validation (403 before 400)
-- restore endpoint findings (known inconsistency documented)
+- restore endpoint success-with-warning behavior
 
-### Restore Endpoint Findings
+### Restore Endpoint Success-With-Warning Behavior
 
-The `restore_candidate` service function commits the restore, then calls
-`refresh_candidate_suggestions` which may raise an exception. The handler
-sanitizes this to a 400 response even though the restore succeeded. This
-inconsistency is preserved as current behavior and documented as a deferred
-issue for a future round.
-
-### Deferred Issues
-
-- Restore endpoint: `refresh_candidate_suggestions` failure after successful
-  restore returns 400 instead of 200 (documented above)
+The `restore_candidate` service function commits the restore before attempting
+the secondary suggestion refresh. If `refresh_candidate_suggestions` fails after
+the committed restore, the response remains a normal 200 success and includes an
+additive `warning` field with the sanitized message `"Candidate was restored,
+but suggestions could not be refreshed."` The warning does not roll back the
+restore and does not change endpoint paths, payload keys, schemas, or primary
+business rules.
 
 ## Round 4A.3: Remaining Write Endpoint Parsers
 
@@ -1200,4 +1197,3 @@ enum-like choices) before the service layer is called.
 - unknown field pass-through
 - default values (confirmed=false, reason="", account_type="individual")
 - `RequestValidationError` recognized as safe validation error
-

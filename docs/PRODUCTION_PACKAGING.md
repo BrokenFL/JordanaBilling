@@ -1,6 +1,10 @@
 # Production Packaging V1
 
 Production packaging separates one-time installation from normal daily launch.
+The V1 artifact is versioned, pinned, offline-installable from its shipped
+wheelhouse, and checksummed. It is not described as bit-for-bit reproducible:
+the build records a timestamp and may download wheels when assembling the
+wheelhouse.
 
 ## Strategy
 
@@ -52,6 +56,10 @@ build/release/JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
 The artifact is inspected during build for forbidden private files such as `.env`, SQLite databases, PDFs, invoices, receipts, reports, and private data folders.
+
+The release manifest records the exact git commit, build timestamp, builder
+Python version, required Python major/minor family, payload checksums, and
+whether the artifact contains private data.
 
 ## Private Configuration Setup
 

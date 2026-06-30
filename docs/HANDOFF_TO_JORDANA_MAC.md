@@ -56,6 +56,13 @@ Also read:
 6. Enter the private Apps Script URL and hidden ingest API key.
 7. Install the app. For a true clean-start test, explicitly confirm clean-start database initialization.
 
+The V1 release requires the Python major/minor version recorded in the release's
+`release_manifest.json`. The installer must find that compatible version before
+installation because the shipped wheelhouse can contain Python-specific wheels.
+Brooke may need to install the matching Python version once before handing the
+computer to Jordana. Normal daily app use does not require Terminal, Git,
+GitHub, PyPI, pip, or a source checkout.
+
 `scripts/install_release.sh` is the production installer for release artifacts.
 The older `scripts/setup_jordana_mac.sh` path is retired. `scripts/bootstrap.sh`
 is now a development-checkout bootstrap and source launcher, not the daily
@@ -136,15 +143,20 @@ Round 4A.2.1 fixed the restore false-failure behavior. Previously, `restore_cand
 
 ## Verification Baseline
 
-The last documented full-suite baseline is:
+The current full-suite baseline for commit
+`f8a01130ed5229a33c71f5d5e737d8ca90d98e82`, verified 2026-06-30, is:
 
 ```text
-2,072 passing
-11 skipped
-0 failures
+Ran 2490 tests in 180.067s
+OK (skipped=11)
 ```
 
-That number is a historical baseline, not a substitute for running the current suite. Later commits may add tests. Before completing any new code round, run the current focused tests and full suite locally and report the exact results.
+Exact counts: 2,479 passing, 11 skipped, 0 failures.
+
+Do not copy historical test totals forward as current. Before completing any new
+code or handoff round, run the current focused tests and full suite locally and
+report the exact passing, skipped, and failure counts with the commit hash and
+verification date.
 
 Acceptance testing must use:
 
@@ -277,6 +289,14 @@ Implemented invoice behavior includes:
 - optional per-invoice insurance coding
 - invoice library search, filters, and pagination
 
+Structured diagnosis codes are optional and invoice-specific. They may be
+stored only when Jordana intentionally enters or approves them for insurance
+billing or reimbursement. They must never be inferred from calendar text,
+participant names, session descriptions, or other application data, should not
+appear on ordinary self-pay invoices, and finalized diagnosis-code snapshots
+remain frozen. Corrections after finalization use the existing correction,
+void, or reissue process.
+
 The application does not yet send invoices by email or mail.
 
 ## Payments
@@ -327,6 +347,9 @@ Do not run duplicate repair against the operational database without reviewing t
 - no automated multi-invoice payment allocation
 - no formal reconciliation or month-close workflow
 - no polished production dashboard
+- no notarized installer
+- matching Python major/minor runtime required for V1 installation
+- clean-Mac acceptance still required unless explicitly completed and recorded
 - no formal client-versus-non-client schema distinction
 - no automatic payer classification
 - no permanent billing-relationship deletion

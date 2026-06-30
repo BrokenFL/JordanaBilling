@@ -28,7 +28,7 @@ Use `scripts/create_demo_database.sh` for fictional demo data. Never import demo
 ## Prerequisites
 
 - macOS 12 or later on Apple Silicon
-- The Python major/minor version listed in `release_manifest.json` installed once
+- The Python major/minor version listed in the release's `release_manifest.json` installed once before running the installer
 - A versioned DMG release artifact from `scripts/build_release.sh`
 - Internet access for Google Sheets sync during application use
 - For production handoff: the verified private transfer package described in `docs/PRIVATE_DATA_TRANSFER.md`
@@ -217,6 +217,12 @@ The V1 installer requires the Python major/minor version recorded in `release_ma
 brew install python@3.14
 ```
 
+Use the version shown in that release's manifest; `3.14` above is only an
+example. Do not assume any Python 3.11+ version can install a release whose
+wheelhouse was built for a different major/minor runtime. After installation,
+normal daily app use runs from the installed private runtime and does not
+require Terminal, Git, GitHub, PyPI, pip, or a source checkout.
+
 ### Configuration created or incomplete
 
 Supply the private `.env` to `scripts/install_release.sh --config ...`. Do not paste live values into GitHub, documentation, screenshots, or chat.
@@ -256,7 +262,7 @@ The approved icon source lives at:
 packaging/macos/AppIcon-source.png
 ```
 
-The reproducible generated icon lives at:
+The generated icon lives at:
 
 ```text
 packaging/macos/AppIcon.icns
@@ -273,4 +279,6 @@ http://127.0.0.1:8765/review
 
 ## Apple Silicon
 
-The launcher runs natively on Apple Silicon when Python 3.11 or newer is installed. Rosetta is not required.
+The launcher runs natively on Apple Silicon. The one-time V1 installer requires
+the Python major/minor version recorded in `release_manifest.json`; Rosetta is
+not required.

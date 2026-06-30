@@ -293,7 +293,7 @@ The Clients workspace uses permanent `people` records and displays:
 - active rate exceptions
 - administrative billing notes
 
-It must not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations. A structured diagnosis code may be stored only when required for administrative insurance billing (entered per-invoice during finalization). It must not rewrite finalized invoice snapshots after a current name change.
+It must not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations. A structured diagnosis code may be stored only when Jordana intentionally enters or approves it for invoice-specific insurance billing or reimbursement documentation (entered per-invoice during finalization). It must never be inferred from calendar text, participant names, session descriptions, or other application data. It must not rewrite finalized invoice snapshots after a current name change.
 
 ## Invoices Workspace
 

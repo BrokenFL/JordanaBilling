@@ -4,13 +4,16 @@ This document supersedes all prior uploaded PDF handoffs and provides the
 authoritative current state of the Jordana Billing system as of the
 `main` branch commit listed below.
 
-**Authoritative main commit hash:** see the current `main` branch on GitHub.
+**Authoritative main commit hash:** `f8a01130ed5229a33c71f5d5e737d8ca90d98e82`
+**Verification date:** 2026-06-30
+**Current migration head:** `015_duplicate_repair_reversal_state`
+**Current test baseline:** 2,479 passing, 11 skipped, 0 failures (`2490` tests run)
 
 ## Current Architecture
 
 The system is a local-first calendar evidence importer, billing review
-workflow, and invoice prototype running on macOS with SQLite and a Python
-HTTP server.
+workflow, invoice system, payment ledger, and receipt generator running on
+macOS with SQLite and a Python HTTP server.
 
 - **Capture:** Apple Shortcut → Google Apps Script → Google Sheets
 - **Sync:** Python client pulls raw staged snapshots from Apps Script into local SQLite
@@ -18,7 +21,7 @@ HTTP server.
 - **Database:** SQLite at `data/jordana_invoice.sqlite3`
 - **Reports:** Local CSV exports after sync
 - **Invoices:** Local PDF generation via ReportLab; new files stored in ignored `Invoices/<Client Display Name>/<Month YYYY>/`
-- **Payments:** Payment ledger in SQLite with API and UI
+- **Payments:** Payment ledger, allocations, corrections, receipts, and financial summaries in SQLite with API and UI
 
 ### Key Modules
 
@@ -246,7 +249,9 @@ HTTP server.
 PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
 ```
 
-- Full suite: 1943 tests passing, 11 skipped, 0 failures
+- Full suite baseline for this handoff: `Ran 2490 tests in 180.067s`, `OK (skipped=11)` on 2026-06-30.
+- Exact counts: 2,479 passing, 11 skipped, 0 failures.
+- Skipped tests are intentionally skipped by the current suite, including manual/network-style integration coverage where private or external state is not available in ordinary local runs.
 - Acceptance test (uses temporary database, never touches operational DB):
 
 ```bash
@@ -262,7 +267,7 @@ scripts/privacy_check.sh
 
 ## Privacy And Git Safety Rules
 
-- Never commit `.env`, API keys, live databases, real CSV reports, Google credentials, invoice PDFs, logs, screenshots with client names, shortcut backups, raw Google Sheet exports, or real diagnosis codes
+- Never commit `.env`, API keys, live databases, real CSV reports, Google credentials, invoice PDFs, logs, screenshots with client names, shortcut backups, raw Google Sheet exports, real diagnosis codes, or real diagnosis-code examples
 - Use sanitized fictional records for demo data only
 - Keep private business profiles, branding assets, and generated PDFs outside Git
 - Before any GitHub push, run `scripts/git_safety_check.sh`
@@ -276,10 +281,11 @@ The former categorical prohibition on diagnosis-code storage has been superseded
 
 Additional rules:
 
-- Diagnosis codes are local operational data; real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, or committed databases.
+- Diagnosis codes are local operational data; real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, demo data, documentation, or committed databases.
+- Diagnosis codes are invoice-specific and optional.
 - Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them.
 - Standard self-pay invoices should not include diagnosis codes.
-- Diagnosis-code values must not be silently inferred from calendar text or session descriptions.
+- Diagnosis-code values must never be inferred from calendar text, participant names, session descriptions, or other application data.
 - Approved invoice snapshots must remain historically stable.
 - Removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records.
 
@@ -301,8 +307,11 @@ Open: `http://127.0.0.1:8765/review`
 - No automatic payer classification
 - No invoice delivery (email/mail sending)
 - No paid-at-session backfill apply mode for legacy pre-workflow sessions (dry-run only; new approvals handle paid-at-session automatically)
-- No credits, multi-invoice payments, formal reconciliation, or month-close workflows
+- No credits, refunds, write-offs, automated multi-invoice payment allocation, formal reconciliation, or month-close workflows
 - No polished production dashboard
+- No notarized installer
+- V1 production installation requires the Python major/minor runtime recorded in `release_manifest.json`
+- Clean-Mac acceptance remains a manual release-validation step until recorded in `docs/TEST_MAC_ACCEPTANCE.md`
 - No permanent deletion of billing relationships (by design — deactivation only)
 - No clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, or session-content notes beyond raw calendar evidence (structured insurance diagnosis codes are permitted per the policy decision above)
 

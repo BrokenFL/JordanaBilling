@@ -53,7 +53,8 @@ SW: <value>
 - There is no blank line or spacer between the Diagnosis Code line and the EIN line.
 - The block appears only on the final page (it is part of the footer `KeepTogether`).
 - EIN, NPI, and SW values come from Invoice Settings and are frozen into the finalized invoice snapshot at finalization time.
-- The diagnosis code is entered per-invoice during finalization and is never persisted on draft invoices.
+- The diagnosis code is entered or approved per-invoice during finalization and is never persisted on draft invoices.
 - When insurance coding is unchecked, no block appears in preview or final PDF.
 - Draft preview and finalized PDF render the block identically.
 - Later changes to Invoice Settings do not alter existing finalized invoices.
+- Diagnosis codes must never be inferred from calendar text, participant names, session descriptions, or other application data. Real diagnosis codes must never be committed to GitHub, fixtures, screenshots, logs, demo data, examples, or documentation.
