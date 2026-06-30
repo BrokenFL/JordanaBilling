@@ -4,18 +4,18 @@
 <dict>
 	<key>files</key>
 	<dict>
-		<key>Resources/AppIcon.png</key>
+		<key>Resources/AppIcon.icns</key>
 		<data>
-		llDDbQTTxzispF5ABh4MP0ptiDY=
+		4A/em3mkFOSOP9xRNlXw111uH0A=
 		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
-		<key>Resources/AppIcon.png</key>
+		<key>Resources/AppIcon.icns</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			Q3OcVm4m/Xy4j2nThk6jR0A3L17pmsrBaeCQvv+85cY=
+			pZnmo40ESZCFcB0JfEk5FzvHEOZGV70gfLifbdmPJj4=
 			</data>
 		</dict>
 	</dict>

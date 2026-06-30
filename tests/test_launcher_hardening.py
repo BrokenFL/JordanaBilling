@@ -1,18 +1,7 @@
-"""Focused tests for Mac launcher hardening.
-
-Tests:
-1. Valid app bundle structure
-2. Launcher executable permission
-3. Valid Info.plist (parseable, required keys)
-4. Python selection using mocked known paths and version results
-5. Rejection of Python below 3.11
-6. Existing database preservation/detection
-7. bash -n on modified shell scripts
-"""
+"""Focused tests for Mac launcher and installer hardening."""
 
 from __future__ import annotations
 
-import os
 import plistlib
 import shutil
 import stat
@@ -21,10 +10,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 APP_BUNDLE = PROJECT_DIR / "Jordana Billing.app"
+PACKAGING_DIR = PROJECT_DIR / "packaging" / "macos"
 
 
 class TestAppBundleStructure(unittest.TestCase):
@@ -54,8 +43,8 @@ class TestAppBundleStructure(unittest.TestCase):
         self.assertTrue(launcher.is_file(), "launcher executable missing")
 
     def test_icon_exists(self) -> None:
-        icon = APP_BUNDLE / "Contents" / "Resources" / "AppIcon.png"
-        self.assertTrue(icon.is_file(), "AppIcon.png missing")
+        icon = APP_BUNDLE / "Contents" / "Resources" / "AppIcon.icns"
+        self.assertTrue(icon.is_file(), "AppIcon.icns missing")
 
 
 class TestLauncherExecutablePermission(unittest.TestCase):
@@ -75,6 +64,8 @@ class TestLauncherExecutablePermission(unittest.TestCase):
             content.startswith("#!/usr/bin/env bash"),
             "launcher does not start with bash shebang",
         )
+        self.assertIn('exec "$PROJECT_DIR/scripts/bootstrap.sh"', content)
+        self.assertNotIn("tell application \"Terminal\"", content)
 
 
 class TestInfoPlist(unittest.TestCase):
@@ -106,6 +97,9 @@ class TestInfoPlist(unittest.TestCase):
     def test_documents_folder_usage_description(self) -> None:
         self.assertIn("NSDocumentsFolderUsageDescription", self.plist)
 
+    def test_icon_file_reference(self) -> None:
+        self.assertEqual(self.plist.get("CFBundleIconFile"), "AppIcon")
+
     @unittest.skipUnless(sys.platform == "darwin", "plutil is only available on macOS")
     def test_plutil_lint(self) -> None:
         result = subprocess.run(
@@ -121,53 +115,14 @@ class TestPythonSelection(unittest.TestCase):
 
     def _make_find_python_script(self, candidates: list[str]) -> str:
         """Extract the find_python function from bootstrap.sh for testing."""
-        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
-        start = bootstrap.index("find_python() {")
-        end = bootstrap.index("}", bootstrap.index("return 1", start)) + 1
-        func_body = bootstrap[start:end]
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        start = common.index("find_python() {")
+        end = common.index("\n}", common.index("return 1", start)) + 2
+        func_body = common[start:end]
         return f"""#!/usr/bin/env bash
 {func_body}
 find_python
 """
-
-    def test_selects_first_valid_python_311(self) -> None:
-        """Picks the first candidate that is Python 3.11+."""
-        with patch("subprocess.run") as mock_run:
-            def side_effect(args, **kwargs):
-                if "-c" in args and "version_info" in str(args):
-                    return MagicMock(returncode=0)
-                return MagicMock(returncode=0)
-            mock_run.side_effect = side_effect
-
-            with patch("os.path.exists", return_value=True):
-                with patch("os.access", return_value=True):
-                    script = self._make_find_python_script([])
-                    result = subprocess.run(
-                        ["bash", "-c", """
-find_python() {
-  local candidates=(
-    "/opt/homebrew/bin/python3"
-    "/usr/local/bin/python3"
-    "/usr/bin/python3"
-  )
-  for candidate in "${{candidates[@]}}"; do
-    if [[ -x "$candidate" ]]; then
-      if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-        echo "$candidate"
-        return 0
-      fi
-    fi
-  done
-  return 1
-}
-find_python
-"""],
-                        capture_output=True,
-                        text=True,
-                        env={"PATH": "/usr/bin:/bin"},
-                    )
-                    # In a test env, none of these paths may exist
-                    # So we test the logic differently
 
     def test_rejects_python_below_311(self) -> None:
         """A Python 3.10 candidate is rejected; 3.12 is accepted."""
@@ -237,45 +192,136 @@ find_python
         self.assertEqual(result.stdout.strip(), "")
 
     def test_bootstrap_has_find_python(self) -> None:
-        """bootstrap.sh must contain the find_python function."""
-        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
-        self.assertIn("find_python()", bootstrap)
-        self.assertIn("/opt/homebrew/bin/python3", bootstrap)
-        self.assertIn("/usr/local/bin/python3", bootstrap)
-        self.assertIn("/usr/bin/python3", bootstrap)
+        """Shared launcher logic must contain the find_python function."""
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertIn("find_python()", common)
+        self.assertIn("/opt/homebrew/bin/python3", common)
+        self.assertIn("/usr/local/bin/python3", common)
+        self.assertIn("/usr/bin/python3", common)
 
     def test_bootstrap_uses_python_bin_for_venv(self) -> None:
-        """bootstrap.sh must use $PYTHON_BIN for venv creation."""
-        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
-        self.assertIn('"$PYTHON_BIN" -m venv', bootstrap)
+        """bootstrap flow must use the discovered Python for venv creation."""
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertIn('"$python_bin" -m venv', common)
 
 
 class TestDatabaseDetection(unittest.TestCase):
     """Test existing database detection in launcher and bootstrap."""
 
-    def test_launcher_detects_existing_database(self) -> None:
-        """Launcher script contains database detection logic."""
-        launcher = (APP_BUNDLE / "Contents" / "MacOS" / "launcher").read_text()
-        self.assertIn("DB_PATH", launcher)
-        self.assertIn("DB_EXISTS", launcher)
-        self.assertIn("will be preserved", launcher)
+    def test_bootstrap_does_not_create_blank_database_silently(self) -> None:
+        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertNotIn("No existing database found — creating new database", bootstrap)
+        self.assertNotIn("init-db\" \"$DB_PATH\"", common)
+        self.assertIn("Configured Database Not Found", common)
 
-    def test_launcher_distinguishes_fresh_vs_existing(self) -> None:
-        """Launcher distinguishes fresh install from existing database."""
-        launcher = (APP_BUNDLE / "Contents" / "MacOS" / "launcher").read_text()
-        self.assertIn("fresh installation", launcher)
-        self.assertIn("not a clean install", launcher)
+    def test_database_validator_requires_existing_database(self) -> None:
+        validator = (PROJECT_DIR / "scripts" / "validate_launcher_environment.py").read_text()
+        self.assertIn("MISSING_DATABASE", validator)
+        self.assertIn("mode=ro", validator)
+        self.assertIn("PRAGMA integrity_check", validator)
+        self.assertIn("os.environ.pop(key, None)", validator)
+
+
+class TestInstallerAuthority(unittest.TestCase):
+    """Verify bootstrap is authoritative and the legacy installer is retired."""
+
+    def test_setup_jordana_mac_is_retired_stub(self) -> None:
+        setup_script = (PROJECT_DIR / "scripts" / "setup_jordana_mac.sh").read_text()
+        self.assertIn("has been retired", setup_script)
+        self.assertIn("scripts/bootstrap.sh", setup_script)
+        self.assertNotIn("python3 -m venv", setup_script)
+        self.assertNotIn("cp data/jordana_invoice.sqlite3", setup_script)
+        self.assertNotIn("init-db", setup_script)
+
+    def test_readme_no_longer_lists_setup_as_setup_utility(self) -> None:
+        readme = (PROJECT_DIR / "README.md").read_text()
+        self.assertNotIn("scripts/setup_jordana_mac.sh`, `scripts/verify_install.sh`", readme)
+
+    def test_handoff_uses_bootstrap(self) -> None:
+        handoff = (PROJECT_DIR / "docs" / "HANDOFF_TO_JORDANA_MAC.md").read_text()
+        self.assertIn("scripts/bootstrap.sh", handoff)
+
+
+class TestPortOwnershipSafety(unittest.TestCase):
+    """Verify launcher scripts do not kill unrelated processes."""
+
+    def test_no_broad_process_kill_patterns_in_launcher_scripts(self) -> None:
+        checked = [
+            PROJECT_DIR / "scripts" / "bootstrap.sh",
+            PROJECT_DIR / "scripts" / "start_jordana.sh",
+            PROJECT_DIR / "scripts" / "stop_jordana.sh",
+            PROJECT_DIR / "scripts" / "launcher_common.sh",
+        ]
+        forbidden = [
+            "pkill -f",
+            "killall python",
+            "killall Python",
+            "lsof -ti \":${PORT}\"",
+            "xargs kill",
+            "kill $PID_ON_PORT",
+        ]
+        for path in checked:
+            content = path.read_text()
+            for pattern in forbidden:
+                self.assertNotIn(pattern, content, f"{pattern!r} found in {path}")
+
+    def test_pid_ownership_uses_metadata_and_command_verification(self) -> None:
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertIn("pid_metadata_matches", common)
+        self.assertIn("pid_looks_like_jordana", common)
+        self.assertIn("project_dir=$PROJECT_DIR", common)
+        self.assertIn("serve-review", common)
+
+    def test_unrelated_port_owner_fails_without_kill(self) -> None:
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertIn("Port 8765 Is In Use", common)
+        self.assertIn("did not stop or reuse that process", common)
+        self.assertNotIn("kill $port_pid", common)
+
+
+class TestIconBuild(unittest.TestCase):
+    """Verify icon source, generated outputs, and app integration."""
+
+    def test_approved_icon_source_present(self) -> None:
+        source = PACKAGING_DIR / "AppIcon-source.png"
+        self.assertTrue(source.is_file())
+        self.assertGreater(source.stat().st_size, 100_000)
+
+    def test_icon_builder_creates_standard_sizes(self) -> None:
+        script = (PROJECT_DIR / "scripts" / "build_app_icon.sh").read_text()
+        for name in [
+            "icon_16x16.png",
+            "icon_16x16@2x.png",
+            "icon_32x32.png",
+            "icon_32x32@2x.png",
+            "icon_128x128.png",
+            "icon_128x128@2x.png",
+            "icon_256x256.png",
+            "icon_256x256@2x.png",
+            "icon_512x512.png",
+            "icon_512x512@2x.png",
+        ]:
+            self.assertIn(name, script)
+        self.assertIn("iconutil -c icns", script)
+
+    def test_generated_icns_exists(self) -> None:
+        self.assertTrue((PACKAGING_DIR / "AppIcon.icns").is_file())
+
+    def test_bundle_contains_generated_icns(self) -> None:
+        self.assertTrue((APP_BUNDLE / "Contents" / "Resources" / "AppIcon.icns").is_file())
 
     def test_bootstrap_preserves_existing_database(self) -> None:
-        """bootstrap.sh preserves existing database and says so."""
-        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
-        self.assertIn("preserving", bootstrap)
-        self.assertIn("not a clean install", bootstrap)
+        """Launcher validation preserves existing database by opening read-only."""
+        validator = (PROJECT_DIR / "scripts" / "validate_launcher_environment.py").read_text()
+        self.assertIn("mode=ro", validator)
+        self.assertNotIn("sqlite3.connect(str(db_path))", validator)
 
     def test_bootstrap_creates_new_database_when_missing(self) -> None:
-        """bootstrap.sh creates database when none exists."""
-        bootstrap = (PROJECT_DIR / "scripts" / "bootstrap.sh").read_text()
-        self.assertIn("No existing database found", bootstrap)
+        """bootstrap.sh does not create a replacement database when missing."""
+        common = (PROJECT_DIR / "scripts" / "launcher_common.sh").read_text()
+        self.assertIn("Configured Database Not Found", common)
+        self.assertNotIn("creating new database", common)
 
     def test_launcher_logs_to_file(self) -> None:
         """Launcher writes log entries to launcher.log."""
@@ -299,6 +345,10 @@ class TestBashSyntaxCheck(unittest.TestCase):
         "scripts/bootstrap.sh",
         "scripts/start_jordana.sh",
         "scripts/build_launcher.sh",
+        "scripts/build_app_icon.sh",
+        "scripts/launcher_common.sh",
+        "scripts/setup_jordana_mac.sh",
+        "scripts/stop_jordana.sh",
     ]
 
     def test_launcher_syntax(self) -> None:
@@ -337,25 +387,25 @@ class TestBuildLauncherSigns(unittest.TestCase):
         build_script = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text()
         self.assertIn("xattr -cr", build_script)
 
-    def test_build_launcher_has_db_detection(self) -> None:
-        """build_launcher.sh template includes database detection."""
+    def test_build_launcher_delegates_to_bootstrap(self) -> None:
+        """build_launcher.sh template delegates runtime checks to bootstrap."""
         build_script = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text()
-        self.assertIn("DB_EXISTS", build_script)
-        self.assertIn("will be preserved", build_script)
+        self.assertIn('exec "$PROJECT_DIR/scripts/bootstrap.sh"', build_script)
+        self.assertNotIn("DB_EXISTS", build_script)
 
-    def test_build_launcher_uses_terminal(self) -> None:
-        """build_launcher.sh template uses Terminal do script for TCC bypass."""
+    def test_build_launcher_does_not_use_terminal(self) -> None:
+        """build_launcher.sh template does not require Terminal."""
         build_script = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text()
-        self.assertIn("tell application", build_script)
-        self.assertIn("Terminal", build_script)
-        self.assertIn("do script", build_script)
+        self.assertNotIn("tell application", build_script)
+        self.assertNotIn("Terminal", build_script)
+        self.assertNotIn("do script", build_script)
 
-    def test_launcher_uses_terminal(self) -> None:
-        """Committed launcher uses Terminal do script for TCC bypass."""
+    def test_launcher_does_not_use_terminal(self) -> None:
+        """Committed launcher does not require Terminal."""
         launcher = (APP_BUNDLE / "Contents" / "MacOS" / "launcher").read_text()
-        self.assertIn("tell application", launcher)
-        self.assertIn("Terminal", launcher)
-        self.assertIn("do script", launcher)
+        self.assertNotIn("tell application", launcher)
+        self.assertNotIn("Terminal", launcher)
+        self.assertNotIn("do script", launcher)
 
     @unittest.skipUnless(sys.platform == "darwin", "codesign is only available on macOS")
     def test_app_is_adhoc_signed(self) -> None:

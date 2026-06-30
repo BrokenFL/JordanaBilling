@@ -56,8 +56,12 @@ Also read:
 6. Run:
 
 ```bash
-scripts/setup_jordana_mac.sh
+scripts/bootstrap.sh
 ```
+
+`scripts/bootstrap.sh` is the only supported installer. The older
+`scripts/setup_jordana_mac.sh` path is retired and exits without performing any
+setup, migration, copy, deletion, or launch action.
 
 A production handoff must include the operational SQLite database. Google Sheets contains raw calendar evidence but cannot reconstruct reviewed people, billing relationships, approved sessions, invoices, payments, receipts, or audit history.
 
@@ -75,6 +79,11 @@ Reports/
 ```
 
 The setup and launcher flows must preserve an existing database, create a verified private backup before pending migrations, and apply only additive migrations. They must never delete, recreate, or silently replace the operational database.
+
+The double-click app uses the same bootstrap flow. It validates `.env`, verifies
+that the configured SQLite database exists and can be opened read-only, reuses a
+verified already-running Jordana Billing server, and refuses to kill or reuse an
+unrelated process on port `8765`.
 
 ## Configuration
 
