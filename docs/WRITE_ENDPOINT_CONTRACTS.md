@@ -139,12 +139,13 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Service**: `restore_candidate(conn, candidate_id, reason=data.get("reason", ""))`
 - **Accepted fields**: `reason` (default "")
 - **Success status**: 200
-- **Success response**: full candidate detail dict
+- **Success response**: full candidate detail dict; if the post-restore suggestion refresh fails, an additive `warning` field is included with the sanitized message `"Candidate was restored, but suggestions could not be refreshed."`
 - **Error status codes**: 400/404 ("No session found for this candidate; only session-backed candidates can be restored.")
 - **DB tables**: `calendar_event_candidates`, `sessions`, `audit_log`, `review_items`
-- **Idempotent**: no — restoring an already-needs-review candidate resets fields
-- **Existing tests**: `test_review_services.py` (service-level)
-- **Missing contract coverage**: HTTP-level shape, error when no session
+- **Transaction boundary**: the restore (candidate/session/audit/review-item updates) commits atomically before the suggestion refresh is attempted; the refresh is a secondary operation whose failure cannot roll back the committed restore
+- **Idempotency**: no — restoring an already-needs-review candidate resets fields; repeat requests produce additional audit entries but do not create duplicate sessions
+- **Success-with-warning convention**: follows the same pattern used by the approve endpoint when invoice staging warns — the primary operation succeeds and the secondary failure is reported as an additive field on the success response rather than as an error status
+- **Existing tests**: `test_routine_queue_filter.py` (service-level), `test_write_endpoint_contracts.py` (HTTP-level), `test_request_validation.py` (HTTP-level regression)
 
 ### POST /api/review/candidates/{id}/send-to-review
 

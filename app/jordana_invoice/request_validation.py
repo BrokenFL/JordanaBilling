@@ -191,12 +191,10 @@ class RestoreCandidateRequest:
     """Validated request for POST /api/review/candidates/{id}/restore.
 
     The parser validates shape only. The service checks for session existence
-    and handles the restore logic.
-
-    Known inconsistency: ``restore_candidate`` commits the restore, then calls
-    ``refresh_candidate_suggestions`` which may raise an unsafe exception. The
-    handler sanitizes this to a 400 response even though the restore succeeded.
-    This is documented as a deferred issue for a later round.
+    and handles the restore logic.  Post-restore suggestion refresh failures
+    are caught by the service and returned as an additive ``warning`` field
+    on the success response, following the same convention used for
+    invoice-staging warnings on the approve endpoint.
     """
 
     reason: str

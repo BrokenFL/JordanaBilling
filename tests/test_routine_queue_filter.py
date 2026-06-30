@@ -408,6 +408,44 @@ class QueueExclusionAndRestoreTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(audit_row, "restore_candidate must write a restored_to_review_queue audit entry")
 
+    def test_restore_returns_warning_when_refresh_raises(self):
+        from unittest.mock import patch
+        alice_cid = self._candidate_id_for("Alice")
+        mark_candidate(self.conn, alice_cid, classification="personal", reason="test")
+        with patch("jordana_invoice.review_services.refresh_candidate_suggestions") as mock_refresh:
+            mock_refresh.side_effect = RuntimeError("internal error")
+            result = restore_candidate(self.conn, alice_cid, reason="re-review")
+        self.assertIn("warning", result)
+        self.assertEqual(
+            result["warning"],
+            "Candidate was restored, but suggestions could not be refreshed.",
+        )
+        self.assertNotIn("internal error", result["warning"])
+
+    def test_restore_no_warning_when_refresh_succeeds(self):
+        alice_cid = self._candidate_id_for("Alice")
+        mark_candidate(self.conn, alice_cid, classification="personal", reason="test")
+        result = restore_candidate(self.conn, alice_cid, reason="re-review")
+        self.assertNotIn("warning", result)
+
+    def test_restore_no_partial_writes_on_genuine_failure(self):
+        # Import a non-session title (no shorthand) so no session is created
+        import_rows(
+            self.conn,
+            [make_row("s-nosession", "Lunch break", "Jordana Calendar")],
+            "exclusion_test",
+        )
+        nosession_cid = self._candidate_id_for("Lunch break")
+        # Mark as excluded first so we can verify restore doesn't partially undo it
+        mark_candidate(self.conn, nosession_cid, classification="personal", reason="test")
+        with self.assertRaises(ValueError):
+            restore_candidate(self.conn, nosession_cid, reason="re-review")
+        row = self.conn.execute(
+            "SELECT review_status FROM calendar_event_candidates WHERE id = ?",
+            (nosession_cid,),
+        ).fetchone()
+        self.assertEqual(row["review_status"], "excluded")
+
 
 class ApprovedQueueFilterTests(unittest.TestCase):
     def setUp(self):

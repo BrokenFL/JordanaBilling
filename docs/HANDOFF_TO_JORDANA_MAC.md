@@ -122,6 +122,8 @@ See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every backend
 
 Round 4A.2 added explicit request-parsing and validation helpers for the four highest-risk review write endpoints (approve, save/section saves, mark/duplicate resolution, restore). The helpers are in `app/jordana_invoice/request_validation.py` and use frozen dataclasses with explicit parser functions. All existing endpoint paths, payload keys, response shapes, status codes, and business rules are preserved. Focused tests are in `tests/test_request_validation.py` (102 tests). See the Round 4A.2 section in `docs/WRITE_ENDPOINT_CONTRACTS.md` for details.
 
+Round 4A.2.1 fixed the restore false-failure behavior. Previously, `restore_candidate` committed the restore, then called `refresh_candidate_suggestions` which could raise an unsafe exception. The HTTP handler sanitized this to a 400 response even though the restore had already succeeded. The fix isolates the refresh as a secondary operation: if it raises, the committed restore is preserved and the response includes an additive `warning` field (`"Candidate was restored, but suggestions could not be refreshed."`) on the normal 200 success response. This follows the same success-with-warning convention used by the approve endpoint when invoice staging warns. No endpoint paths, payload keys, schemas, or business rules were changed. Regression tests are in `tests/test_request_validation.py` and `tests/test_routine_queue_filter.py`.
+
 ## Verification Baseline
 
 The last documented full-suite baseline is:

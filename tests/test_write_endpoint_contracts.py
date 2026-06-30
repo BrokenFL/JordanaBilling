@@ -348,27 +348,29 @@ class TestMarkCandidateContract(WriteEndpointContractTestBase):
 
 class TestRestoreCandidateContract(WriteEndpointContractTestBase):
     def test_restore_returns_200(self):
-        cid = self._import_candidate("rs-1", "Avery Stone 60", "2026-05-15T12:00:00-04:00")
+        cid = self._import_candidate("rs-1", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
         self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
         _, captured = self._post(
             f"/api/review/candidates/{cid}/restore",
             {"reason": "Restoring"},
         )
-        # restore_candidate calls refresh_candidate_suggestions which may
-        # raise an unsafe error that gets sanitized to 400.  Verify the
-        # actual current behavior.
-        self.assertIn(captured["status"], (200, 400))
+        self.assertEqual(captured["status"], 200)
+        self.assertIn("session", captured["payload"])
 
     def test_restore_no_session_returns_400(self):
-        # Create a candidate-only record (no session) by importing then marking
         cid = self._import_candidate("rs-2", "Lunch break", "2026-05-15T12:00:00-04:00")
-        # Mark as personal (which creates a session), then try to restore
-        # But we need a candidate with no session — use send-to-review first
-        # Actually, mark creates a session via import. Let's test the error directly.
-        # The candidate already has a session from import, so restore should work.
-        # To test the no-session error, we need a candidate-only record.
-        # Skip this edge case — it's covered at the service level.
-        pass
+        self.conn.execute("DELETE FROM sessions WHERE candidate_id = ?", (cid,))
+        self.conn.commit()
+        _, captured = self._post(
+            f"/api/review/candidates/{cid}/restore",
+            {"reason": "Restoring"},
+        )
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(
+            captured["payload"]["error"],
+            "No session found for this candidate; only session-backed candidates can be restored.",
+        )
+
 
 
 class TestSendToReviewContract(WriteEndpointContractTestBase):

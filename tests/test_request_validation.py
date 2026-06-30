@@ -714,13 +714,13 @@ class TestUnchangedSuccessContracts(RequestValidationTestBase):
         self.assertEqual(captured["payload"]["session"]["classification"], "personal")
 
     def test_restore_success_unchanged(self):
-        cid = self._import_candidate("sc-8", "Avery Stone 60", "2026-05-15T12:00:00-04:00")
+        cid = self._import_candidate("sc-8", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
         self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
         _, captured = self._post(
             f"/api/review/candidates/{cid}/restore",
             {"reason": "Restoring"},
         )
-        self.assertIn(captured["status"], (200, 400))
+        self.assertEqual(captured["status"], 200)
 
 
 # ---------------------------------------------------------------------------
@@ -924,43 +924,39 @@ class TestUnknownFieldBehavior(RequestValidationTestBase):
         self.assertEqual(captured["status"], 200)
 
     def test_restore_unknown_field_accepted(self):
-        cid = self._import_candidate("uf-4", "Avery Stone 60", "2026-05-15T12:00:00-04:00")
+        cid = self._import_candidate("uf-4", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
         self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
         _, captured = self._post(
             f"/api/review/candidates/{cid}/restore",
             {"reason": "ok", "unknown_field": "value"},
         )
-        self.assertIn(captured["status"], (200, 400))
+        self.assertEqual(captured["status"], 200)
 
 
 # ---------------------------------------------------------------------------
-# 12. Restore Endpoint Findings
+# 12. Restore Endpoint Regression Tests
 # ---------------------------------------------------------------------------
 
-class TestRestoreEndpointFindings(RequestValidationTestBase):
-    """Document the known restore endpoint inconsistency.
+class TestRestoreEndpointRegression(RequestValidationTestBase):
+    """Regression tests for the restore success-with-warning fix.
 
     restore_candidate commits the restore, then calls refresh_candidate_suggestions
-    which may raise an unsafe exception. The handler sanitizes this to a 400
-    response even though the restore succeeded. This is preserved as current
-    behavior and documented as a deferred issue.
+    as a secondary operation.  If the refresh raises, the endpoint must still
+    return 200 with an additive ``warning`` field rather than a false 400.
     """
 
-    def test_restore_after_mark_may_return_200_or_400(self):
-        cid = self._import_candidate("rf-1", "Avery Stone 60", "2026-05-15T12:00:00-04:00")
+    def test_restore_after_mark_returns_200(self):
+        cid = self._import_candidate("rf-1", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
         self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
         _, captured = self._post(
             f"/api/review/candidates/{cid}/restore",
             {"reason": "Restoring"},
         )
-        # Current behavior: 200 if refresh succeeds, 400 if it raises
-        self.assertIn(captured["status"], (200, 400))
+        self.assertEqual(captured["status"], 200)
 
     def test_restore_no_session_returns_400(self):
         """Restore on a candidate without a session returns 400."""
-        # Create a candidate-only record by importing
         cid = self._import_candidate("rf-2", "Test event", "2026-05-15T12:00:00-04:00")
-        # Delete the session to simulate candidate-only
         self.conn.execute("DELETE FROM sessions WHERE candidate_id = ?", (cid,))
         self.conn.commit()
         _, captured = self._post(
@@ -972,6 +968,104 @@ class TestRestoreEndpointFindings(RequestValidationTestBase):
             captured["payload"]["error"],
             "No session found for this candidate; only session-backed candidates can be restored.",
         )
+
+    def test_restore_succeeds_and_refresh_succeeds_returns_200_no_warning(self):
+        cid = self._import_candidate("rf-3", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
+        self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
+        _, captured = self._post(
+            f"/api/review/candidates/{cid}/restore",
+            {"reason": "Restoring"},
+        )
+        self.assertEqual(captured["status"], 200)
+        self.assertNotIn("warning", captured["payload"])
+
+    def test_restore_succeeds_and_refresh_raises_returns_200_with_warning(self):
+        from unittest.mock import patch
+        cid = self._import_candidate("rf-4", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
+        self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
+        with patch("jordana_invoice.review_services.refresh_candidate_suggestions") as mock_refresh:
+            mock_refresh.side_effect = RuntimeError("internal boom")
+            _, captured = self._post(
+                f"/api/review/candidates/{cid}/restore",
+                {"reason": "Restoring"},
+            )
+        self.assertEqual(captured["status"], 200)
+        self.assertIn("warning", captured["payload"])
+        self.assertEqual(
+            captured["payload"]["warning"],
+            "Candidate was restored, but suggestions could not be refreshed.",
+        )
+
+    def test_restore_warning_is_sanitized_no_raw_exception(self):
+        from unittest.mock import patch
+        cid = self._import_candidate("rf-5", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
+        self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
+        with patch("jordana_invoice.review_services.refresh_candidate_suggestions") as mock_refresh:
+            mock_refresh.side_effect = RuntimeError("SECRET_INTERNAL_DETAIL_xyz")
+            _, captured = self._post(
+                f"/api/review/candidates/{cid}/restore",
+                {"reason": "Restoring"},
+            )
+        self.assertEqual(captured["status"], 200)
+        warning = captured["payload"].get("warning", "")
+        self.assertNotIn("SECRET_INTERNAL_DETAIL_xyz", warning)
+
+    def test_restore_db_state_present_despite_refresh_failure(self):
+        from unittest.mock import patch
+        cid = self._import_candidate("rf-6", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
+        self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
+        with patch("jordana_invoice.review_services.refresh_candidate_suggestions") as mock_refresh:
+            mock_refresh.side_effect = RuntimeError("boom")
+            self._post(
+                f"/api/review/candidates/{cid}/restore",
+                {"reason": "Restoring"},
+            )
+        row = self.conn.execute(
+            "SELECT review_status FROM calendar_event_candidates WHERE id = ?", (cid,)
+        ).fetchone()
+        self.assertEqual(row["review_status"], "needs_classification")
+
+    def test_restore_no_duplicate_side_effects_on_repeat(self):
+        from unittest.mock import patch
+        cid = self._import_candidate("rf-7", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
+        self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})
+        with patch("jordana_invoice.review_services.refresh_candidate_suggestions") as mock_refresh:
+            mock_refresh.side_effect = RuntimeError("boom")
+            self._post(f"/api/review/candidates/{cid}/restore", {"reason": "first"})
+            mock_refresh.side_effect = RuntimeError("boom")
+            self._post(f"/api/review/candidates/{cid}/restore", {"reason": "second"})
+        session_count = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM sessions WHERE candidate_id = ?", (cid,)
+        ).fetchone()["c"]
+        self.assertEqual(session_count, 1)
+        audit_count = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_log WHERE entity_id = ? AND action = 'restored_to_review_queue'",
+            (cid,),
+        ).fetchone()["c"]
+        self.assertEqual(audit_count, 2)
+
+    def test_genuine_restore_failure_still_returns_400(self):
+        cid = self._import_candidate("rf-8", "Test event", "2026-05-15T12:00:00-04:00")
+        self.conn.execute("DELETE FROM sessions WHERE candidate_id = ?", (cid,))
+        self.conn.commit()
+        _, captured = self._post(
+            f"/api/review/candidates/{cid}/restore",
+            {"reason": "Restoring"},
+        )
+        self.assertEqual(captured["status"], 400)
+
+    def test_refresh_not_attempted_if_restore_fails(self):
+        from unittest.mock import patch
+        cid = self._import_candidate("rf-9", "Test event", "2026-05-15T12:00:00-04:00")
+        self.conn.execute("DELETE FROM sessions WHERE candidate_id = ?", (cid,))
+        self.conn.commit()
+        with patch("jordana_invoice.review_services.refresh_candidate_suggestions") as mock_refresh:
+            _, captured = self._post(
+                f"/api/review/candidates/{cid}/restore",
+                {"reason": "Restoring"},
+            )
+        mock_refresh.assert_not_called()
+        self.assertEqual(captured["status"], 400)
 
 
 if __name__ == "__main__":

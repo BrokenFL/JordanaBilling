@@ -1788,8 +1788,11 @@ function renderSessions(rows, total) {
 
 async function restoreSessionRow(candidateId) {
   try {
-    await api(`/api/review/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify({ reason: "Returned to review queue from Sessions view" }) });
+    const result = await api(`/api/review/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify({ reason: "Returned to review queue from Sessions view" }) });
     await loadSessions();
+    if (result && result.warning) {
+      alert(result.warning);
+    }
   } catch (err) {
     alert("Could not restore session: " + err.message);
   }

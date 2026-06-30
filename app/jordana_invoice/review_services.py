@@ -1282,9 +1282,17 @@ def restore_candidate(
         [reason or "Restored to review queue."],
     )
     conn.commit()
-    refresh_candidate_suggestions(conn, candidate_id)
-    conn.commit()
-    return get_review_candidate(conn, candidate_id)
+    warning = None
+    try:
+        refresh_candidate_suggestions(conn, candidate_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        warning = "Candidate was restored, but suggestions could not be refreshed."
+    result = get_review_candidate(conn, candidate_id)
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def _ensure_review_session_for_candidate(
