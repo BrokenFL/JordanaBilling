@@ -2047,6 +2047,59 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn(".payments-tab.active", css)
         self.assertIn(".payments-panel", css)
 
+    def test_header_logo_present_in_html(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertIn("brand-mark", html)
+        self.assertIn("Jordana Billing", html)
+
+    def test_header_logo_size_increased_by_approximately_15_percent(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn("width: 44px; height: 44px;", css)
+        self.assertNotIn("width: 38px; height: 38px;", css)
+
+    def test_header_logo_aspect_ratio_preserved(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        mark_start = css.index(".brand-mark")
+        mark_end = css.index("}", mark_start) + 1
+        mark_block = css[mark_start:mark_end]
+        self.assertIn("width: 44px", mark_block)
+        self.assertIn("height: 44px", mark_block)
+        self.assertIn("border-radius: 50%", mark_block)
+
+    def test_header_uses_left_aligned_horizontal_layout(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        brand_start = css.index(".brand")
+        brand_end = css.index("}", brand_start) + 1
+        brand_block = css[brand_start:brand_end]
+        self.assertIn("display: flex", brand_block)
+        self.assertIn("align-items: center", brand_block)
+
+    def test_header_logo_and_name_on_same_line(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        brand_start = html.index('class="brand"')
+        brand_end = html.index("</div>", brand_start) + len("</div>")
+        brand_html = html[brand_start:brand_end]
+        self.assertIn("brand-mark", brand_html)
+        self.assertIn("<strong>Jordana Billing</strong>", brand_html)
+        self.assertLess(
+            brand_html.index("brand-mark"),
+            brand_html.index("<strong>Jordana Billing</strong>"),
+        )
+
+    def test_header_logo_mobile_layout_remains_usable(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn("@media (max-width: 760px)", css)
+        mobile_start = css.index("@media (max-width: 760px)")
+        mobile_section = css[mobile_start:]
+        self.assertIn(".brand", mobile_section)
+        self.assertIn("margin-bottom: 2px", mobile_section)
+
 
 if __name__ == "__main__":
     unittest.main()
