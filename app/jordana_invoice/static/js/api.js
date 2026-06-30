@@ -1,24 +1,13 @@
 (function () {
   "use strict";
 
-  class ApiError extends Error {
-    constructor(message, { status = null, body = null } = {}) {
-      super(message);
-      this.name = "ApiError";
-      this.status = status;
-      this.body = body;
-    }
-  }
-
-  function getWriteToken() {
-    return window.__JORDANA_BOOTSTRAP__?.writeToken || "";
-  }
+  const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
 
   async function api(path, options = {}) {
     const method = (options.method || "GET").toUpperCase();
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-      headers["X-Jordana-Write-Token"] = getWriteToken();
+      headers["X-Jordana-Write-Token"] = WRITE_TOKEN;
     }
     const res = await fetch(path, { ...options, method, headers });
     const json = await res.json();
@@ -35,5 +24,5 @@
     return raw;
   }
 
-  window.JordanaAPI = { api, ApiError, sanitizeUiErrorMessage };
+  window.JordanaAPI = { api, sanitizeUiErrorMessage };
 })();
