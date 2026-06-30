@@ -349,6 +349,42 @@ Derived CSV downloads neutralize spreadsheet formula injection.
 
 Write routes require the local write token and appropriate content type. Errors exposed to the browser must not include SQL, filesystem paths, stack traces, secrets, or private internal diagnostics.
 
+## Shared Frontend API Module
+
+The shared frontend request utility lives at `app/jordana_invoice/static/js/api.js`.
+
+It is loaded as a classic script (IIFE) before `review.js` via `<script src="/static/js/api.js"></script>` in `review.html`. The server injects the bootstrap write-token script between `api.js` and `review.js`; the token is read at call time, not at load time.
+
+### Exports
+
+The module assigns `window.JordanaAPI` with:
+
+- **`api(path, options)`** — async fetch helper. Sets `Content-Type: application/json` on all requests. Adds `X-Jordana-Write-Token` for POST/PUT/PATCH/DELETE. Parses response as JSON. Throws `Error(json.error || "Request failed")` when `!res.ok || json.ok === false`. Returns the parsed JSON object unchanged.
+- **`sanitizeUiErrorMessage(message, fallback)`** — sanitizes error messages for UI display. Returns fallback for messages containing `/`, `traceback`, or `select `.
+- **`ApiError`** — lightweight custom error class with `status` and `body` properties, for future use. Not yet used by the `api()` function to preserve current error behavior.
+
+### Token Behavior
+
+- Write token is read from `window.__JORDANA_BOOTSTRAP__?.writeToken` at call time.
+- Only POST/PUT/PATCH/DELETE methods receive the token.
+- GET requests do not receive the write-token header.
+- The token is never placed in URLs, query strings, logs, or error messages.
+
+### Warning Behavior
+
+The `api()` function does not inspect or intercept warning fields. Responses with `warning` or `invoice_staging` fields remain successful. Call sites handle warnings independently (e.g., restore success-with-warning, approval staging warning).
+
+### Direct Fetch Exceptions
+
+Two `fetch()` calls in `review.js` intentionally bypass the shared utility:
+
+1. **Draft PDF preview** (`/api/invoices/{id}/draft-pdf`) — returns a binary blob, not JSON.
+2. **Billing relationship setup** (`/api/billing-relationships/setup`) — throws the raw JSON object (not an `Error`) so the catch block can inspect `err.duplicate`, `err.account_id`, and `err.created` for duplicate-relationship handling.
+
+### Tests
+
+Focused tests are in `tests/test_api_util.py`.
+
 ## Current Deferred UI Work
 
 The following are not complete:
