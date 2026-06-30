@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -41,6 +42,7 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("--find-links", installer)
         self.assertIn("jordana-invoice==0.1.0", installer)
         self.assertIn("release requires Python", installer)
+        self.assertIn("create_private_config.sh", installer)
         self.assertNotIn("pip install -e", installer)
         self.assertNotIn("pip install --upgrade pip", installer)
         self.assertIn("--init-empty-db", installer)
@@ -53,6 +55,9 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("SHA256SUMS", builder)
         self.assertIn("wheelhouse", builder)
         self.assertIn("requirements-production.lock", builder)
+        self.assertIn("create_private_config.sh", builder)
+        self.assertIn("docs/TEST_MAC_ACCEPTANCE.md", builder)
+        self.assertIn("config/example.env", builder)
         self.assertIn("Private artifact path found", builder)
 
     def test_installed_launcher_resource_is_committed_without_private_data(self) -> None:
@@ -70,12 +75,118 @@ class ProductionPackagingContractTest(unittest.TestCase):
         for phrase in [
             "Verify checksum",
             "Wi-Fi-off launch",
+            "create_private_config.sh",
             "missing config",
             "missing DB",
             "Reinstall",
             "private data remains",
         ]:
             self.assertIn(phrase, text)
+
+    def test_documentation_gives_one_authoritative_config_workflow(self) -> None:
+        doc = (PROJECT_DIR / "docs" / "PRODUCTION_PACKAGING.md").read_text(encoding="utf-8")
+        self.assertIn("Private Configuration Setup", doc)
+        self.assertIn("~/Library/Application Support/Jordana Billing/config/.env", doc)
+        self.assertIn("scripts/create_private_config.sh", doc)
+        self.assertIn("The API key input is hidden", doc)
+        self.assertIn("not stored inside the `.app`, release ZIP, GitHub, SQLite database, or browser storage", doc)
+
+
+class PrivateConfigHelperTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="jordana_config_helper_")
+        self.config_path = Path(self.temp.name) / "config" / ".env"
+        self.script = PROJECT_DIR / "scripts" / "create_private_config.sh"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _run_helper(self, stdin: str, *, path: Path | None = None) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["JORDANA_CONFIG_OUTPUT"] = str(path or self.config_path)
+        return subprocess.run(
+            ["bash", str(self.script)],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(PROJECT_DIR),
+        )
+
+    def test_helper_writes_required_keys_with_600_permissions(self) -> None:
+        result = self._run_helper("https://example.invalid/apps-script\nsecret-test-key\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.config_path.is_file())
+        self.assertEqual(oct(self.config_path.stat().st_mode & 0o777), "0o600")
+        lines = self.config_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            lines,
+            [
+                "JORDANA_APPS_SCRIPT_URL=https://example.invalid/apps-script",
+                "JORDANA_INGEST_API_KEY=secret-test-key",
+            ],
+        )
+
+    def test_helper_does_not_print_api_key(self) -> None:
+        result = self._run_helper("https://example.invalid/apps-script\nsecret-test-key\n")
+        combined = result.stdout + result.stderr
+        self.assertNotIn("secret-test-key", combined)
+        self.assertIn("Private config created at:", combined)
+
+    def test_helper_does_not_accept_api_key_argument(self) -> None:
+        result = subprocess.run(
+            ["bash", str(self.script), "--api-key", "secret-test-key"],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_DIR),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.config_path.exists())
+
+    def test_empty_url_is_rejected_without_partial_file(self) -> None:
+        result = self._run_helper("\nsecret-test-key\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Apps Script URL cannot be empty", result.stderr)
+        self.assertFalse(self.config_path.exists())
+
+    def test_empty_api_key_is_rejected_without_partial_file(self) -> None:
+        result = self._run_helper("https://example.invalid/apps-script\n\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Ingest API key cannot be empty", result.stderr)
+        self.assertFalse(self.config_path.exists())
+
+    def test_invalid_url_is_rejected_without_partial_file(self) -> None:
+        result = self._run_helper("not-a-url\nsecret-test-key\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("valid https URL", result.stderr)
+        self.assertFalse(self.config_path.exists())
+
+    def test_existing_config_is_not_overwritten_silently(self) -> None:
+        self.config_path.parent.mkdir(parents=True)
+        self.config_path.write_text("JORDANA_APPS_SCRIPT_URL=https://old.invalid\nJORDANA_INGEST_API_KEY=old\n", encoding="utf-8")
+        self.config_path.chmod(0o600)
+        result = self._run_helper("\n")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Existing config was preserved", result.stdout)
+        self.assertIn("old", self.config_path.read_text(encoding="utf-8"))
+
+    def test_existing_config_can_be_overwritten_explicitly(self) -> None:
+        self.config_path.parent.mkdir(parents=True)
+        self.config_path.write_text("old\n", encoding="utf-8")
+        self.config_path.chmod(0o600)
+        result = self._run_helper("OVERWRITE\nhttps://example.invalid/apps-script\nnew-key\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("new-key", self.config_path.read_text(encoding="utf-8"))
+
+    def test_cancelled_input_leaves_no_partial_config(self) -> None:
+        result = self._run_helper("")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.config_path.exists())
+
+    def test_helper_uses_standard_config_path_by_default(self) -> None:
+        helper = self.script.read_text(encoding="utf-8")
+        self.assertIn("$HOME/Library/Application Support/Jordana Billing", helper)
+        self.assertIn("config/.env", helper)
 
 
 class ReleaseArtifactBuildSmokeTest(unittest.TestCase):
@@ -102,6 +213,7 @@ class ReleaseArtifactBuildSmokeTest(unittest.TestCase):
     def test_new_shell_scripts_parse(self) -> None:
         for script in [
             "scripts/build_release.sh",
+            "scripts/create_private_config.sh",
             "scripts/install_release.sh",
             "scripts/launch_installed_app.sh",
             "scripts/update_release.sh",

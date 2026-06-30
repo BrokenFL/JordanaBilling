@@ -7,7 +7,7 @@ Production packaging separates one-time installation from normal daily launch.
 V1 uses an offline pinned runtime install:
 
 - Brooke builds a versioned zip release from this repo.
-- The release contains `Jordana Billing.app`, installer scripts, a local wheelhouse, `requirements-production.lock`, `release_manifest.json`, and checksums.
+- The release contains `Jordana Billing.app`, installer scripts, a local wheelhouse, `requirements-production.lock`, `release_manifest.json`, docs, a sanitized config example, and checksums.
 - The installer creates a private virtual environment inside the installed app bundle and installs only from the shipped wheelhouse.
 - Normal double-click launch uses that installed runtime and never runs pip, Git, dependency repair, or package installation.
 
@@ -52,22 +52,53 @@ build/release/JordanaBilling-<version>-<commit>-macos-arm64.zip.sha256
 
 The artifact is inspected during build for forbidden private files such as `.env`, SQLite databases, PDFs, invoices, receipts, reports, and private data folders.
 
+## Private Configuration Setup
+
+Never upload `.env` to GitHub and never send secrets in email, chat, logs, screenshots, or release assets.
+
+On the spare Mac, create the private config from inside the unzipped release:
+
+```bash
+scripts/create_private_config.sh
+```
+
+The helper asks for:
+
+- `JORDANA_APPS_SCRIPT_URL`
+- `JORDANA_INGEST_API_KEY`
+
+The API key input is hidden. The helper writes:
+
+```text
+~/Library/Application Support/Jordana Billing/config/.env
+```
+
+with permissions `600`. The config is not stored inside the `.app`, release ZIP, GitHub, SQLite database, or browser storage. The installed launcher reads it at startup, validates the required keys, and exports them only to the local server process. The file persists across app restarts, Mac restarts, reinstalls, and updates. Removing the app bundle does not delete the config.
+
+To rotate the key, rerun `scripts/create_private_config.sh` and type `OVERWRITE` when prompted, or edit the Application Support config locally. Delete any temporary source file after confirming the Application Support config exists.
+
 ## One-Time Install
 
 After unzipping the release on the target Mac:
 
 ```bash
 cd JordanaBilling-<version>-<commit>-macos-arm64
-scripts/install_release.sh --config /secure/path/.env --database /secure/path/jordana_invoice.sqlite3
+scripts/install_release.sh --database /secure/path/jordana_invoice.sqlite3
 ```
 
 For a disposable clean-Mac test only, Brooke may initialize an empty database explicitly:
 
 ```bash
-scripts/install_release.sh --config /secure/path/.env --init-empty-db
+scripts/install_release.sh --init-empty-db
 ```
 
 The installer preserves existing `config/.env` and `data/jordana_invoice.sqlite3`. It fails rather than creating a replacement database unless `--init-empty-db` is supplied and confirmed.
+
+For the spare clean-Mac test, after running `scripts/create_private_config.sh`, use:
+
+```bash
+scripts/install_release.sh --init-empty-db
+```
 
 ## Daily Launch
 

@@ -21,14 +21,21 @@ ZIP_PATH="$BUILD_ROOT/$RELEASE_NAME.zip"
 WHEELHOUSE="$RELEASE_DIR/wheelhouse"
 
 rm -rf "$RELEASE_DIR" "$ZIP_PATH"
-mkdir -p "$WHEELHOUSE" "$RELEASE_DIR/scripts"
+mkdir -p "$WHEELHOUSE" "$RELEASE_DIR/scripts" "$RELEASE_DIR/docs" "$RELEASE_DIR/config"
 
 "$PROJECT_DIR/scripts/build_launcher.sh" --force >/dev/null
 cp -R "$PROJECT_DIR/Jordana Billing.app" "$RELEASE_DIR/Jordana Billing.app"
 cp "$PROJECT_DIR/scripts/install_release.sh" "$RELEASE_DIR/scripts/install_release.sh"
+cp "$PROJECT_DIR/scripts/create_private_config.sh" "$RELEASE_DIR/scripts/create_private_config.sh"
+cp "$PROJECT_DIR/scripts/launch_installed_app.sh" "$RELEASE_DIR/scripts/launch_installed_app.sh"
 cp "$PROJECT_DIR/scripts/update_release.sh" "$RELEASE_DIR/scripts/update_release.sh"
 cp "$PROJECT_DIR/scripts/verify_installation.sh" "$RELEASE_DIR/scripts/verify_installation.sh"
 cp "$PROJECT_DIR/requirements-production.lock" "$RELEASE_DIR/requirements-production.lock"
+cp "$PROJECT_DIR/config/example.env" "$RELEASE_DIR/config/example.env"
+cp "$PROJECT_DIR/docs/PRODUCTION_PACKAGING.md" "$RELEASE_DIR/docs/PRODUCTION_PACKAGING.md"
+cp "$PROJECT_DIR/docs/TEST_MAC_ACCEPTANCE.md" "$RELEASE_DIR/docs/TEST_MAC_ACCEPTANCE.md"
+cp "$PROJECT_DIR/docs/FRESH_INSTALL.md" "$RELEASE_DIR/docs/FRESH_INSTALL.md"
+cp "$PROJECT_DIR/docs/TEST_RELEASE_NOTES.md" "$RELEASE_DIR/docs/TEST_RELEASE_NOTES.md"
 chmod +x "$RELEASE_DIR/scripts/"*.sh
 
 "$BUILD_PYTHON" -m pip wheel --wheel-dir "$WHEELHOUSE" -r "$PROJECT_DIR/requirements-production.lock"

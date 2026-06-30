@@ -68,32 +68,32 @@ Before accepting the database:
 
 See `docs/PRIVATE_DATA_TRANSFER.md` for the authoritative secure-transfer procedure.
 
-## 3. Configure `.env`
+## 3. Private Configuration Setup
 
-If `.env` was transferred securely, verify it without pasting its secrets into chat, documentation, source code, or Git.
+Never upload `.env` to GitHub. Never send secrets in email, chat, logs, screenshots, or release assets.
 
-For a new empty installation, copy the template:
+On the target Mac, run the helper from the unzipped release:
 
 ```bash
-cp .env.example .env
+scripts/create_private_config.sh
 ```
 
-The required sync values include:
+It asks for:
 
 - `JORDANA_APPS_SCRIPT_URL`
 - `JORDANA_INGEST_API_KEY`
-- `JORDANA_DATABASE_PATH`
-- `JORDANA_REPORTS_DIR`
-- optional `JORDANA_BACKUP_DIR`
 
-The production installer copies `.env` into Application Support only when no private config already exists. It validates `.env` as data and does not execute it as shell code.
+The API key input is hidden. The helper writes
+`~/Library/Application Support/Jordana Billing/config/.env` with permissions
+`600`. The installer finds that standard path automatically and preserves it
+across reinstall/update.
 
 ## 4. Install And Launch
 
 Run the one-time installer from the unzipped release:
 
 ```bash
-scripts/install_release.sh --config /secure/path/.env --database /secure/path/jordana_invoice.sqlite3
+scripts/install_release.sh --database /secure/path/jordana_invoice.sqlite3
 ```
 
 After installation, double-click `~/Applications/Jordana Billing.app` in Finder.

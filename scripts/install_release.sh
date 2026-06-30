@@ -84,7 +84,7 @@ if [[ -n "$CONFIG_SOURCE" ]]; then
     echo "Installed private configuration: $CONFIG_DEST"
   fi
 elif [[ ! -f "$CONFIG_DEST" ]]; then
-  fail "Private configuration is missing. Re-run with --config PATH after Brooke supplies .env."
+  fail "Private configuration is missing. Run scripts/create_private_config.sh, then run this installer again."
 fi
 
 if [[ -n "$DB_SOURCE" ]]; then

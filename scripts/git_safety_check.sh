@@ -19,6 +19,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   for pattern in "${blocked_patterns[@]}"; do
     while IFS= read -r file; do
       [[ -z "$file" ]] && continue
+      [[ "$file" == "config/example.env" ]] && continue
       case "$file" in
         $pattern)
           echo "Blocked staged file: $file" >&2

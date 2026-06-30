@@ -53,10 +53,16 @@ Also read:
 3. Verify the release checksum and the private transfer manifest/checksums.
 4. Unzip the release on Jordana's Mac.
 5. Open Terminal in the unzipped release folder.
-6. Run the one-time installer:
+6. Run the private config helper:
 
 ```bash
-scripts/install_release.sh --config /secure/path/.env --database /secure/path/jordana_invoice.sqlite3
+scripts/create_private_config.sh
+```
+
+7. Run the one-time installer:
+
+```bash
+scripts/install_release.sh --database /secure/path/jordana_invoice.sqlite3
 ```
 
 `scripts/install_release.sh` is the production installer for release artifacts.
@@ -90,21 +96,18 @@ creation during normal launch.
 
 ## Configuration
 
-For a production handoff, transfer `.env` securely and verify it locally without exposing its values.
-
-For a new empty development or demo installation only:
+For a production handoff, create or verify `.env` locally without exposing its values:
 
 ```bash
-cp .env.example .env
+scripts/create_private_config.sh
 ```
 
-Required sync configuration includes:
+The helper stores the private config at `~/Library/Application Support/Jordana Billing/config/.env`, hides API-key input, and sets file permissions to `600`.
+
+Required production release configuration includes:
 
 - `JORDANA_APPS_SCRIPT_URL`
 - `JORDANA_INGEST_API_KEY`
-- `JORDANA_DATABASE_PATH`
-- `JORDANA_REPORTS_DIR`
-- optional `JORDANA_BACKUP_DIR`
 
 Do not commit or paste the real `.env`, credentials, Script Properties, spreadsheet IDs, or private paths into documentation, screenshots, logs, GitHub, or chat.
 

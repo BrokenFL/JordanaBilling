@@ -67,6 +67,11 @@ install editable packages, use Git, access PyPI, or create a blank production
 database. See `docs/PRODUCTION_PACKAGING.md` and
 `docs/TEST_MAC_ACCEPTANCE.md`.
 
+On the clean Mac, download the private GitHub pre-release, verify the checksum,
+run `scripts/create_private_config.sh` to create the private `.env` in
+Application Support, then run `scripts/install_release.sh --init-empty-db` for
+the disposable acceptance test. Never upload `.env` or real secrets to GitHub.
+
 For local development checkouts only, `scripts/bootstrap.sh` remains available
 to create or repair the repo-local `.venv` and launch from source.
 
@@ -248,6 +253,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
 - `scripts/build_release.sh` - builds the versioned offline production release artifact.
 - `scripts/install_release.sh` - one-time production installer copied into release artifacts.
+- `scripts/create_private_config.sh` - interactive private config helper for the target Mac.
 - `scripts/launch_installed_app.sh` - daily installed-app launcher; no package installation or Git/PyPI access.
 - `scripts/bootstrap.sh` - development-checkout bootstrap and source launcher.
 - `scripts/setup_jordana_mac.sh` - retired non-destructive stub.

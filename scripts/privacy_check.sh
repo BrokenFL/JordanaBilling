@@ -6,14 +6,14 @@ cd "$(dirname "$0")/.."
 fail=0
 
 blocked_tracked='(\.env$|\.sqlite3($|-)|credential.*\.json$|Reports/|logs/|output/|\.pdf$|Jordana_Private_Transfer/)'
-if git ls-files | grep -E "$blocked_tracked" >/tmp/jordana_privacy_tracked.txt; then
+if git ls-files | grep -E "$blocked_tracked" | grep -v -x 'config/example.env' >/tmp/jordana_privacy_tracked.txt; then
   echo "Blocked tracked private files:" >&2
   cat /tmp/jordana_privacy_tracked.txt >&2
   fail=1
 fi
 
 blocked_staged='(\.env$|\.sqlite3($|-)|credential.*\.json$|Reports/|logs/|output/|\.pdf$|Jordana_Private_Transfer/)'
-if git diff --cached --name-only | grep -E "$blocked_staged" >/tmp/jordana_privacy_staged.txt; then
+if git diff --cached --name-only | grep -E "$blocked_staged" | grep -v -x 'config/example.env' >/tmp/jordana_privacy_staged.txt; then
   echo "Blocked staged private files:" >&2
   cat /tmp/jordana_privacy_staged.txt >&2
   fail=1
