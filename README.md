@@ -58,9 +58,9 @@ For production or clean-Mac testing, build and install a versioned offline DMG r
 scripts/build_release.sh
 ```
 
-The release DMG contains `Install Jordana Billing.app` plus an internal
-`ReleasePayload` folder. The setup app collects the Apps Script URL and ingest
-API key in a native macOS window, writes private configuration under
+The release DMG contains `Install Jordana Billing.app` with the release payload
+embedded inside the setup app. The setup app collects the Apps Script URL and
+ingest API key in a native macOS window, writes private configuration under
 `~/Library/Application Support/Jordana Billing/`, asks before initializing a
 clean-start database, installs `Jordana Billing.app` to `~/Applications`, and
 runs install verification. Daily double-click launch validates and starts the

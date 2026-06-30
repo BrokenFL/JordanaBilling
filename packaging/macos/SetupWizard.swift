@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-final class SetupController: NSObject, NSApplicationDelegate {
+final class SetupController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 560, height: 470),
         styleMask: [.titled, .closable, .miniaturizable],
@@ -17,11 +17,9 @@ final class SetupController: NSObject, NSApplicationDelegate {
     private let progress = NSProgressIndicator()
 
     private let fm = FileManager.default
-    private var releaseRoot: URL {
-        Bundle.main.bundleURL.deletingLastPathComponent()
-    }
     private var payloadRoot: URL {
-        releaseRoot.appendingPathComponent("ReleasePayload")
+        let resources = Bundle.main.resourceURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources")
+        return resources.appendingPathComponent("ReleasePayload")
     }
     private var supportRoot: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Jordana Billing")
@@ -35,8 +33,12 @@ final class SetupController: NSObject, NSApplicationDelegate {
     private var installedApp: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications/Jordana Billing.app")
     }
+    private var requiredPython: String?
+    private var selectedPython: URL?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        buildMenu()
         buildUI()
         detectEnvironment()
         window.center()
@@ -44,8 +46,31 @@ final class SetupController: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        NSApp.terminate(nil)
+        return true
+    }
+
+    private func buildMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+
+        let appMenu = NSMenu()
+        let quitTitle = "Quit Install Jordana Billing"
+        let quitItem = NSMenuItem(title: quitTitle, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(quitItem)
+        appMenuItem.submenu = appMenu
+        NSApp.mainMenu = mainMenu
+    }
+
     private func buildUI() {
         window.title = "Install Jordana Billing"
+        window.delegate = self
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
@@ -117,7 +142,15 @@ final class SetupController: NSObject, NSApplicationDelegate {
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let runtime = json["runtime"] as? [String: Any],
            let required = runtime["requires_python"] as? String {
+            requiredPython = required
             messages.append("Required Python: \(required).")
+            if let python = findCompatiblePython(required: required) {
+                selectedPython = python
+                messages.append("Using Python: \(python.path)")
+            } else {
+                messages.append("Compatible Python \(required) was not found. Install Python \(required) from python.org or Homebrew, then reopen this installer.")
+                installButton.isEnabled = false
+            }
         } else {
             messages.append("Release manifest missing or unreadable.")
             installButton.isEnabled = false
@@ -139,6 +172,76 @@ final class SetupController: NSObject, NSApplicationDelegate {
             return false
         }
         return !value.contains(" ")
+    }
+
+    private func requiredPythonPrefix(_ required: String) -> String? {
+        let parts = required.split(separator: ".")
+        guard parts.count >= 2 else {
+            return nil
+        }
+        return "\(parts[0]).\(parts[1])."
+    }
+
+    private func pythonCandidates(required: String) -> [URL] {
+        let majorMinor = required.split(separator: ".").prefix(2).joined(separator: ".")
+        let environment = ProcessInfo.processInfo.environment
+        var paths: [String] = []
+        if let override = environment["JORDANA_INSTALL_PYTHON"], !override.isEmpty {
+            paths.append(override)
+        }
+        paths.append(contentsOf: [
+            "/usr/local/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/\(majorMinor)/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+            "/usr/bin/python3",
+        ])
+        if let pathEnv = environment["PATH"] {
+            for directory in pathEnv.split(separator: ":") {
+                paths.append("\(directory)/python3")
+            }
+        }
+
+        var seen = Set<String>()
+        return paths.compactMap { raw in
+            let expanded = NSString(string: raw).expandingTildeInPath
+            guard !expanded.isEmpty && seen.insert(expanded).inserted else {
+                return nil
+            }
+            return URL(fileURLWithPath: expanded)
+        }
+    }
+
+    private func findCompatiblePython(required: String) -> URL? {
+        guard let prefix = requiredPythonPrefix(required) else {
+            return nil
+        }
+        for candidate in pythonCandidates(required: required) {
+            guard fm.isExecutableFile(atPath: candidate.path) else {
+                continue
+            }
+            let process = Process()
+            process.executableURL = candidate
+            process.arguments = ["-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                continue
+            }
+            guard process.terminationStatus == 0 else {
+                continue
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let version = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if version.hasPrefix(prefix) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     @objc private func install() {
@@ -211,10 +314,17 @@ final class SetupController: NSObject, NSApplicationDelegate {
         guard fm.isExecutableFile(atPath: script.path) else {
             throw NSError(domain: "JordanaSetup", code: 1, userInfo: [NSLocalizedDescriptionKey: "Installer script is missing from the release payload."])
         }
+        guard let python = selectedPython else {
+            let required = requiredPython ?? "the required version"
+            throw NSError(domain: "JordanaSetup", code: 2, userInfo: [NSLocalizedDescriptionKey: "Compatible Python \(required) was not found."])
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = initEmptyDb ? [script.path, "--init-empty-db", "--yes"] : [script.path]
         process.currentDirectoryURL = payloadRoot
+        var environment = ProcessInfo.processInfo.environment
+        environment["JORDANA_INSTALL_PYTHON"] = python.path
+        process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe

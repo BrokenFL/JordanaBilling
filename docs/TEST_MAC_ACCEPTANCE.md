@@ -21,12 +21,12 @@ Use this checklist on Brooke's spare clean Mac before installing anything on Jor
 shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
-5. Open the DMG. Expected result: the top level shows `Install Jordana Billing.app`; the daily app is not the obvious first item.
+5. Open the DMG. Expected result: the top level shows `Install Jordana Billing.app` and README only; the daily app and `ReleasePayload` folder are not exposed as separate DMG items.
 6. Double-click `Install Jordana Billing.app`. If Gatekeeper blocks it, use right-click Open or Security & Privacy approval. Do not bypass Gatekeeper silently.
 7. Confirm no Rosetta prompt appears. Stop if macOS asks to install Rosetta.
-8. Enter the Apps Script URL.
-9. Enter the ingest API key. Expected result: the key field is hidden and the key is not displayed afterward.
-10. Check the clean-start database confirmation. Expected explanation: unresolved review evidence will sync; historical invoices, payments, clients, approved sessions, and billing relationships will not be imported.
+8. Enter the Apps Script URL. On a reinstall where `~/Library/Application Support/Jordana Billing/config/.env` already exists, this field is disabled and the setup app says the existing private config will be preserved.
+9. Enter the ingest API key. Expected result: the key field is hidden and the key is not displayed afterward. On a reinstall with existing private config, this field is disabled so secrets do not need to be re-entered.
+10. Check the clean-start database confirmation. Expected explanation: unresolved review evidence will sync; historical invoices, payments, clients, approved sessions, and billing relationships will not be imported. On a reinstall where `~/Library/Application Support/Jordana Billing/data/jordana_invoice.sqlite3` already exists, clean-start initialization is disabled and the setup app says the existing database will be preserved.
 11. Click Install.
 12. Expected result: setup installs `~/Applications/Jordana Billing.app`, writes `~/Library/Application Support/Jordana Billing/config/.env` with permissions `600`, creates the clean database only after confirmation, runs verification, and reports success.
 13. Click Open Jordana Billing. Expected result: the browser opens only after health readiness.
@@ -38,7 +38,7 @@ shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 19. Start an unrelated process on port `8765`, then launch. Expected result: Jordana Billing refuses to stop or reuse it.
 20. Temporarily move `config/.env` aside and test the missing config error. Restore the file afterward.
 21. Temporarily move `data/jordana_invoice.sqlite3` aside and test the missing DB error. Restore the file afterward.
-22. Reinstall the same release and confirm existing config and DB are preserved.
+22. Reinstall the same release and confirm existing config and DB are preserved. Expected result: Apps Script URL and ingest API-key fields are disabled, clean-start initialization is disabled, and installation remains possible without re-entering secrets.
 23. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support.
 
 ## Evidence To Record

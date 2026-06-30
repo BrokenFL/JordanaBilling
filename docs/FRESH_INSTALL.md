@@ -41,7 +41,9 @@ Transfer the release DMG and checksum file to the target Mac, then verify:
 shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
-Open the DMG. A production install does not require Terminal, Git, or a source clone.
+Open the DMG. The top level contains `Install Jordana Billing.app` and README
+only; the daily app and release payload are embedded inside the setup app. A
+production install does not require Terminal, Git, or a source clone.
 
 ## 2. Place Private Production Files
 
@@ -83,6 +85,11 @@ The API key input is hidden. The setup app writes
 `~/Library/Application Support/Jordana Billing/config/.env` with permissions
 `600`. The installer finds that standard path automatically and preserves it
 across reinstall/update.
+
+If private config already exists, the URL and API-key fields are disabled and
+the setup app says the existing configuration will be preserved. If the database
+already exists, clean-start initialization is disabled and the setup app says
+the existing database will be preserved.
 
 ## 4. Install And Launch
 
@@ -204,10 +211,10 @@ The following remain local and must never be committed:
 
 ### Matching Python Runtime Is Required
 
-The V1 installer requires the Python major/minor version recorded in `release_manifest.json` before it creates the private app runtime. Install that Python from python.org or Homebrew when necessary:
+The V1 installer requires the Python major/minor version recorded in `release_manifest.json` before it creates the private app runtime. The setup app checks common macOS Python locations such as `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`, and python.org framework installs. Install the matching Python from python.org or Homebrew when necessary:
 
 ```bash
-brew install python@3.12
+brew install python@3.14
 ```
 
 ### Configuration created or incomplete

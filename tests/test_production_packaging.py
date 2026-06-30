@@ -58,7 +58,10 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("build_setup_wizard.sh", builder)
         self.assertIn("Install Jordana Billing.app", builder)
         self.assertIn("ReleasePayload", builder)
+        self.assertIn('SETUP_APP="$BUILD_ROOT/Install Jordana Billing.app"', builder)
+        self.assertIn('PAYLOAD_DIR="$SETUP_APP/Contents/Resources/ReleasePayload"', builder)
         self.assertIn("hdiutil create", builder)
+        self.assertIn("COPYFILE_DISABLE=1 hdiutil create", builder)
         self.assertIn('shasum -a 256 "$(basename "$DMG_PATH")"', builder)
         self.assertIn("docs/TEST_MAC_ACCEPTANCE.md", builder)
         self.assertIn("config/example.env", builder)
@@ -101,9 +104,68 @@ class NativeSetupWizardContractTest(unittest.TestCase):
         source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
         self.assertIn("NSSecureTextField", source)
         self.assertIn("validURL", source)
+        self.assertIn("Bundle.main.resourceURL", source)
         self.assertIn("Initialize a clean production database?", source)
         self.assertIn("Existing private config found and will be preserved.", source)
         self.assertIn("Existing database found and will be preserved.", source)
+
+    def test_setup_wizard_resolves_embedded_payload(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        payload_block = source[
+            source.index("private var payloadRoot: URL") :
+            source.index("private var supportRoot: URL")
+        ]
+        self.assertIn("Bundle.main.resourceURL", payload_block)
+        self.assertIn('appendingPathComponent("ReleasePayload")', payload_block)
+        self.assertNotIn("deletingLastPathComponent()", payload_block)
+
+    def test_setup_wizard_finds_and_passes_compatible_python(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        self.assertIn("findCompatiblePython(required:", source)
+        self.assertIn("requiredPythonPrefix", source)
+        self.assertIn("/usr/local/bin/python3", source)
+        self.assertIn("/opt/homebrew/bin/python3", source)
+        self.assertIn("/Library/Frameworks/Python.framework/Versions/", source)
+        self.assertIn('environment["JORDANA_INSTALL_PYTHON"] = python.path', source)
+        self.assertIn("process.environment = environment", source)
+
+    def test_setup_wizard_has_normal_quit_behavior(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        self.assertIn("NSWindowDelegate", source)
+        self.assertIn("applicationShouldTerminateAfterLastWindowClosed", source)
+        self.assertIn("windowShouldClose", source)
+        self.assertIn("buildMenu()", source)
+        self.assertIn("Quit Install Jordana Billing", source)
+
+    def test_setup_wizard_fresh_install_keeps_required_inputs_enabled(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        config_detection = source.index("if fm.fileExists(atPath: configPath.path)")
+        db_detection = source.index("if fm.fileExists(atPath: dbPath.path)")
+        self.assertNotIn("urlField.isEnabled = false", source[:config_detection])
+        self.assertNotIn("keyField.isEnabled = false", source[:config_detection])
+        self.assertNotIn("cleanStart.isEnabled = false", source[:db_detection])
+        self.assertIn("if !hasConfig", source)
+        self.assertIn("guard validURL(appsURL)", source)
+        self.assertIn("guard !apiKey.isEmpty", source)
+        self.assertIn("if !hasDb && cleanStart.state != .on", source)
+
+    def test_setup_wizard_reinstall_preserves_existing_config_and_database(self) -> None:
+        source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
+        config_block = source[
+            source.index("if fm.fileExists(atPath: configPath.path)") :
+            source.index("if fm.fileExists(atPath: dbPath.path)")
+        ]
+        db_block = source[
+            source.index("if fm.fileExists(atPath: dbPath.path)") :
+            source.index("status.stringValue = messages.joined")
+        ]
+        self.assertIn("Existing private config found and will be preserved.", config_block)
+        self.assertIn("urlField.isEnabled = false", config_block)
+        self.assertIn("keyField.isEnabled = false", config_block)
+        self.assertIn("Existing database found and will be preserved.", db_block)
+        self.assertIn("cleanStart.isEnabled = false", db_block)
+        self.assertIn("if !hasConfig", source)
+        self.assertIn("if !hasDb", source)
 
     def test_setup_wizard_does_not_pass_secrets_as_arguments(self) -> None:
         source = (PROJECT_DIR / "packaging" / "macos" / "SetupWizard.swift").read_text(encoding="utf-8")
@@ -127,11 +189,12 @@ class NativeSetupWizardContractTest(unittest.TestCase):
 
     def test_release_dmg_payload_hides_daily_app_from_root(self) -> None:
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
-        self.assertIn('ditto --norsrc "$BUILD_ROOT/Install Jordana Billing.app" "$DMG_ROOT/Install Jordana Billing.app"', builder)
+        self.assertIn('ditto --norsrc "$SETUP_APP" "$DMG_ROOT/Install Jordana Billing.app"', builder)
         self.assertIn('mv "$RELEASE_DIR" "$PAYLOAD_DIR"', builder)
         self.assertIn("clean_and_sign_app", builder)
         self.assertIn("codesign --verify --deep --strict", builder)
-        self.assertIn("Do not open the app inside ReleasePayload directly", builder)
+        self.assertIn("The release payload is embedded inside the installer app.", builder)
+        self.assertNotIn('PAYLOAD_DIR="$DMG_ROOT/ReleasePayload"', builder)
 
     def test_checksum_generation_rejects_absolute_paths(self) -> None:
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")

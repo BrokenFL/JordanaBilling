@@ -8,7 +8,7 @@ V1 uses an offline pinned runtime install with a native macOS setup app:
 
 - Brooke builds a versioned DMG release from this repo.
 - The DMG root contains `Install Jordana Billing.app` and concise instructions.
-- The internal `ReleasePayload` folder contains `Jordana Billing.app`, installer scripts, a local wheelhouse, `requirements-production.lock`, `release_manifest.json`, docs, a sanitized config example, and checksums.
+- `Install Jordana Billing.app` contains an embedded `Contents/Resources/ReleasePayload` folder with `Jordana Billing.app`, installer scripts, a local wheelhouse, `requirements-production.lock`, `release_manifest.json`, docs, a sanitized config example, and checksums.
 - The installer creates a private virtual environment inside the installed app bundle and installs only from the shipped wheelhouse.
 - Normal double-click launch uses that installed runtime and never runs pip, Git, dependency repair, or package installation.
 
@@ -79,6 +79,10 @@ The API key input is hidden. The setup app writes:
 
 with permissions `600`. The config is not stored inside the `.app`, release DMG, GitHub, SQLite database, or browser storage. The installed launcher reads it at startup, validates the required keys, and exports them only to the local server process. The file persists across app restarts, Mac restarts, reinstalls, and updates. Removing the app bundle does not delete the config.
 
+When private config already exists, the setup app disables the Apps Script URL
+and ingest API-key fields and says the existing configuration will be preserved.
+Reinstall remains possible without re-entering secrets.
+
 The CLI helper `scripts/create_private_config.sh` remains available inside the payload for support use, but the GUI setup app is the user-facing workflow.
 
 ## One-Time Install
@@ -88,7 +92,7 @@ After opening the DMG, run `Install Jordana Billing.app`. It installs to
 offline wheelhouse, preserves existing private config and database files, and
 runs `scripts/verify_installation.sh`.
 
-The installer preserves existing `config/.env` and `data/jordana_invoice.sqlite3`. It fails rather than creating a replacement database unless `--init-empty-db` is supplied and confirmed.
+The installer preserves existing `config/.env` and `data/jordana_invoice.sqlite3`. When the database already exists, the setup app disables clean-start initialization and says the existing database will be preserved. It fails rather than creating a replacement database unless `--init-empty-db` is supplied and confirmed.
 
 For the spare clean-Mac test, check the clean-start confirmation in the setup
 app. Clean-start creates an empty database only after explicit confirmation.
@@ -105,9 +109,8 @@ Jordana double-clicks:
 
 Daily launch validates the installed runtime, private config, private database, port ownership, and health readiness. It may apply safe application migrations through the app startup contract, but it does not install packages, repair the runtime, access GitHub, access PyPI, or create a blank production database.
 
-If the app inside `ReleasePayload` is opened directly before setup, it displays
-that Jordana Billing has not been installed yet and points the user back to
-`Install Jordana Billing.app`.
+The daily app payload is embedded inside the setup app and is not exposed as a
+separate DMG item.
 
 ## Update
 
