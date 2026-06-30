@@ -24,4 +24,4 @@ package-dir = {"" = "app"}
 where = ["app"]
 
 [tool.setuptools.package-data]
-jordana_invoice = ["static/*"]
+jordana_invoice = ["static/*", "static/**/*"]

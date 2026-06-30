@@ -8,6 +8,7 @@ __pycache__/
 *.sqlite3-*
 *.sqlite3.lock
 *.lock
+!requirements-production.lock
 logs/
 Reports/
 data/imports/

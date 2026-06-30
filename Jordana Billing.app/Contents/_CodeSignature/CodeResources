@@ -8,6 +8,10 @@
 		<data>
 		4A/em3mkFOSOP9xRNlXw111uH0A=
 		</data>
+		<key>Resources/launch_installed_app.sh</key>
+		<data>
+		+2ceWQkHtpuVaR0nHJzdy2jI/OU=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -16,6 +20,13 @@
 			<key>hash2</key>
 			<data>
 			pZnmo40ESZCFcB0JfEk5FzvHEOZGV70gfLifbdmPJj4=
+			</data>
+		</dict>
+		<key>Resources/launch_installed_app.sh</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			lxfyVBmirJEpiq0zhwkxx/Y+AepijBXhUbDZv7ZvP00=
 			</data>
 		</dict>
 	</dict>

@@ -64,7 +64,7 @@ class TestLauncherExecutablePermission(unittest.TestCase):
             content.startswith("#!/usr/bin/env bash"),
             "launcher does not start with bash shebang",
         )
-        self.assertIn('exec "$PROJECT_DIR/scripts/bootstrap.sh"', content)
+        self.assertIn('exec "$RESOURCE_DIR/launch_installed_app.sh"', content)
         self.assertNotIn("tell application \"Terminal\"", content)
 
 
@@ -224,7 +224,7 @@ class TestDatabaseDetection(unittest.TestCase):
 
 
 class TestInstallerAuthority(unittest.TestCase):
-    """Verify bootstrap is authoritative and the legacy installer is retired."""
+    """Verify production install and daily launch are separate."""
 
     def test_setup_jordana_mac_is_retired_stub(self) -> None:
         setup_script = (PROJECT_DIR / "scripts" / "setup_jordana_mac.sh").read_text()
@@ -238,9 +238,10 @@ class TestInstallerAuthority(unittest.TestCase):
         readme = (PROJECT_DIR / "README.md").read_text()
         self.assertNotIn("scripts/setup_jordana_mac.sh`, `scripts/verify_install.sh`", readme)
 
-    def test_handoff_uses_bootstrap(self) -> None:
+    def test_handoff_documents_production_installer(self) -> None:
         handoff = (PROJECT_DIR / "docs" / "HANDOFF_TO_JORDANA_MAC.md").read_text()
-        self.assertIn("scripts/bootstrap.sh", handoff)
+        self.assertIn("scripts/install_release.sh", handoff)
+        self.assertIn("Application Support/Jordana Billing", handoff)
 
 
 class TestPortOwnershipSafety(unittest.TestCase):
@@ -252,6 +253,7 @@ class TestPortOwnershipSafety(unittest.TestCase):
             PROJECT_DIR / "scripts" / "start_jordana.sh",
             PROJECT_DIR / "scripts" / "stop_jordana.sh",
             PROJECT_DIR / "scripts" / "launcher_common.sh",
+            PROJECT_DIR / "scripts" / "launch_installed_app.sh",
         ]
         forbidden = [
             "pkill -f",
@@ -311,6 +313,9 @@ class TestIconBuild(unittest.TestCase):
     def test_bundle_contains_generated_icns(self) -> None:
         self.assertTrue((APP_BUNDLE / "Contents" / "Resources" / "AppIcon.icns").is_file())
 
+    def test_bundle_contains_installed_launcher_resource(self) -> None:
+        self.assertTrue((APP_BUNDLE / "Contents" / "Resources" / "launch_installed_app.sh").is_file())
+
     def test_bootstrap_preserves_existing_database(self) -> None:
         """Launcher validation preserves existing database by opening read-only."""
         validator = (PROJECT_DIR / "scripts" / "validate_launcher_environment.py").read_text()
@@ -346,9 +351,14 @@ class TestBashSyntaxCheck(unittest.TestCase):
         "scripts/start_jordana.sh",
         "scripts/build_launcher.sh",
         "scripts/build_app_icon.sh",
+        "scripts/build_release.sh",
+        "scripts/install_release.sh",
+        "scripts/launch_installed_app.sh",
         "scripts/launcher_common.sh",
         "scripts/setup_jordana_mac.sh",
         "scripts/stop_jordana.sh",
+        "scripts/update_release.sh",
+        "scripts/verify_installation.sh",
     ]
 
     def test_launcher_syntax(self) -> None:
@@ -387,10 +397,12 @@ class TestBuildLauncherSigns(unittest.TestCase):
         build_script = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text()
         self.assertIn("xattr -cr", build_script)
 
-    def test_build_launcher_delegates_to_bootstrap(self) -> None:
-        """build_launcher.sh template delegates runtime checks to bootstrap."""
+    def test_build_launcher_delegates_to_installed_launcher(self) -> None:
+        """build_launcher.sh template delegates daily launch to the installed launcher."""
         build_script = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text()
-        self.assertIn('exec "$PROJECT_DIR/scripts/bootstrap.sh"', build_script)
+        self.assertIn('exec "$RESOURCE_DIR/launch_installed_app.sh"', build_script)
+        self.assertIn("launch_installed_app.sh", build_script)
+        self.assertNotIn('exec "$PROJECT_DIR/scripts/bootstrap.sh"', build_script)
         self.assertNotIn("DB_EXISTS", build_script)
 
     def test_build_launcher_does_not_use_terminal(self) -> None:

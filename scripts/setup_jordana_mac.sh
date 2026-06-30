@@ -11,7 +11,11 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cat >&2 <<EOF
 setup_jordana_mac.sh has been retired.
 
-Use the authoritative installer instead:
+For production release artifacts, use the installer included in the release:
+
+  scripts/install_release.sh --config /secure/path/.env --database /secure/path/jordana_invoice.sqlite3
+
+For development checkouts only, use:
 
   "$PROJECT_DIR/scripts/bootstrap.sh"
 

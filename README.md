@@ -52,17 +52,23 @@ Phase 2 strengthens the normalization layer. The current prototype adds invoice 
 
 ## Quick Start
 
-For Jordana's Mac, use the double-click launcher or the authoritative installer:
+For production or clean-Mac testing, build and install a versioned offline release artifact:
 
 ```bash
-scripts/bootstrap.sh
+scripts/build_release.sh
 ```
 
-`scripts/bootstrap.sh` creates or repairs `.venv`, installs the package, validates
-private configuration, verifies the configured SQLite database exists and is
-readable, starts the local app only when port ownership is safe, waits for
-health, and opens the browser. It does not create, replace, delete, or raw-copy
-the operational database.
+The release installer copies `Jordana Billing.app` to `~/Applications`, creates
+an offline private runtime inside the app from the shipped wheelhouse, and keeps
+private configuration and the operational database under
+`~/Library/Application Support/Jordana Billing/`. Daily double-click launch
+validates and starts the installed app only; it does not run pip, repair `.venv`,
+install editable packages, use Git, access PyPI, or create a blank production
+database. See `docs/PRODUCTION_PACKAGING.md` and
+`docs/TEST_MAC_ACCEPTANCE.md`.
+
+For local development checkouts only, `scripts/bootstrap.sh` remains available
+to create or repair the repo-local `.venv` and launch from source.
 
 For development-only experiments with a disposable database:
 
@@ -240,8 +246,11 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - `app/jordana_invoice/static/` - local review UI.
 - `launchd/` and `scripts/` - hourly macOS sync agent installer and remover.
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
-- `scripts/bootstrap.sh` - authoritative macOS installer and launcher.
-- `scripts/setup_jordana_mac.sh` - retired non-destructive stub that points to `bootstrap.sh`.
+- `scripts/build_release.sh` - builds the versioned offline production release artifact.
+- `scripts/install_release.sh` - one-time production installer copied into release artifacts.
+- `scripts/launch_installed_app.sh` - daily installed-app launcher; no package installation or Git/PyPI access.
+- `scripts/bootstrap.sh` - development-checkout bootstrap and source launcher.
+- `scripts/setup_jordana_mac.sh` - retired non-destructive stub.
 - `scripts/verify_install.sh` and `scripts/privacy_check.sh` - verification and safety utilities for Mac handoff.
 - `packaging/macos/AppIcon-source.png` and `packaging/macos/AppIcon.icns` - approved launcher icon source and generated macOS icon.
 - `data/samples/` - small June-style fixture for acceptance testing.

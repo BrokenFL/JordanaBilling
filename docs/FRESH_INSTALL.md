@@ -1,6 +1,6 @@
 # Fresh Install Guide
 
-This guide covers installing Jordana Billing on a new macOS computer from a clean clone.
+This guide covers installing Jordana Billing on a new macOS computer from a versioned release artifact.
 
 ## Choose The Correct Installation Type
 
@@ -27,21 +27,21 @@ Use `scripts/create_demo_database.sh` for fictional demo data. Never import demo
 
 ## Prerequisites
 
-- macOS 12 or later, Apple Silicon or Intel
-- Python 3.11 or newer
-- Internet access for dependency installation and Google Sheets sync
-- Access to the private GitHub repository
+- macOS 12 or later on Apple Silicon
+- The Python major/minor version listed in `release_manifest.json` installed once
+- A versioned release artifact from `scripts/build_release.sh`
+- Internet access for Google Sheets sync during application use
 - For production handoff: the verified private transfer package described in `docs/PRIVATE_DATA_TRANSFER.md`
 
-## 1. Clone The Repository
+## 1. Transfer The Release
 
-Clone using GitHub Desktop or the command line:
+Transfer the release zip and checksum file to the target Mac, then verify:
 
 ```bash
-git clone <repo-url> "Jordana Billing"
+shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.zip.sha256
 ```
 
-The repository includes `Jordana Billing.app`, a double-clickable launcher.
+Unzip the release. A production install does not require Git or a source clone.
 
 ## 2. Place Private Production Files
 
@@ -50,11 +50,9 @@ For a production handoff, stop before launching and place the verified private f
 Minimum production state normally includes:
 
 ```text
-.env
+config/.env
 data/jordana_invoice.sqlite3
-data/private/
-Invoices/
-Receipts/
+backups/
 Reports/
 ```
 
@@ -88,33 +86,31 @@ The required sync values include:
 - `JORDANA_REPORTS_DIR`
 - optional `JORDANA_BACKUP_DIR`
 
-The launcher can create `.env` from `.env.example`, resolve `__PROJECT_DIR__` placeholders, open the file in TextEdit, and identify missing required values. It validates `.env` as data and does not execute it as shell code.
+The production installer copies `.env` into Application Support only when no private config already exists. It validates `.env` as data and does not execute it as shell code.
 
 ## 4. Install And Launch
 
-Double-click **Jordana Billing.app** in Finder.
+Run the one-time installer from the unzipped release:
 
-The app is ad-hoc code-signed and runs the authoritative installer,
-`scripts/bootstrap.sh`, without requiring Jordana to use Terminal. Brooke may
-run `scripts/bootstrap.sh` directly while installing or repairing the system.
+```bash
+scripts/install_release.sh --config /secure/path/.env --database /secure/path/jordana_invoice.sqlite3
+```
 
-`scripts/setup_jordana_mac.sh` is retired. It is kept only as a non-destructive
-stub that exits and points maintainers to `scripts/bootstrap.sh`.
+After installation, double-click `~/Applications/Jordana Billing.app` in Finder.
+The app is ad-hoc code-signed, not notarized, so Gatekeeper may require
+right-click Open or Security & Privacy approval.
 
 ### First launch with a transferred production database
 
 The launcher must:
 
-1. Locate Python 3.11 or newer.
-2. Create the project-local `.venv`.
-3. Install pinned dependencies.
-4. Validate `.env`.
-5. Detect and preserve the existing operational database.
-6. Create and verify a private SQLite backup before any pending migration.
-7. Apply only pending additive migrations.
-8. Start the local review server at `127.0.0.1:8765`.
-9. Run intelligent calendar sync using the existing durable cursor.
-10. Open the review UI in the default browser.
+1. Validate the installed app runtime.
+2. Validate private config in Application Support.
+3. Detect and preserve the existing operational database.
+4. Apply only pending additive migrations.
+5. Start the local review server at `127.0.0.1:8765`.
+6. Run intelligent calendar sync using the existing durable cursor.
+7. Open the review UI in the default browser.
 
 It must not delete, recreate, replace, or treat the transferred database as a clean installation.
 
@@ -123,11 +119,10 @@ It must not delete, recreate, replace, or treat the transferred database as a cl
 For production, a missing configured SQLite database is an error. The launcher
 will stop with a clear message instead of creating a replacement blank database.
 
-For an explicitly empty development or demo installation, create the disposable
-database manually with the CLI or `scripts/create_demo_database.sh`, then launch
-the app. Rebuilding from Google Sheets reconstructs raw calendar evidence and
-proposed review records only. It does not reconstruct prior human review,
-invoices, payments, or other production-only SQLite state.
+For an explicitly empty clean-Mac test, use `scripts/install_release.sh
+--init-empty-db`. Rebuilding from Google Sheets reconstructs raw calendar
+evidence and proposed review records only. It does not reconstruct prior human
+review, invoices, payments, or other production-only SQLite state.
 
 ### Later launches
 
@@ -151,10 +146,10 @@ The review UI should open at:
 http://127.0.0.1:8765/review
 ```
 
-Run the repository verification script when performing a production handoff:
+Run the release verification script when performing a production handoff:
 
 ```bash
-scripts/verify_install.sh
+scripts/verify_installation.sh
 ```
 
 For a transferred production database, also verify:
@@ -186,29 +181,24 @@ These scripts are available for terminal use:
 
 | Command | Purpose |
 |---|---|
-| `scripts/bootstrap.sh` | First-run setup and launch |
-| `scripts/start_jordana.sh` | Subsequent launch |
-| `scripts/stop_jordana.sh` | Stop the review server |
-| `scripts/health_check.sh` | Check server health |
-| `scripts/full_sync.sh` | Recovery-oriented full Sheet sync |
-| `scripts/backup_db.sh` | Create a private SQLite backup |
-| `scripts/reset_test_db.sh` | Reset a test database only; requires confirmation |
-| `scripts/build_launcher.sh --force` | Rebuild the `.app` bundle |
-| `scripts/build_app_icon.sh` | Rebuild `packaging/macos/AppIcon.icns` from the approved icon source |
-| `scripts/verify_install.sh` | Verify installation integrity |
-| `scripts/git_safety_check.sh` | Check for staged private files |
+| `scripts/install_release.sh` | One-time release installer |
+| `scripts/update_release.sh` | Deliberate update path with pre-update DB backup |
+| `scripts/verify_installation.sh` | Verify installed app, runtime, config, DB, and static assets |
+| `scripts/build_release.sh` | Development checkout command to create the release artifact |
+| `scripts/bootstrap.sh` | Development checkout bootstrap and source launcher only |
+| `scripts/git_safety_check.sh` | Check for staged private files before Git operations |
 | `scripts/privacy_check.sh` | Check for tracked private files |
 
 ## Private Files
 
 The following remain local and must never be committed:
 
-- `.env`
-- `data/jordana_invoice.sqlite3`
-- `data/private/`
+- `~/Library/Application Support/Jordana Billing/config/.env`
+- `~/Library/Application Support/Jordana Billing/data/jordana_invoice.sqlite3`
+- `~/Library/Application Support/Jordana Billing/backups/`
 - raw imports and Google credentials
-- `Reports/`
-- `logs/`
+- `~/Library/Application Support/Jordana Billing/Reports/`
+- `~/Library/Application Support/Jordana Billing/logs/`
 - `Invoices/`
 - `Receipts/`
 - SQLite backups
@@ -216,9 +206,9 @@ The following remain local and must never be committed:
 
 ## Troubleshooting
 
-### Python 3.11 or newer is required
+### Matching Python Runtime Is Required
 
-The launcher searches common Homebrew, system, and `PATH` locations. Install a current Python from python.org or Homebrew when necessary:
+The V1 installer requires the Python major/minor version recorded in `release_manifest.json` before it creates the private app runtime. Install that Python from python.org or Homebrew when necessary:
 
 ```bash
 brew install python@3.12
@@ -226,7 +216,7 @@ brew install python@3.12
 
 ### Configuration created or incomplete
 
-Fill in the missing variables identified by the launcher, save `.env`, and launch the app again. Do not paste live values into GitHub, documentation, screenshots, or chat.
+Supply the private `.env` to `scripts/install_release.sh --config ...`. Do not paste live values into GitHub, documentation, screenshots, or chat.
 
 ### Startup failed
 
@@ -235,6 +225,7 @@ Inspect the sanitized local logs:
 ```text
 logs/bootstrap.log
 logs/start.log
+~/Library/Application Support/Jordana Billing/logs/launch.log
 ```
 
 Common causes include:

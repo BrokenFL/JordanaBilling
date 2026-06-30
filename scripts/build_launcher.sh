@@ -2,9 +2,9 @@
 #
 # Build the "Jordana Billing.app" macOS launcher bundle.
 #
-# The app is a thin double-click wrapper around scripts/bootstrap.sh. Bootstrap
-# owns first-run setup, later launches, validation, process ownership, health,
-# and browser opening.
+# The app is a thin double-click wrapper around the installed production
+# launcher in Contents/Resources. One-time setup is handled by the release
+# installer; normal launch only validates and starts the installed app.
 #
 set -euo pipefail
 
@@ -66,19 +66,22 @@ cat > "$MACOS_DIR/launcher" <<'LAUNCHER'
 set -euo pipefail
 
 BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT_DIR="$(cd "$BUNDLE_DIR/../.." && pwd)"
-LOG_DIR="$PROJECT_DIR/logs"
+RESOURCE_DIR="$BUNDLE_DIR/Resources"
+APP_SUPPORT_DIR="${JORDANA_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Jordana Billing}"
+LOG_DIR="$APP_SUPPORT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/launcher.log"
 
 {
   printf '[%s] Double-click launcher invoked.\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  exec "$PROJECT_DIR/scripts/bootstrap.sh"
+  exec "$RESOURCE_DIR/launch_installed_app.sh"
 } >> "$LOG_FILE" 2>&1
 LAUNCHER
 
 chmod +x "$MACOS_DIR/launcher"
 cp "$ICNS_PATH" "$RESOURCES_DIR/AppIcon.icns"
+cp "$PROJECT_DIR/scripts/launch_installed_app.sh" "$RESOURCES_DIR/launch_installed_app.sh"
+chmod +x "$RESOURCES_DIR/launch_installed_app.sh"
 
 xattr -cr "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true

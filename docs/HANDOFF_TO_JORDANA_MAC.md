@@ -48,42 +48,45 @@ Also read:
 
 ## Production Handoff Setup
 
-1. Clone the private repository onto Jordana's Mac.
-2. Transfer private production data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
-3. Verify the transfer manifest and SHA-256 checksums.
-4. Place the transferred files in their documented local paths.
-5. Open Terminal in the project folder.
-6. Run:
+1. Build a versioned release artifact from the development Mac.
+2. Transfer the release zip and private production data separately using `docs/PRIVATE_DATA_TRANSFER.md`.
+3. Verify the release checksum and the private transfer manifest/checksums.
+4. Unzip the release on Jordana's Mac.
+5. Open Terminal in the unzipped release folder.
+6. Run the one-time installer:
 
 ```bash
-scripts/bootstrap.sh
+scripts/install_release.sh --config /secure/path/.env --database /secure/path/jordana_invoice.sqlite3
 ```
 
-`scripts/bootstrap.sh` is the only supported installer. The older
-`scripts/setup_jordana_mac.sh` path is retired and exits without performing any
-setup, migration, copy, deletion, or launch action.
+`scripts/install_release.sh` is the production installer for release artifacts.
+The older `scripts/setup_jordana_mac.sh` path is retired. `scripts/bootstrap.sh`
+is now a development-checkout bootstrap and source launcher, not the daily
+production launch path.
 
 A production handoff must include the operational SQLite database. Google Sheets contains raw calendar evidence but cannot reconstruct reviewed people, billing relationships, approved sessions, invoices, payments, receipts, or audit history.
 
 Never transfer private production files through GitHub.
 
-Typical private local state includes:
+Typical private local state now lives under
+`~/Library/Application Support/Jordana Billing/` and includes:
 
 ```text
-.env
+config/.env
 data/jordana_invoice.sqlite3
-data/private/
-Invoices/
-Receipts/
+backups/
+logs/
 Reports/
 ```
 
 The setup and launcher flows must preserve an existing database, create a verified private backup before pending migrations, and apply only additive migrations. They must never delete, recreate, or silently replace the operational database.
 
-The double-click app uses the same bootstrap flow. It validates `.env`, verifies
-that the configured SQLite database exists and can be opened read-only, reuses a
-verified already-running Jordana Billing server, and refuses to kill or reuse an
-unrelated process on port `8765`.
+The double-click app uses `Contents/Resources/launch_installed_app.sh`. It
+validates private config, verifies that the Application Support SQLite database
+exists and can be opened read-only, reuses a verified already-running Jordana
+Billing server, and refuses to kill or reuse an unrelated process on port `8765`.
+It does not run pip, Git, PyPI, editable installs, dependency repair, or blank DB
+creation during normal launch.
 
 ## Configuration
 

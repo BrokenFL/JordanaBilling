@@ -2,12 +2,13 @@
 set -euo pipefail
 
 BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT_DIR="$(cd "$BUNDLE_DIR/../.." && pwd)"
-LOG_DIR="$PROJECT_DIR/logs"
+RESOURCE_DIR="$BUNDLE_DIR/Resources"
+APP_SUPPORT_DIR="${JORDANA_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Jordana Billing}"
+LOG_DIR="$APP_SUPPORT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/launcher.log"
 
 {
   printf '[%s] Double-click launcher invoked.\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  exec "$PROJECT_DIR/scripts/bootstrap.sh"
+  exec "$RESOURCE_DIR/launch_installed_app.sh"
 } >> "$LOG_FILE" 2>&1
