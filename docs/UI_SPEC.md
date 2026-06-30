@@ -384,6 +384,53 @@ Two `fetch()` calls in `review.js` intentionally bypass the shared utility:
 
 Focused tests are in `tests/test_api_util.py`.
 
+## Shared Frontend Overlay Manager
+
+The shared overlay lifecycle manager lives at `app/jordana_invoice/static/js/overlay_manager.js`.
+
+It is loaded as a classic script (IIFE) before `review.js` via `<script src="/static/js/overlay_manager.js"></script>` in `review.html`, after `api.js` and before `review.js`.
+
+### Exports
+
+The module assigns `window.JordanaOverlay` with:
+
+- **`create(config)`** — creates an overlay controller for a specific overlay element. Returns an object with `open`, `close`, `beginPending`, `endPending`, `isPending`, `isOpen`, `getReturnFocus`, and `setReturnFocus` methods.
+
+### Lifecycle Responsibilities
+
+The overlay manager coordinates:
+
+- **Open**: captures the previously focused element, shows the overlay, sets `aria-hidden` to `false`, applies body scroll lock (if configured), binds the keydown handler once, and moves focus to the first focusable control.
+- **Pending**: `beginPending(buttons)` prevents a second submission by disabling specified buttons. Returns `false` if already pending.
+- **Success/Close**: hides the overlay, sets `aria-hidden` to `true`, removes body scroll lock, unbinds keydown, runs the workflow-provided cleanup callback, restores pending buttons, and safely restores focus to the previously focused element (only if it remains in the DOM and is not hidden or disabled).
+- **Failure**: the workflow calls `endPending()` to re-enable controls and clear pending state. The overlay remains open.
+- **Body lock**: uses a reference-counted counter so nested overlays do not incorrectly unlock the body. Only resets `body.style.overflow` when the count reaches zero.
+- **Idempotent**: `open()` is a no-op if already open. `close()` is a no-op if already closed. Keydown handlers are bound once and not duplicated on repeated opens.
+
+### Migrated Workflows
+
+The following workflows use the overlay manager:
+
+1. **Review approval overlay** — uses `reviewOverlayCtrl` with `bodyLock: false`. The `approvalState` object tracks `submitting` and `candidateId`. `beginPending(["approveBtn"])` disables the approve button during submission. On success, the overlay closes and candidate state clears. On failure, `endPending()` re-enables the button. Success-with-warning (invoice staging) still closes the overlay and shows the warning separately.
+2. **Duplicate confirmation** — uses `reviewOverlayCtrl` with `duplicateState` tracking `submitting` and `candidateId`. `beginPending(["duplicateBtn"])` disables the confirm button. On success, the overlay closes, candidate state clears, and the next unresolved item opens when supported.
+3. **Restore candidate** — uses `restoreState` tracking `submitting` and `candidateId`. Prevents duplicate submission and concurrent restore of different candidates. On success, the sessions list refreshes. Success-with-warning shows the warning separately. On failure, the button re-enables and a sanitized error is shown.
+4. **Billing relationship wizard** — uses `billingWizardState` tracking `submitting`. The wizard modal (`closeBillingModal`) clears `billingWizardState.submitting` on close. The `doSave` function syncs the local `saving` flag with `billingWizardState.submitting`. On failure, the modal stays open, the save button re-enables, and selected chips are preserved.
+
+### Workflows Not Yet Migrated
+
+The following overlays are not yet migrated to the overlay manager and retain their existing lifecycle:
+
+- Payment overlay (`#paymentOverlay`)
+- Payment detail overlay (`#paymentDetailOverlay`)
+- Line editor modal (`#lineEditorModalOverlay`)
+- Invoice finalization preview (inline workspace, not an overlay)
+
+These may be migrated in a future round if they share the same lifecycle requirements.
+
+### Tests
+
+Focused tests are in `tests/test_overlay_manager.py` (111 tests).
+
 ## Current Deferred UI Work
 
 The following are not complete:

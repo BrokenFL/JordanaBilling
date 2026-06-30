@@ -169,6 +169,10 @@ All browser-visible errors are sanitized. User-controlled HTML is escaped. Write
 
 The UI must not expose SQL, stack traces, filesystem paths, credentials, API keys, or private internal diagnostics.
 
+## Shared Overlay Manager
+
+The review overlay, duplicate confirmation, restore candidate, and billing relationship wizard use a shared overlay lifecycle manager at `app/jordana_invoice/static/js/overlay_manager.js`. The manager coordinates focus capture/restoration, ARIA state, body scroll lock, keydown binding, and pending-state button disabling. Each workflow owns its own state object (`approvalState`, `duplicateState`, `restoreState`, `billingWizardState`) with `submitting` and `candidateId` fields. See `docs/UI_SPEC.md` for the full overlay manager specification.
+
 ## Related Documents
 
 - `docs/UI_SPEC.md`

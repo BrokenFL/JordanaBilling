@@ -451,7 +451,7 @@ class ReviewUiStaticTests(unittest.TestCase):
 
         self.assertIn("function openReviewOverlay()", js)
         self.assertIn("function closeReviewOverlay(", js)
-        self.assertIn("function overlayKeydownHandler", js)
+        self.assertIn("function reviewOverlayKeydownHandler", js)
         self.assertIn("function goToPreviousSession()", js)
         self.assertIn("function saveAndNext()", js)
 
@@ -1541,7 +1541,7 @@ class ReviewOverlayCloseTests(unittest.TestCase):
         self.assertIn("state.billingParty = null;", self.js)
 
     def test_closeReviewOverlay_skipDirtyCheck_option_bypasses_prompt(self):
-        self.assertIn("if (!skipDirtyCheck && state.dirty.size > 0)", self.js)
+        self.assertIn("if (reviewOverlayCtrl.isOpen() && !skipDirtyCheck && state.dirty.size > 0)", self.js)
 
     def test_openBillingRelationshipEditor_closes_overlay_before_navigation(self):
         start = self.js.index("function openBillingRelationshipEditor()")
@@ -1569,13 +1569,12 @@ class ReviewApprovalTests(unittest.TestCase):
         self.save_fn = self.js[start:end]
 
     def test_approval_has_single_submit_guard(self):
-        self.assertIn("approvalInProgress", self.js)
-        self.assertIn("if (approve && approvalInProgress) return;", self.save_fn)
+        self.assertIn("approvalState", self.js)
+        self.assertIn("if (approve && approvalState.submitting) return;", self.save_fn)
 
     def test_approval_disables_button_during_request(self):
-        self.assertIn("approvalInProgress = true;", self.save_fn)
-        self.assertIn('const approveBtn = $("approveBtn");', self.save_fn)
-        self.assertIn("approveBtn.disabled = true;", self.save_fn)
+        self.assertIn("approvalState.submitting = true;", self.save_fn)
+        self.assertIn('reviewOverlayCtrl.beginPending(["approveBtn"]);', self.save_fn)
 
     def test_approval_closes_overlay_on_success(self):
         self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
@@ -1599,8 +1598,8 @@ class ReviewApprovalTests(unittest.TestCase):
         self.assertIn("Invoice staging", self.save_fn)
 
     def test_approval_reenables_button_on_error(self):
-        self.assertIn("approvalInProgress = false;", self.save_fn)
-        self.assertIn("approveBtn.disabled = false;", self.save_fn)
+        self.assertIn("approvalState.submitting = false;", self.save_fn)
+        self.assertIn("reviewOverlayCtrl.endPending()", self.save_fn)
 
     def test_approval_sanitizes_error_messages(self):
         self.assertIn('msg.startsWith("Cannot approve")', self.save_fn)
@@ -1902,7 +1901,7 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
 
     def test_show_invoice_success_uses_invoices_view(self):
         start = self.js.index("function showInvoiceSuccess")
-        end = self.js.index("function overlayKeydownHandler", start)
+        end = self.js.index("function goToPreviousSession", start)
         fn = self.js[start:end]
         self.assertIn('$("invoicesView")', fn)
         self.assertIn("review-success-banner", fn)

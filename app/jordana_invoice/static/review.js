@@ -1,9 +1,14 @@
-let overlayReturnFocus = null;
-let paymentOverlayReturnFocus = null;
-let approvalInProgress = false;
-let duplicateInProgress = false;
 const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
 const { api, sanitizeUiErrorMessage } = window.JordanaAPI;
+const { create: createOverlay } = window.JordanaOverlay;
+
+const approvalState = { submitting: false, candidateId: null };
+const duplicateState = { submitting: false, candidateId: null };
+const restoreState = { submitting: false, candidateId: null };
+const billingWizardState = { submitting: false };
+
+let paymentOverlayReturnFocus = null;
+let paymentDetailReturnFocus = null;
 
 const state = {
   items: [],
@@ -240,13 +245,13 @@ function renderRows(items, total) {
   document.querySelectorAll("#candidateRows tr[data-id]").forEach(row => {
     row.addEventListener("click", (e) => {
       if (e.target.closest("button") || e.target.closest("a")) return;
-      overlayReturnFocus = row;
+      if (reviewOverlayCtrl) reviewOverlayCtrl.setReturnFocus(row);
       selectCandidate(row.dataset.id);
     });
     const reviewBtn = row.querySelector(".review-btn");
     if (reviewBtn) reviewBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      overlayReturnFocus = reviewBtn;
+      if (reviewOverlayCtrl) reviewOverlayCtrl.setReturnFocus(reviewBtn);
       selectCandidate(row.dataset.id);
     });
   });
@@ -902,11 +907,11 @@ async function saveSessionSection() {
 }
 
 async function save(approve) {
-  if (approve && approvalInProgress) return;
+  if (approve && approvalState.submitting) return;
   if (approve) {
-    approvalInProgress = true;
-    const approveBtn = $("approveBtn");
-    if (approveBtn) approveBtn.disabled = true;
+    approvalState.submitting = true;
+    approvalState.candidateId = state.selected;
+    if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn"]);
   }
   await resolveTypedSelections();
   try {
@@ -955,15 +960,16 @@ async function save(approve) {
         }
       }
       
-      approvalInProgress = false;
+      approvalState.submitting = false;
+      approvalState.candidateId = null;
     } else {
       renderInspector(updated);
     }
   } catch (error) {
     if (approve) {
-      approvalInProgress = false;
-      const approveBtn = $("approveBtn");
-      if (approveBtn && document.body.contains(approveBtn)) approveBtn.disabled = false;
+      approvalState.submitting = false;
+      approvalState.candidateId = null;
+      if (reviewOverlayCtrl) reviewOverlayCtrl.endPending();
       const msg = error.message || "";
       if (msg.startsWith("Cannot approve")) {
         alert(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
@@ -1050,10 +1056,10 @@ async function mark(classification) {
 }
 
 async function confirmDuplicateAndNext() {
-  if (duplicateInProgress) return;
-  duplicateInProgress = true;
-  const dupBtn = $("duplicateBtn");
-  if (dupBtn) dupBtn.disabled = true;
+  if (duplicateState.submitting) return;
+  duplicateState.submitting = true;
+  duplicateState.candidateId = state.selected;
+  if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["duplicateBtn"]);
   try {
     await api(`/api/review/candidates/${state.selected}/mark`, {
       method: "POST",
@@ -1071,11 +1077,12 @@ async function confirmDuplicateAndNext() {
       else $("searchBox")?.focus();
     }
     showReviewSuccess("Duplicate resolved");
-    duplicateInProgress = false;
+    duplicateState.submitting = false;
+    duplicateState.candidateId = null;
   } catch (error) {
-    duplicateInProgress = false;
-    const btn = $("duplicateBtn");
-    if (btn && document.body.contains(btn)) btn.disabled = false;
+    duplicateState.submitting = false;
+    duplicateState.candidateId = null;
+    if (reviewOverlayCtrl) reviewOverlayCtrl.endPending();
     alert(error.message || "Could not mark as duplicate. Please try again.");
   }
 }
@@ -1325,28 +1332,47 @@ function showRateCard() {
   loadRateRules();
 }
 
+function reviewOverlayKeydownHandler(e, overlay) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeReviewOverlay();
+    return;
+  }
+  if (e.key === "Tab") {
+    if (!overlay || overlay.hidden) return;
+    const focusable = overlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+}
+
+const reviewOverlayCtrl = createOverlay({
+  overlay: "reviewOverlay",
+  closeBtn: "reviewOverlayClose",
+  firstFocusSelector: "button, input, select, a[href]",
+  keydownHandler: reviewOverlayKeydownHandler,
+  bodyLock: false
+});
+
 function openReviewOverlay() {
-  const overlay = $("reviewOverlay");
-  if (!overlay) return;
-  overlay.hidden = false;
-  document.addEventListener("keydown", overlayKeydownHandler);
-  const closeBtn = $("reviewOverlayClose");
-  if (closeBtn) closeBtn.onclick = closeReviewOverlay;
-  requestAnimationFrame(() => {
-    const focusable = overlay.querySelector("button, input, select, a[href]");
-    if (focusable) focusable.focus();
-  });
+  if (!reviewOverlayCtrl) return;
+  reviewOverlayCtrl.open({});
 }
 
 function closeReviewOverlay({ clearCandidate = false, skipDirtyCheck = false } = {}) {
-  const overlay = $("reviewOverlay");
-  if (!overlay) return true;
-  if (!skipDirtyCheck && state.dirty.size > 0) {
+  if (!reviewOverlayCtrl) return true;
+  if (reviewOverlayCtrl.isOpen() && !skipDirtyCheck && state.dirty.size > 0) {
     if (!confirm("You have unsaved changes. Close anyway?")) return false;
     state.dirty.clear();
   }
-  overlay.hidden = true;
-  document.removeEventListener("keydown", overlayKeydownHandler);
   if (clearCandidate) {
     state.selected = null;
     state.detail = null;
@@ -1355,10 +1381,7 @@ function closeReviewOverlay({ clearCandidate = false, skipDirtyCheck = false } =
     state.billingParty = null;
     state.editSteps = { clients: false, session: false };
   }
-  if (overlayReturnFocus && document.body.contains(overlayReturnFocus)) {
-    overlayReturnFocus.focus();
-    overlayReturnFocus = null;
-  }
+  reviewOverlayCtrl.close({ restoreFocus: true });
   return true;
 }
 
@@ -1591,29 +1614,6 @@ async function submitInvoicePayment(invoice) {
   }
 }
 
-function overlayKeydownHandler(e) {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    closeReviewOverlay();
-    return;
-  }
-  if (e.key === "Tab") {
-    const overlay = $("reviewOverlay");
-    if (!overlay || overlay.hidden) return;
-    const focusable = overlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]');
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-}
-
 function goToPreviousSession() {
   const items = state.items;
   if (!items.length) return;
@@ -1768,6 +1768,12 @@ function renderSessions(rows, total) {
 }
 
 async function restoreSessionRow(candidateId) {
+  if (restoreState.submitting) return;
+  if (restoreState.candidateId && restoreState.candidateId !== candidateId) return;
+  restoreState.submitting = true;
+  restoreState.candidateId = candidateId;
+  const btn = document.querySelector(`.restore-session-btn[data-cid="${CSS.escape(candidateId)}"]`);
+  if (btn) btn.disabled = true;
   try {
     const result = await api(`/api/review/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify({ reason: "Returned to review queue from Sessions view" }) });
     await loadSessions();
@@ -1775,7 +1781,11 @@ async function restoreSessionRow(candidateId) {
       alert(result.warning);
     }
   } catch (err) {
-    alert("Could not restore session: " + err.message);
+    alert(sanitizeUiErrorMessage(err.message, "Could not restore session. Please try again."));
+    if (btn && document.body.contains(btn)) btn.disabled = false;
+  } finally {
+    restoreState.submitting = false;
+    restoreState.candidateId = null;
   }
 }
 
@@ -2210,8 +2220,6 @@ function closePaymentDetailOverlay() {
   }
   paymentDetailReturnFocus = null;
 }
-
-let paymentDetailReturnFocus = null;
 
 async function loadReports() {
   const grid = $("reportCardGrid");
@@ -5248,9 +5256,10 @@ function closeBillingModal() {
   const overlay = document.getElementById("billingModalOverlay");
   if (overlay) {
     overlay.remove();
-    document.body.style.overflow = "";
   }
+  document.body.style.overflow = "";
   document.removeEventListener("keydown", billingModalTrapKeydown);
+  billingWizardState.submitting = false;
 }
 
 function billingModalTrapKeydown(e) {
@@ -6019,6 +6028,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     const saveBtn = document.getElementById("wizardSave");
     if (!saveBtn) return;
     saving = true;
+    billingWizardState.submitting = true;
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving relationship…";
     errorDisplay.textContent = "";
@@ -6065,6 +6075,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       }
     } catch (err) {
       saving = false;
+      billingWizardState.submitting = false;
       saveBtn.disabled = false;
       saveBtn.textContent = "Save Billing Relationship";
       if (err && (err.duplicate || (err.created === false))) {
@@ -6076,6 +6087,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
           if (useBtn) {
             useBtn.addEventListener("click", async () => {
               saving = true;
+              billingWizardState.submitting = true;
               saveBtn.disabled = true;
               saveBtn.textContent = "Attaching to session…";
               errorDisplay.textContent = "";
@@ -6138,8 +6150,10 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       setTimeout(() => { if (banner) banner.remove(); }, 5000);
 
       saving = false;
+      billingWizardState.submitting = false;
     } catch (attachErr) {
       saving = false;
+      billingWizardState.submitting = false;
       saveBtn.disabled = false;
       saveBtn.textContent = "Save Billing Relationship";
       errorDisplay.innerHTML = `
@@ -6154,6 +6168,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       if (retryBtn) {
         retryBtn.addEventListener("click", async () => {
           saving = true;
+          billingWizardState.submitting = true;
           saveBtn.disabled = true;
           saveBtn.textContent = "Attaching to session…";
           errorDisplay.textContent = "";

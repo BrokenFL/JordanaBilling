@@ -119,13 +119,12 @@ class DuplicateResolutionTests(unittest.TestCase):
 
     def test_button_disables_while_pending(self):
         """2. Button disables while pending."""
-        self.assertIn("duplicateInProgress = true", self.dup_fn)
-        self.assertIn('const dupBtn = $("duplicateBtn")', self.dup_fn)
-        self.assertIn("dupBtn.disabled = true", self.dup_fn)
+        self.assertIn("duplicateState.submitting = true", self.dup_fn)
+        self.assertIn('reviewOverlayCtrl.beginPending(["duplicateBtn"]);', self.dup_fn)
 
     def test_double_click_sends_one_request(self):
         """3. Double-click sends one request."""
-        self.assertIn("if (duplicateInProgress) return;", self.dup_fn)
+        self.assertIn("if (duplicateState.submitting) return;", self.dup_fn)
 
     def test_success_closes_overlay(self):
         """4. Success closes the overlay."""
@@ -157,8 +156,8 @@ class DuplicateResolutionTests(unittest.TestCase):
     def test_failure_reenables_action(self):
         """10. Failure re-enables the action."""
         catch = self._catch_block()
-        self.assertIn("duplicateInProgress = false", catch)
-        self.assertIn("btn.disabled = false", catch)
+        self.assertIn("duplicateState.submitting = false", catch)
+        self.assertIn("reviewOverlayCtrl.endPending()", catch)
 
     def test_already_approved_and_unrelated_records_unchanged(self):
         """11. The duplicate function only calls the mark endpoint, no other mutation."""
@@ -173,8 +172,8 @@ class DuplicateResolutionTests(unittest.TestCase):
         self.assertIn("Duplicate resolved", self.dup_fn)
 
     def test_duplicate_in_progress_flag_exists_at_top_level(self):
-        """The duplicateInProgress flag is declared at module level."""
-        self.assertIn("let duplicateInProgress = false;", self.js)
+        """The duplicateState flag is declared at module level."""
+        self.assertIn("const duplicateState = { submitting: false, candidateId: null };", self.js)
 
     def test_button_wired_to_confirmDuplicateAndNext(self):
         """The duplicate button is wired to confirmDuplicateAndNext."""
