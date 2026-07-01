@@ -6,6 +6,26 @@ const duplicateState = { submitting: false, candidateId: null };
 const restoreState = { submitting: false, candidateId: null };
 const billingWizardState = { submitting: false };
 
+function isFutureAppointment(session) {
+  if (!session || !session.end_at) return false;
+  try {
+    const end = new Date(session.end_at);
+    return end.getTime() > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function futureAppointmentMessage(session) {
+  if (!session || !session.end_at) return "";
+  try {
+    const end = new Date(session.end_at);
+    return `This appointment is scheduled for ${end.toLocaleDateString("en-US", { month: "long", day: "numeric" })} at ${end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}. It can be approved after the session ends.`;
+  } catch {
+    return "This appointment is in the future. It can be approved after the session ends.";
+  }
+}
+
 let paymentOverlayReturnFocus = null;
 let paymentDetailReturnFocus = null;
 
@@ -413,7 +433,8 @@ function renderInspector(data) {
 
     <div class="actions">
       <button id="prevSessionBtn">Previous</button>
-      ${isSession && readiness.all_ready ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
+      ${isSession && readiness.all_ready && !isFutureAppointment(s) ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
+      ${isSession && readiness.all_ready && isFutureAppointment(s) ? '<button class="approve" id="approveBtn" disabled>Approve Session</button><div class="readonly-note" id="futureAppointmentNote">' + escapeHtml(futureAppointmentMessage(s)) + '</div>' : ""}
       ${!isSession ? '<button class="approve" id="sendToReviewBtn">Send to Review</button>' : ""}
       <button id="saveNextBtn" class="save">Save and next</button>
       <button id="personalBtn">Mark Personal/Admin</button>
@@ -1018,7 +1039,7 @@ async function updateSessionRatePreview() {
   const payload = {
     session_date: state.detail.session.session_date || state.detail.session.start_at?.slice(0, 10) || "",
     duration_choice: $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes),
-    custom_duration_minutes: $("customDurationInput")?.value || null,
+    custom_duration_minutes: ($("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes)) === "custom" ? ($("customDurationInput")?.value || null) : null,
     billing_session_type: $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy",
     appointment_status: state.detail.session.appointment_status || "scheduled",
     custom_service_description: $("customDescInput")?.value || "",
@@ -3329,7 +3350,7 @@ function buildRateRulePayload() {
   const payload = {
     amount: $("rateAmountInput").value,
     duration_choice: $("rateDurationChoice").value,
-    custom_duration_minutes: $("rateCustomDurationMinutes").value,
+    custom_duration_minutes: $("rateDurationChoice").value === "custom" ? ($("rateCustomDurationMinutes").value || null) : null,
     billing_session_type: $("rateBillingSessionType").value,
     custom_service_description: $("rateCustomDescription").value,
     custom_service_code: $("rateCustomCode").value,

@@ -397,6 +397,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Cannot approve until required fields are complete:",
             "No active billing party found for ",
             "Session is not invoice eligible: ",
+            "This appointment is scheduled for ",
             "Invalid year:",
             "Unsupported date range:",
             "Year must be an integer, got ",

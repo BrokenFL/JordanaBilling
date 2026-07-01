@@ -270,11 +270,10 @@ class TestParseApproveSessionRequest(unittest.TestCase):
         })
         self.assertNotIn("custom_duration_minutes", req.to_payload())
 
-    def test_custom_duration_empty_string_rejected(self):
-        """Empty string must be rejected — it is not a valid integer."""
-        with self.assertRaises(RequestValidationError) as ctx:
-            parse_approve_session_request({"custom_duration_minutes": ""})
-        self.assertIn("custom_duration_minutes must be an integer", str(ctx.exception))
+    def test_custom_duration_empty_string_accepted_as_none(self):
+        """Empty string is treated as None — frontend sends empty for standard durations."""
+        req = parse_approve_session_request({"custom_duration_minutes": ""})
+        self.assertIsNone(req.to_payload().get("custom_duration_minutes"))
 
     def test_custom_duration_valid_integer_accepted(self):
         """Valid custom duration integer must pass."""

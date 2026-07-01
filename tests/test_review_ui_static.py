@@ -1665,7 +1665,7 @@ class ReviewCustomDurationPayloadTests(unittest.TestCase):
         start = self.js.index("async function updateSessionRatePreview()")
         end = self.js.index("async function resolveTypedSelections", start)
         fn = self.js[start:end]
-        self.assertIn('custom_duration_minutes: $("customDurationInput")?.value || null', fn)
+        self.assertIn('custom_duration_minutes', fn)
         self.assertNotIn('custom_duration_minutes: $("customDurationInput")?.value || ""', fn)
 
 

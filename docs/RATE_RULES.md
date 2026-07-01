@@ -94,6 +94,10 @@ Creating a rule with the same scope, dimensions, and effective date as an existi
 
 The Rate Card form is responsive: all controls and the **Add Rate Rule** button remain visible and clickable at normal laptop/browser widths.
 
+### Custom Duration Payload Behavior
+
+For standard durations (30, 45, 50, 60, 90, 120 minutes), `custom_duration_minutes` is sent as JSON `null` or omitted. Only when the user explicitly chooses a custom duration is an integer sent. This applies to all Rate Card preview, save, update, and replace paths. The backend treats empty strings as `null` for robustness.
+
 Historical approved session rates are preserved in `sessions.rate_cents_snapshot` at approval time and must not be rewritten by later rate-card edits. `approved_rate_source` and `approved_rate_rule_id` preserve the source used for the actual charged amount. Finalized invoice line amounts are frozen snapshots and are never reconstructed from current rate rules.
 ## Calendar Status Interaction
 

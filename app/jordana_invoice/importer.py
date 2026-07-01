@@ -913,6 +913,141 @@ def initial_billing_treatment(result: ParseResult) -> str:
     return "not_billable"
 
 
+def maybe_create_source_change_warning(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    session_id: str,
+    old_title: str,
+    new_title: str,
+) -> None:
+    """Create a visible source-change warning when an approved session's
+    raw calendar title has changed in a later snapshot.
+
+    Does NOT un-approve the session or rewrite approved values.
+    Creates a review_items entry and a review_queue entry so the change
+    is visible in the review queue. Idempotent: if an unreviewed
+    source_change_warning already exists for this candidate, it is
+    updated rather than duplicated.
+    """
+    if not old_title or not new_title or old_title == new_title:
+        return
+
+    now = now_iso()
+    reason = f"Source calendar title changed after approval: \"{old_title}\" -> \"{new_title}\""
+    unresolved_fields = ["source_change_warning"]
+    review_status = "source_change_warning"
+
+    existing_warning = conn.execute(
+        """
+        SELECT review_item_id
+        FROM review_items
+        WHERE candidate_id = ?
+          AND review_status = 'source_change_warning'
+          AND reviewed_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (candidate_id,),
+    ).fetchone()
+
+    if existing_warning:
+        conn.execute(
+            """
+            UPDATE review_items
+            SET session_id = ?,
+                unresolved_fields = ?,
+                review_reasons = ?,
+                old_value = ?,
+                new_value = ?,
+                reason = ?,
+                updated_at = ?
+            WHERE review_item_id = ?
+            """,
+            (
+                session_id,
+                json_dumps(unresolved_fields),
+                json_dumps([reason]),
+                old_title,
+                new_title,
+                reason,
+                now,
+                existing_warning["review_item_id"],
+            ),
+        )
+        audit(conn, "review_item", existing_warning["review_item_id"], "updated", {"reason": reason})
+        return
+
+    review_item_id = new_id()
+    conn.execute(
+        """
+        INSERT INTO review_items (
+          review_item_id, candidate_id, session_id, review_status,
+          unresolved_fields, review_reasons, old_value, new_value,
+          reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            review_item_id,
+            candidate_id,
+            session_id,
+            review_status,
+            json_dumps(unresolved_fields),
+            json_dumps([reason]),
+            old_title,
+            new_title,
+            reason,
+            now,
+            now,
+        ),
+    )
+
+    existing_queue = conn.execute(
+        """
+        SELECT id
+        FROM review_queue
+        WHERE candidate_id = ?
+          AND status = 'open'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (candidate_id,),
+    ).fetchone()
+    if existing_queue:
+        conn.execute(
+            """
+            UPDATE review_queue
+            SET review_type = 'source_change_warning',
+                priority = 1,
+                reason = ?,
+                fields = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (reason, json_dumps(unresolved_fields), now, existing_queue["id"]),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO review_queue (
+              id, candidate_id, review_type, priority, reason, fields,
+              status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id(),
+                candidate_id,
+                "source_change_warning",
+                1,
+                reason,
+                json_dumps(unresolved_fields),
+                "open",
+                now,
+                now,
+            ),
+        )
+    audit(conn, "review_item", review_item_id, "source_change_warning_created", {"old_title": old_title, "new_title": new_title})
+
+
 def maybe_insert_session(
     conn: sqlite3.Connection,
     candidate_id: str,
@@ -1043,6 +1178,14 @@ def maybe_insert_session(
             conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
             insert_session_participants(conn, existing["id"], result)
         maybe_insert_review_item(conn, candidate_id, existing["id"], result, unresolved_fields, review_status)
+        if existing["review_status"] == "approved":
+            maybe_create_source_change_warning(
+                conn,
+                candidate_id,
+                existing["id"],
+                text(existing["raw_calendar_title"]),
+                text(latest["event_title"]),
+            )
         audit(conn, "session", existing["id"], "updated_from_calendar_snapshot", result.as_dict())
         return True
 

@@ -65,6 +65,9 @@ def _optional_int_not_bool(data: dict[str, Any], key: str) -> int | None:
     if isinstance(value, int):
         return value
     if isinstance(value, str):
+        if value.strip() == "":
+            data[key] = None
+            return None
         try:
             return int(value)
         except ValueError:

@@ -111,6 +111,14 @@ fi
 
 TMP_APP="${APP_DEST}.installing"
 rm -rf "$TMP_APP"
+
+cleanup_temp_app() {
+  if [[ -e "$TMP_APP" && "$TMP_APP" != "$APP_DEST" ]]; then
+    rm -rf "$TMP_APP"
+  fi
+}
+trap cleanup_temp_app EXIT
+
 ditto --norsrc "$SOURCE_APP" "$TMP_APP"
 rm -rf "$TMP_APP/Contents/Resources/runtime/venv"
 mkdir -p "$TMP_APP/Contents/Resources/runtime"

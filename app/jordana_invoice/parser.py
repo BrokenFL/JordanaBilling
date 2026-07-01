@@ -178,6 +178,7 @@ class ParseResult:
     billing_type_source: str = "auto"
     location_text: str | None = None
     late_evening_warning: bool = False
+    unresolved_trailing_text: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -217,6 +218,7 @@ class ParseResult:
             "billing_type_source": self.billing_type_source,
             "location_text": self.location_text,
             "late_evening_warning": self.late_evening_warning,
+            "unresolved_trailing_text": self.unresolved_trailing_text,
         }
 
 
@@ -558,6 +560,33 @@ def parse_event(row: dict[str, object]) -> ParseResult:
     if contains_any(lower, NONBILLABLE_KEYWORDS):
         return finalize_result(status_result("nonbillable", start_at, computed_duration, time_info))
 
+    name_guess, trailing_text = extract_name_guess(title)
+    if name_guess:
+        explanation_parts = ["No recognized shorthand, exclusion, or status pattern."]
+        explanation_parts.append(f"Participant guess: {name_guess}.")
+        if trailing_text:
+            explanation_parts.append(f"Unresolved trailing text: \"{trailing_text}\".")
+        if for_reference:
+            explanation_parts.append(f"Title references \"{for_reference}\" after 'for'.")
+        return finalize_result(
+            ParseResult(
+                classification="unresolved",
+                confidence=0.3,
+                explanation=" ".join(explanation_parts),
+                fields_requiring_review=["classification", "client"],
+                proposed_client_name=name_guess,
+                candidate_person_names=[name_guess],
+                proposed_start_at=start_at or None,
+                proposed_duration_minutes=computed_duration or 60,
+                duration_source="calendar" if computed_duration else "default",
+                calendar_duration_minutes=computed_duration,
+                appointment_status=occurrence_status,
+                possible_referenced_person=for_reference,
+                unresolved_trailing_text=trailing_text,
+                **time_info,
+            )
+        )
+
     return finalize_result(
         ParseResult(
             classification="unresolved",
@@ -569,6 +598,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             duration_source="calendar" if computed_duration else "default",
             calendar_duration_minutes=computed_duration,
             appointment_status=occurrence_status,
+            possible_referenced_person=for_reference,
             **time_info,
         )
     )
@@ -1021,3 +1051,47 @@ def confidence_label(result: ParseResult) -> str:
 
 def contains_any(value: str, needles: set[str]) -> bool:
     return any(needle in value for needle in needles)
+
+
+_NAME_GUESS_STOPWORDS = {
+    "am", "pm", "min", "mins", "minutes", "hour", "hours",
+    "zoom", "phone", "facetime", "office", "home", "house",
+    "late", "cx", "cancel", "cancelled", "canceled",
+    "no", "show", "noshow",
+    "leaves", "leave", "going", "away", "vacation",
+    "for", "with", "and", "the", "a", "an",
+}
+
+
+def extract_name_guess(title: str) -> tuple[str | None, str | None]:
+    """Try to extract a leading person name from an ambiguous title.
+
+    Returns (name, trailing_text) or (None, None) if no name can be extracted.
+    The name is a sequence of 1-3 leading capitalized alphabetic tokens
+    that do not match known stopwords. Trailing text is everything after
+    the name, preserved as administrative review context.
+    """
+    tokens = title.strip().split()
+    if not tokens:
+        return None, None
+
+    name_tokens: list[str] = []
+    for token in tokens:
+        cleaned = token.strip(".,;:!?")
+        if not cleaned or not re.search(r"[A-Za-z]", cleaned):
+            break
+        if not cleaned[0].isupper():
+            break
+        lower = cleaned.lower()
+        if lower in _NAME_GUESS_STOPWORDS:
+            break
+        name_tokens.append(cleaned)
+        if len(name_tokens) >= 3:
+            break
+
+    if not name_tokens:
+        return None, None
+
+    name = canonicalize_name(" ".join(name_tokens))
+    trailing = " ".join(tokens[len(name_tokens):]).strip()
+    return (name if name else None), (trailing if trailing else None)

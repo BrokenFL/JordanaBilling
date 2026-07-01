@@ -93,7 +93,7 @@ class PaidAtSessionApplyTests(unittest.TestCase):
         self.conn.close()
         self.temp.cleanup()
 
-    def _import_candidate(self, key, title="Casey Sample | 60 | Office", start="2026-07-10T10:00:00-04:00"):
+    def _import_candidate(self, key, title="Casey Sample | 60 | Office", start="2026-05-10T10:00:00-04:00"):
         import_rows(self.conn, [raw_row(key, title, start)], "test")
         candidate = self.conn.execute(
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",

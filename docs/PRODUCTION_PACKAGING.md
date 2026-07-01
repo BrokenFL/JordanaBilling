@@ -117,6 +117,10 @@ runs `scripts/verify_installation.sh`.
 
 The installer preserves existing `config/.env` and `data/jordana_invoice.sqlite3`. When the database already exists, the setup app disables clean-start initialization and says the existing database will be preserved. It fails rather than creating a replacement database unless `--init-empty-db` is supplied and confirmed.
 
+### Installer Temp Cleanup
+
+The installer stages the app bundle in a temporary `Jordana Billing.app.installing` directory during the venv build. On any controlled abort or handled install failure (including cross-user-running protection, Python version mismatch, wheelhouse install failure, or verification failure), the temporary `.app.installing` directory is automatically removed via an EXIT trap. An existing valid `Jordana Billing.app` is never deleted. Application Support, the database, config, invoices, receipts, reports, and user data are never touched by the cleanup. On successful install, the temp app is atomically renamed into the final destination.
+
 For the spare clean-Mac test, check the clean-start confirmation in the setup
 app. Clean-start creates an empty database only after explicit confirmation.
 It lets unresolved review evidence sync from Google Sheets but does not import

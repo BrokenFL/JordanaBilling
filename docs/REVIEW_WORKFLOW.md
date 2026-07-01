@@ -116,6 +116,15 @@ See `docs/SECTION_LEVEL_SAVES.md` for the complete contract.
 
 Approval validates participants, Bill To, duration, one of the five session types, derived time category, actual charged rate, Payment Handling, and any required cancelled/no-show or paid-at-session details.
 
+### Future-Appointment Gating
+
+Future appointments may be opened and reviewed. Jordana may confirm Participants, Bill To, duration, session type, time category, rate, and payment status. The Approve action remains disabled until the event end time has passed. The backend enforces the same rule even if the frontend is bypassed.
+
+- The actual event end timestamp in the configured Eastern timezone is used, not only the calendar date.
+- The UI shows a message such as: `This appointment is scheduled for July 1 at 3:00 PM. It can be approved after the session ends.`
+- Once the end time passes, the item becomes approvable without recreating it.
+- Already-approved future sessions from prior versions are preserved with their audit history.
+
 During submission, the approval action is disabled.
 
 For invoice billing:
@@ -154,6 +163,29 @@ Saving persists transactionally to SQLite. Approved sessions are never silently 
 ## Candidate Identity And Repair
 
 Candidate identity resolution uses exact event ID, exact fingerprint, then conservative exact structural matching. Ambiguous identity remains in review. Raw snapshots and existing identity evidence are preserved.
+
+### Calendar Event Revision Handling
+
+The same appointment may be edited in Apple Calendar and arrive later with a changed title. The system uses the stable calendar event identifier to recognize revisions of the same event.
+
+- Every raw snapshot is preserved for audit history.
+- The newest valid snapshot becomes the current source evidence for the unresolved review candidate.
+- Two revisions of the same event do not create two active operational sessions.
+- Approved sessions are not silently overwritten.
+- If an already-approved session's source event later changes, a visible source-change warning review item is created instead of rewriting approved values.
+- Event absence from one capture window alone does not prove deletion/cancellation.
+- The logic is additive, idempotent, and reversible.
+
+### Ambiguous Title Review Routing
+
+Ambiguous but recognizable calendar titles (e.g. `Leah Grossman 630 38`, `Sage Burkhead 4 zoom`, `Fred 60`) are routed to the Review Queue with safe participant guesses.
+
+- The parser extracts a leading person name as a participant guess where confidence is high.
+- Calendar event start/end timestamps remain authoritative; title time tokens are hints only.
+- Unknown or conflicting trailing text is preserved as administrative review context (not clinical interpretation).
+- Any unresolved, conflicting, or extra token routes the item into the Review Queue.
+- No silent auto-approval occurs.
+- No duplicate operational session is created.
 
 Duplicate repair supports a sanitized dry-run, explicit apply, verified backup, idempotent application, and guarded reversal. Approved, invoiced, paid, audited, and raw-evidence records are protected. Reversal is refused after later edits make it unsafe.
 

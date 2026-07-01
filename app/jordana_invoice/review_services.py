@@ -882,6 +882,37 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
         else:
             return get_review_candidate(conn, candidate_id)
 
+    # 1b. Future-appointment gate: cannot approve until the session end time has passed
+    # Query end_at directly to avoid side effects from session_for_candidate
+    gate_row = conn.execute(
+        """
+        SELECT s.end_at AS session_end_at, c.end_at AS candidate_end_at
+        FROM calendar_event_candidates c
+        LEFT JOIN sessions s ON s.candidate_id = c.id
+        WHERE c.id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    end_at_raw = ""
+    if gate_row:
+        end_at_raw = text(gate_row["session_end_at"]) or text(gate_row["candidate_end_at"])
+    if end_at_raw:
+        try:
+            end_dt = datetime.fromisoformat(end_at_raw.replace("Z", "+00:00"))
+            eastern = ZoneInfo("America/New_York")
+            now_eastern = datetime.now(eastern)
+            if end_dt > now_eastern:
+                end_local = end_dt.astimezone(eastern)
+                formatted = end_local.strftime("%B %-d at %-I:%M %p")
+                raise ValueError(
+                    f"This appointment is scheduled for {formatted}. "
+                    f"It can be approved after the session ends."
+                )
+        except ValueError:
+            raise
+        except Exception:
+            pass
+
     # 2. Start a single immediate transaction for first-time approval
     conn.execute("BEGIN IMMEDIATE")
     try:
