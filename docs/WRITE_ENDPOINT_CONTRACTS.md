@@ -781,8 +781,8 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Success status**: 200
 - **Success response**: `{"rows_fetched": int, "rows_imported": int, "duplicate_snapshots_skipped": int, "review_items_changed": int, "mode": "full"|"incremental", "status": sync_status_payload}`
 - **Error status codes**: 503 (SyncError, sanitized)
-- **DB tables**: `raw_calendar_snapshots`, `calendar_event_candidates`, `sessions`, `sync_state`, `review_items`
-- **Idempotent**: yes — snapshot_key uniqueness prevents duplicate imports
+- **DB tables**: `raw_calendar_snapshots`, `calendar_event_candidates`, `sessions`, `sync_state`, `review_items`; after successful non-dry-run sync, idempotent monthly invoice staging may also update draft `invoices` and `invoice_line_items` for previously approved sessions that have become eligible
+- **Idempotent**: yes — snapshot_key uniqueness prevents duplicate imports, and invoice staging reuses existing monthly drafts/lines
 - **Existing tests**: `test_review_server.py` (mocked), `test_sync.py`, `test_manual_sync_integration.py`
 - **Missing contract coverage**: HTTP-level shape (mocked tests exist)
 
@@ -794,8 +794,8 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Required fields**: `confirmed` (enforced: "Explicit rebuild confirmation is required.")
 - **Success status**: 200
 - **Success response**: `{"rows_fetched": int, "rows_imported": int, "duplicate_snapshots_skipped": int, "review_items_changed": int, "mode": "full", "backup_created": bool, "status": sync_status_payload}`
-- **DB tables**: `raw_calendar_snapshots`, `calendar_event_candidates`, `sessions`, `sync_state`, `review_items`
-- **Idempotent**: yes — snapshot_key uniqueness prevents duplicates; creates backup before rebuild
+- **DB tables**: `raw_calendar_snapshots`, `calendar_event_candidates`, `sessions`, `sync_state`, `review_items`; after successful rebuild sync, idempotent monthly invoice staging may also update draft `invoices` and `invoice_line_items` for previously approved sessions that have become eligible
+- **Idempotent**: yes — snapshot_key uniqueness prevents duplicates, invoice staging reuses existing monthly drafts/lines, and rebuild creates a backup first
 - **Existing tests**: `test_review_server_sync.py`
 - **Missing contract coverage**: HTTP-level shape, missing `confirmed` behavior
 

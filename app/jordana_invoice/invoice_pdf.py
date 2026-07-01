@@ -29,8 +29,9 @@ TITLE_LEADING = 31.0
 TOTAL_FONT_SIZE = 14.5
 TOTAL_LEADING = 18.0
 
-LOGO_MAX_WIDTH = 1.50 * POINTS_PER_INCH
-LOGO_MAX_HEIGHT = 1.05 * POINTS_PER_INCH
+LOGO_MAX_WIDTH = 1.725 * POINTS_PER_INCH
+LOGO_MAX_HEIGHT = 1.2075 * POINTS_PER_INCH
+LOGO_LEFT_SHIFT = 0.10 * POINTS_PER_INCH
 
 HEADER_LEFT_WIDTH = 4.55 * POINTS_PER_INCH
 HEADER_RIGHT_WIDTH = CONTENT_WIDTH - HEADER_LEFT_WIDTH
@@ -277,7 +278,7 @@ def _logo_flowable(raw_path: str | None, max_width: float, max_height: float):
                 scale = min(max_width / image.imageWidth, max_height / image.imageHeight)
                 image.drawWidth = image.imageWidth * scale
                 image.drawHeight = image.imageHeight * scale
-                return image
+                return _LeftShiftedFlowable(image, LOGO_LEFT_SHIFT)
             try:
                 from svglib.svglib import svg2rlg
             except ImportError:
@@ -289,14 +290,47 @@ def _logo_flowable(raw_path: str | None, max_width: float, max_height: float):
             drawing.scale(scale, scale)
             drawing.width *= scale
             drawing.height *= scale
-            return drawing
+            return _LeftShiftedFlowable(drawing, LOGO_LEFT_SHIFT)
         image = Image(str(path))
         scale = min(max_width / image.imageWidth, max_height / image.imageHeight)
         image.drawWidth = image.imageWidth * scale
         image.drawHeight = image.imageHeight * scale
-        return image
+        return _LeftShiftedFlowable(image, LOGO_LEFT_SHIFT)
     except Exception:
         return None
+
+
+class _LeftShiftedFlowable:
+    def __init__(self, flowable: Any, offset: float) -> None:
+        self.flowable = flowable
+        self.offset = offset
+
+    @property
+    def drawWidth(self) -> float:
+        return float(getattr(self.flowable, "drawWidth", getattr(self.flowable, "width", 0.0)) or 0.0)
+
+    @property
+    def drawHeight(self) -> float:
+        return float(getattr(self.flowable, "drawHeight", getattr(self.flowable, "height", 0.0)) or 0.0)
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        if hasattr(self.flowable, "wrap"):
+            return self.flowable.wrap(availWidth, availHeight)
+        return self.drawWidth, self.drawHeight
+
+    def wrapOn(self, canvas: Any, availWidth: float, availHeight: float) -> tuple[float, float]:
+        if hasattr(self.flowable, "wrapOn"):
+            return self.flowable.wrapOn(canvas, availWidth, availHeight)
+        return self.wrap(availWidth, availHeight)
+
+    def drawOn(self, canvas: Any, x: float, y: float, _sW: float = 0) -> None:
+        self.flowable.drawOn(canvas, x - self.offset, y, _sW)
+
+    def getSpaceBefore(self) -> float:
+        return float(self.flowable.getSpaceBefore()) if hasattr(self.flowable, "getSpaceBefore") else 0.0
+
+    def getSpaceAfter(self) -> float:
+        return float(self.flowable.getSpaceAfter()) if hasattr(self.flowable, "getSpaceAfter") else 0.0
 
 
 def _footer_pushdown_height(render: dict[str, Any]) -> float:

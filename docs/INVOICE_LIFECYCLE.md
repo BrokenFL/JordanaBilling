@@ -46,6 +46,8 @@ Stale draft lines are reconciled before finalization:
 
 The service returns a structured summary with counts of drafts created/reused, sessions staged/already staged/moved/removed as ineligible, sessions skipped with reasons, drafts consolidated, and errors by party/month. It does not expose private names in returned diagnostic identifiers.
 
+Future scheduled sessions are approved but not invoice-eligible until the appointment is no longer future-dated. They appear in `sessions_skipped` with the reason `"Future scheduled session is not invoice eligible"` and do not create a draft or invoice line. After a later successful calendar sync updates the session so it is eligible, the sync path runs the same idempotent staging reconciliation and adds the session to the appropriate monthly draft without duplicating existing drafts or lines.
+
 ### Staging API Endpoint
 
 An administrative HTTP endpoint is available for manual or scripted staging:
@@ -97,7 +99,7 @@ Session approval now triggers monthly invoice staging automatically. When a cand
 **Transaction separation**: Approval commits before staging begins. Staging uses its own per-party-month `BEGIN IMMEDIATE` transactions. A staging failure never reverses, rolls back, or misreports the successful approval.
 
 **Status values**:
-- `success` — staging completed with no party-month errors; full summary included.
+- `success` — staging completed with no party-month errors; full summary included. This can still mean zero sessions were staged, for example when the approved session is future scheduled and appears in `sessions_skipped`.
 - `warning` — staging completed but the summary contains errors; full summary included.
 - `unavailable` — staging could not run because the database was busy; `summary` is `null`.
 - `error` — unexpected staging exception; `summary` is `null`. No exception text, SQL, paths, or private data is exposed.
@@ -108,6 +110,7 @@ Session approval now triggers monthly invoice staging automatically. When a cand
 
 **Frontend**: The review UI (`review.js`) processes the additive `invoice_staging` field returned by candidate approval:
 - On successful staging (`status == "success"`), the success banner states `"Session approved and added to monthly draft."`
+- On a successful approval where the staging summary reports zero staged sessions because the session is future scheduled, the success banner states `"Session approved. This future session will become invoice-eligible after the appointment date."`
 - On staging warning (`status == "warning"`), database busy (`status == "unavailable"`), or unexpected error (`status == "error"`), approval remains successful, and a persistent amber warning banner is displayed at the top of the workbench via `showReviewWarning(message)`.
 - If the Invoices view is visible, the UI automatically invalidates/refreshes the active invoices list via `loadInvoices()` and reopens the active invoice via `openInvoice(...)` to reflect the newly staged session without requiring a manual reload.
 

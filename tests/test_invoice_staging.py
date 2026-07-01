@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jordana_invoice.db import connect, init_db, migrate_database
+from jordana_invoice.google_sync import EMPTY_CURSOR, SyncConfig, sync_with_connection
 from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_services import (
     create_invoice_draft,
@@ -33,8 +34,9 @@ class InvoiceStagingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.conn = connect(self.root / "staging.sqlite3")
-        migrate_database(self.root / "staging.sqlite3")
+        self.db_path = self.root / "staging.sqlite3"
+        self.conn = connect(self.db_path)
+        migrate_database(self.db_path)
         self.person = create_person(self.conn, {"first_name": "Avery", "last_name": "Stone", "display_name": "Avery Stone"})
         self.party = create_billing_party(self.conn, {
             "billing_name": "Avery Stone", "person_id": self.person["person_id"],
@@ -432,6 +434,77 @@ class InvoiceStagingTests(unittest.TestCase):
         # Session should be in skipped list
         skipped_ids = [s["session_id"] for s in result["sessions_skipped"]]
         self.assertTrue(len(skipped_ids) > 0)
+
+    def test_future_scheduled_session_skipped_with_exact_reason(self):
+        session = self.approved_session("future1", day=10)
+        self.conn.execute(
+            "UPDATE sessions SET appointment_status = 'scheduled' WHERE id = ?",
+            (session["id"],),
+        )
+        self.conn.commit()
+
+        result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+
+        self.assertEqual(result["sessions_staged"], 0)
+        self.assertEqual(result["drafts_created"], 0)
+        self.assertEqual(result["sessions_skipped"], [
+            {
+                "session_id": session["id"],
+                "reasons": ["Future scheduled session is not invoice eligible"],
+            }
+        ])
+
+    def test_future_session_stages_after_successful_sync_reconciliation(self):
+        session = self.approved_session("future2", day=11)
+        self.conn.execute(
+            "UPDATE sessions SET appointment_status = 'scheduled' WHERE id = ?",
+            (session["id"],),
+        )
+        self.conn.commit()
+        skipped = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+        self.assertEqual(skipped["sessions_staged"], 0)
+        self.assertEqual(self.count_drafts(self.party["billing_party_id"], "2026-05"), 0)
+
+        self.conn.execute(
+            "UPDATE sessions SET appointment_status = 'completed' WHERE id = ?",
+            (session["id"],),
+        )
+        self.conn.commit()
+        config = SyncConfig(
+            apps_script_url="https://example.test/exec",
+            ingest_api_key="test-key",
+            database_path=str(self.db_path),
+            reports_dir=str(self.root / "Reports"),
+        )
+        sync_with_connection(
+            self.conn,
+            config,
+            transport=lambda *_args: {
+                "ok": True,
+                "record_type": "sync_response",
+                "rows": [],
+                "next_cursor": EMPTY_CURSOR,
+                "has_more": False,
+            },
+        )
+
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        self.assertIsNotNone(draft)
+        self.assertEqual(self.count_lines(draft["invoice_id"]), 1)
+
+        sync_with_connection(
+            self.conn,
+            config,
+            transport=lambda *_args: {
+                "ok": True,
+                "record_type": "sync_response",
+                "rows": [],
+                "next_cursor": EMPTY_CURSOR,
+                "has_more": False,
+            },
+        )
+        self.assertEqual(self.count_drafts(self.party["billing_party_id"], "2026-05"), 1)
+        self.assertEqual(self.count_lines(draft["invoice_id"]), 1)
 
     # 18. Nonmonthly or invalid session dates are skipped safely
     def test_invalid_session_dates_skipped(self):

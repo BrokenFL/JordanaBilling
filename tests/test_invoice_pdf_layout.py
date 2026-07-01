@@ -12,6 +12,7 @@ from jordana_invoice.invoice_pdf import (
     LABEL_FONT_SIZE,
     LETTER_PAGE_HEIGHT,
     LETTER_PAGE_WIDTH,
+    LOGO_LEFT_SHIFT,
     LOGO_MAX_HEIGHT,
     LOGO_MAX_WIDTH,
     PAYMENT_FOOTER_MIN_CLEARANCE,
@@ -173,9 +174,8 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertAlmostEqual(LABEL_FONT_SIZE, 9.0, delta=0.1)
 
     def test_logo_max_dimensions_match_refinement(self):
-        self.assertGreaterEqual(LOGO_MAX_WIDTH, 1.45 * 72)
-        self.assertLessEqual(LOGO_MAX_WIDTH, 1.55 * 72)
-        self.assertLessEqual(LOGO_MAX_HEIGHT, 1.10 * 72)
+        self.assertAlmostEqual(LOGO_MAX_WIDTH, 1.725 * 72, delta=0.1)
+        self.assertAlmostEqual(LOGO_MAX_HEIGHT, 1.2075 * 72, delta=0.1)
 
     def test_logo_scales_within_bounds(self):
         if not _has_pdf_deps():
@@ -187,6 +187,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIsNotNone(image)
         self.assertLessEqual(image.drawWidth, LOGO_MAX_WIDTH + 0.1)
         self.assertLessEqual(image.drawHeight, LOGO_MAX_HEIGHT + 0.1)
+
+    def test_logo_left_shift_matches_optical_padding(self):
+        self.assertAlmostEqual(LOGO_LEFT_SHIFT, 0.10 * 72, delta=0.1)
 
     def test_row_padding_matches_print_spacing(self):
         self.assertEqual(TABLE_ROW_TOP_PADDING, 9)

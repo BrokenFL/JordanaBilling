@@ -933,7 +933,7 @@ async function save(approve) {
       let warningMsg = null;
       if (staging) {
         if (staging.status === "success") {
-          successMsg = "Session approved and added to monthly draft.";
+          successMsg = approvalSuccessMessageForStaging(staging.summary);
         } else if (staging.status === "not_required") {
           successMsg = "Session approved and paid-at-session payment confirmed. Invoice staging was not required.";
         } else if (staging.status === "warning") {
@@ -1094,6 +1094,17 @@ async function sendToReview() {
   } catch (err) {
     alert("Could not promote to review: " + err.message);
   }
+}
+
+function approvalSuccessMessageForStaging(summary) {
+  if ((summary?.sessions_staged || 0) > 0) {
+    return "Session approved and added to monthly draft.";
+  }
+  const skippedReasons = (summary?.sessions_skipped || []).flatMap(item => item?.reasons || []);
+  if (skippedReasons.includes("Future scheduled session is not invoice eligible")) {
+    return "Session approved. This future session will become invoice-eligible after the appointment date.";
+  }
+  return "Session approved.";
 }
 
 function collectPayload() {

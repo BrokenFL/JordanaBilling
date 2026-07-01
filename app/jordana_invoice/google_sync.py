@@ -369,6 +369,9 @@ def sync_with_connection(
                     )
                 backfill_phase2(conn)
                 write_reports(conn, config.reports_dir)
+            from .invoice_services import stage_approved_sessions_to_monthly_drafts
+
+            stage_approved_sessions_to_monthly_drafts(conn)
         except sqlite3.OperationalError as error:
             if "database is locked" in str(error).lower() or "locked" in str(error).lower():
                 raise DatabaseBusyError(

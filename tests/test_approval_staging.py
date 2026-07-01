@@ -121,6 +121,17 @@ class ApprovalStagingTests(unittest.TestCase):
         self.assertIn("summary", captured["payload"]["invoice_staging"])
         self.assertEqual(captured["payload"]["invoice_staging"]["summary"]["sessions_staged"], 1)
 
+    def test_future_approved_session_returns_skip_reason_without_draft(self):
+        future_candidate_id = self._import_candidate("future1", "Avery Stone | 60 | Office", "2099-07-01T10:00:00-04:00")
+        captured = self._approve_via_http(candidate_id=future_candidate_id)
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["invoice_staging"]["status"], "success")
+        self.assertEqual(captured["payload"]["invoice_staging"]["summary"]["sessions_staged"], 0)
+        self.assertEqual(
+            captured["payload"]["invoice_staging"]["summary"]["sessions_skipped"][0]["reasons"],
+            ["Future scheduled session is not invoice eligible"],
+        )
+
     # 3. Staging summary errors produce status = "warning" and HTTP 200
     def test_staging_errors_produce_warning(self):
         with patch("jordana_invoice.review_server.stage_approved_sessions_to_monthly_drafts") as mock_stage:

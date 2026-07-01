@@ -110,6 +110,7 @@ macOS with SQLite and a Python HTTP server.
 - One open monthly draft per canonical payer and month (person-linked payers)
 - Organizations grouped by their actual organization billing-party record
 - Stale draft line reconciliation (party or month changes)
+- Future scheduled approved sessions remain unstaged until they become invoice-eligible; the approval response reports the skip reason, and successful calendar sync runs idempotent staging reconciliation.
 - Finalized and void invoices remain immutable
 - No historical finalized invoice is silently repointed
 - Void with reason; source sessions become eligible for reissue
@@ -191,7 +192,7 @@ macOS with SQLite and a Python HTTP server.
    - Save Session Draft — duration, type, rate, payment handling
    - Approve Session — validates and commits
 5. Approval triggers monthly invoice staging automatically
-6. Staging result is additive to the approval response (success/warning/unavailable/error)
+6. Staging result is additive to the approval response (success/warning/unavailable/error); a clean future-session skip is success with zero staged sessions, not an “added to draft” result
 7. Approval remains successful even if staging warns
 
 ## Canonical Payer And Billing Relationships Behavior

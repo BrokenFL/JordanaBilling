@@ -1703,6 +1703,10 @@ class ReviewStagingUiTests(unittest.TestCase):
     def test_js_save_handles_staging_result_and_refreshes_invoices(self):
         # Verify the success and warning banner messages are present in save()
         self.assertIn('Session approved and added to monthly draft.', self.js)
+        self.assertIn('Session approved. This future session will become invoice-eligible after the appointment date.', self.js)
+        self.assertIn("approvalSuccessMessageForStaging", self.js)
+        self.assertIn("sessions_staged", self.js)
+        self.assertIn("Future scheduled session is not invoice eligible", self.js)
         self.assertIn('Invoice staging warning: staging completed with errors', self.js)
         self.assertIn('Invoice staging warning: database busy, session will stage later.', self.js)
         self.assertIn('Invoice staging warning: unexpected error occurred, session will stage later.', self.js)
