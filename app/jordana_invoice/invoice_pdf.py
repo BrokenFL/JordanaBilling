@@ -36,6 +36,15 @@ LOGO_SENDER_SPACING = 0.01 * POINTS_PER_INCH
 
 HEADER_LEFT_WIDTH = 4.55 * POINTS_PER_INCH
 HEADER_RIGHT_WIDTH = CONTENT_WIDTH - HEADER_LEFT_WIDTH
+
+# The sender name/address column sits beside (not below) the logo so that the
+# provider name lines up with the "Invoice Number" row on the right, instead
+# of starting only after the full logo height. The offset below matches the
+# vertical space the INVOICE title + first meta row's top padding occupy.
+HEADER_SENDER_TOP_OFFSET = TITLE_LEADING + 3.0
+HEADER_LOGO_NAME_GAP = 0.10 * POINTS_PER_INCH
+HEADER_TO_BILLTO_SPACING = 0.15 * POINTS_PER_INCH
+BILLTO_TO_TABLE_SPACING = 0.15 * POINTS_PER_INCH
 TABLE_COLUMN_WIDTHS = [
     1.12 * POINTS_PER_INCH,
     1.65 * POINTS_PER_INCH,
@@ -171,18 +180,6 @@ def generate_invoice_pdf(
     )
     render = render_model or build_invoice_render_model(invoice, lines)
     story = []
-    logo_flowable = _logo_flowable(render.get("logo_path"), LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
-    if logo_flowable is None:
-        fallback = [para(invoice.get("business_name_snapshot") or "Business", styles["Heading2"])]
-        for value in render.get("sender_lines") or []:
-            if value:
-                fallback.append(para(value, small))
-        logo_cell = fallback
-    else:
-        logo_cell = [logo_flowable]
-        logo_cell.append(Spacer(1, LOGO_SENDER_SPACING))
-        for value in render.get("sender_lines") or []:
-            logo_cell.append(para(value, small))
     meta = [para("INVOICE", title)]
     meta_rows = []
     for key, value in (
@@ -204,19 +201,14 @@ def generate_invoice_pdf(
             ]),
         )
     )
-    header = Table([[logo_cell, meta]], colWidths=[HEADER_LEFT_WIDTH, HEADER_RIGHT_WIDTH], hAlign="LEFT")
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.extend([header, Spacer(1, 0.24 * inch), para("BILL TO", label)])
+    header = _build_header_table(
+        render, meta, small, styles["Heading2"], invoice.get("business_name_snapshot") or "",
+    )
+    story.extend([header, Spacer(1, HEADER_TO_BILLTO_SPACING), para("BILL TO", label)])
     for value in render.get("bill_to_lines") or []:
         if value:
             story.append(para(value))
-    story.append(Spacer(1, 0.24 * inch))
+    story.append(Spacer(1, BILLTO_TO_TABLE_SPACING))
 
     data = [[para("Date", small), para("Participants", small), para("Service", small), para("Duration", small), para("Amount", small)]]
     for line in render.get("lines") or []:
@@ -332,6 +324,53 @@ class _LeftShiftedFlowable:
 
     def getSpaceAfter(self) -> float:
         return float(self.flowable.getSpaceAfter()) if hasattr(self.flowable, "getSpaceAfter") else 0.0
+
+
+def _build_header_table(
+    render: dict[str, Any],
+    meta: list[Any],
+    small_style: Any,
+    heading_style: Any,
+    fallback_business_name: str,
+):
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    def para(value: Any, style=small_style):
+        return Paragraph(_escape(value), style)
+
+    logo_flowable = _logo_flowable(render.get("logo_path"), LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
+    if logo_flowable is None:
+        fallback = [Paragraph(_escape(fallback_business_name or "Business"), heading_style)]
+        for value in render.get("sender_lines") or []:
+            if value:
+                fallback.append(para(value))
+        logo_cell = fallback
+    else:
+        name_column = [Spacer(1, HEADER_SENDER_TOP_OFFSET)]
+        for value in render.get("sender_lines") or []:
+            name_column.append(para(value))
+        sender_table = Table(
+            [[[logo_flowable], name_column]],
+            colWidths=[LOGO_MAX_WIDTH, HEADER_LEFT_WIDTH - LOGO_MAX_WIDTH],
+            style=TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (0, 0), 0),
+                ("LEFTPADDING", (1, 0), (1, 0), HEADER_LOGO_NAME_GAP),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]),
+        )
+        logo_cell = [sender_table]
+    header = Table([[logo_cell, meta]], colWidths=[HEADER_LEFT_WIDTH, HEADER_RIGHT_WIDTH], hAlign="LEFT")
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return header
 
 
 def _footer_pushdown_height(render: dict[str, Any]) -> float:
@@ -507,18 +546,6 @@ def generate_draft_pdf_bytes(
     )
     render = render_model or build_invoice_render_model(invoice, lines)
     story = []
-    logo_flowable = _logo_flowable(render.get("logo_path"), LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
-    if logo_flowable is None:
-        fallback = [para(invoice.get("business_name_snapshot") or "Business", styles["Heading2"])]
-        for value in render.get("sender_lines") or []:
-            if value:
-                fallback.append(para(value, small))
-        logo_cell = fallback
-    else:
-        logo_cell = [logo_flowable]
-        logo_cell.append(Spacer(1, LOGO_SENDER_SPACING))
-        for value in render.get("sender_lines") or []:
-            logo_cell.append(para(value, small))
     meta = [para("INVOICE", title), para("DRAFT", draft_label_style)]
     meta_rows = []
     for key, value in (
@@ -540,19 +567,14 @@ def generate_draft_pdf_bytes(
             ]),
         )
     )
-    header = Table([[logo_cell, meta]], colWidths=[HEADER_LEFT_WIDTH, HEADER_RIGHT_WIDTH], hAlign="LEFT")
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.extend([header, Spacer(1, 0.24 * inch), para("BILL TO", label)])
+    header = _build_header_table(
+        render, meta, small, styles["Heading2"], invoice.get("business_name_snapshot") or "",
+    )
+    story.extend([header, Spacer(1, HEADER_TO_BILLTO_SPACING), para("BILL TO", label)])
     for value in render.get("bill_to_lines") or []:
         if value:
             story.append(para(value))
-    story.append(Spacer(1, 0.24 * inch))
+    story.append(Spacer(1, BILLTO_TO_TABLE_SPACING))
 
     data = [[para("Date", small), para("Participants", small), para("Service", small), para("Duration", small), para("Amount", small)]]
     for line in render.get("lines") or []:
@@ -608,7 +630,7 @@ def _build_pdf_footer(
 ) -> list[Any]:
     from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib import colors
     from reportlab.lib.units import inch
 
@@ -734,15 +756,41 @@ def _build_pdf_footer(
             )
         ]
 
+    payment_title_center_style = ParagraphStyle(
+        "PaymentTitleCenter",
+        parent=payment_title_style,
+        fontSize=SMALL_FONT_SIZE,
+        leading=SMALL_LEADING,
+        alignment=TA_CENTER,
+        spaceAfter=1,
+    )
+    payment_value_center_style = ParagraphStyle(
+        "PaymentValueCenter",
+        parent=small_style,
+        alignment=TA_CENTER,
+        spaceAfter=1,
+    )
+
+    payment_flowables: list[Any] = [
+        Paragraph(_escape(render.get("payment_title") or "Please make all checks payable to:"), payment_title_center_style),
+    ]
+    if render.get("payment_name"):
+        payment_flowables.append(Paragraph(_escape(render.get("payment_name")), payment_value_center_style))
+    for value in render.get("payment_lines") or []:
+        payment_flowables.append(Paragraph(_escape(value), payment_value_center_style))
+    zelle_title = render.get("payment_zelle_title")
+    zelle_value = render.get("payment_zelle_value")
+    if zelle_title and zelle_value:
+        payment_flowables.append(Paragraph(_escape(zelle_title), payment_title_center_style))
+        payment_flowables.append(Paragraph(_escape(zelle_value), payment_value_center_style))
+    account_name_line = render.get("payment_account_name_line")
+    if account_name_line:
+        payment_flowables.append(Paragraph(_escape(account_name_line), payment_value_center_style))
+
     footer = footer_table_flowables + [
         Spacer(1, 0.18 * inch),
         Table(
-            [[[
-                Paragraph(_escape(render.get("payment_title") or "Please make all checks payable to:"), payment_title_style),
-                Paragraph(_escape(render.get("payment_name") or ""), body_style),
-                *[Paragraph(_escape(value), body_style) for value in (render.get("payment_lines") or [])],
-                *([Paragraph(_escape(render.get("payment_zelle_line")), body_style)] if render.get("payment_zelle_line") else []),
-            ]]],
+            [[payment_flowables]],
             colWidths=[CONTENT_WIDTH],
             style=TableStyle([
                 ("LINEABOVE", (0, 0), (-1, -1), 0.6, colors.HexColor("#9FB3C8")),
@@ -750,6 +798,7 @@ def _build_pdf_footer(
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ]),
         ),
     ]

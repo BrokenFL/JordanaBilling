@@ -5,10 +5,13 @@ import unittest
 from pathlib import Path
 
 from jordana_invoice.invoice_pdf import (
+    BILLTO_TO_TABLE_SPACING,
     BODY_FONT_SIZE,
     CONTENT_WIDTH,
     HEADER_LEFT_WIDTH,
     HEADER_RIGHT_WIDTH,
+    HEADER_SENDER_TOP_OFFSET,
+    HEADER_TO_BILLTO_SPACING,
     LABEL_FONT_SIZE,
     LETTER_PAGE_HEIGHT,
     LETTER_PAGE_WIDTH,
@@ -379,6 +382,80 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         )
         self.assertEqual(len(result), 64)
         self.assertEqual(result, hashlib.sha256(path2.read_bytes()).hexdigest())
+
+    # --- 11. Header alignment: provider name vs. Invoice Number row ---
+
+    def _extract_text_positions(self, path):
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        snips = []
+        reader.pages[0].extract_text(
+            visitor_text=lambda t, cm, tm, fd, fs: snips.append((t, tm[4], tm[5])) if t and t.strip() else None
+        )
+        return snips
+
+    def test_provider_name_aligns_with_invoice_number_row(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        path = self._generate_pdf()
+        snips = self._extract_text_positions(path)
+        provider = [s for s in snips if "Demo Provider" in s[0]]
+        invoice_number_label = [s for s in snips if "Invoice Number" in s[0]]
+        self.assertTrue(provider, "Provider name text not found")
+        self.assertTrue(invoice_number_label, "'Invoice Number' label not found")
+        self.assertAlmostEqual(provider[0][2], invoice_number_label[0][2], delta=10)
+
+    def test_header_sender_top_offset_matches_title_leading(self):
+        self.assertAlmostEqual(HEADER_SENDER_TOP_OFFSET, TITLE_FONT_SIZE + 5.0, delta=6.0)
+
+    def test_header_to_billto_spacing_reduced_from_original(self):
+        original_spacing = 0.24 * 72
+        self.assertLess(HEADER_TO_BILLTO_SPACING, original_spacing)
+        self.assertLess(BILLTO_TO_TABLE_SPACING, original_spacing)
+
+    # --- 12. Payment block: centered, phone omitted, compact wording ---
+
+    def test_payment_block_omits_phone_number(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        path = self._generate_pdf()
+        from pypdf import PdfReader
+        text = PdfReader(path).pages[0].extract_text() or ""
+        self.assertEqual(text.count("555-0100"), 1)
+
+    def test_payment_block_is_centered(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.lib.enums import TA_CENTER
+        from jordana_invoice.invoice_pdf import _build_pdf_footer
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
+        styles = getSampleStyleSheet()
+        body = ParagraphStyle("B", parent=styles["BodyText"])
+        small = ParagraphStyle("S", parent=body)
+        total_label = ParagraphStyle("TL", parent=body)
+        total_amount = ParagraphStyle("TA", parent=body)
+        payment_title = ParagraphStyle("PT", parent=body)
+        render = build_invoice_render_model(_sample_invoice(), _sample_lines())
+        footer = _build_pdf_footer(render, 15000, body, small, total_label, total_amount, payment_title)
+        from reportlab.platypus import Table
+        payment_table = [f for f in footer if isinstance(f, Table)][-1]
+        payment_paragraphs = payment_table._cellvalues[0][0]
+        self.assertTrue(payment_paragraphs, "Centered payment paragraphs not found")
+        for paragraph in payment_paragraphs:
+            self.assertEqual(paragraph.style.alignment, TA_CENTER)
+
+    def test_payment_block_uses_compact_zelle_and_account_lines(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        path = self._generate_pdf()
+        from pypdf import PdfReader
+        text = PdfReader(path).pages[0].extract_text() or ""
+        self.assertIn("Please make all checks payable to:", text)
+        self.assertIn("Or send payment via Zelle to:", text)
+        self.assertIn("demo-zelle@example.test", text)
+        self.assertIn("Account name: Demo Practice", text)
 
 
 if __name__ == "__main__":
