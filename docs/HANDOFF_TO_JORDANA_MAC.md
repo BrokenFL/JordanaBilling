@@ -1,10 +1,17 @@
 # Handoff To Jordana Mac
 
-This is the continuation contract for installing, verifying, or continuing development on Jordana's computer. Read `AGENTS.md` and `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md` before making changes.
+This is the continuation contract for installing, verifying, or continuing
+development on Jordana's computer. Read `AGENTS.md` and
+`docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md` before making changes.
+
+**Last code verification commit:** `033d2634fa33688f686c66160ec0eff3e71bf8d7`
+**Recorded verification date:** 2026-07-01
+**Recorded full-suite baseline:** 2,585 passing, 11 skipped, 0 failures (`2596` tests run)
 
 ## Goal
 
-Continue the local-first invoice system without relying on chat history while preserving all private operational data and reviewed billing history.
+Continue the local-first invoice system without relying on chat history while
+preserving all private operational data and reviewed billing history.
 
 ## Source Of Truth
 
@@ -16,7 +23,8 @@ Use this order:
 4. current private local configuration and transferred operational data
 5. older historical notes
 
-Do not revive obsolete schemas, terminology, side-inspector UI behavior, editable time-category controls, or abandoned workflows.
+Do not revive obsolete schemas, terminology, side-inspector UI behavior,
+editable time-category controls, or abandoned workflows.
 
 ## Before Any Change
 
@@ -65,14 +73,17 @@ GitHub, PyPI, pip, or a source checkout.
 
 `scripts/install_release.sh` is the production installer for release artifacts.
 The older `scripts/setup_jordana_mac.sh` path is retired. `scripts/bootstrap.sh`
-is now a development-checkout bootstrap and source launcher, not the daily
+is a development-checkout bootstrap and source launcher, not the daily
 production launch path.
 
-A production handoff must include the operational SQLite database. Google Sheets contains raw calendar evidence but cannot reconstruct reviewed people, billing relationships, approved sessions, invoices, payments, receipts, or audit history.
+A production handoff must include the operational SQLite database. Google
+Sheets contains raw calendar evidence but cannot reconstruct reviewed people,
+billing relationships, approved sessions, invoices, payments, receipts, or
+audit history.
 
 Never transfer private production files through GitHub.
 
-Typical private local state now lives under
+Typical private local state lives under
 `~/Library/Application Support/Jordana Billing/` and includes:
 
 ```text
@@ -88,14 +99,37 @@ Installed user-facing generated files live under
 `~/Documents/Jordana Billing/Client Files/`. They remain outside Git and
 outside the app bundle.
 
-The setup and launcher flows must preserve an existing database, create a verified private backup before pending migrations, and apply only additive migrations. They must never delete, recreate, or silently replace the operational database.
+The setup and launcher flows must preserve an existing database, create a
+verified private backup before pending migrations, and apply only additive
+migrations. They must never delete, recreate, or silently replace the
+operational database.
 
 The double-click app uses `Contents/Resources/launch_installed_app.sh`. It
 validates private config, verifies that the Application Support SQLite database
 exists and can be opened read-only, reuses a verified already-running Jordana
-Billing server, and refuses to kill or reuse an unrelated process on port `8765`.
-It does not run pip, Git, PyPI, editable installs, dependency repair, or blank DB
-creation during normal launch.
+Billing server, and refuses to kill or reuse an unrelated process on port
+`8765`. It does not run pip, Git, PyPI, editable installs, dependency repair, or
+blank-database creation during normal launch.
+
+## Current Installer Validation Status
+
+Brooke reports that the current one-click installer successfully completed an
+install and launch on a test Mac. This is a meaningful handoff milestone and
+replaces the older statement that the one-click launcher was unfinished.
+
+The successful test is not yet a complete recorded acceptance run. Before the
+Jordana production handoff, record the release filename, checksum, Mac used,
+Python version, Gatekeeper behavior, restart result, duplicate-launch result,
+reinstall result, and any remaining checklist scenarios in
+`docs/TEST_MAC_ACCEPTANCE.md`.
+
+Current packaging caution: the installer safely builds the replacement app in
+a temporary `.installing` path, but then removes the existing app before final
+verification. A verification failure after that swap can leave the previous
+working app unavailable even though private configuration, SQLite data,
+backups, reports, invoices, and receipts remain preserved. A narrow hardening
+round should retain the previous app until the new app passes verification and
+restore it on failure.
 
 ## Configuration
 
@@ -112,7 +146,9 @@ Required production release configuration includes:
 - `JORDANA_APPS_SCRIPT_URL`
 - `JORDANA_INGEST_API_KEY`
 
-Do not commit or paste the real `.env`, credentials, Script Properties, spreadsheet IDs, or private paths into documentation, screenshots, logs, GitHub, or chat.
+Do not commit or paste the real `.env`, credentials, Script Properties,
+spreadsheet IDs, or private paths into documentation, screenshots, logs,
+GitHub, or chat.
 
 ## Current Database State
 
@@ -122,7 +158,8 @@ The current migration head is:
 015_duplicate_repair_reversal_state
 ```
 
-Migrations `001` through `015` are registered. `app/jordana_invoice/db.py` is the executable migration source of truth.
+Migrations `001` through `015` are registered.
+`app/jordana_invoice/db.py` is the executable migration source of truth.
 
 Migration safety includes:
 
@@ -134,36 +171,52 @@ Migration safety includes:
 - no request-path migrations
 - no deletion or reset of the operational database
 
-See `docs/SCHEMA_AUDIT.md` for the current migration list and table responsibilities.
+See `docs/SCHEMA_AUDIT.md` for the current migration list and table
+responsibilities.
 
-See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every backend write HTTP endpoint and its current request/response contract. Characterization tests are in `tests/test_write_endpoint_contracts.py`.
+See `docs/WRITE_ENDPOINT_CONTRACTS.md` for a complete inventory of every
+backend write HTTP endpoint and its current request/response contract.
+Characterization tests are in `tests/test_write_endpoint_contracts.py`.
 
-Round 4A.2 added explicit request-parsing and validation helpers for the four highest-risk review write endpoints (approve, save/section saves, mark/duplicate resolution, restore). The helpers are in `app/jordana_invoice/request_validation.py` and use frozen dataclasses with explicit parser functions. All existing endpoint paths, payload keys, response shapes, status codes, and business rules are preserved. Focused tests are in `tests/test_request_validation.py` (102 tests). See the Round 4A.2 section in `docs/WRITE_ENDPOINT_CONTRACTS.md` for details.
+Round 4A.2 added explicit request-parsing and validation helpers for the four
+highest-risk review write endpoints. The helpers are in
+`app/jordana_invoice/request_validation.py` and preserve existing endpoint
+paths, payload keys, response shapes, status codes, and business rules.
 
-Round 4B.1 extracted the shared frontend API utility. The `api()` request helper and `sanitizeUiErrorMessage()` error sanitizer were moved from `review.js` into a new shared module at `app/jordana_invoice/static/js/api.js`. The module is loaded as a classic IIFE script before `review.js` and assigns `window.JordanaAPI` with `api` and `sanitizeUiErrorMessage`. All endpoint paths, HTTP methods, payload keys, headers, write-token behavior, response parsing, error messages, warning handling, and call-site behavior are preserved. Two direct `fetch()` calls intentionally remain in `review.js`: the draft PDF blob download and the billing-relationship setup (which throws raw JSON for duplicate inspection). No backend contracts, UI behavior, or workflow structure were changed. Focused tests are in `tests/test_api_util.py`.
+Round 4B.1 extracted the shared frontend API utility into
+`app/jordana_invoice/static/js/api.js`. It preserves write-token behavior,
+response parsing, warning handling, and sanitized UI errors.
 
-Round 4B.1.1 fixed a write-token load-order regression in the shared frontend API utility. The review page loads `api.js` before the server-injected bootstrap script, so the helper now reads `window.__JORDANA_BOOTSTRAP__?.writeToken` at write-request time instead of freezing it when `api.js` evaluates. The two direct write `fetch()` exceptions in `review.js` use the same `getWriteToken()` helper. No endpoint paths, payloads, response envelopes, review behavior, approval behavior, duplicate-prevention rules, or backend contracts changed. Regression coverage is in `tests/test_api_util.py`, including `/api/review/candidates/{id}/save-relationship` with the actual review-page loading order.
+Round 4B.1.1 fixed the write-token load-order regression by reading
+`window.__JORDANA_BOOTSTRAP__?.writeToken` at write-request time.
 
-Round 4B.2 extracted a shared frontend overlay lifecycle manager and migrated the four highest-risk overlay workflows. The overlay manager lives at `app/jordana_invoice/static/js/overlay_manager.js` and is loaded as a classic IIFE script before `review.js`. It assigns `window.JordanaOverlay.create(config)` which returns an overlay controller with `open`, `close`, `beginPending`, `endPending`, `isPending`, `isOpen`, `getReturnFocus`, and `setReturnFocus` methods. The manager coordinates focus capture/restoration, ARIA state synchronization, body scroll lock (reference-counted for nested overlays), keydown handler binding (once per controller, not duplicated on repeated opens), and pending-state button disabling. Four workflows were migrated: review approval (`approvalState`), duplicate confirmation (`duplicateState`), restore candidate (`restoreState`), and billing relationship wizard (`billingWizardState`). Each workflow owns its own state object with `submitting` and `candidateId` fields. No backend contracts, endpoint paths, payload keys, response envelopes, business rules, visual design, or workflow terminology were changed. No backend files, launcher files, or schema were modified. Focused tests are in `tests/test_overlay_manager.py` (111 tests).
+Round 4B.2 extracted a shared frontend overlay lifecycle manager into
+`app/jordana_invoice/static/js/overlay_manager.js`. Review approval, duplicate
+confirmation, restore, and the billing relationship wizard use managed pending
+state, focus restoration, ARIA synchronization, body scroll locking, and
+single-submit behavior.
 
-Round 4A.2.1 fixed the restore false-failure behavior. Previously, `restore_candidate` committed the restore, then called `refresh_candidate_suggestions` which could raise an unsafe exception. The HTTP handler sanitized this to a 400 response even though the restore had already succeeded. The fix isolates the refresh as a secondary operation: if it raises, the committed restore is preserved and the response includes an additive `warning` field (`"Candidate was restored, but suggestions could not be refreshed."`) on the normal 200 success response. This follows the same success-with-warning convention used by the approve endpoint when invoice staging warns. No endpoint paths, payload keys, schemas, or business rules were changed. Regression tests are in `tests/test_request_validation.py` and `tests/test_routine_queue_filter.py`.
+Round 4A.2.1 fixed restore false-failure behavior. A secondary suggestion
+refresh failure now returns success with an additive sanitized warning after
+the committed restore instead of reporting the completed restore as failed.
 
 ## Verification Baseline
 
-The current full-suite baseline for commit
-`f8a01130ed5229a33c71f5d5e737d8ca90d98e82`, verified 2026-06-30, is:
+The current recorded full-suite baseline for code commit
+`033d2634fa33688f686c66160ec0eff3e71bf8d7`, verified 2026-07-01, is:
 
 ```text
-Ran 2490 tests in 180.067s
+Ran 2596 tests in 180.798s
 OK (skipped=11)
 ```
 
-Exact counts: 2,479 passing, 11 skipped, 0 failures.
+Exact counts: 2,585 passing, 11 skipped, 0 failures.
 
-Do not copy historical test totals forward as current. Before completing any new
-code or handoff round, run the current focused tests and full suite locally and
-report the exact passing, skipped, and failure counts with the commit hash and
-verification date.
+This documentation-only reconciliation does not claim that the suite was rerun
+after documentation edits. Before completing any new code or handoff round,
+run the current focused tests and full suite locally and report the exact
+passing, skipped, and failure counts with the commit hash and verification
+date.
 
 Acceptance testing must use:
 
@@ -171,7 +224,8 @@ Acceptance testing must use:
 scripts/run_acceptance_test.sh
 ```
 
-Do not manually recreate that workflow with ad hoc commands against the operational database.
+Do not manually recreate that workflow with ad hoc commands against the
+operational database.
 
 ## Calendar Synchronization
 
@@ -186,16 +240,19 @@ The app uses one intelligent synchronization path:
 
 The cursor is composite: `ingested_at` plus `snapshot_key`.
 
-The app does not trigger the iPhone Shortcut. The Shortcut must separately stage Apple Calendar snapshots into Google Sheets.
+The app does not trigger the iPhone Shortcut. The Shortcut must separately
+stage Apple Calendar snapshots into Google Sheets.
 
-All non-all-day events from all calendars are captured. `Jordana Work` is a classification preference, not an ingestion filter.
+All non-all-day events from all calendars are captured. `Jordana Work` is a
+classification preference, not an ingestion filter.
 
 Normal capture-window labels are:
 
 - `past_3_days`
 - `next_7_days`
 
-Deprecated labels remain readable for compatibility. The June 1–14, 2026 backfill label remains supported for its one-time purpose.
+Deprecated labels remain readable for compatibility. The June 1–14, 2026
+backfill label remains supported for its one-time purpose.
 
 Manual commands:
 
@@ -223,7 +280,8 @@ Routine review focuses on:
 - Payment Handling
 - Approve
 
-Time category is derived from the authoritative calendar date and start time. It is not a normal editable control.
+Time category is derived from the authoritative calendar date and start time. It
+is not a normal editable control.
 
 The five active billing session types are:
 
@@ -242,9 +300,12 @@ The focused review overlay uses independent actions:
 
 No section save approves a session.
 
-Successful approval prevents double submission, clears stale state, closes the overlay, refreshes or removes the item, restores focus, and shows confirmation. Invoice-staging warnings do not roll back approval.
+Successful approval prevents double submission, clears stale state, closes the
+overlay, refreshes or removes the item, restores focus, and shows confirmation.
+Invoice-staging warnings do not roll back approval.
 
-Duplicate resolution uses **Confirm Duplicate & Next** and follows the same completed-action behavior.
+Duplicate resolution uses **Confirm Duplicate & Next** and follows the same
+completed-action behavior.
 
 ## Billing Relationships
 
@@ -255,11 +316,15 @@ The visible concepts are:
 - Bill To
 - Participants
 
-The payer is not automatically covered. Session participants remain selectable but are not silently preselected. Changing payer type clears stale covered-client selections. Selected-client chips are the source of truth.
+The payer is not automatically covered. Session participants remain selectable
+but are not silently preselected. Changing payer type clears stale
+covered-client selections. Selected-client chips are the source of truth.
 
-Saving persists immediately to SQLite. Reopening or refreshing review exposes the saved relationship. Jordana still confirms Bill To for each session.
+Saving persists immediately to SQLite. Reopening or refreshing review exposes
+the saved relationship. Jordana still confirms Bill To for each session.
 
-Permanent deletion is intentionally absent; use deactivate and reactivate. Approved sessions are never silently rewritten.
+Permanent deletion is intentionally absent; use deactivate and reactivate.
+Approved sessions are never silently rewritten.
 
 ## Rates
 
@@ -289,6 +354,7 @@ Implemented invoice behavior includes:
 - optimistic draft revision locking
 - draft HTML and PDF preview
 - two-step finalization
+- one canonical ReportLab renderer for draft and finalized PDFs
 - immutable finalized snapshots and PDFs
 - void and reissue under a new number
 - prior-balance and account-summary snapshots
@@ -306,6 +372,20 @@ void, or reissue process.
 
 The application does not yet send invoices by email or mail.
 
+### Current Finalization Transaction Caution
+
+`finalize_invoice()` begins an immediate SQLite transaction and then calls
+`synchronize_draft_delivery_method()`. That helper can commit internally when
+it fills a stale delivery method from the active billing setup. If that path is
+used, part of the draft mutation can commit before the rest of finalization
+completes. The next narrow code round should make transaction ownership
+explicit and add a regression test proving a failed finalization leaves the
+entire draft unchanged.
+
+This finding does not mean finalized invoice snapshots or PDFs are currently
+mutable. It is a transaction-boundary defect in a failure path and should be
+fixed before describing finalization as fully atomic in every case.
+
 ## Payments
 
 Implemented payment behavior includes:
@@ -319,9 +399,11 @@ Implemented payment behavior includes:
 - manual immutable receipts
 - Outstanding, Paid, and All Payments views
 
-New paid-at-session approvals create or validate one posted payment and allocation transactionally and idempotently, then skip monthly invoice staging.
+New paid-at-session approvals create or validate one posted payment and
+allocation transactionally and idempotently, then skip monthly invoice staging.
 
-The legacy paid-at-session backfill analyzer is dry-run only. There is no historical backfill apply mode.
+The legacy paid-at-session backfill analyzer is dry-run only. There is no
+historical backfill apply mode.
 
 ## Candidate Identity And Duplicate Repair
 
@@ -344,7 +426,8 @@ Duplicate repair supports:
 - refusal after later edits make reversal unsafe
 - protection of approved, invoiced, paid, audited, and raw-evidence records
 
-Do not run duplicate repair against the operational database without reviewing the plan and confirming a current backup.
+Do not run duplicate repair against the operational database without reviewing
+the plan and confirming a current backup.
 
 ## Current Known Limitations
 
@@ -356,7 +439,10 @@ Do not run duplicate repair against the operational database without reviewing t
 - no polished production dashboard
 - no notarized installer
 - matching Python major/minor runtime required for V1 installation
-- clean-Mac acceptance still required unless explicitly completed and recorded
+- one-click install has succeeded, but the full clean-Mac acceptance evidence record is not yet complete
+- installer replacement is not yet rollback-safe after the existing app is removed
+- invoice finalization transaction ownership needs the narrow delivery-method synchronization fix described above
+- installer currently installs `jordana-invoice==0.1.0` directly rather than deriving the package version from the release manifest
 - no formal client-versus-non-client schema distinction
 - no automatic payer classification
 - no permanent billing-relationship deletion
@@ -372,7 +458,9 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/demo/jordana_demo.s
 
 Never import demo rows into the operational database.
 
-CSV import is for testing or emergency raw-evidence recovery. It does not replace the transferred operational database or reconstruct prior reviewed billing state.
+CSV import is for testing or emergency raw-evidence recovery. It does not
+replace the transferred operational database or reconstruct prior reviewed
+billing state.
 
 ## Start The Review UI
 
@@ -422,6 +510,15 @@ Required checks include:
 scripts/git_safety_check.sh
 scripts/privacy_check.sh
 ```
+
+## Immediate Handoff Order
+
+1. Fix finalization transaction ownership.
+2. Make installer replacement rollback-safe and derive its package version from the manifest.
+3. Record the successful one-click install details and finish the remaining clean-Mac checklist scenarios.
+4. Build the final release from a clean synchronized checkout.
+5. Transfer private production data separately and verify checksums and database integrity.
+6. Run Jordana's complete operational smoke path before handoff: launch, sync, review, approve, preview, finalize, open PDF, record payment, restart, and reopen records.
 
 ## Completion Report
 
