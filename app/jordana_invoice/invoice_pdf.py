@@ -92,13 +92,24 @@ def _register_invoice_font_aliases() -> None:
         pdfmetrics.registerFont(Font(alias, base_font, "WinAnsiEncoding"))
 
 
-def generate_invoice_pdf(
+def _generate_invoice_pdf_bytes(
     invoice: dict[str, Any],
     lines: list[dict[str, Any]],
-    output_path: str | Path,
     *,
     render_model: dict[str, Any] | None = None,
-) -> str:
+    meta_rows: list[tuple[str, str]] | None = None,
+    page_footer_label: str = "Invoice Draft",
+    doc_title: str = "Invoice Draft",
+) -> bytes:
+    """Shared canonical PDF rendering for both draft previews and finalized invoices.
+
+    Both generate_invoice_pdf (finalized) and generate_draft_pdf_bytes (draft
+    preview) delegate to this function so that typography, spacing, header
+    layout, table, total, payment section, footer, insurance/coding block,
+    and late-cancellation rendering are always identical.  The only intended
+    differences are parameterised via *meta_rows*, *page_footer_label*, and
+    *doc_title*.
+    """
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_LEFT, TA_RIGHT
@@ -119,11 +130,7 @@ def generate_invoice_pdf(
     except ImportError as error:
         raise RuntimeError("PDF generation requires the project PDF dependencies. Run: python -m pip install -e .") from error
 
-    path = Path(output_path)
-    if path.exists():
-        raise FileExistsError(f"Finalized invoice PDF already exists: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
+    buf = io.BytesIO()
     _register_invoice_font_aliases()
     styles = getSampleStyleSheet()
     body = ParagraphStyle(
@@ -230,19 +237,18 @@ def generate_invoice_pdf(
         canvas.saveState()
         canvas.setFont("Times-Roman", 8)
         canvas.setFillColor(colors.HexColor("#64748B"))
-        number = invoice.get("invoice_number") or "Draft"
-        canvas.drawString(doc.leftMargin, 0.42 * inch, f"Invoice {number}")
+        canvas.drawString(doc.leftMargin, 0.42 * inch, page_footer_label)
         canvas.drawRightString(letter[0] - doc.rightMargin, 0.42 * inch, f"Page {doc.page}")
         canvas.restoreState()
 
     doc = SimpleDocTemplate(
-        str(temp_path), pagesize=letter, rightMargin=0.50 * inch, leftMargin=0.50 * inch,
-        topMargin=0.50 * inch, bottomMargin=0.55 * inch, title=f"Invoice {invoice.get('invoice_number') or 'Draft'}",
+        buf, pagesize=letter, rightMargin=0.50 * inch, leftMargin=0.50 * inch,
+        topMargin=0.50 * inch, bottomMargin=0.55 * inch, title=doc_title,
     )
     render = render_model or build_invoice_render_model(invoice, lines)
     story = []
     meta = _build_meta_block(
-        [
+        meta_rows or [
             ("", render.get("invoice_date_display") or ""),
             ("", render.get("invoice_number_display") or ""),
         ],
@@ -269,8 +275,40 @@ def generate_invoice_pdf(
     )
     footer.extend(_build_insurance_coding_flowables(render, small))
     story.append(KeepTogether(footer))
+    doc.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=_times_canvasmaker)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    if not pdf_bytes:
+        raise RuntimeError("Invoice PDF generation did not produce valid bytes.")
+    return pdf_bytes
+
+
+def generate_invoice_pdf(
+    invoice: dict[str, Any],
+    lines: list[dict[str, Any]],
+    output_path: str | Path,
+    *,
+    render_model: dict[str, Any] | None = None,
+) -> str:
+    path = Path(output_path)
+    if path.exists():
+        raise FileExistsError(f"Finalized invoice PDF already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    number = invoice.get("invoice_number") or "Draft"
+    resolved_model = render_model or build_invoice_render_model(invoice, lines)
+    pdf_bytes = _generate_invoice_pdf_bytes(
+        invoice, lines,
+        render_model=resolved_model,
+        meta_rows=[
+            ("", resolved_model.get("invoice_date_display") or ""),
+            ("", resolved_model.get("invoice_number_display") or ""),
+        ],
+        page_footer_label=f"Invoice {number}",
+        doc_title=f"Invoice {number}",
+    )
     try:
-        doc.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=_times_canvasmaker)
+        temp_path.write_bytes(pdf_bytes)
         os.replace(temp_path, path)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -650,193 +688,25 @@ def generate_draft_pdf_bytes(
 ) -> bytes:
     """Generate a draft invoice PDF as an in-memory byte stream.
 
-    Uses the same ReportLab render model and layout as final invoice generation.
-    The PDF is clearly marked DRAFT, does not assign an invoice number, does not
-    write to disk, does not change invoice status, revision, pdf_path, or checksum,
-    and does not create any audit event.
+    Delegates to the same shared canonical renderer as finalized invoices
+    (_generate_invoice_pdf_bytes) so that typography, spacing, header layout,
+    table, total, payment section, footer, insurance/coding block, and
+    late-cancellation rendering are always identical.  The PDF is clearly
+    marked DRAFT, does not assign an invoice number, does not write to disk,
+    does not change invoice status, revision, pdf_path, or checksum, and
+    does not create any audit event.
     """
-    try:
-        from reportlab.lib import colors
-        from reportlab.lib.enums import TA_LEFT, TA_RIGHT
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-        from reportlab.lib.units import inch
-        from reportlab.platypus import (
-            Image,
-            KeepTogether,
-            LongTable,
-            PageBreak,
-            Paragraph,
-            SimpleDocTemplate,
-            Spacer,
-            Table,
-            TableStyle,
-        )
-    except ImportError as error:
-        raise RuntimeError("PDF generation requires the project PDF dependencies. Run: python -m pip install -e .") from error
-
-    buf = io.BytesIO()
-    _register_invoice_font_aliases()
-    styles = getSampleStyleSheet()
-    body = ParagraphStyle(
-        "InvoiceBody",
-        parent=styles["BodyText"],
-        fontName="Times-Roman",
-        fontSize=BODY_FONT_SIZE,
-        leading=BODY_LEADING,
-        textColor=colors.HexColor("#102A43"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    small = ParagraphStyle(
-        "InvoiceSmall",
-        parent=body,
-        fontSize=SMALL_FONT_SIZE,
-        leading=SMALL_LEADING,
-        textColor=colors.HexColor("#42526A"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    table_header = ParagraphStyle(
-        "InvoiceTableHeader",
-        parent=small,
-        fontName="Times-Bold",
-    )
-    compact = ParagraphStyle(
-        "InvoiceCompact",
-        parent=body,
-        fontSize=BODY_FONT_SIZE,
-        leading=BODY_LEADING,
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    label = ParagraphStyle(
-        "InvoiceLabel",
-        parent=compact,
-        fontName="Times-Bold",
-        fontSize=LABEL_FONT_SIZE,
-        leading=LABEL_LEADING,
-        textColor=colors.HexColor("#526171"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    title = ParagraphStyle(
-        "InvoiceTitle",
-        parent=styles["Heading1"],
-        fontName="Times-Bold",
-        fontSize=TITLE_FONT_SIZE,
-        leading=TITLE_LEADING,
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#102A43"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    total_label_style = ParagraphStyle(
-        "InvoiceTotalLabel",
-        parent=body,
-        fontName="Times-Bold",
-        fontSize=TOTAL_FONT_SIZE,
-        leading=TOTAL_LEADING,
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#102A43"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    total_amount_style = ParagraphStyle(
-        "InvoiceTotalAmount",
-        parent=total_label_style,
-        alignment=TA_RIGHT,
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    meta_label = ParagraphStyle(
-        "InvoiceMetaLabel",
-        parent=small,
-        fontName="Times-Bold",
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#526171"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    meta_value = ParagraphStyle(
-        "InvoiceMetaValue",
-        parent=body,
-        alignment=TA_LEFT,
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    payment_title_style = ParagraphStyle(
-        "InvoicePaymentTitle",
-        parent=body,
-        fontName="Times-Bold",
-        fontSize=BODY_FONT_SIZE,
-        leading=BODY_LEADING,
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-    draft_label_style = ParagraphStyle(
-        "DraftLabel",
-        parent=body,
-        fontName="Times-Roman",
-        fontSize=BODY_FONT_SIZE,
-        leading=BODY_LEADING,
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#B0B0B0"),
-        spaceBefore=0,
-        spaceAfter=0,
-    )
-
-    def para(value: Any, style=body):
-        return Paragraph(_escape(value), style)
-
-    def page(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("Times-Roman", 8)
-        canvas.setFillColor(colors.HexColor("#64748B"))
-        canvas.drawString(doc.leftMargin, 0.42 * inch, "Invoice DRAFT")
-        canvas.drawRightString(letter[0] - doc.rightMargin, 0.42 * inch, f"Page {doc.page}")
-        canvas.restoreState()
-
-    doc = SimpleDocTemplate(
-        buf, pagesize=letter, rightMargin=0.50 * inch, leftMargin=0.50 * inch,
-        topMargin=0.50 * inch, bottomMargin=0.55 * inch, title="Invoice DRAFT",
-    )
-    render = render_model or build_invoice_render_model(invoice, lines)
-    story = []
-    meta = _build_meta_block(
-        [
-            ("", render.get("invoice_date_display") or ""),
+    resolved_model = render_model or build_invoice_render_model(invoice, lines)
+    return _generate_invoice_pdf_bytes(
+        invoice, lines,
+        render_model=resolved_model,
+        meta_rows=[
+            ("", resolved_model.get("invoice_date_display") or ""),
             ("", "DRAFT"),
         ],
-        title,
-        meta_label,
-        meta_value,
-        para,
+        page_footer_label="Invoice DRAFT",
+        doc_title="Invoice DRAFT",
     )
-    header = _build_header_table(
-        render, meta, compact, label, styles["Heading2"], invoice.get("business_name_snapshot") or "",
-    )
-    story.extend([header, Spacer(1, HEADER_TO_TABLE_SPACING)])
-
-    story.append(_build_session_table(render, para, table_header))
-    story.append(Spacer(1, _footer_pushdown_height(render)))
-    footer = _build_pdf_footer(
-        render,
-        int(invoice.get("total_cents") or 0),
-        body,
-        small,
-        total_label_style,
-        total_amount_style,
-        payment_title_style,
-    )
-    footer.extend(_build_insurance_coding_flowables(render, small))
-    story.append(KeepTogether(footer))
-    doc.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=_times_canvasmaker)
-    pdf_bytes = buf.getvalue()
-    buf.close()
-    if not pdf_bytes:
-        raise RuntimeError("Draft PDF preview generation did not produce valid bytes.")
-    return pdf_bytes
 
 
 def _build_pdf_footer(

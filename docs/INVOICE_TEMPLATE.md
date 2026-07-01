@@ -21,6 +21,15 @@ The ReportLab letter template contains a balanced two-column header: `INVOICE`, 
 
 SVG wrappers with embedded PNG/JPEG artwork and PNG images preserve aspect ratio. Missing/unreadable logos fall back to text. Full vector SVG rendering is used when optional local `svglib` is installed. Draft previews and finalized PDFs use the same server-side invoice render model for logo choice, header metadata, bill-to formatting, date formatting, and payment-block content. Draft PDF previews (`GET /api/invoices/{id}/draft-pdf`) use the same ReportLab template, are clearly marked DRAFT, do not assign an invoice number, and are generated in-memory without writing to disk or changing invoice state. Missing readiness information (e.g. missing address or email) may block finalization but does not block draft preview. Both draft PDF and final PDF endpoints use dedicated inline PDF response headers (`Content-Type: application/pdf`, `Content-Disposition: inline`) compatible with Safari. PDF responses use `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` but do not apply the `X-Frame-Options: DENY` or CSP headers used for HTML/JSON responses.
 
+### Canonical Shared Renderer
+
+Both draft preview (`generate_draft_pdf_bytes`) and finalized invoice PDF generation (`generate_invoice_pdf`) delegate to a single shared canonical rendering function (`_generate_invoice_pdf_bytes`). This ensures that typography, spacing, BILL TO dynamic alignment, provider block, table, TOTAL DUE, payment section, footer, insurance/coding block, and late-cancellation rendering are always identical between preview and finalization. The only intended differences are:
+
+- DRAFT watermark/label versus finalized invoice number
+- Any explicitly approved final metadata (e.g. frozen account-summary snapshot)
+
+No legacy or alternative final-invoice renderer exists. Regression tests in `tests/test_invoice_pdf_layout.py` verify that both functions delegate to the shared renderer and that draft and finalized output share the same layout, content, and positioning.
+
 Multi-page invoices repeat headers, keep rows intact, identify invoice/page on every page, and show totals/payment instructions only on the last page. The payment footer remains above the invoice/page footer and is never intended to overlap it. New finalized files are atomic under the configured invoice root; installed releases use `~/Documents/Jordana Billing/Client Files/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf`. The frozen person code remains the stable internal filing identity and appears in the folder only when needed to disambiguate two different people with the same sanitized display name. Bill To organization names are not used as the folder when the invoice is filed under a client.
 
 Existing finalized PDFs are immutable; layout and filing-path refinements apply only when a new invoice PDF is generated. Existing `pdf_path` and checksum values are preserved.

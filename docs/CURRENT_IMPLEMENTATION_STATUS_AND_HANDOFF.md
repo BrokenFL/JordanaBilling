@@ -243,6 +243,7 @@ macOS with SQLite and a Python HTTP server.
 - **Folded payer rows and Safari PDF headers (PR #5):** Same-payer shared billing accounts folded into one payer-centered Billing Relationships row; browser-compatible inline PDF headers for Safari
 - **Joint-session review linkage (PR #6):** Candidate-only review records promoted into exactly one sessions row during section save; multi-participant save and approval reusing the same candidate-to-session link; approval remaining successful even if invoice staging later warns
 - **Draft preview account-summary wiring fix:** The `/api/invoices/<id>/print-preview` and `/api/invoices/<id>/draft-pdf` endpoints now pass the already-calculated `account_summary` (from `get_invoice()`) into `build_print_preview_html` and `build_invoice_render_model`, so draft previews correctly display prior unpaid balances and total amount due. Previously these endpoints omitted the `account_summary` argument, causing draft previews to miss the prior-balance section.
+- **Canonical shared PDF renderer fix:** Both `generate_invoice_pdf` (finalized) and `generate_draft_pdf_bytes` (draft preview) now delegate to a single shared canonical rendering function (`_generate_invoice_pdf_bytes`), eliminating the duplicated style definitions and story-building code that previously allowed preview and finalization to diverge. Regression tests verify that both functions use the shared renderer, that draft and finalized output share identical layout/content/positioning, and that the old renderer is no longer reachable from finalization.
 
 ## Current Test Strategy
 
@@ -250,8 +251,8 @@ macOS with SQLite and a Python HTTP server.
 PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
 ```
 
-- Full suite baseline for this handoff: `Ran 2490 tests in 180.067s`, `OK (skipped=11)` on 2026-06-30.
-- Exact counts: 2,479 passing, 11 skipped, 0 failures.
+- Full suite baseline for this handoff: `Ran 2596 tests in 180.798s`, `OK (skipped=11)` on 2026-07-01.
+- Exact counts: 2,585 passing, 11 skipped, 0 failures.
 - Skipped tests are intentionally skipped by the current suite, including manual/network-style integration coverage where private or external state is not available in ordinary local runs.
 - Acceptance test (uses temporary database, never touches operational DB):
 

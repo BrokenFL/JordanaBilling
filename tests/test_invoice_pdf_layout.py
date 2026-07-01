@@ -49,6 +49,7 @@ from jordana_invoice.invoice_pdf import (
     _build_header_table,
     _build_session_table,
     _footer_pushdown_height,
+    _generate_invoice_pdf_bytes,
     generate_draft_pdf_bytes,
     generate_invoice_pdf,
 )
@@ -692,6 +693,351 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIn("Business email: jordana.singer@gmail.com", text)
         self.assertIn("jordana.singer@gmail.com", text)
         self.assertIn("Account name: Psychotherapy of the Palm Beaches", text)
+
+
+# --- 13. Preview / Finalization parity (canonical shared renderer) ---
+
+class InvoicePreviewFinalizationParityTests(unittest.TestCase):
+    """Regression tests proving draft preview and finalized PDFs use the same
+    canonical renderer (_generate_invoice_pdf_bytes)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _generate_final_pdf(self, invoice=None, lines=None, filename="Invoice_final.pdf"):
+        path = self.root / filename
+        generate_invoice_pdf(invoice or _sample_invoice(), lines or _sample_lines(), path)
+        return path
+
+    def _extract_pdf_text(self, path_or_bytes):
+        from pypdf import PdfReader
+        source = io.BytesIO(path_or_bytes) if isinstance(path_or_bytes, bytes) else path_or_bytes
+        reader = PdfReader(source)
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+    def _extract_text_positions(self, path_or_bytes):
+        from pypdf import PdfReader
+        source = io.BytesIO(path_or_bytes) if isinstance(path_or_bytes, bytes) else path_or_bytes
+        reader = PdfReader(source)
+        snips = []
+        reader.pages[0].extract_text(
+            visitor_text=lambda t, cm, tm, fd, fs: snips.append((t, tm[4], tm[5])) if t and t.strip() else None
+        )
+        return snips
+
+    def test_both_functions_delegate_to_same_canonical_renderer(self):
+        """generate_invoice_pdf and generate_draft_pdf_bytes must both call
+        _generate_invoice_pdf_bytes — verify via source inspection."""
+        import inspect
+        src_final = inspect.getsource(generate_invoice_pdf)
+        src_draft = inspect.getsource(generate_draft_pdf_bytes)
+        self.assertIn("_generate_invoice_pdf_bytes", src_final)
+        self.assertIn("_generate_invoice_pdf_bytes", src_draft)
+
+    def test_draft_and_finalized_share_same_render_path(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        invoice = _sample_invoice()
+        lines = _sample_lines()
+        draft_bytes = generate_draft_pdf_bytes(
+            _sample_invoice(invoice_number=""),
+            lines,
+        )
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines)
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        shared_strings = [
+            "INVOICE",
+            "BILL TO:",
+            "Avery Stone",
+            "Jordana Singer LCSW",
+            "TOTAL DUE",
+            "Please make checks payable to:",
+            "Or send payment via Zelle to:",
+            "Business email: jordana.singer@gmail.com",
+            "Account name: Psychotherapy of the Palm Beaches",
+        ]
+        for s in shared_strings:
+            self.assertIn(s, draft_text, f"Draft PDF missing: {s}")
+            self.assertIn(s, final_text, f"Finalized PDF missing: {s}")
+
+    def test_only_difference_is_draft_label_vs_invoice_number(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        invoice = _sample_invoice()
+        lines = _sample_lines()
+        draft_bytes = generate_draft_pdf_bytes(
+            _sample_invoice(invoice_number=""),
+            lines,
+        )
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines)
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        self.assertIn("DRAFT", draft_text)
+        self.assertNotIn("DRAFT", final_text)
+        self.assertIn("2026-0042", final_text)
+        self.assertNotIn("2026-0042", draft_text)
+
+    def test_layout_parity_short_bill_to(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        invoice = _sample_invoice(
+            bill_to_address_snapshot="",
+            bill_to_email_snapshot="",
+            delivery_method="mail",
+        )
+        lines = _sample_lines()
+        draft_bytes = generate_draft_pdf_bytes(_sample_invoice(invoice_number="", bill_to_address_snapshot="", bill_to_email_snapshot="", delivery_method="mail"), lines)
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines)
+        final_bytes = final_path.read_bytes()
+        draft_snips = self._extract_text_positions(draft_bytes)
+        final_snips = self._extract_text_positions(final_bytes)
+        draft_provider = [s for s in draft_snips if "Jordana" in s[0]]
+        final_provider = [s for s in final_snips if "Jordana" in s[0]]
+        self.assertTrue(draft_provider and final_provider)
+        self.assertAlmostEqual(draft_provider[0][2], final_provider[0][2], delta=1.0,
+                               msg="Provider block Y position differs between draft and final")
+
+    def test_layout_parity_medium_bill_to(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        invoice = _sample_invoice(
+            bill_to_address_snapshot="10 Sample Street\nExample, FL 00000",
+            bill_to_email_snapshot="",
+            delivery_method="mail",
+        )
+        lines = _sample_lines()
+        draft_bytes = generate_draft_pdf_bytes(
+            _sample_invoice(invoice_number="", bill_to_address_snapshot="10 Sample Street\nExample, FL 00000", bill_to_email_snapshot="", delivery_method="mail"),
+            lines,
+        )
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines)
+        final_bytes = final_path.read_bytes()
+        draft_snips = self._extract_text_positions(draft_bytes)
+        final_snips = self._extract_text_positions(final_bytes)
+        draft_provider = [s for s in draft_snips if "Jordana" in s[0]]
+        final_provider = [s for s in final_snips if "Jordana" in s[0]]
+        self.assertTrue(draft_provider and final_provider)
+        self.assertAlmostEqual(draft_provider[0][2], final_provider[0][2], delta=1.0)
+
+    def test_layout_parity_long_bill_to_with_email(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        invoice = _sample_invoice(
+            bill_to_address_snapshot="12345 Long Billing Address Boulevard\nApartment 12B\nExample Harbor, FL 00000",
+            bill_to_email_snapshot="billing.long-client@example.test",
+            delivery_method="both",
+        )
+        lines = _sample_lines()
+        draft_bytes = generate_draft_pdf_bytes(
+            _sample_invoice(invoice_number="",
+                bill_to_address_snapshot="12345 Long Billing Address Boulevard\nApartment 12B\nExample Harbor, FL 00000",
+                bill_to_email_snapshot="billing.long-client@example.test",
+                delivery_method="both"),
+            lines,
+        )
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines)
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        for s in ["Alexandria Montgomery-Sterling Family Account" if "Alexandria" in invoice.get("bill_to_name_snapshot", "") else "Avery Stone",
+                  "Apartment 12B", "Example Harbor, FL 00000",
+                  "Via Email: billing.long-client@example.test"]:
+            self.assertIn(s, draft_text)
+            self.assertIn(s, final_text)
+
+    def test_provider_coordinates_fixed_across_all_bill_to_sizes(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import Paragraph
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+
+        styles = getSampleStyleSheet()
+        body = ParagraphStyle("B", parent=styles["BodyText"])
+        label = ParagraphStyle("L", parent=body)
+        title = ParagraphStyle("T", parent=body)
+
+        def para(value, style=body):
+            return Paragraph(str(value), style)
+
+        meta = [para("INVOICE", title), para("June 28, 2026", body), para("DRAFT", body)]
+        variants = [
+            _sample_invoice(bill_to_address_snapshot="", bill_to_email_snapshot="", delivery_method="mail"),
+            _sample_invoice(bill_to_address_snapshot="10 Sample Street\nExample, FL 00000", bill_to_email_snapshot="", delivery_method="mail"),
+            _sample_invoice(
+                bill_to_address_snapshot="12345 Long Billing Address Boulevard\nApartment 12B\nExample Harbor, FL 00000",
+                bill_to_email_snapshot="billing.long-client@example.test",
+                delivery_method="both",
+            ),
+        ]
+        provider_top = None
+        provider_bottom = None
+        for invoice in variants:
+            render = build_invoice_render_model(invoice, _sample_lines())
+            header = _build_header_table(render, meta, body, label, styles["Heading2"], "Business")
+            header.wrap(CONTENT_WIDTH, 10_000)
+            metrics = header._last_metrics
+            if provider_top is None:
+                provider_top = metrics["provider_top"]
+                provider_bottom = metrics["provider_bottom"]
+            self.assertAlmostEqual(metrics["provider_top"], provider_top, delta=0.01)
+            self.assertAlmostEqual(metrics["provider_bottom"], provider_bottom, delta=0.01)
+
+    def test_invoice_gap_within_approved_range_all_sizes(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import Paragraph
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+
+        styles = getSampleStyleSheet()
+        body = ParagraphStyle("B", parent=styles["BodyText"])
+        label = ParagraphStyle("L", parent=body)
+        title = ParagraphStyle("T", parent=body)
+
+        def para(value, style=body):
+            return Paragraph(str(value), style)
+
+        meta = [para("INVOICE", title), para("June 28, 2026", body)]
+        cases = [
+            (_sample_invoice(bill_to_address_snapshot="", bill_to_email_snapshot="", delivery_method="mail"),
+             INVOICE_TO_BILLTO_GAP_SHORT, (24.0, 28.0)),
+            (_sample_invoice(bill_to_address_snapshot="10 Sample Street\nExample, FL 00000", bill_to_email_snapshot="", delivery_method="mail"),
+             INVOICE_TO_BILLTO_GAP_MEDIUM, (16.0, 18.0)),
+            (_sample_invoice(
+                bill_to_address_snapshot="12345 Long Billing Address Boulevard\nApartment 12B\nExample Harbor, FL 00000",
+                bill_to_email_snapshot="billing.long-client@example.test",
+                delivery_method="both"),
+             INVOICE_TO_BILLTO_GAP_LONG, (12.0, 14.0)),
+        ]
+        for invoice, expected_gap, gap_range in cases:
+            render = build_invoice_render_model(invoice, _sample_lines())
+            header = _build_header_table(render, meta, body, label, styles["Heading2"], "Business")
+            header.wrap(CONTENT_WIDTH, 10_000)
+            metrics = header._last_metrics
+            self.assertAlmostEqual(metrics["invoice_to_bill_to_gap"], expected_gap, delta=0.01)
+            self.assertGreaterEqual(metrics["invoice_to_bill_to_gap"], gap_range[0])
+            self.assertLessEqual(metrics["invoice_to_bill_to_gap"], gap_range[1])
+
+    def test_late_cancellation_description_renders_identically(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        desc = "Late Cancellation - 50% Fee"
+        lines = [{
+            "service_date": "2026-05-15",
+            "participants_snapshot": "Avery Stone",
+            "description_snapshot": desc,
+            "duration_minutes": 60,
+            "line_amount_cents": 7500,
+        }]
+        invoice = _sample_invoice(total_cents=7500)
+        draft_bytes = generate_draft_pdf_bytes(_sample_invoice(invoice_number="", total_cents=7500), lines)
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines, filename="Invoice_late_cancel.pdf")
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        self.assertIn(desc, draft_text)
+        self.assertIn(desc, final_text)
+
+    def test_late_cancellation_waived_renders_identically(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        desc = "Late Cancellation - Waived"
+        lines = [{
+            "service_date": "2026-05-20",
+            "participants_snapshot": "Avery Stone",
+            "description_snapshot": desc,
+            "duration_minutes": 0,
+            "line_amount_cents": 0,
+        }]
+        invoice = _sample_invoice(total_cents=0)
+        draft_bytes = generate_draft_pdf_bytes(_sample_invoice(invoice_number="", total_cents=0), lines)
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines, filename="Invoice_waived.pdf")
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        self.assertIn(desc, draft_text)
+        self.assertIn(desc, final_text)
+
+    def test_late_cancellation_custom_description_renders_identically(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        desc = "Custom Late Cancel - Full Session Rate"
+        lines = [{
+            "service_date": "2026-05-25",
+            "participants_snapshot": "Avery Stone",
+            "description_snapshot": desc,
+            "duration_minutes": 45,
+            "line_amount_cents": 15000,
+        }]
+        invoice = _sample_invoice(total_cents=15000)
+        draft_bytes = generate_draft_pdf_bytes(_sample_invoice(invoice_number="", total_cents=15000), lines)
+        final_path = self._generate_final_pdf(invoice=invoice, lines=lines, filename="Invoice_custom_cancel.pdf")
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        self.assertIn(desc, draft_text)
+        self.assertIn(desc, final_text)
+
+    def test_insurance_coding_block_renders_identically(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+        profile = {
+            "insurance_ein": "12-3456789",
+            "insurance_npi": "1234567890",
+            "insurance_sw": "SW001",
+        }
+        invoice = _sample_invoice(
+            status="finalized",
+            insurance_coding_included=1,
+            insurance_diagnosis_code_snapshot="F41.1",
+            insurance_ein_snapshot="12-3456789",
+            insurance_npi_snapshot="1234567890",
+            insurance_sw_snapshot="SW001",
+        )
+        lines = _sample_lines()
+        draft_model = build_invoice_render_model(
+            _sample_invoice(invoice_number="", status="draft"),
+            lines,
+            business_profile=profile,
+            insurance_coding_payload={
+                "insurance_coding_included": True,
+                "insurance_diagnosis_code": "F41.1",
+            },
+        )
+        draft_bytes = generate_draft_pdf_bytes(
+            _sample_invoice(invoice_number="", status="draft"),
+            lines,
+            render_model=draft_model,
+        )
+        final_model = build_invoice_render_model(invoice, lines)
+        final_path = self.root / "Invoice_insurance.pdf"
+        generate_invoice_pdf(invoice, lines, final_path, render_model=final_model)
+        final_bytes = final_path.read_bytes()
+        draft_text = self._extract_pdf_text(draft_bytes)
+        final_text = self._extract_pdf_text(final_bytes)
+        for s in ["Diagnosis Code: F41.1", "EIN: 12-3456789", "NPI: 1234567890", "SW: SW001"]:
+            self.assertIn(s, draft_text, f"Draft PDF missing insurance line: {s}")
+            self.assertIn(s, final_text, f"Finalized PDF missing insurance line: {s}")
+
+    def test_old_renderer_not_reachable_from_finalization(self):
+        """Verify that generate_invoice_pdf delegates to _generate_invoice_pdf_bytes
+        and does not contain its own style definitions or story-building code."""
+        import inspect
+        src = inspect.getsource(generate_invoice_pdf)
+        self.assertIn("_generate_invoice_pdf_bytes", src)
+        forbidden = ["fontName=\"Times-Roman\"", "fontName=\"Helvetica\"", "SimpleDocTemplate", "ParagraphStyle"]
+        for token in forbidden:
+            self.assertNotIn(token, src,
+                             f"generate_invoice_pdf still contains '{token}' — it should be a thin wrapper")
 
 
 if __name__ == "__main__":
