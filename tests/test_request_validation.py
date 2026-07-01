@@ -251,6 +251,47 @@ class TestParseApproveSessionRequest(unittest.TestCase):
             self.assertNotIn("path", msg.lower())
             self.assertNotIn("db", msg.lower())
 
+    # -- Regression: custom_duration_minutes empty-string bug --
+
+    def test_custom_duration_null_accepted(self):
+        """Standard 60-minute approval: null custom_duration_minutes must pass."""
+        req = parse_approve_session_request({
+            "approved_duration_minutes": "60",
+            "duration_choice": "60",
+            "custom_duration_minutes": None,
+        })
+        self.assertIsNone(req.to_payload()["custom_duration_minutes"])
+
+    def test_custom_duration_omitted_accepted(self):
+        """Standard approval: missing custom_duration_minutes must pass."""
+        req = parse_approve_session_request({
+            "approved_duration_minutes": "60",
+            "duration_choice": "60",
+        })
+        self.assertNotIn("custom_duration_minutes", req.to_payload())
+
+    def test_custom_duration_empty_string_rejected(self):
+        """Empty string must be rejected — it is not a valid integer."""
+        with self.assertRaises(RequestValidationError) as ctx:
+            parse_approve_session_request({"custom_duration_minutes": ""})
+        self.assertIn("custom_duration_minutes must be an integer", str(ctx.exception))
+
+    def test_custom_duration_valid_integer_accepted(self):
+        """Valid custom duration integer must pass."""
+        req = parse_approve_session_request({"custom_duration_minutes": 45})
+        self.assertEqual(req.to_payload()["custom_duration_minutes"], 45)
+
+    def test_custom_duration_valid_string_integer_accepted(self):
+        """String representation of a valid integer must pass (frontend sends strings)."""
+        req = parse_approve_session_request({"custom_duration_minutes": "45"})
+        self.assertEqual(req.to_payload()["custom_duration_minutes"], "45")
+
+    def test_custom_duration_non_integer_string_rejected(self):
+        """Non-integer string must still be rejected — no silent conversion."""
+        with self.assertRaises(RequestValidationError) as ctx:
+            parse_approve_session_request({"custom_duration_minutes": "abc"})
+        self.assertIn("custom_duration_minutes must be an integer", str(ctx.exception))
+
 
 # ---------------------------------------------------------------------------
 # 2. Save Section Request Parsers

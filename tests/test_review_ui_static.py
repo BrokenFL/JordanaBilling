@@ -1619,6 +1619,55 @@ class ReviewApprovalTests(unittest.TestCase):
         css = Path("app/jordana_invoice/static/review.css").read_text()
         self.assertIn(".review-success-banner", css)
 
+    def test_approval_failure_keeps_overlay_open(self):
+        """On approval failure, the overlay must stay open — no closeReviewOverlay in catch."""
+        catch_start = self.save_fn.index("catch (error)")
+        catch_block = self.save_fn[catch_start:]
+        self.assertNotIn("closeReviewOverlay", catch_block)
+
+    def test_approval_success_closes_overlay_and_clears_candidate(self):
+        """On success, overlay closes and candidate is cleared."""
+        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
+
+    def test_approval_success_prevents_resubmission(self):
+        """Submit guard prevents double-submission during request."""
+        self.assertIn("if (approve && approvalState.submitting) return;", self.save_fn)
+        self.assertIn("approvalState.submitting = true;", self.save_fn)
+
+
+class ReviewCustomDurationPayloadTests(unittest.TestCase):
+    """Regression: custom_duration_minutes must be null (not empty string) when no custom duration."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+
+    def test_collect_payload_sends_null_for_standard_duration(self):
+        start = self.js.index("function collectPayload()")
+        end = self.js.index("function collectRelationshipPayload", start)
+        fn = self.js[start:end]
+        self.assertIn("custom_duration_minutes: durationChoice === \"custom\" ? (customMinutes || null) : null", fn)
+        self.assertNotIn('custom_duration_minutes: durationChoice === "custom" ? customMinutes : ""', fn)
+
+    def test_collect_session_draft_sends_null_for_standard_duration(self):
+        start = self.js.index("function collectSessionDraftValues()")
+        end = self.js.index("function restoreSessionDraftValues", start)
+        fn = self.js[start:end]
+        self.assertIn("custom_duration_minutes: durationChoice === \"custom\" ? (customMinutes || null) : null", fn)
+        self.assertNotIn('custom_duration_minutes: durationChoice === "custom" ? customMinutes : ""', fn)
+
+    def test_restore_session_draft_handles_null(self):
+        start = self.js.index("function restoreSessionDraftValues(values)")
+        end = self.js.index("async function updateSessionRatePreview", start)
+        fn = self.js[start:end]
+        self.assertIn("values.custom_duration_minutes ?? \"\"", fn)
+
+    def test_rate_preview_sends_null_for_empty_custom(self):
+        start = self.js.index("async function updateSessionRatePreview()")
+        end = self.js.index("async function resolveTypedSelections", start)
+        fn = self.js[start:end]
+        self.assertIn('custom_duration_minutes: $("customDurationInput")?.value || null', fn)
+        self.assertNotIn('custom_duration_minutes: $("customDurationInput")?.value || ""', fn)
+
 
 class ReviewBillingRelationshipReturnTests(unittest.TestCase):
     """Bug 3: saveBillingRelationship must refresh candidate before returning to review."""

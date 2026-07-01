@@ -989,7 +989,7 @@ function collectSessionDraftValues() {
     approved_duration_minutes: approvedMinutes,
     billing_session_type: $("billingTypeInput")?.value || "psychotherapy",
     duration_choice: durationChoice,
-    custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
+    custom_duration_minutes: durationChoice === "custom" ? (customMinutes || null) : null,
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
     approved_rate: $("approvedRateInput")?.value || "",
@@ -1003,7 +1003,7 @@ function restoreSessionDraftValues(values) {
   if (!values) return;
   if ($("billingTypeInput")) $("billingTypeInput").value = values.billing_session_type;
   if ($("durationChoiceInput")) $("durationChoiceInput").value = values.duration_choice;
-  if ($("customDurationInput")) $("customDurationInput").value = values.custom_duration_minutes;
+  if ($("customDurationInput")) $("customDurationInput").value = values.custom_duration_minutes ?? "";
   if ($("customDescInput")) $("customDescInput").value = values.custom_service_description;
   if ($("customCodeInput")) $("customCodeInput").value = values.custom_service_code;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
@@ -1018,7 +1018,7 @@ async function updateSessionRatePreview() {
   const payload = {
     session_date: state.detail.session.session_date || state.detail.session.start_at?.slice(0, 10) || "",
     duration_choice: $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes),
-    custom_duration_minutes: $("customDurationInput")?.value || "",
+    custom_duration_minutes: $("customDurationInput")?.value || null,
     billing_session_type: $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy",
     appointment_status: state.detail.session.appointment_status || "scheduled",
     custom_service_description: $("customDescInput")?.value || "",
@@ -1130,7 +1130,7 @@ function collectPayload() {
     approved_duration_minutes: approvedMinutes,
     billing_session_type: $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy",
     duration_choice: durationChoice,
-    custom_duration_minutes: durationChoice === "custom" ? customMinutes : "",
+    custom_duration_minutes: durationChoice === "custom" ? (customMinutes || null) : null,
     custom_service_description: $("customDescInput")?.value || session.custom_service_description || "",
     custom_service_code: $("customCodeInput")?.value || session.custom_service_code || "",
     time_category: session.time_category || "standard",
