@@ -2,6 +2,16 @@
 
 Use this checklist on Brooke's spare clean Mac before installing anything on Jordana's Mac. Do not use real credentials in screenshots or notes.
 
+## Current Status — 2026-07-01
+
+Brooke reports that the current one-click installer successfully completed an install and launch on a test Mac. This confirms that the basic native setup, offline runtime installation, and daily app launch work in at least one real installation.
+
+The checklist is not yet recorded as fully complete. Do not assume restart, duplicate launch, cross-user port ownership, unrelated port conflict, missing-config, missing-database, reinstall preservation, or uninstall preservation passed unless they are explicitly recorded below.
+
+Before final production handoff, record the release filename and commit, checksum result, test Mac and macOS version, Python version, Gatekeeper behavior, completed steps, deferred steps, and operational smoke-test result.
+
+Known packaging limitation: the installer currently replaces the existing app before final verification and does not automatically restore the previous app if that verification fails. Private configuration and SQLite data remain outside the app and are preserved, but app-bundle replacement is not yet rollback-safe.
+
 ## Prerequisites
 
 - macOS 12 or later on Apple Silicon.
@@ -31,7 +41,7 @@ shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 12. Expected result: setup installs `~/Applications/Jordana Billing.app`, writes `~/Library/Application Support/Jordana Billing/config/.env` with permissions `600`, creates `~/Documents/Jordana Billing/Session Lists` and `~/Documents/Jordana Billing/Client Files`, creates the clean database only after confirmation, runs verification, and reports success.
 13. Click Open Jordana Billing. Expected result: the browser opens only after health readiness.
 14. Confirm unresolved review items load after sync.
-15. Confirm there are no old invoices, payments, clients, approved sessions, or billing relationships.
+15. Confirm there are no old invoices, payments, clients, approved sessions, or billing relationships in an intentionally clean-start test.
 16. Restart the Mac and launch `~/Applications/Jordana Billing.app` again.
 17. Double-click twice and confirm the second launch reuses the existing healthy server rather than creating a duplicate.
 18. From another macOS user account, leave Jordana Billing running on port `8765`, then try launching from this account. Expected result: a clear message says Jordana Billing is already running under another macOS user account. It must not kill the other process.
@@ -41,9 +51,26 @@ shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 22. Reinstall the same release and confirm existing config and DB are preserved. Expected result: Apps Script URL and ingest API-key fields are disabled, clean-start initialization is disabled, and installation remains possible without re-entering secrets.
 23. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support and user-facing generated folders remain in Documents.
 
+## Operational Smoke Path
+
+After the installation mechanics pass, verify the actual user workflow with approved test data:
+
+1. Launch the installed app by double-clicking.
+2. Run Calendar Sync and confirm it completes without duplicate snapshots or sessions.
+3. Open one review candidate and save Participants, Bill To, and Session Draft.
+4. Approve the session and confirm the overlay closes, the item refreshes, and no duplicate approval is possible.
+5. Open the resulting draft invoice.
+6. Open the draft PDF preview and verify it matches the intended final layout except for DRAFT versus invoice number.
+7. Finalize a disposable test invoice after confirming filing owner, delivery method, and readiness.
+8. Open the finalized PDF and verify the file exists in the expected client/month folder.
+9. Confirm payment and balance behavior using the approved test workflow.
+10. Restart the Mac and confirm the same records remain visible.
+
 ## Evidence To Record
 
 - Release filename and checksum result.
+- Git commit recorded in the release manifest.
+- Test Mac model, macOS version, and installer Python version.
 - Confirmation that `.env` permissions are `600`.
 - Confirmation that the Documents Session Lists and Client Files folders exist and are writable.
 - Setup app success message.
@@ -54,11 +81,32 @@ shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 - Duplicate-launch result.
 - Cross-user, port-conflict, missing-config, and missing-DB error wording.
 - Reinstall result confirming data preservation.
+- Operational smoke-path result.
+- Any untested step and the reason it was deferred.
+
+## Acceptance Record
+
+```text
+Date:
+Release DMG:
+Release commit:
+Checksum verified:
+Test Mac / macOS:
+Installer Python:
+Gatekeeper result:
+Passed steps:
+Deferred steps:
+Operational smoke path:
+Known limitations accepted:
+Tester:
+```
 
 ## Stop Conditions
 
-Stop before Jordana's Mac if any step creates a blank DB unexpectedly, overwrites private config, starts without the expected DB, requires PyPI/GitHub during launch, asks to install Rosetta, kills an unrelated process, exposes secrets in output, or fails to launch after reboot.
+Stop before Jordana's Mac if any step creates a blank DB unexpectedly, overwrites private config, starts without the expected DB, requires PyPI/GitHub during launch, asks to install Rosetta, kills an unrelated process, exposes secrets in output, fails to launch after reboot, or loses the only available working app during an update.
 
 ## Rollback
 
 Move `~/Applications/Jordana Billing.app` to Trash. Keep `~/Library/Application Support/Jordana Billing` intact unless Brooke explicitly chooses to remove private data.
+
+Until automatic app-bundle rollback is implemented, retain the prior verified release DMG and checksum so the previous version can be reinstalled manually if a new release fails after replacement.
