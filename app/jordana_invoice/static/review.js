@@ -2628,6 +2628,12 @@ async function startInvoiceBuilder() {
     <div class="actions"><button id="saveInvoiceDraft" class="save">Save Draft</button></div>
   </div>`;
   ["draftBillTo","draftPeriodStart","draftPeriodEnd"].forEach(id => $(id).onchange = loadEligibleInvoiceSessions);
+  $("draftBillTo").onchange = () => {
+    const pid = $("draftBillTo").value;
+    const p = parties.find(x => x.billing_party_id === pid);
+    if (p && p.preferred_delivery_method) $("draftDelivery").value = p.preferred_delivery_method;
+    loadEligibleInvoiceSessions();
+  };
   $("refreshEligible").onclick = loadEligibleInvoiceSessions;
   $("saveInvoiceDraft").onclick = async () => {
     const sessionIds = [...document.querySelectorAll("#eligibleSessions input:checked")].map(input => input.value);

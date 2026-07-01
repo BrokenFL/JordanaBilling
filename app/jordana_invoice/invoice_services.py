@@ -851,8 +851,15 @@ def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
             raise ValueError("A valid billing period is required.")
         billing_month = _derive_billing_month(start, end)
 
-    method = str(data.get("delivery_method") or party["preferred_delivery_method"] or "unresolved")
-    if method not in DELIVERY_METHODS: raise ValueError("Invalid delivery method.")
+    requested = str(data.get("delivery_method") or "").strip()
+    if requested and requested not in DELIVERY_METHODS:
+        raise ValueError("Invalid delivery method.")
+    if requested in ("email", "mail", "both"):
+        method = requested
+    else:
+        method = str(party["preferred_delivery_method"] or "unresolved")
+        if method not in DELIVERY_METHODS:
+            method = "unresolved"
     supplement_sequence = int(data.get("supplement_sequence") or 0)
     if supplement_sequence < 0:
         raise ValueError("supplement_sequence cannot be negative.")
