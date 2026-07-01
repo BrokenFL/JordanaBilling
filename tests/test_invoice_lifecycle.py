@@ -233,7 +233,8 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertNotIn("TOTAL DUE", "\n".join(texts[:-1]))
         self.assertIn("TOTAL DUE", texts[-1])
         self.assertIn("Please make all checks payable to:", texts[-1])
-        self.assertIn("Or send payment via Zelle to: demo-zelle@example.test", texts[-1])
+        self.assertIn("Or send payment via Zelle to:", texts[-1])
+        self.assertIn("demo-zelle@example.test", texts[-1])
         self.assertNotIn("Please send payment to:", texts[-1])
         self.assertNotIn(str(logo), "\n".join(texts))
 

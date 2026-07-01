@@ -248,11 +248,9 @@ def build_invoice_render_model(
     if payment_snapshot_lines and payee_name and payment_snapshot_lines[0] == payee_name:
         payment_snapshot_lines = payment_snapshot_lines[1:]
     if payment_snapshot_lines:
-        payment_compact_parts = list(payment_snapshot_lines)
-        phone_text = str(invoice.get("business_phone_snapshot") or profile.get("phone") or "").strip()
-        if phone_text:
-            payment_compact_parts.append(phone_text)
-        payment_compact_line = " · ".join(part for part in payment_compact_parts if part)
+        # The bottom payment block intentionally omits the phone number; it
+        # already appears in the upper-left provider block via sender_lines.
+        payment_compact_line = " · ".join(part for part in payment_snapshot_lines if part)
     else:
         payment_compact_line = _payment_compact_line(
             profile.get("payment_address_line_1"),
@@ -260,12 +258,13 @@ def build_invoice_render_model(
             profile.get("payment_city"),
             profile.get("payment_state"),
             profile.get("payment_postal_code"),
-            invoice.get("business_phone_snapshot") or profile.get("phone"),
+            None,
         )
     zelle_snapshot = str(invoice.get("zelle_recipient_snapshot") or "").strip()
     zelle_recipient = zelle_snapshot
     if not zelle_recipient and str(invoice.get("status") or "") == "draft":
         zelle_recipient = str(profile.get("zelle_recipient") or "").strip()
+    business_name = str(invoice.get("business_name_snapshot") or profile.get("business_name") or "").strip()
 
     rendered_lines = []
     for line in lines:
@@ -323,6 +322,13 @@ def build_invoice_render_model(
             if zelle_recipient
             else ("Or send payment via Zelle to: Not configured" if str(invoice.get("status") or "") == "draft" else "")
         ),
+        "payment_zelle_title": "Or send payment via Zelle to:",
+        "payment_zelle_value": (
+            zelle_recipient
+            if zelle_recipient
+            else ("Not configured" if str(invoice.get("status") or "") == "draft" else "")
+        ),
+        "payment_account_name_line": f"Account name: {business_name}" if business_name else "",
         "notes": str(invoice.get("notes") or "").strip(),
         "total_label": str(invoice.get("total_label_snapshot") or profile.get("invoice_total_label") or "TOTAL DUE"),
         "total_display": money(invoice.get("total_cents")),
