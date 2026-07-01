@@ -496,9 +496,11 @@ class ReviewServerReviewPageTests(unittest.TestCase):
         self.assertNotIn("<!--", html)
 
     def test_static_review_js_does_not_embed_runtime_token(self):
-        js = Path("app/jordana_invoice/static/review.js").read_text(encoding="utf-8")
-        self.assertIn("window.__JORDANA_BOOTSTRAP__", js)
-        self.assertNotIn(self.handler_cls.write_token, js)
+        api_js = Path("app/jordana_invoice/static/js/api.js").read_text(encoding="utf-8")
+        review_js = Path("app/jordana_invoice/static/review.js").read_text(encoding="utf-8")
+        self.assertIn("window.__JORDANA_BOOTSTRAP__", api_js)
+        self.assertNotIn(self.handler_cls.write_token, api_js)
+        self.assertNotIn(self.handler_cls.write_token, review_js)
 
 
 class ReviewServerRequestBodyLimitTests(unittest.TestCase):

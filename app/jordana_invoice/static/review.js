@@ -1,5 +1,4 @@
-const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
-const { api, sanitizeUiErrorMessage } = window.JordanaAPI;
+const { api, sanitizeUiErrorMessage, getWriteToken } = window.JordanaAPI;
 const { create: createOverlay } = window.JordanaOverlay;
 
 const approvalState = { submitting: false, candidateId: null };
@@ -3087,7 +3086,7 @@ function renderFinalizationPreview(preview, insuranceState) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Jordana-Write-Token": WRITE_TOKEN,
+          "X-Jordana-Write-Token": getWriteToken(),
         },
         body: JSON.stringify(payload),
       });
@@ -6049,7 +6048,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Jordana-Write-Token": WRITE_TOKEN,
+          "X-Jordana-Write-Token": getWriteToken(),
         },
         body: JSON.stringify(payload),
       });

@@ -353,18 +353,19 @@ Write routes require the local write token and appropriate content type. Errors 
 
 The shared frontend request utility lives at `app/jordana_invoice/static/js/api.js`.
 
-It is loaded as a classic script (IIFE) before `review.js` via `<script src="/static/js/api.js"></script>` in `review.html`. The server injects the bootstrap write-token script before `api.js`; the token is captured once at module load time.
+It is loaded as a classic script (IIFE) before `review.js` via `<script src="/static/js/api.js"></script>` in `review.html`. The server injects the bootstrap write-token script before `review.js`; because `api.js` loads earlier, write requests read the current bootstrap token at request time.
 
 ### Exports
 
 The module assigns `window.JordanaAPI` with:
 
 - **`api(path, options)`** — async fetch helper. Sets `Content-Type: application/json` on all requests. Adds `X-Jordana-Write-Token` for POST/PUT/PATCH/DELETE. Parses response as JSON. Throws `Error(json.error || "Request failed")` when `!res.ok || json.ok === false`. Returns the parsed JSON object unchanged.
+- **`getWriteToken()`** — reads the current bootstrap write token from `window.__JORDANA_BOOTSTRAP__` for mutating requests and direct write-fetch exceptions.
 - **`sanitizeUiErrorMessage(message, fallback)`** — sanitizes error messages for UI display. Returns fallback for messages containing `/`, `traceback`, or `select `.
 
 ### Token Behavior
 
-- Write token is captured once from `window.__JORDANA_BOOTSTRAP__?.writeToken` at module load time.
+- Write token is read from `window.__JORDANA_BOOTSTRAP__?.writeToken` when each write request is sent.
 - Only POST/PUT/PATCH/DELETE methods receive the token.
 - GET requests do not receive the write-token header.
 - The token is never placed in URLs, query strings, logs, or error messages.
@@ -375,7 +376,7 @@ The `api()` function does not inspect or intercept warning fields. Responses wit
 
 ### Direct Fetch Exceptions
 
-Two `fetch()` calls in `review.js` intentionally bypass the shared utility:
+Two `fetch()` calls in `review.js` intentionally bypass the shared utility but use the shared `getWriteToken()` helper:
 
 1. **Draft PDF preview** (`/api/invoices/{id}/draft-pdf`) — returns a binary blob, not JSON.
 2. **Billing relationship setup** (`/api/billing-relationships/setup`) — throws the raw JSON object (not an `Error`) so the catch block can inspect `err.duplicate`, `err.account_id`, and `err.created` for duplicate-relationship handling.

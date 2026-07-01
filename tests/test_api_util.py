@@ -1,4 +1,6 @@
 import unittest
+import subprocess
+import textwrap
 from pathlib import Path
 
 
@@ -22,9 +24,10 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     def test_api_module_assigns_window_jordana_api(self):
         self.assertIn("window.JordanaAPI", self.api_js)
+        self.assertIn("getWriteToken", self.api_js)
 
     def test_review_js_destructures_from_window_jordana_api(self):
-        self.assertIn("const { api, sanitizeUiErrorMessage } = window.JordanaAPI;", self.review_js)
+        self.assertIn("const { api, sanitizeUiErrorMessage, getWriteToken } = window.JordanaAPI;", self.review_js)
 
     def test_review_js_no_longer_defines_local_api_function(self):
         self.assertNotIn("async function api(path, options = {}) {", self.review_js)
@@ -53,17 +56,20 @@ class ApiUtilStaticTests(unittest.TestCase):
     # --- POST / write request behavior ---
 
     def test_post_request_adds_write_token_header(self):
-        self.assertIn('headers["X-Jordana-Write-Token"] = WRITE_TOKEN', self.api_js)
+        self.assertIn('headers["X-Jordana-Write-Token"] = getWriteToken()', self.api_js)
 
-    def test_write_token_captured_once_at_load(self):
-        self.assertIn('const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || ""', self.api_js)
+    def test_write_token_is_read_per_write_request(self):
+        self.assertIn("function getWriteToken()", self.api_js)
+        self.assertIn('window.__JORDANA_BOOTSTRAP__?.writeToken || ""', self.api_js)
+        self.assertNotIn("const WRITE_TOKEN", self.api_js)
 
-    def test_write_token_not_reread_per_request(self):
-        self.assertNotIn("getWriteToken", self.api_js)
+    def test_review_js_direct_write_fetches_use_current_write_token(self):
+        self.assertNotIn("const WRITE_TOKEN", self.review_js)
+        self.assertEqual(self.review_js.count('"X-Jordana-Write-Token": getWriteToken()'), 2)
 
     def test_write_token_not_in_urls(self):
         self.assertNotIn("writeToken", self.api_js.replace(
-            'const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || ""', ""))
+            'window.__JORDANA_BOOTSTRAP__?.writeToken || ""', ""))
 
     def test_write_token_not_logged(self):
         self.assertNotIn("console.log", self.api_js)
@@ -88,6 +94,44 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     def test_callers_still_serialize_body_in_review_js(self):
         self.assertIn("body:JSON.stringify(", self.review_js)
+
+    def test_actual_review_page_order_still_sends_bootstrap_token_for_save_relationship(self):
+        api_pos = self.review_html.index('<script src="/static/js/api.js"></script>')
+        review_marker = '<script src="/static/review.js"></script>'
+        rendered_html = self.review_html.replace(
+            review_marker,
+            '<script nonce="test-nonce">window.__JORDANA_BOOTSTRAP__={"writeToken": "test-bootstrap-token"};</script>\n'
+            f"    {review_marker}",
+            1,
+        )
+        bootstrap_pos = rendered_html.index("window.__JORDANA_BOOTSTRAP__")
+        review_pos = rendered_html.index(review_marker)
+        self.assertLess(api_pos, bootstrap_pos)
+        self.assertLess(bootstrap_pos, review_pos)
+
+        script = textwrap.dedent(
+            f"""
+            global.window = {{}};
+            let captured = null;
+            global.fetch = async (path, options) => {{
+              captured = {{path, options}};
+              return {{ok: true, json: async () => ({{ok: true}})}};
+            }};
+            {self.api_js}
+            window.__JORDANA_BOOTSTRAP__ = {{writeToken: "test-bootstrap-token"}};
+            (async () => {{
+              await window.JordanaAPI.api(
+                "/api/review/candidates/candidate-1/save-relationship",
+                {{method: "POST", body: "{{}}"}}
+              );
+              if (captured.path !== "/api/review/candidates/candidate-1/save-relationship") process.exit(2);
+              if (captured.options.headers["X-Jordana-Write-Token"] !== "test-bootstrap-token") process.exit(3);
+              if (!captured.options.headers["X-Jordana-Write-Token"]) process.exit(4);
+            }})().catch(() => process.exit(5));
+            """
+        )
+        result = subprocess.run(["node", "-e", script], check=False, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     # --- Response parsing ---
 
@@ -122,7 +166,7 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     def test_sanitize_function_exported_from_api_module(self):
         self.assertIn("sanitizeUiErrorMessage", self.api_js)
-        self.assertIn("window.JordanaAPI = { api, sanitizeUiErrorMessage }", self.api_js)
+        self.assertIn("window.JordanaAPI = { api, sanitizeUiErrorMessage, getWriteToken }", self.api_js)
 
     def test_sanitize_preserves_fallback_default(self):
         self.assertIn('"An unexpected error occurred."', self.api_js)

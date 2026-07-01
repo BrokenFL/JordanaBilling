@@ -1,13 +1,15 @@
 (function () {
   "use strict";
 
-  const WRITE_TOKEN = window.__JORDANA_BOOTSTRAP__?.writeToken || "";
+  function getWriteToken() {
+    return window.__JORDANA_BOOTSTRAP__?.writeToken || "";
+  }
 
   async function api(path, options = {}) {
     const method = (options.method || "GET").toUpperCase();
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-      headers["X-Jordana-Write-Token"] = WRITE_TOKEN;
+      headers["X-Jordana-Write-Token"] = getWriteToken();
     }
     const res = await fetch(path, { ...options, method, headers });
     const json = await res.json();
@@ -24,5 +26,5 @@
     return raw;
   }
 
-  window.JordanaAPI = { api, sanitizeUiErrorMessage };
+  window.JordanaAPI = { api, sanitizeUiErrorMessage, getWriteToken };
 })();
