@@ -429,7 +429,7 @@ class CompactAccountSummaryTests(unittest.TestCase):
         from pypdf import PdfReader
         # Create many sessions to force multi-page
         sessions = []
-        for i in range(15):
+        for i in range(30):
             s = self._approved_session(f"multi{i}", f"2026-05-{i+1:02d}T10:00:00-04:00")
             sessions.append(s)
         draft = self._draft(sessions, "2026-05-31")

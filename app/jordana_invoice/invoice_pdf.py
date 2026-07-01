@@ -18,16 +18,16 @@ TOP_MARGIN = 0.50 * POINTS_PER_INCH
 BOTTOM_MARGIN = 0.55 * POINTS_PER_INCH
 CONTENT_WIDTH = LETTER_PAGE_WIDTH - (2 * LEFT_RIGHT_MARGIN)
 
-BODY_FONT_SIZE = 10.25
-BODY_LEADING = 13.0
-SMALL_FONT_SIZE = 9.0
-SMALL_LEADING = 11.0
-LABEL_FONT_SIZE = 9.0
-LABEL_LEADING = 11.0
-TITLE_FONT_SIZE = 29.0
-TITLE_LEADING = 31.0
-TOTAL_FONT_SIZE = 14.5
-TOTAL_LEADING = 18.0
+BODY_FONT_SIZE = 10.75
+BODY_LEADING = 11.6
+SMALL_FONT_SIZE = BODY_FONT_SIZE
+SMALL_LEADING = BODY_LEADING
+LABEL_FONT_SIZE = BODY_FONT_SIZE
+LABEL_LEADING = BODY_LEADING
+TITLE_FONT_SIZE = 14.5
+TITLE_LEADING = 16.0
+TOTAL_FONT_SIZE = 13.0
+TOTAL_LEADING = 14.3
 
 LOGO_MAX_WIDTH = 2.1004 * POINTS_PER_INCH
 LOGO_MAX_HEIGHT = 1.3452 * POINTS_PER_INCH
@@ -35,14 +35,15 @@ LOGO_OPTICAL_RIGHT_SHIFT = 0.0
 
 HEADER_LEFT_WIDTH = 3.65 * POINTS_PER_INCH
 HEADER_RIGHT_WIDTH = CONTENT_WIDTH - HEADER_LEFT_WIDTH
-HEADER_TO_TABLE_SPACING = (0.13 * POINTS_PER_INCH) + 5.0
-META_TO_BILLTO_SPACING = 0.16 * POINTS_PER_INCH
-TITLE_TO_META_SPACING = 0.10 * POINTS_PER_INCH
-LOGO_TO_PROVIDER_SPACING = 0.08 * POINTS_PER_INCH
-LOGO_TO_PROVIDER_SPACING_REDUCTION = 9.0
+HEADER_TO_TABLE_SPACING = 0.285 * POINTS_PER_INCH
+META_TO_BILLTO_SPACING = (0.10 * POINTS_PER_INCH) + 16.0
+BILLTO_LABEL_TO_DETAILS_SPACING = 3.5
+TITLE_TO_META_SPACING = 0.0
+LOGO_TO_PROVIDER_SPACING = 1.5
+LOGO_TO_PROVIDER_SPACING_REDUCTION = 0.0
 RIGHT_HEADER_BLOCK_WIDTH = 2.45 * POINTS_PER_INCH
-META_LABEL_WIDTH = 1.00 * POINTS_PER_INCH
-META_VALUE_WIDTH = 1.02 * POINTS_PER_INCH
+META_LABEL_WIDTH = 2.02 * POINTS_PER_INCH
+META_VALUE_WIDTH = 0.0
 TABLE_COLUMN_WIDTHS = [
     1.12 * POINTS_PER_INCH,
     1.65 * POINTS_PER_INCH,
@@ -52,12 +53,43 @@ TABLE_COLUMN_WIDTHS = [
 ]
 TOTAL_COLUMN_WIDTHS = [6.15 * POINTS_PER_INCH, 1.35 * POINTS_PER_INCH]
 
-TABLE_ROW_TOP_PADDING = 9
-TABLE_ROW_BOTTOM_PADDING = 9
+TABLE_ROW_TOP_PADDING = 4
+TABLE_ROW_BOTTOM_PADDING = 4
 TABLE_CELL_LEFT_PADDING = 6
 TABLE_CELL_RIGHT_PADDING = 6
 TABLE_HEADER_BORDER_WIDTH = 0.5
 PAYMENT_FOOTER_MIN_CLEARANCE = 0.30 * POINTS_PER_INCH
+PAYMENT_COLUMN_HEADING_TO_DETAIL_SPACING = 3.5
+PAYMENT_CHECK_COLUMN_WIDTH = 2.10 * POINTS_PER_INCH
+PAYMENT_ZELLE_COLUMN_WIDTH = 3.30 * POINTS_PER_INCH
+PAYMENT_COLUMN_CENTER_SEPARATION = (PAYMENT_CHECK_COLUMN_WIDTH + PAYMENT_ZELLE_COLUMN_WIDTH) / 2.0
+BILLTO_SHORT_HEIGHT_MAX = 35.0
+BILLTO_MEDIUM_HEIGHT_MAX = 60.0
+INVOICE_TO_BILLTO_GAP_SHORT = 26.0
+INVOICE_TO_BILLTO_GAP_MEDIUM = 17.0
+INVOICE_TO_BILLTO_GAP_LONG = 13.0
+PAYMENT_SECTION_TOP_SPACING = (0.12 * POINTS_PER_INCH) + BODY_LEADING
+
+
+def _times_canvasmaker(*args: Any, **kwargs: Any) -> Any:
+    from reportlab.pdfgen.canvas import Canvas
+
+    canvas = Canvas(*args, **kwargs)
+    canvas.setFont("Times-Roman", BODY_FONT_SIZE)
+    return canvas
+
+
+def _register_invoice_font_aliases() -> None:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.pdfmetrics import Font
+
+    for alias, base_font in (
+        ("Helvetica", "Times-Roman"),
+        ("Helvetica-Bold", "Times-Bold"),
+        ("Helvetica-Oblique", "Times-Italic"),
+        ("Helvetica-BoldOblique", "Times-BoldItalic"),
+    ):
+        pdfmetrics.registerFont(Font(alias, base_font, "WinAnsiEncoding"))
 
 
 def generate_invoice_pdf(
@@ -92,14 +124,17 @@ def generate_invoice_pdf(
         raise FileExistsError(f"Finalized invoice PDF already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
+    _register_invoice_font_aliases()
     styles = getSampleStyleSheet()
     body = ParagraphStyle(
         "InvoiceBody",
         parent=styles["BodyText"],
-        fontName="Helvetica",
+        fontName="Times-Roman",
         fontSize=BODY_FONT_SIZE,
         leading=BODY_LEADING,
         textColor=colors.HexColor("#102A43"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     small = ParagraphStyle(
         "InvoiceSmall",
@@ -107,70 +142,85 @@ def generate_invoice_pdf(
         fontSize=SMALL_FONT_SIZE,
         leading=SMALL_LEADING,
         textColor=colors.HexColor("#42526A"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     table_header = ParagraphStyle(
         "InvoiceTableHeader",
         parent=small,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
     )
     compact = ParagraphStyle(
         "InvoiceCompact",
         parent=body,
         fontSize=BODY_FONT_SIZE,
-        leading=BODY_FONT_SIZE * 1.15,
+        leading=BODY_LEADING,
+        spaceBefore=0,
         spaceAfter=0,
     )
     label = ParagraphStyle(
         "InvoiceLabel",
         parent=compact,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=LABEL_FONT_SIZE,
-        leading=LABEL_FONT_SIZE * 1.15,
+        leading=LABEL_LEADING,
         textColor=colors.HexColor("#526171"),
-        spaceAfter=2,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     title = ParagraphStyle(
         "InvoiceTitle",
         parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=TITLE_FONT_SIZE,
         leading=TITLE_LEADING,
         alignment=TA_LEFT,
         textColor=colors.HexColor("#102A43"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     total_label_style = ParagraphStyle(
         "InvoiceTotalLabel",
         parent=body,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=TOTAL_FONT_SIZE,
         leading=TOTAL_LEADING,
         alignment=TA_LEFT,
         textColor=colors.HexColor("#102A43"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     total_amount_style = ParagraphStyle(
         "InvoiceTotalAmount",
         parent=total_label_style,
         alignment=TA_RIGHT,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     meta_label = ParagraphStyle(
         "InvoiceMetaLabel",
         parent=small,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         alignment=TA_LEFT,
         textColor=colors.HexColor("#526171"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     meta_value = ParagraphStyle(
         "InvoiceMetaValue",
         parent=body,
         alignment=TA_LEFT,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     payment_title_style = ParagraphStyle(
         "InvoicePaymentTitle",
         parent=body,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=BODY_FONT_SIZE,
         leading=BODY_LEADING,
-        spaceAfter=2,
+        spaceBefore=0,
+        spaceAfter=0,
     )
 
     def para(value: Any, style=body):
@@ -178,7 +228,7 @@ def generate_invoice_pdf(
 
     def page(canvas, doc):
         canvas.saveState()
-        canvas.setFont("Helvetica", 8)
+        canvas.setFont("Times-Roman", 8)
         canvas.setFillColor(colors.HexColor("#64748B"))
         number = invoice.get("invoice_number") or "Draft"
         canvas.drawString(doc.leftMargin, 0.42 * inch, f"Invoice {number}")
@@ -193,8 +243,8 @@ def generate_invoice_pdf(
     story = []
     meta = _build_meta_block(
         [
-            ("Invoice Number", render.get("invoice_number_display") or ""),
-            ("Invoice Date", render.get("invoice_date_display") or ""),
+            ("", render.get("invoice_date_display") or ""),
+            ("", render.get("invoice_number_display") or ""),
         ],
         title,
         meta_label,
@@ -220,7 +270,7 @@ def generate_invoice_pdf(
     footer.extend(_build_insurance_coding_flowables(render, small))
     story.append(KeepTogether(footer))
     try:
-        doc.build(story, onFirstPage=page, onLaterPages=page)
+        doc.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=_times_canvasmaker)
         os.replace(temp_path, path)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -280,22 +330,27 @@ def _build_meta_block(
 
     meta = [para("INVOICE", title_style)]
     meta.extend(extra_title_flowables or [])
-    meta.append(Spacer(1, TITLE_TO_META_SPACING))
-    meta_rows = [[para(label, meta_label_style), para(value, meta_value_style)] for label, value in rows]
-    meta.append(
-        Table(
-            meta_rows,
-            colWidths=[META_LABEL_WIDTH, META_VALUE_WIDTH],
-            hAlign="RIGHT",
-            style=TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-            ]),
+    if TITLE_TO_META_SPACING:
+        meta.append(Spacer(1, TITLE_TO_META_SPACING))
+    meta_rows = [[para(value, meta_value_style)] for _label, value in rows if value]
+    if meta_rows:
+        meta.append(
+            Table(
+                meta_rows,
+                colWidths=[META_LABEL_WIDTH],
+                hAlign="LEFT",
+                style=TableStyle([
+                    ("FONTNAME", (0, 0), (-1, -1), "Times-Roman"),
+                    ("FONTSIZE", (0, 0), (-1, -1), BODY_FONT_SIZE),
+                    ("LEADING", (0, 0), (-1, -1), BODY_LEADING),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]),
+            )
         )
-    )
     return meta
 
 
@@ -307,7 +362,7 @@ def _build_header_table(
     heading_style: Any,
     fallback_business_name: str,
 ) -> Any:
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.styles import ParagraphStyle
 
@@ -325,75 +380,183 @@ def _build_header_table(
         alignment=TA_CENTER,
     )
 
-    left = list(meta)
-    left.append(Spacer(1, META_TO_BILLTO_SPACING))
-    left.append(para("BILL TO", label_style))
-    left.extend(para(value) for value in (render.get("bill_to_lines") or []) if value)
+    bill_to_block = [para("BILL TO:", label_style), Spacer(1, BILLTO_LABEL_TO_DETAILS_SPACING)]
+    bill_to_block.extend(para(value) for value in (render.get("bill_to_lines") or []) if value)
 
     logo_flowable = _logo_flowable(render.get("logo_path"), LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
-    right = []
     if logo_flowable is not None:
-        right.append(_OpticallyShiftedFlowable(logo_flowable, LOGO_OPTICAL_RIGHT_SHIFT))
+        logo = _OpticallyShiftedFlowable(logo_flowable, LOGO_OPTICAL_RIGHT_SHIFT)
     else:
-        right.append(Paragraph(_escape(fallback_business_name or "Business"), heading_style))
-    right.append(Spacer(1, LOGO_TO_PROVIDER_SPACING + provider_label_style.leading - LOGO_TO_PROVIDER_SPACING_REDUCTION))
-    right.extend(Paragraph(_escape(value), provider_value_style) for value in (render.get("sender_lines") or []) if value)
+        logo = Paragraph(_escape(fallback_business_name or "Business"), heading_style)
+    provider_block = [
+        Paragraph(_escape(value), provider_value_style)
+        for value in (render.get("sender_lines") or [])
+        if value
+    ]
+    return _InvoiceHeaderFlowable(meta, bill_to_block, logo, provider_block)
 
-    right_block = Table(
-        [[right]],
-        colWidths=[RIGHT_HEADER_BLOCK_WIDTH],
-        hAlign="RIGHT",
-        style=TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]),
-    )
 
-    header = Table([[left, [right_block]]], colWidths=[HEADER_LEFT_WIDTH, HEADER_RIGHT_WIDTH], hAlign="LEFT")
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    return header
+class _InvoiceHeaderFlowable:
+    def __init__(self, invoice_block: list[Any], bill_to_block: list[Any], logo: Any, provider_block: list[Any]) -> None:
+        self.invoice_block = invoice_block
+        self.bill_to_block = bill_to_block
+        self.logo = logo
+        self.provider_block = provider_block
+        self.width = CONTENT_WIDTH
+        self.height = 0.0
+        self._last_metrics: dict[str, float] = {}
+
+    def _flowable_size(self, flowable: Any, width: float) -> tuple[float, float]:
+        if hasattr(flowable, "wrap"):
+            wrapped_width, wrapped_height = flowable.wrap(width, 10_000)
+            return float(wrapped_width or width), float(wrapped_height or 0)
+        return float(getattr(flowable, "drawWidth", width) or width), float(getattr(flowable, "drawHeight", 0) or 0)
+
+    def _block_height(self, flowables: list[Any], width: float) -> float:
+        return sum(self._flowable_size(flowable, width)[1] for flowable in flowables)
+
+    def _invoice_gap_for_bill_to_height(self, bill_to_height: float) -> float:
+        if bill_to_height <= BILLTO_SHORT_HEIGHT_MAX:
+            return INVOICE_TO_BILLTO_GAP_SHORT
+        if bill_to_height <= BILLTO_MEDIUM_HEIGHT_MAX:
+            return INVOICE_TO_BILLTO_GAP_MEDIUM
+        return INVOICE_TO_BILLTO_GAP_LONG
+
+    def _layout(self) -> dict[str, float]:
+        logo_width, logo_height = self._flowable_size(self.logo, RIGHT_HEADER_BLOCK_WIDTH)
+        provider_height = self._block_height(self.provider_block, RIGHT_HEADER_BLOCK_WIDTH)
+        bill_to_height = self._block_height(self.bill_to_block, HEADER_LEFT_WIDTH)
+        invoice_height = self._block_height(self.invoice_block, HEADER_LEFT_WIDTH)
+
+        provider_bottom = 0.0
+        provider_top = provider_bottom + provider_height
+        logo_bottom = provider_top + LOGO_TO_PROVIDER_SPACING
+        logo_top = logo_bottom + logo_height
+
+        bill_to_top = provider_bottom + bill_to_height
+        invoice_gap = self._invoice_gap_for_bill_to_height(bill_to_height)
+        invoice_bottom = bill_to_top + invoice_gap
+        invoice_top = invoice_bottom + invoice_height
+        header_height = max(logo_top, invoice_top)
+
+        return {
+            "header_height": header_height,
+            "logo_width": logo_width,
+            "logo_height": logo_height,
+            "logo_top": logo_top,
+            "logo_bottom": logo_bottom,
+            "provider_top": provider_top,
+            "provider_bottom": provider_bottom,
+            "provider_height": provider_height,
+            "bill_to_top": bill_to_top,
+            "bill_to_bottom": provider_bottom,
+            "bill_to_height": bill_to_height,
+            "invoice_top": invoice_top,
+            "invoice_bottom": invoice_bottom,
+            "invoice_height": invoice_height,
+            "invoice_to_bill_to_gap": invoice_bottom - bill_to_top,
+            "invoice_gap_rule": invoice_gap,
+        }
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        metrics = self._layout()
+        self.height = metrics["header_height"]
+        self._last_metrics = metrics
+        return self.width, self.height
+
+    def wrapOn(self, canvas: Any, availWidth: float, availHeight: float) -> tuple[float, float]:
+        return self.wrap(availWidth, availHeight)
+
+    def _draw_block(self, canvas: Any, flowables: list[Any], x: float, top: float, width: float) -> None:
+        cursor = top
+        for flowable in flowables:
+            _, height = self._flowable_size(flowable, width)
+            cursor -= height
+            flowable.drawOn(canvas, x, cursor)
+
+    def drawOn(self, canvas: Any, x: float, y: float, _sW: float = 0) -> None:
+        metrics = self._last_metrics or self._layout()
+        self._last_metrics = metrics
+        right_x = x + HEADER_LEFT_WIDTH + HEADER_RIGHT_WIDTH - RIGHT_HEADER_BLOCK_WIDTH
+        logo_x = right_x + ((RIGHT_HEADER_BLOCK_WIDTH - metrics["logo_width"]) / 2.0)
+
+        self._draw_block(canvas, self.invoice_block, x, y + metrics["invoice_top"], HEADER_LEFT_WIDTH)
+        self._draw_block(canvas, self.bill_to_block, x, y + metrics["bill_to_top"], HEADER_LEFT_WIDTH)
+        self.logo.drawOn(canvas, logo_x, y + metrics["logo_bottom"])
+        self._draw_block(canvas, self.provider_block, right_x, y + metrics["provider_top"], RIGHT_HEADER_BLOCK_WIDTH)
+
+    def getSpaceBefore(self) -> float:
+        return 0.0
+
+    def getSpaceAfter(self) -> float:
+        return 0.0
+
+    def getKeepWithNext(self) -> bool:
+        return False
+
+    def split(self, availWidth: float, availHeight: float) -> list[Any]:
+        return []
 
 
 def _build_session_table(render: dict[str, Any], para: Any, table_header_style: Any) -> Any:
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
     from reportlab.platypus import LongTable, TableStyle
 
+    table_value_style = ParagraphStyle(
+        "InvoiceTableValue",
+        parent=getattr(table_header_style, "parent", table_header_style),
+        fontName="Times-Roman",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
+        alignment=TA_CENTER,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    centered_header_style = ParagraphStyle(
+        "InvoiceTableHeaderCentered",
+        parent=table_header_style,
+        fontName="Times-Bold",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
+        alignment=TA_CENTER,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+
+    def table_para(value: Any, style: Any = table_value_style) -> Any:
+        return Paragraph(_escape(value), style)
+
     data = [[
-        para("Date", table_header_style),
-        para("Participants", table_header_style),
-        para("Service", table_header_style),
-        para("Duration", table_header_style),
-        para("Amount", table_header_style),
+        table_para("Date", centered_header_style),
+        table_para("Participants", centered_header_style),
+        table_para("Service", centered_header_style),
+        table_para("Duration", centered_header_style),
+        table_para("Amount", centered_header_style),
     ]]
     for line in render.get("lines") or []:
         data.append([
-            para(line.get("service_date_display")),
-            para(line.get("participants_display")),
-            para(line.get("description_display")),
-            para(line.get("duration_display")),
-            para(line.get("amount_display")),
+            table_para(line.get("service_date_display")),
+            table_para(line.get("participants_display")),
+            table_para(line.get("description_display")),
+            table_para(line.get("duration_display")),
+            table_para(line.get("amount_display")),
         ])
 
     table = LongTable(data, colWidths=TABLE_COLUMN_WIDTHS, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#102A43")),
+        ("FONTNAME", (0, 0), (-1, -1), "Times-Roman"),
+        ("FONTSIZE", (0, 0), (-1, -1), BODY_FONT_SIZE),
+        ("LEADING", (0, 0), (-1, -1), BODY_LEADING),
         ("BOX", (0, 0), (-1, 0), TABLE_HEADER_BORDER_WIDTH, colors.HexColor("#9FB3C8")),
         ("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.HexColor("#9FB3C8")),
         ("LINEBELOW", (0, 1), (-1, -1), 0.3, colors.HexColor("#D9E2EC")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("TOPPADDING", (0, 0), (-1, -1), TABLE_ROW_TOP_PADDING),
         ("BOTTOMPADDING", (0, 0), (-1, -1), TABLE_ROW_BOTTOM_PADDING),
         ("LEFTPADDING", (0, 0), (-1, -1), TABLE_CELL_LEFT_PADDING),
@@ -513,14 +676,17 @@ def generate_draft_pdf_bytes(
         raise RuntimeError("PDF generation requires the project PDF dependencies. Run: python -m pip install -e .") from error
 
     buf = io.BytesIO()
+    _register_invoice_font_aliases()
     styles = getSampleStyleSheet()
     body = ParagraphStyle(
         "InvoiceBody",
         parent=styles["BodyText"],
-        fontName="Helvetica",
+        fontName="Times-Roman",
         fontSize=BODY_FONT_SIZE,
         leading=BODY_LEADING,
         textColor=colors.HexColor("#102A43"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     small = ParagraphStyle(
         "InvoiceSmall",
@@ -528,79 +694,96 @@ def generate_draft_pdf_bytes(
         fontSize=SMALL_FONT_SIZE,
         leading=SMALL_LEADING,
         textColor=colors.HexColor("#42526A"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     table_header = ParagraphStyle(
         "InvoiceTableHeader",
         parent=small,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
     )
     compact = ParagraphStyle(
         "InvoiceCompact",
         parent=body,
         fontSize=BODY_FONT_SIZE,
-        leading=BODY_FONT_SIZE * 1.15,
+        leading=BODY_LEADING,
+        spaceBefore=0,
         spaceAfter=0,
     )
     label = ParagraphStyle(
         "InvoiceLabel",
         parent=compact,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=LABEL_FONT_SIZE,
-        leading=LABEL_FONT_SIZE * 1.15,
+        leading=LABEL_LEADING,
         textColor=colors.HexColor("#526171"),
-        spaceAfter=2,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     title = ParagraphStyle(
         "InvoiceTitle",
         parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=TITLE_FONT_SIZE,
         leading=TITLE_LEADING,
         alignment=TA_LEFT,
         textColor=colors.HexColor("#102A43"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     total_label_style = ParagraphStyle(
         "InvoiceTotalLabel",
         parent=body,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=TOTAL_FONT_SIZE,
         leading=TOTAL_LEADING,
         alignment=TA_LEFT,
         textColor=colors.HexColor("#102A43"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     total_amount_style = ParagraphStyle(
         "InvoiceTotalAmount",
         parent=total_label_style,
         alignment=TA_RIGHT,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     meta_label = ParagraphStyle(
         "InvoiceMetaLabel",
         parent=small,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         alignment=TA_LEFT,
         textColor=colors.HexColor("#526171"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
     meta_value = ParagraphStyle(
         "InvoiceMetaValue",
         parent=body,
         alignment=TA_LEFT,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     payment_title_style = ParagraphStyle(
         "InvoicePaymentTitle",
         parent=body,
-        fontName="Helvetica-Bold",
+        fontName="Times-Bold",
         fontSize=BODY_FONT_SIZE,
         leading=BODY_LEADING,
-        spaceAfter=2,
+        spaceBefore=0,
+        spaceAfter=0,
     )
     draft_label_style = ParagraphStyle(
         "DraftLabel",
         parent=body,
-        fontName="Helvetica-Bold",
-        fontSize=14,
-        leading=18,
+        fontName="Times-Roman",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
         alignment=TA_LEFT,
         textColor=colors.HexColor("#B0B0B0"),
+        spaceBefore=0,
+        spaceAfter=0,
     )
 
     def para(value: Any, style=body):
@@ -608,7 +791,7 @@ def generate_draft_pdf_bytes(
 
     def page(canvas, doc):
         canvas.saveState()
-        canvas.setFont("Helvetica", 8)
+        canvas.setFont("Times-Roman", 8)
         canvas.setFillColor(colors.HexColor("#64748B"))
         canvas.drawString(doc.leftMargin, 0.42 * inch, "Invoice DRAFT")
         canvas.drawRightString(letter[0] - doc.rightMargin, 0.42 * inch, f"Page {doc.page}")
@@ -622,14 +805,13 @@ def generate_draft_pdf_bytes(
     story = []
     meta = _build_meta_block(
         [
-            ("Invoice Number", "DRAFT"),
-            ("Invoice Date", render.get("invoice_date_display") or ""),
+            ("", render.get("invoice_date_display") or ""),
+            ("", "DRAFT"),
         ],
         title,
         meta_label,
         meta_value,
         para,
-        extra_title_flowables=[para("DRAFT", draft_label_style)],
     )
     header = _build_header_table(
         render, meta, compact, label, styles["Heading2"], invoice.get("business_name_snapshot") or "",
@@ -649,7 +831,7 @@ def generate_draft_pdf_bytes(
     )
     footer.extend(_build_insurance_coding_flowables(render, small))
     story.append(KeepTogether(footer))
-    doc.build(story, onFirstPage=page, onLaterPages=page)
+    doc.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=_times_canvasmaker)
     pdf_bytes = buf.getvalue()
     buf.close()
     if not pdf_bytes:
@@ -696,7 +878,7 @@ def _build_pdf_footer(
         total_due_label_style = ParagraphStyle(
             "TotalDueLabel",
             parent=total_label_style,
-            fontName="Helvetica-Bold",
+            fontName="Times-Bold",
             fontSize=TOTAL_FONT_SIZE,
             leading=TOTAL_LEADING,
             alignment=TA_RIGHT,
@@ -737,6 +919,9 @@ def _build_pdf_footer(
 
         summary_table_style = TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("FONTNAME", (0, 0), (-1, -1), "Times-Roman"),
+            ("FONTSIZE", (0, 0), (-1, -1), BODY_FONT_SIZE),
+            ("LEADING", (0, 0), (-1, -1), BODY_LEADING),
             ("LEFTPADDING", (0, 0), (-1, -1), TABLE_CELL_LEFT_PADDING),
             ("RIGHTPADDING", (0, 0), (-1, -1), TABLE_CELL_RIGHT_PADDING),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
@@ -744,7 +929,7 @@ def _build_pdf_footer(
         ] + span_cmds)
         summary_table_style.add("LINEABOVE", (0, total_row_idx), (-1, total_row_idx), 1, colors.HexColor("#102A43"))
         summary_table_style.add("LINEBELOW", (0, total_row_idx), (-1, total_row_idx), 0.6, colors.HexColor("#9FB3C8"))
-        summary_table_style.add("TOPPADDING", (0, total_row_idx), (-1, total_row_idx), 10)
+        summary_table_style.add("TOPPADDING", (0, total_row_idx), (-1, total_row_idx), 8)
         summary_table_style.add("BOTTOMPADDING", (0, total_row_idx), (-1, total_row_idx), 4)
 
         footer_table = Table(summary_rows, colWidths=TABLE_COLUMN_WIDTHS, hAlign="LEFT", style=summary_table_style)
@@ -755,9 +940,11 @@ def _build_pdf_footer(
             summary_small_left = ParagraphStyle(
                 "SummarySmallLeft",
                 parent=small_style,
-                fontSize=8,
-                leading=10,
+                fontSize=BODY_FONT_SIZE,
+                leading=BODY_LEADING,
                 alignment=TA_LEFT,
+                spaceBefore=0,
+                spaceAfter=0,
             )
             from .invoice_rendering import format_long_date
             prior_flowables.append(Spacer(1, 0.04 * inch))
@@ -787,9 +974,12 @@ def _build_pdf_footer(
                 hAlign="LEFT",
                 style=TableStyle([
                     ("SPAN", (0, 0), (3, 0)),
+                    ("FONTNAME", (0, 0), (-1, -1), "Times-Roman"),
+                    ("FONTSIZE", (0, 0), (-1, -1), BODY_FONT_SIZE),
+                    ("LEADING", (0, 0), (-1, -1), BODY_LEADING),
                     ("LINEABOVE", (0, 0), (-1, 0), 1, colors.HexColor("#102A43")),
                     ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#9FB3C8")),
-                    ("TOPPADDING", (0, 0), (-1, -1), 12),
+                    ("TOPPADDING", (0, 0), (-1, -1), 8),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                     ("LEFTPADDING", (0, 0), (-1, -1), TABLE_CELL_LEFT_PADDING),
                     ("RIGHTPADDING", (0, 0), (-1, -1), TABLE_CELL_RIGHT_PADDING),
@@ -797,49 +987,69 @@ def _build_pdf_footer(
             )
         ]
 
-    payment_title_center_style = ParagraphStyle(
-        "PaymentTitleCenter",
+    payment_column_heading_style = ParagraphStyle(
+        "PaymentColumnHeading",
         parent=payment_title_style,
-        fontSize=SMALL_FONT_SIZE,
-        leading=SMALL_LEADING,
+        fontName="Times-Bold",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
         alignment=TA_CENTER,
-        spaceAfter=1,
+        spaceBefore=0,
+        spaceAfter=0,
     )
-    payment_value_center_style = ParagraphStyle(
-        "PaymentValueCenter",
+    payment_value_style = ParagraphStyle(
+        "PaymentValue",
         parent=small_style,
+        fontName="Times-Roman",
+        fontSize=BODY_FONT_SIZE,
+        leading=BODY_LEADING,
         alignment=TA_CENTER,
-        spaceAfter=1,
+        spaceBefore=0,
+        spaceAfter=0,
     )
 
-    payment_flowables: list[Any] = [
-        Paragraph(_escape(render.get("payment_title") or "Please make all checks payable to:"), payment_title_center_style),
-    ]
+    check_details: list[Any] = []
     if render.get("payment_name"):
-        payment_flowables.append(Paragraph(_escape(render.get("payment_name")), payment_value_center_style))
+        check_details.append(Paragraph(_escape(render.get("payment_name")), payment_value_style))
     for value in render.get("payment_lines") or []:
-        payment_flowables.append(Paragraph(_escape(value), payment_value_center_style))
-    zelle_title = render.get("payment_zelle_title")
+        for line in str(value).split(" · "):
+            if line.strip():
+                check_details.append(Paragraph(_escape(line.strip()), payment_value_style))
+
+    zelle_details: list[Any] = []
     zelle_value = render.get("payment_zelle_value")
-    if zelle_title and zelle_value:
-        payment_flowables.append(Paragraph(_escape(zelle_title), payment_title_center_style))
-        payment_flowables.append(Paragraph(_escape(zelle_value), payment_value_center_style))
+    if zelle_value:
+        zelle_details.append(Paragraph(f"Business email: {_escape(zelle_value)}", payment_value_style))
     account_name_line = render.get("payment_account_name_line")
     if account_name_line:
-        payment_flowables.append(Paragraph(_escape(account_name_line), payment_value_center_style))
+        zelle_details.append(Paragraph(_escape(account_name_line), payment_value_style))
+
+    payment_columns = Table(
+        [
+            [
+                Paragraph("Please make checks payable to:", payment_column_heading_style),
+                Paragraph("Or send payment via Zelle to:", payment_column_heading_style),
+            ],
+            [check_details, zelle_details],
+        ],
+        colWidths=[PAYMENT_CHECK_COLUMN_WIDTH, PAYMENT_ZELLE_COLUMN_WIDTH],
+        hAlign="CENTER",
+        style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, -1), "Times-Roman"),
+            ("FONTSIZE", (0, 0), (-1, -1), BODY_FONT_SIZE),
+            ("LEADING", (0, 0), (-1, -1), BODY_LEADING),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), PAYMENT_COLUMN_HEADING_TO_DETAIL_SPACING),
+        ]),
+    )
 
     footer = footer_table_flowables + [
-        Spacer(1, 0.18 * inch),
-        Table(
-            [[payment_flowables]],
-            colWidths=[CONTENT_WIDTH],
-            style=TableStyle([
-                ("TOPPADDING", (0, 0), (-1, -1), 12),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ]),
-        ),
+        Spacer(1, PAYMENT_SECTION_TOP_SPACING),
+        payment_columns,
     ]
     return footer

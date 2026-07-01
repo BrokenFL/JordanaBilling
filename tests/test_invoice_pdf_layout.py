@@ -7,10 +7,16 @@ from pathlib import Path
 
 from jordana_invoice.invoice_pdf import (
     BODY_FONT_SIZE,
+    BILLTO_LABEL_TO_DETAILS_SPACING,
     CONTENT_WIDTH,
     HEADER_LEFT_WIDTH,
     HEADER_RIGHT_WIDTH,
     HEADER_TO_TABLE_SPACING,
+    BILLTO_MEDIUM_HEIGHT_MAX,
+    BILLTO_SHORT_HEIGHT_MAX,
+    INVOICE_TO_BILLTO_GAP_LONG,
+    INVOICE_TO_BILLTO_GAP_MEDIUM,
+    INVOICE_TO_BILLTO_GAP_SHORT,
     LABEL_FONT_SIZE,
     LETTER_PAGE_HEIGHT,
     LETTER_PAGE_WIDTH,
@@ -22,7 +28,12 @@ from jordana_invoice.invoice_pdf import (
     META_LABEL_WIDTH,
     META_TO_BILLTO_SPACING,
     META_VALUE_WIDTH,
+    PAYMENT_COLUMN_HEADING_TO_DETAIL_SPACING,
+    PAYMENT_CHECK_COLUMN_WIDTH,
+    PAYMENT_COLUMN_CENTER_SEPARATION,
     PAYMENT_FOOTER_MIN_CLEARANCE,
+    PAYMENT_SECTION_TOP_SPACING,
+    PAYMENT_ZELLE_COLUMN_WIDTH,
     RIGHT_HEADER_BLOCK_WIDTH,
     SMALL_FONT_SIZE,
     TABLE_CELL_LEFT_PADDING,
@@ -35,6 +46,7 @@ from jordana_invoice.invoice_pdf import (
     TOTAL_COLUMN_WIDTHS,
     TOTAL_FONT_SIZE,
     _build_pdf_footer,
+    _build_header_table,
     _build_session_table,
     _footer_pushdown_height,
     generate_draft_pdf_bytes,
@@ -168,7 +180,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         # drawRightString places the right edge at PAGE_W - MARGIN_PT = 576
         # pypdf returns the left edge of the text, so estimate right edge
         s = page_snips[0]
-        approx_right = s[1] + len(s[0]) * s[2] * 0.5
+        approx_right = s[1] + len(s[0]) * s[2] * 0.35
         self.assertLessEqual(approx_right, PAGE_W - MARGIN_PT + 4)
 
     # --- 2. Column widths sum exactly to content width ---
@@ -185,14 +197,12 @@ class InvoicePdfLayoutTests(unittest.TestCase):
     # --- 3. Typography, logo, and row spacing scale up for print ---
 
     def test_typography_sizes_match_print_contract(self):
-        self.assertGreaterEqual(BODY_FONT_SIZE, 10.0)
-        self.assertLessEqual(BODY_FONT_SIZE, 10.5)
-        self.assertAlmostEqual(SMALL_FONT_SIZE, 9.0, delta=0.1)
-        self.assertGreaterEqual(TITLE_FONT_SIZE, 28.0)
-        self.assertLessEqual(TITLE_FONT_SIZE, 30.0)
-        self.assertGreaterEqual(TOTAL_FONT_SIZE, 14.0)
-        self.assertLessEqual(TOTAL_FONT_SIZE, 15.0)
-        self.assertAlmostEqual(LABEL_FONT_SIZE, 9.0, delta=0.1)
+        self.assertGreaterEqual(BODY_FONT_SIZE, 10.7)
+        self.assertLessEqual(BODY_FONT_SIZE, 10.8)
+        self.assertAlmostEqual(SMALL_FONT_SIZE, BODY_FONT_SIZE, delta=0.1)
+        self.assertAlmostEqual(TITLE_FONT_SIZE, 14.5, delta=0.1)
+        self.assertAlmostEqual(TOTAL_FONT_SIZE, 13.0, delta=0.1)
+        self.assertAlmostEqual(LABEL_FONT_SIZE, BODY_FONT_SIZE, delta=0.1)
 
     def test_logo_max_dimensions_match_refinement(self):
         self.assertAlmostEqual(LOGO_MAX_WIDTH, 2.1004 * 72, delta=0.1)
@@ -210,16 +220,21 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertLessEqual(image.drawHeight, LOGO_MAX_HEIGHT + 0.1)
 
     def test_two_column_header_spacing_is_compact(self):
-        self.assertAlmostEqual(HEADER_TO_TABLE_SPACING, (0.13 * 72) + 5.0, delta=0.1)
-        self.assertAlmostEqual(META_TO_BILLTO_SPACING, 0.16 * 72, delta=0.1)
-        self.assertAlmostEqual(LOGO_TO_PROVIDER_SPACING, 0.08 * 72, delta=0.1)
-        self.assertAlmostEqual(LOGO_TO_PROVIDER_SPACING_REDUCTION, 9.0, delta=0.1)
+        self.assertAlmostEqual(HEADER_TO_TABLE_SPACING, 0.285 * 72, delta=0.1)
+        self.assertAlmostEqual(BILLTO_SHORT_HEIGHT_MAX, 35.0, delta=0.1)
+        self.assertAlmostEqual(BILLTO_MEDIUM_HEIGHT_MAX, 60.0, delta=0.1)
+        self.assertAlmostEqual(INVOICE_TO_BILLTO_GAP_SHORT, 26.0, delta=0.1)
+        self.assertAlmostEqual(INVOICE_TO_BILLTO_GAP_MEDIUM, 17.0, delta=0.1)
+        self.assertAlmostEqual(INVOICE_TO_BILLTO_GAP_LONG, 13.0, delta=0.1)
+        self.assertAlmostEqual(BILLTO_LABEL_TO_DETAILS_SPACING, 3.5, delta=0.1)
+        self.assertAlmostEqual(LOGO_TO_PROVIDER_SPACING, 1.5, delta=0.1)
+        self.assertAlmostEqual(LOGO_TO_PROVIDER_SPACING_REDUCTION, 0.0, delta=0.1)
         self.assertAlmostEqual(RIGHT_HEADER_BLOCK_WIDTH, 2.45 * 72, delta=0.1)
         self.assertAlmostEqual(LOGO_OPTICAL_RIGHT_SHIFT, 0.0, delta=0.1)
 
     def test_row_padding_matches_print_spacing(self):
-        self.assertEqual(TABLE_ROW_TOP_PADDING, 9)
-        self.assertEqual(TABLE_ROW_BOTTOM_PADDING, 9)
+        self.assertEqual(TABLE_ROW_TOP_PADDING, 4)
+        self.assertEqual(TABLE_ROW_BOTTOM_PADDING, 4)
         self.assertGreaterEqual(TABLE_CELL_LEFT_PADDING, 6)
         self.assertGreaterEqual(TABLE_CELL_RIGHT_PADDING, 6)
         self.assertAlmostEqual(TABLE_HEADER_BORDER_WIDTH, 0.5, delta=0.01)
@@ -254,7 +269,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
 
         styles = getSampleStyleSheet()
         body = ParagraphStyle("B", parent=styles["BodyText"])
-        table_header = ParagraphStyle("TH", parent=body, fontName="Helvetica-Bold")
+        table_header = ParagraphStyle("TH", parent=body, fontName="Times-Bold")
 
         def para(value, style=body):
             return Paragraph(str(value), style)
@@ -262,7 +277,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         table = _build_session_table(build_invoice_render_model(_sample_invoice(), _sample_lines()), para, table_header)
         self.assertEqual(table._colWidths, TABLE_COLUMN_WIDTHS)
         for cell in table._cellvalues[0]:
-            self.assertEqual(cell.style.fontName, "Helvetica-Bold")
+            self.assertEqual(cell.style.fontName, "Times-Bold")
 
         header_box = [cmd for cmd in table._linecmds if cmd[0] == "BOX" and cmd[1] == (0, 0) and cmd[2] == (-1, 0)]
         self.assertTrue(header_box, "Table header full-row border not found")
@@ -285,7 +300,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
 
     def test_date_column_fits_long_date_text(self):
         available = TABLE_COLUMN_WIDTHS[0] - (TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING)
-        # "June 22, 2026" at 9pt Helvetica is ~58pt
+        # "June 22, 2026" at the body size in Times-Roman is roughly 58pt.
         self.assertGreaterEqual(available, 58)
 
     def test_long_date_does_not_wrap_in_pdf(self):
@@ -387,7 +402,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         texts = [page.extract_text() or "" for page in reader.pages]
         self.assertNotIn("TOTAL DUE", "\n".join(texts[:-1]))
         self.assertIn("TOTAL DUE", texts[-1])
-        self.assertIn("Please make all checks payable to:", texts[-1])
+        self.assertIn("Please make checks payable to:", texts[-1])
 
     # --- 9. Existing-file overwrite protection remains ---
 
@@ -439,8 +454,8 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         path = self._generate_pdf()
         from pypdf import PdfReader
         text = PdfReader(path).pages[0].extract_text() or ""
-        self.assertIn("Invoice Number", text)
-        self.assertIn("Invoice Date", text)
+        self.assertNotIn("Invoice Number", text)
+        self.assertNotIn("Invoice Date", text)
         self.assertNotIn("Billing Period", text)
 
     def test_draft_preview_uses_approved_layout(self):
@@ -450,9 +465,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = self._extract_pdf_text(pdf_bytes)
         self.assertIn("INVOICE", text)
         self.assertIn("DRAFT", text)
-        self.assertIn("Invoice Number", text)
-        self.assertIn("Invoice Date", text)
-        self.assertIn("BILL TO", text)
+        self.assertNotIn("Invoice Number", text)
+        self.assertNotIn("Invoice Date", text)
+        self.assertIn("BILL TO:", text)
         self.assertIn("Jordana Singer LCSW", text)
         self.assertNotIn("Billing Period", text)
         self.assertNotIn("FROM", text)
@@ -465,9 +480,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = self._extract_pdf_text(self._generate_pdf())
         self.assertIn("INVOICE", text)
         self.assertNotIn("DRAFT", text)
-        self.assertIn("Invoice Number", text)
-        self.assertIn("Invoice Date", text)
-        self.assertIn("BILL TO", text)
+        self.assertNotIn("Invoice Number", text)
+        self.assertNotIn("Invoice Date", text)
+        self.assertIn("BILL TO:", text)
         self.assertIn("Jordana Singer LCSW", text)
         self.assertNotIn("Billing Period", text)
         self.assertNotIn("FROM", text)
@@ -521,8 +536,92 @@ class InvoicePdfLayoutTests(unittest.TestCase):
 
     def test_metadata_block_is_tight_and_left_column_weighted(self):
         self.assertLess(META_LABEL_WIDTH + META_VALUE_WIDTH, HEADER_LEFT_WIDTH)
-        self.assertAlmostEqual(META_LABEL_WIDTH, 1.00 * 72, delta=0.1)
-        self.assertAlmostEqual(META_VALUE_WIDTH, 1.02 * 72, delta=0.1)
+        self.assertAlmostEqual(META_LABEL_WIDTH, 2.02 * 72, delta=0.1)
+        self.assertAlmostEqual(META_VALUE_WIDTH, 0.0, delta=0.1)
+
+    def test_header_uses_fixed_provider_anchor_and_dynamic_bill_to_position(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import Paragraph
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+
+        styles = getSampleStyleSheet()
+        body = ParagraphStyle("B", parent=styles["BodyText"])
+        label = ParagraphStyle("L", parent=body)
+        title = ParagraphStyle("T", parent=body)
+
+        def para(value, style=body):
+            return Paragraph(str(value), style)
+
+        meta = [para("INVOICE", title), para("June 28, 2026", body), para("DRAFT", body)]
+        samples = [
+            (
+                _sample_invoice(bill_to_address_snapshot="", bill_to_email_snapshot="", delivery_method="mail"),
+                INVOICE_TO_BILLTO_GAP_SHORT,
+                (24.0, 28.0),
+            ),
+            (
+                _sample_invoice(
+                    bill_to_address_snapshot="10 Sample Street\nExample, FL 00000",
+                    bill_to_email_snapshot="",
+                    delivery_method="mail",
+                ),
+                INVOICE_TO_BILLTO_GAP_MEDIUM,
+                (16.0, 18.0),
+            ),
+            (
+                _sample_invoice(
+                    bill_to_address_snapshot="12345 Long Billing Address Boulevard\nApartment 12B\nExample Harbor, FL 00000",
+                    bill_to_email_snapshot="billing.long-client@example.test",
+                    delivery_method="both",
+                ),
+                INVOICE_TO_BILLTO_GAP_LONG,
+                (12.0, 14.0),
+            ),
+        ]
+        provider_top = None
+        provider_bottom = None
+        previous_bill_to_height = 0.0
+        previous_invoice_top = None
+        for invoice, expected_gap, gap_range in samples:
+            render = build_invoice_render_model(invoice, _sample_lines())
+            header = _build_header_table(render, meta, body, label, styles["Heading2"], "Business")
+            header.wrap(CONTENT_WIDTH, 10_000)
+            metrics = header._last_metrics
+            if provider_top is None:
+                provider_top = metrics["provider_top"]
+                provider_bottom = metrics["provider_bottom"]
+            self.assertAlmostEqual(metrics["provider_top"], provider_top, delta=0.01)
+            self.assertAlmostEqual(metrics["provider_bottom"], provider_bottom, delta=0.01)
+            self.assertAlmostEqual(metrics["bill_to_bottom"], metrics["provider_bottom"], delta=0.01)
+            self.assertGreater(metrics["bill_to_height"], previous_bill_to_height)
+            self.assertAlmostEqual(metrics["invoice_to_bill_to_gap"], expected_gap, delta=0.01)
+            self.assertGreaterEqual(metrics["invoice_to_bill_to_gap"], gap_range[0])
+            self.assertLessEqual(metrics["invoice_to_bill_to_gap"], gap_range[1])
+            if previous_invoice_top is not None:
+                self.assertGreater(metrics["invoice_top"], previous_invoice_top)
+            previous_bill_to_height = metrics["bill_to_height"]
+            previous_invoice_top = metrics["invoice_top"]
+
+    def test_bill_to_variants_keep_supported_lines(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        variants = [
+            _sample_invoice(bill_to_address_snapshot="", bill_to_email_snapshot="", delivery_method="mail"),
+            _sample_invoice(bill_to_address_snapshot="10 Sample Street\nExample, FL 00000", bill_to_email_snapshot="", delivery_method="mail"),
+            _sample_invoice(
+                bill_to_address_snapshot="12345 Long Billing Address Boulevard\nApartment 12B\nExample Harbor, FL 00000",
+                bill_to_email_snapshot="billing.long-client@example.test",
+                delivery_method="both",
+            ),
+            _sample_invoice(bill_to_address_snapshot="", bill_to_email_snapshot="email-only@example.test", delivery_method="email"),
+            _sample_invoice(bill_to_address_snapshot="10 Sample Street\nExample, FL 00000", bill_to_email_snapshot="", delivery_method="mail"),
+        ]
+        for index, invoice in enumerate(variants):
+            text = self._extract_pdf_text(self._generate_pdf(invoice=invoice, filename=f"Invoice_variant_{index}.pdf"))
+            self.assertIn("BILL TO:", text)
+            self.assertIn(invoice["bill_to_name_snapshot"], text)
 
     # --- 12. Payment block: centered, phone omitted, compact wording ---
 
@@ -550,11 +649,15 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         render = build_invoice_render_model(_sample_invoice(), _sample_lines())
         footer = _build_pdf_footer(render, 15000, body, small, total_label, total_amount, payment_title)
         from reportlab.platypus import Table
-        payment_table = [f for f in footer if isinstance(f, Table)][-1]
-        payment_paragraphs = payment_table._cellvalues[0][0]
-        self.assertTrue(payment_paragraphs, "Centered payment paragraphs not found")
-        for paragraph in payment_paragraphs:
+        payment_columns = [f for f in footer if isinstance(f, Table)][-1]
+        self.assertEqual(payment_columns.hAlign, "CENTER")
+        for paragraph in payment_columns._cellvalues[0]:
             self.assertEqual(paragraph.style.alignment, TA_CENTER)
+        self.assertEqual(PAYMENT_COLUMN_HEADING_TO_DETAIL_SPACING, 3.5)
+        self.assertAlmostEqual(PAYMENT_SECTION_TOP_SPACING, (0.12 * 72) + 11.6, delta=0.1)
+        self.assertAlmostEqual(payment_columns._colWidths[0], PAYMENT_CHECK_COLUMN_WIDTH, delta=0.1)
+        self.assertAlmostEqual(payment_columns._colWidths[1], PAYMENT_ZELLE_COLUMN_WIDTH, delta=0.1)
+        self.assertAlmostEqual(PAYMENT_COLUMN_CENTER_SEPARATION, 2.70 * 72, delta=0.1)
 
     def test_total_due_rules_align_to_session_table_width(self):
         if not _has_pdf_deps():
@@ -583,8 +686,10 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         path = self._generate_pdf()
         from pypdf import PdfReader
         text = PdfReader(path).pages[0].extract_text() or ""
-        self.assertIn("Please make all checks payable to:", text)
+        self.assertNotIn("PAYMENT:", text)
+        self.assertIn("Please make checks payable to:", text)
         self.assertIn("Or send payment via Zelle to:", text)
+        self.assertIn("Business email: jordana.singer@gmail.com", text)
         self.assertIn("jordana.singer@gmail.com", text)
         self.assertIn("Account name: Psychotherapy of the Palm Beaches", text)
 
