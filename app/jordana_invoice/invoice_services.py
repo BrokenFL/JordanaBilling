@@ -673,6 +673,9 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
         or (filing.get("selected") or {}).get("display_name")
         or ""
     )
+    if invoice["status"] in ("finalized", "void") and invoice.get("pdf_path"):
+        version = invoice.get("pdf_sha256") or invoice.get("updated_at") or invoice_id
+        invoice["final_pdf_url"] = f"/api/invoices/{invoice_id}/final-pdf?v={version}"
 
     # 1. Parse and validate as_finalized_summary snapshot if finalized
     as_finalized_summary = None
@@ -1652,7 +1655,15 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
 
 
 def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None, insurance_coding_included: bool = False, insurance_diagnosis_code: str = "") -> dict[str, Any]:
-    _draft(conn, invoice_id)
+    existing = conn.execute("SELECT status, pdf_path FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    if not existing:
+        raise ValueError("Invoice was not found.")
+    if existing["status"] == "finalized":
+        if not existing["pdf_path"]:
+            raise ValueError("No PDF file is stored for this invoice.")
+        return get_invoice(conn, invoice_id)
+    if existing["status"] != "draft":
+        raise ValueError("Only a draft invoice can be finalized.")
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as error:

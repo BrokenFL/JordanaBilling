@@ -66,6 +66,7 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("docs/TEST_MAC_ACCEPTANCE.md", builder)
         self.assertIn("config/example.env", builder)
         self.assertIn("Private artifact path found", builder)
+        self.assertIn('rm -rf "$PROJECT_DIR/build/lib"', builder)
 
     def test_installed_launcher_resource_is_committed_without_private_data(self) -> None:
         resource = PROJECT_DIR / "Jordana Billing.app" / "Contents" / "Resources" / "launch_installed_app.sh"

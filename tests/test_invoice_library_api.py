@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +34,8 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.db_path = self.root / "test.sqlite3"
+        self.previous_invoice_root = os.environ.get("JORDANA_INVOICES_DIR")
+        os.environ["JORDANA_INVOICES_DIR"] = str(self.root / "Invoices")
         migrate_database(self.db_path)
         self.conn = connect(self.db_path)
         self.person = create_person(self.conn, {"first_name": "Pat", "last_name": "Client", "display_name": "Pat Client"})
@@ -53,6 +56,10 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+        if self.previous_invoice_root is None:
+            os.environ.pop("JORDANA_INVOICES_DIR", None)
+        else:
+            os.environ["JORDANA_INVOICES_DIR"] = self.previous_invoice_root
         self.temp.cleanup()
 
     def _handler(self, path, body=b""):
@@ -143,6 +150,71 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
         body = handler.wfile.getvalue()
         self.assertTrue(body.startswith(b"%PDF"))
 
+    def test_final_pdf_uses_no_cache_headers(self):
+        s = self._approved_session("pdf-cache")
+        draft = self._draft([s])
+        pdf_root = self.root / "Invoices"
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf", side_effect=lambda inv, lines, path, **kw: (Path(path).parent.mkdir(parents=True, exist_ok=True), Path(path).write_bytes(b"%PDF-1.4 fake content"), "a" * 64)[-1]):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=pdf_root)
+        handler, captured = self._handler(f"/api/invoices/{draft['invoice']['invoice_id']}/final-pdf?v=test")
+        handler.conn = lambda: self.conn
+        handler.do_GET()
+
+        headers = captured.get("headers", {})
+        self.assertEqual(headers.get("Cache-Control"), "no-store, no-cache, must-revalidate, max-age=0")
+        self.assertEqual(headers.get("Pragma"), "no-cache")
+        self.assertEqual(headers.get("Expires"), "0")
+
+    def test_finalize_endpoint_returns_versioned_final_pdf_url_and_serves_same_file(self):
+        s = self._approved_session("final-api")
+        draft = self._draft([s])
+        invoice_id = draft["invoice"]["invoice_id"]
+        revision = draft["invoice"]["revision"]
+        body = json.dumps({"confirmed": True, "expected_revision": revision}).encode("utf-8")
+        handler, captured = self._handler(f"/api/invoices/{invoice_id}/finalize", body)
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        payload = captured.get("payload", {})
+        invoice = payload["invoice"]
+        final_path = Path(invoice["pdf_path"])
+        self.assertEqual(invoice["status"], "finalized")
+        self.assertTrue(final_path.is_file())
+        self.assertIn("/final-pdf?v=", invoice["final_pdf_url"])
+        self.assertIn(invoice["pdf_sha256"], invoice["final_pdf_url"])
+
+        pdf_handler, pdf_captured = self._handler(invoice["final_pdf_url"])
+        pdf_handler.conn = lambda: self.conn
+        pdf_handler.do_GET()
+
+        self.assertEqual(pdf_captured.get("response_code"), 200)
+        self.assertEqual(pdf_handler.wfile.getvalue(), final_path.read_bytes())
+        self.assertIn(b"Times", final_path.read_bytes())
+        self.assertNotIn(b"/BaseFont /Helvetica", final_path.read_bytes())
+
+    def test_repeated_finalize_returns_existing_pdf_without_rewrite(self):
+        s = self._approved_session("final-idempotent")
+        draft = self._draft([s])
+        invoice_id = draft["invoice"]["invoice_id"]
+        first_body = json.dumps({"confirmed": True, "expected_revision": draft["invoice"]["revision"]}).encode("utf-8")
+        first_handler, first_captured = self._handler(f"/api/invoices/{invoice_id}/finalize", first_body)
+        first_handler.conn = lambda: self.conn
+        first_handler.do_POST()
+        first_invoice = first_captured["payload"]["invoice"]
+        path = Path(first_invoice["pdf_path"])
+        before_bytes = path.read_bytes()
+        before_mtime_ns = path.stat().st_mtime_ns
+
+        second_body = json.dumps({"confirmed": True, "expected_revision": first_invoice["revision"]}).encode("utf-8")
+        second_handler, second_captured = self._handler(f"/api/invoices/{invoice_id}/finalize", second_body)
+        second_handler.conn = lambda: self.conn
+        second_handler.do_POST()
+
+        self.assertEqual(second_captured.get("status", 200), 200)
+        self.assertEqual(second_captured["payload"]["invoice"]["pdf_path"], str(path))
+        self.assertEqual(path.read_bytes(), before_bytes)
+        self.assertEqual(path.stat().st_mtime_ns, before_mtime_ns)
+
     def test_final_pdf_rejects_draft_invoice(self):
         s = self._approved_session("pdf2")
         draft = self._draft([s])
@@ -218,6 +290,9 @@ class InvoiceLibraryUiStaticTests(unittest.TestCase):
         self.assertIn("invoiceBillToFilter", js)
         self.assertIn("invoiceDateFilter", js)
         self.assertIn("invoiceSearch", js)
+        self.assertIn("finalInvoicePdfUrl", js)
+        self.assertIn("openFinalInvoicePdf(final.invoice, finalPdfWindow)", js)
+        self.assertIn("window.open(\"about:blank\", \"_blank\")", js)
 
     def test_invoice_library_js_has_payment_summary_in_preview(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

@@ -41,6 +41,7 @@ clean_and_sign_app() {
 }
 
 rm -rf "$RELEASE_DIR" "$DMG_ROOT" "$DMG_PATH" "$DMG_PATH.sha256"
+rm -rf "$PROJECT_DIR/build/lib" "$PROJECT_DIR/build/bdist."* "$PROJECT_DIR/build/temp."*
 mkdir -p "$WHEELHOUSE" "$RELEASE_DIR/scripts" "$RELEASE_DIR/docs" "$RELEASE_DIR/config"
 
 "$PROJECT_DIR/scripts/build_launcher.sh" --force >/dev/null

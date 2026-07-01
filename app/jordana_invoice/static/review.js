@@ -3239,6 +3239,7 @@ function renderFinalizationPreview(preview, insuranceState) {
     backBtn.disabled = true;
     errorDiv.style.display = "none";
     errorDiv.textContent = "";
+    const finalPdfWindow = window.open("about:blank", "_blank");
     try {
       const ins = collectInsurancePayload();
       const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision, insurance_coding_included:ins.insurance_coding_included, insurance_diagnosis_code:ins.insurance_diagnosis_code})});
@@ -3248,8 +3249,10 @@ function renderFinalizationPreview(preview, insuranceState) {
       backBtn.disabled = true;
       await loadInvoices();
       renderInvoicePreview(final);
+      openFinalInvoicePdf(final.invoice, finalPdfWindow);
       showInvoiceSuccess("Invoice finalized successfully.");
     } catch (err) {
+      if (finalPdfWindow && !finalPdfWindow.closed) finalPdfWindow.close();
       state.finalizeInProgress = false;
       finalizeBtn.disabled = false;
       backBtn.disabled = false;
@@ -3312,10 +3315,25 @@ function renderInvoicePreview(data) {
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
-  if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { window.open(`/api/invoices/${i.invoice_id}/final-pdf`, "_blank"); };
+  if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
   if ($("showPdfInFinderBtn")) $("showPdfInFinderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"show_in_finder"})});
   if ($("openClientFolderBtn")) $("openClientFolderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"open_client_folder"})});
-  if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { window.open(`/api/invoices/${i.invoice_id}/final-pdf`, "_blank"); };
+  if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
+}
+
+function finalInvoicePdfUrl(invoice) {
+  if (invoice.final_pdf_url) return invoice.final_pdf_url;
+  const version = invoice.pdf_sha256 || invoice.updated_at || Date.now();
+  return `/api/invoices/${invoice.invoice_id}/final-pdf?v=${encodeURIComponent(version)}`;
+}
+
+function openFinalInvoicePdf(invoice, targetWindow) {
+  const url = finalInvoicePdfUrl(invoice);
+  if (targetWindow && !targetWindow.closed) {
+    targetWindow.location = url;
+    return targetWindow;
+  }
+  return window.open(url, "_blank");
 }
 
 $("newInvoiceBtn").onclick = startInvoiceBuilder;

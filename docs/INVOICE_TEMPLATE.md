@@ -34,6 +34,14 @@ Multi-page invoices repeat headers, keep rows intact, identify invoice/page on e
 
 Existing finalized PDFs are immutable; layout and filing-path refinements apply only when a new invoice PDF is generated. Existing `pdf_path` and checksum values are preserved.
 
+## Review To Finalize PDF Opening
+
+The Review -> Finalize workflow finalizes through `POST /api/invoices/{id}/finalize`, receives the stored finalized invoice record, and opens the versioned `final_pdf_url` returned on that record. The UI must not leave the user relying on the in-app HTML invoice card as proof of the finalized document layout; the canonical customer-facing artifact is the PDF served by `GET /api/invoices/{id}/final-pdf`.
+
+The finalized PDF URL includes the stored PDF checksum as a cache-busting query value, while the stable stored filename remains `Invoice_<number>.pdf`. PDF responses use no-cache headers so Safari or another browser cannot show an older file for the same invoice endpoint. Repeated finalize submissions for an already-finalized invoice return the existing immutable invoice record and existing final PDF URL instead of regenerating or renumbering.
+
+The July 2026 live workflow bug was not caused by the source server importing `build/lib`: the source launcher sets `PYTHONPATH` to `app/`, and the running process imported `app/jordana_invoice/invoice_pdf.py`. The visible mismatch came from the post-finalize UI rendering the older in-app HTML invoice preview instead of opening the newly generated canonical PDF. Release packaging now clears stale Python `build/lib` output before wheel creation so packaged builds cannot accidentally reuse an older renderer.
+
 ## Prior Unpaid Balance & Account Summary Layout
 
 When an invoice contains prior unpaid balances or payments applied, the standard single-row "TOTAL DUE" block is replaced with a multi-row structured table displaying:

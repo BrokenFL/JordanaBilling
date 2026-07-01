@@ -339,14 +339,19 @@ class SafeFinalizationTests(unittest.TestCase):
         self.assertEqual(final["invoice"]["status"], "finalized")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_double_finalization_rejected(self, fake_pdf):
-        """Finalizing an already-finalized invoice should fail."""
+    def test_double_finalization_returns_existing_pdf_without_rewrite(self, fake_pdf):
+        """Finalizing an already-finalized invoice returns the immutable artifact."""
         fake_pdf.return_value = "a" * 64
         session = self._approved_session("double")
         draft = self._draft([session])
-        finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
-        with self.assertRaises(ValueError):
-            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        first = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        second = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+
+        self.assertEqual(second["invoice"]["status"], "finalized")
+        self.assertEqual(second["invoice"]["invoice_number"], first["invoice"]["invoice_number"])
+        self.assertEqual(second["invoice"]["pdf_path"], first["invoice"]["pdf_path"])
+        self.assertEqual(second["invoice"]["pdf_sha256"], first["invoice"]["pdf_sha256"])
+        fake_pdf.assert_called_once()
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_finalization_snapshot_matches_preview(self, fake_pdf):
