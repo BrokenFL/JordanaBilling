@@ -1,13 +1,14 @@
 # Current Implementation Status And Handoff
 
 This document supersedes all prior uploaded PDF handoffs and provides the
-authoritative current state of the Jordana Billing system as of the
-`main` branch commit listed below.
+authoritative current state of the Jordana Billing system. Repository code,
+schema, migrations, tests, and newer explicit decisions remain authoritative
+when they are newer than this document.
 
-**Authoritative main commit hash:** `f8a01130ed5229a33c71f5d5e737d8ca90d98e82`
-**Verification date:** 2026-06-30
+**Last code verification commit:** `033d2634fa33688f686c66160ec0eff3e71bf8d7`
+**Documentation reconciliation date:** 2026-07-01
 **Current migration head:** `015_duplicate_repair_reversal_state`
-**Current test baseline:** 2,479 passing, 11 skipped, 0 failures (`2490` tests run)
+**Recorded test baseline at the verified code commit:** 2,585 passing, 11 skipped, 0 failures (`2596` tests run)
 
 ## Current Architecture
 
@@ -29,7 +30,7 @@ macOS with SQLite and a Python HTTP server.
 - `app/jordana_invoice/review_server.py` — local HTTP server with API routes
 - `app/jordana_invoice/review_services.py` — review workflow, billing relationships, candidate promotion
 - `app/jordana_invoice/invoice_services.py` — invoice lifecycle, monthly staging, line item editing
-- `app/jordana_invoice/invoice_pdf.py` — ReportLab PDF generation (draft and final)
+- `app/jordana_invoice/invoice_pdf.py` — canonical ReportLab PDF generation for draft and final output
 - `app/jordana_invoice/invoice_rendering.py` — shared render model and HTML print preview
 - `app/jordana_invoice/payment_services.py` — payment ledger, allocations, corrections
 - `app/jordana_invoice/financial_summary.py` — shared financial summary calculations
@@ -65,7 +66,7 @@ macOS with SQLite and a Python HTTP server.
 - Duplicate collapse by `calendar_event_id` or `event_fingerprint`
 - Source-calendar classification and review filtering
 - `JORDANA_PREFERRED_WORK_CALENDAR` as classification signal (not ingestion filter)
-- Sanitized Apps Script source is represented in `integrations/apps_script/Code.gs`; live deployment must preserve the existing Apps Script project and use Script Properties.
+- Sanitized Apps Script source is represented in `integrations/apps_script/Code.gs`; live deployment must preserve the existing Apps Script project and use Script Properties
 
 ### Review Workflow
 
@@ -101,8 +102,8 @@ macOS with SQLite and a Python HTTP server.
 ### Invoice Lifecycle
 
 - Draft, finalized, and void invoice lifecycle
-- Transaction-safe numbering and immutable finalization snapshots
-- Two-step finalization: preview (readiness validation) → confirm (atomic transaction)
+- Transaction-safe invoice numbering and immutable finalization snapshots
+- Two-step finalization: preview readiness validation followed by confirmation
 - Line item editing for drafts: description and amount/rate with correction scope
 - Optimistic locking via `expected_revision`
 - Monthly invoice identity with `billing_month` and `supplement_sequence`
@@ -110,22 +111,22 @@ macOS with SQLite and a Python HTTP server.
 - One open monthly draft per canonical payer and month (person-linked payers)
 - Organizations grouped by their actual organization billing-party record
 - Stale draft line reconciliation (party or month changes)
-- Future scheduled approved sessions remain unstaged until they become invoice-eligible; the approval response reports the skip reason, and successful calendar sync runs idempotent staging reconciliation.
+- Future scheduled approved sessions remain unstaged until they become invoice-eligible; the approval response reports the skip reason, and successful calendar sync runs idempotent staging reconciliation
 - Finalized and void invoices remain immutable
 - No historical finalized invoice is silently repointed
 - Void with reason; source sessions become eligible for reissue
 - Invoice library: searchable, filterable, paginated
 - **Prior Unpaid Balance & Account-Summary Presentation**:
-  - Displays current charges, current balance, prior unpaid balances from prior finalized non-void invoices, and a final "TOTAL AMOUNT DUE" on HTML print previews and ReportLab PDFs.
-  - Payments Applied row is omitted when current-invoice payments are zero; shown with negative formatting only when greater than zero.
-  - Customer-facing previews and PDFs use "TOTAL AMOUNT DUE" without "(As Finalized)" or snapshot/version terminology; internal app detail views still distinguish frozen historical values from live status.
-  - Compact right-aligned summary block with single-line labels, reduced padding, and smaller-font prior-invoice note beneath the block.
-  - Single prior invoice: compact note "Includes prior invoice NNN dated … — $X remaining"; multiple: heading + one line per invoice.
-  - Frozen `account_summary_snapshot` JSON snapshot (version 1) is persisted in the database upon finalization.
-  - Deterministic same-date cutoff tie-breaking (using date, draft/finalized status, finalized_at timestamp, and alphabetical UUID).
-  - Graceful fallback for legacy invoices with NULL snapshots (UI shows live payment status and hides the as-finalized snapshot section).
-  - Void invoices are treated as having 0 current balance and are excluded from subsequent prior balance calculations.
-  - Account statements, delivery, credits, and reconciliation remain unimplemented. Payment receipts are implemented separately from invoice rendering.
+  - Displays current charges, current balance, prior unpaid balances from prior finalized non-void invoices, and a final "TOTAL AMOUNT DUE" on HTML print previews and ReportLab PDFs
+  - Payments Applied row is omitted when current-invoice payments are zero; shown with negative formatting only when greater than zero
+  - Customer-facing previews and PDFs use "TOTAL AMOUNT DUE" without "(As Finalized)" or snapshot/version terminology; internal app detail views still distinguish frozen historical values from live status
+  - Compact right-aligned summary block with single-line labels, reduced padding, and smaller-font prior-invoice note beneath the block
+  - Single prior invoice: compact note "Includes prior invoice NNN dated … — $X remaining"; multiple: heading + one line per invoice
+  - Frozen `account_summary_snapshot` JSON snapshot (version 1) is persisted in the database upon finalization
+  - Deterministic same-date cutoff tie-breaking (using date, draft/finalized status, finalized_at timestamp, and alphabetical UUID)
+  - Graceful fallback for legacy invoices with NULL snapshots
+  - Void invoices are treated as having 0 current balance and are excluded from subsequent prior balance calculations
+  - Account statements, delivery, credits, and reconciliation remain unimplemented. Payment receipts are implemented separately from invoice rendering
 
 ### PDF Generation
 
@@ -133,6 +134,8 @@ macOS with SQLite and a Python HTTP server.
 - Draft PDF preview: real PDF, generated in memory, marked DRAFT, no invoice number
 - Draft PDF is side-effect free: no disk write, no status/revision/pdf_path/checksum/audit change
 - Missing readiness information may block finalization but not draft preview
+- Draft and finalized PDFs delegate to one canonical `_generate_invoice_pdf_bytes` renderer
+- Draft and finalized output share typography, spacing, header, table, totals, payment section, insurance block, and late-cancellation rendering
 - Draft and final PDF endpoints use dedicated inline PDF response headers compatible with Safari
 - PDF responses use `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`
 - PDF responses do not apply `X-Frame-Options: DENY` or CSP headers (allows inline browser preview)
@@ -146,32 +149,32 @@ macOS with SQLite and a Python HTTP server.
 - Payment provenance via `source_type` and `source_session_id` (migration 004)
 - Payment corrections: reversal with reason, void with reason, apply available funds (migration 007)
 - **Paid-at-Session Apply Workflow**:
-  - First-time approval of a session marked `paid_at_session` automatically records a posted payment (with source category `paid_at_session_backfill` and correct session/billing party provenance) and allocates it to the session.
-  - Strict in-transaction validation enforces that the amount matches approved rate exactly (full payment only), payment date is valid, and payment method is selected.
-  - Full idempotency check in write transaction prevents duplicate payments/allocations, and repairs missing allocations (self-healing) when safe.
-  - Paid-at-session approvals bypass monthly invoice staging, returning a staging status of `not_required` to the UI.
-  - Report generation is executed post-commit; filesystem failures return a warning without rolling back the transaction.
+  - First-time approval of a session marked `paid_at_session` automatically records a posted payment and allocates it to the session
+  - Strict in-transaction validation enforces that the amount matches approved rate exactly, payment date is valid, and payment method is selected
+  - Full idempotency check in the write transaction prevents duplicate payments/allocations and repairs missing allocations when safe
+  - Paid-at-session approvals bypass monthly invoice staging, returning a staging status of `not_required` to the UI
+  - Report generation is executed post-commit; filesystem failures return a warning without rolling back the transaction
 - Idempotency keys for correction deduplication
 - `billing_party_id` is the authoritative payment owner
 - Unapplied money computed dynamically (not stored as a column)
 - Finalized invoice charges remain immutable; payments are a separate audited ledger
 - Payment settlement may change after invoice finalization
-- Paid/balance amounts derived dynamically from the ledger (no `paid_cents`/`balance_cents` columns on invoices)
+- Paid/balance amounts derived dynamically from the ledger
 - Tabbed Payments workspace: Outstanding, Paid, All Payments
 - Payment detail overlay with allocations, correction history, apply-funds, and void forms
 - Payment receipt PDF creation from posted payments: one receipt per payment, manual only, immutable JSON snapshot, stored PDF served from disk
-- Client page account summary cards (Total Finalized, Total Payments Applied, Current Balance, Account Status)
+- Client page account summary cards
 - Shared financial summaries for draft value, monthly finalized, monthly receipts, and outstanding balance
 - Read-only dry-run backfill analyzer and CLI for paid-at-session sessions
 
 ### Invoice Filing Owner
 
-- `File invoice under` is separate from Participants, Bill To, billing relationships/accounts, and payment ownership.
-- Additive schema: `client_accounts.default_filing_owner_person_id`; `invoices.filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`.
-- Draft preview/finalization resolves filing ownership from Bill To client, eligible covered clients, and relationship defaults. Ambiguous multi-client drafts can preview but cannot finalize until Jordana selects an eligible client.
-- New finalized PDFs use `Client Files/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf` in installed releases; person code is appended to the client folder only for same-display-name collisions.
-- Existing finalized invoices keep their current `pdf_path`, checksum, and immutable snapshots; no guessing backfill is performed.
-- Local document actions are record-derived only: Open PDF uses the served final PDF endpoint, Show in Finder reveals the stored PDF, and Open client invoice folder opens the client-level folder for the current path shape while still accepting legacy stored paths.
+- `File invoice under` is separate from Participants, Bill To, billing relationships/accounts, and payment ownership
+- Additive schema: `client_accounts.default_filing_owner_person_id`; `invoices.filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`
+- Draft preview/finalization resolves filing ownership from Bill To client, eligible covered clients, and relationship defaults. Ambiguous multi-client drafts can preview but cannot finalize until Jordana selects an eligible client
+- New finalized PDFs use `Client Files/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf` in installed releases; person code is appended only for same-display-name collisions
+- Existing finalized invoices keep their current `pdf_path`, checksum, and immutable snapshots; no guessing backfill is performed
+- Local document actions are record-derived only
 
 ### Rate Rules
 
@@ -192,7 +195,7 @@ macOS with SQLite and a Python HTTP server.
    - Save Session Draft — duration, type, rate, payment handling
    - Approve Session — validates and commits
 5. Approval triggers monthly invoice staging automatically
-6. Staging result is additive to the approval response (success/warning/unavailable/error); a clean future-session skip is success with zero staged sessions, not an “added to draft” result
+6. Staging result is additive to the approval response; a clean future-session skip is success with zero staged sessions
 7. Approval remains successful even if staging warns
 
 ## Canonical Payer And Billing Relationships Behavior
@@ -205,7 +208,7 @@ macOS with SQLite and a Python HTTP server.
 - Normal UI shows one payer-centered row when a shared backend account resolves to the same payer relationship
 - Backend account/group records remain for compatibility and advanced detail
 - Folding does not delete or rewrite accounts, memberships, sessions, approved Bill To values, invoices, payments, or audit history
-- Normalize appears only for true duplicate person-linked billing-party conflicts, not merely because an internal shared account exists
+- Normalize appears only for true duplicate person-linked billing-party conflicts
 
 ## Invoice Lifecycle And PDF Preview
 
@@ -214,8 +217,9 @@ macOS with SQLite and a Python HTTP server.
 - Staging consolidates duplicate drafts tied to legacy duplicate person-linked billing-party records
 - Finalized and void invoices remain immutable; no historical finalized invoice is silently repointed
 - Organizations remain grouped by their actual organization billing-party record
-- Draft PDF preview is an actual PDF (not HTML), generated in memory, clearly marked DRAFT
-- Draft PDF has no invoice number, no disk write, no mutation of invoice status/revision/pdf_path/checksum/audit
+- Draft PDF preview is an actual PDF, generated in memory and clearly marked DRAFT
+- Draft PDF has no invoice number, no disk write, and no invoice-state mutation
+- Draft and finalized PDFs use the same canonical ReportLab renderer
 - Both draft and final PDF endpoints use inline PDF headers compatible with Safari
 
 ## Payment Ledger Status
@@ -226,24 +230,35 @@ macOS with SQLite and a Python HTTP server.
 - Invoice payment history
 - Payment detail overlay with correction history
 - Manual payment receipt preview/create/open/show-in-Finder actions for posted payments
-- Tabbed Payments workspace (Outstanding, Paid, All Payments)
+- Tabbed Payments workspace
 - Client page account summary
 - Shared financial summary calculations
 - Idempotency keys for corrections
 - Read-only dry-run backfill analyzer and CLI
 
 **Not implemented:**
-- Paid-at-session backfill apply mode for legacy pre-workflow sessions (dry-run only; new approvals handle paid-at-session automatically)
+- Paid-at-session backfill apply mode for legacy pre-workflow sessions
 - Credits, multi-invoice payments, formal reconciliation, month-close workflows
-- Invoice delivery (email/mail sending)
+- Invoice delivery by email or mail
 
 ## Recent Live-Validated Fixes
 
-- **Canonical payer (PR #4):** Unified payer billing profiles; one canonical active person-linked billing-party record per payer; draft PDF preview restored using same ReportLab render model as final PDFs
-- **Folded payer rows and Safari PDF headers (PR #5):** Same-payer shared billing accounts folded into one payer-centered Billing Relationships row; browser-compatible inline PDF headers for Safari
-- **Joint-session review linkage (PR #6):** Candidate-only review records promoted into exactly one sessions row during section save; multi-participant save and approval reusing the same candidate-to-session link; approval remaining successful even if invoice staging later warns
-- **Draft preview account-summary wiring fix:** The `/api/invoices/<id>/print-preview` and `/api/invoices/<id>/draft-pdf` endpoints now pass the already-calculated `account_summary` (from `get_invoice()`) into `build_print_preview_html` and `build_invoice_render_model`, so draft previews correctly display prior unpaid balances and total amount due. Previously these endpoints omitted the `account_summary` argument, causing draft previews to miss the prior-balance section.
-- **Canonical shared PDF renderer fix:** Both `generate_invoice_pdf` (finalized) and `generate_draft_pdf_bytes` (draft preview) now delegate to a single shared canonical rendering function (`_generate_invoice_pdf_bytes`), eliminating the duplicated style definitions and story-building code that previously allowed preview and finalization to diverge. Regression tests verify that both functions use the shared renderer, that draft and finalized output share identical layout/content/positioning, and that the old renderer is no longer reachable from finalization.
+- **Canonical payer (PR #4):** Unified payer billing profiles and restored draft PDF preview
+- **Folded payer rows and Safari PDF headers (PR #5):** Folded same-payer shared accounts and added browser-compatible inline PDF headers
+- **Joint-session review linkage (PR #6):** Promoted candidate-only records into exactly one session and kept repeated saves idempotent
+- **Draft preview account-summary wiring:** Draft previews now receive the calculated account summary and show prior balances correctly
+- **Canonical shared PDF renderer:** `generate_invoice_pdf` and `generate_draft_pdf_bytes` now delegate to `_generate_invoice_pdf_bytes`; the former duplicate final renderer is no longer reachable
+- **Installer and launcher hardening:** The release uses a native no-Terminal setup app, offline wheelhouse, private app runtime, Application Support data paths, Documents output paths, port ownership checks, and clean temporary-install cleanup
+- **Manual one-click install proof:** Brooke reports that the current installer successfully completed a one-click install and launch on a test Mac. Formal acceptance evidence still must be recorded in `docs/TEST_MAC_ACCEPTANCE.md`; this statement does not imply that every checklist scenario has been completed
+
+## Current Audit Findings Requiring Narrow Follow-Up
+
+These are verified implementation/documentation findings, not redesign requests.
+
+1. **Invoice finalization transaction ownership:** `finalize_invoice()` begins an immediate transaction and calls `synchronize_draft_delivery_method()`, which can call `conn.commit()` internally. If delivery method synchronization occurs, the helper can commit before the rest of finalization finishes. The next code round should make transaction ownership explicit and add a rollback regression test.
+2. **Installer rollback after app replacement:** `install_release.sh` stages the new app safely, but removes the existing app before final verification. A verification failure after replacement can leave the prior working app unavailable even though private data remains safe. The next packaging round should preserve the old app until the new app passes verification and restore it on failure.
+3. **Installer version source:** `install_release.sh` currently installs `jordana-invoice==0.1.0` directly. This matches the current project version but can drift on a future version bump. Installation should eventually read the expected version from the release manifest.
+4. **Remote CI:** The verified commit has no GitHub status checks. Local tests remain authoritative today; adding sanitized CI would reduce the chance of an untested future push.
 
 ## Current Test Strategy
 
@@ -251,10 +266,10 @@ macOS with SQLite and a Python HTTP server.
 PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
 ```
 
-- Full suite baseline for this handoff: `Ran 2596 tests in 180.798s`, `OK (skipped=11)` on 2026-07-01.
-- Exact counts: 2,585 passing, 11 skipped, 0 failures.
-- Skipped tests are intentionally skipped by the current suite, including manual/network-style integration coverage where private or external state is not available in ordinary local runs.
-- Acceptance test (uses temporary database, never touches operational DB):
+- Recorded full-suite baseline: `Ran 2596 tests in 180.798s`, `OK (skipped=11)` on 2026-07-01 at commit `033d2634fa33688f686c66160ec0eff3e71bf8d7`
+- Exact counts: 2,585 passing, 11 skipped, 0 failures
+- Skipped tests include manual/network-style integration coverage where private or external state is not available in ordinary local runs
+- Acceptance test uses a temporary database and never touches the operational database:
 
 ```bash
 scripts/run_acceptance_test.sh
@@ -267,15 +282,16 @@ scripts/git_safety_check.sh
 scripts/privacy_check.sh
 ```
 
+This documentation reconciliation does not claim that the suite was rerun after documentation-only edits. Future code rounds must rerun focused tests and the full suite.
+
 ## Privacy And Git Safety Rules
 
 - Never commit `.env`, API keys, live databases, real CSV reports, Google credentials, invoice PDFs, logs, screenshots with client names, shortcut backups, raw Google Sheet exports, real diagnosis codes, or real diagnosis-code examples
 - Use sanitized fictional records for demo data only
 - Keep private business profiles, branding assets, and generated PDFs outside Git
 - Before any GitHub push, run `scripts/git_safety_check.sh`
-- Do not commit live databases, reports, logs, screenshots with client names, shortcut backups, `.env`, or credentials
-- The operational SQLite database at `data/jordana_invoice.sqlite3` contains real data; never delete, overwrite, truncate, or recreate it
-- For acceptance testing, always use `scripts/run_acceptance_test.sh` (creates a temporary database)
+- The operational SQLite database contains real data; never delete, overwrite, truncate, or recreate it
+- For acceptance testing, always use `scripts/run_acceptance_test.sh`
 
 ## Policy Decision: Diagnosis-Code Storage (2026-06-30)
 
@@ -283,15 +299,15 @@ The former categorical prohibition on diagnosis-code storage has been superseded
 
 Additional rules:
 
-- Diagnosis codes are local operational data; real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, demo data, documentation, or committed databases.
-- Diagnosis codes are invoice-specific and optional.
-- Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them.
-- Standard self-pay invoices should not include diagnosis codes.
-- Diagnosis-code values must never be inferred from calendar text, participant names, session descriptions, or other application data.
-- Approved invoice snapshots must remain historically stable.
-- Removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records.
+- Diagnosis codes are local operational data; real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, demo data, documentation, or committed databases
+- Diagnosis codes are invoice-specific and optional
+- Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them
+- Standard self-pay invoices should not include diagnosis codes
+- Diagnosis-code values must never be inferred from calendar text, participant names, session descriptions, or other application data
+- Approved invoice snapshots must remain historically stable
+- Removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records
 
-This decision is consistent with migration 012 (`012_insurance_coding`), which added the `insurance_diagnosis_code_snapshot` column to the `invoices` table, and with the invoice finalization code, which freezes the diagnosis code into the finalized snapshot only when insurance coding is explicitly enabled.
+This decision is consistent with migration 012 (`012_insurance_coding`) and with invoice finalization, which freezes the diagnosis code into the finalized snapshot only when insurance coding is explicitly enabled.
 
 ## Local Run Command
 
@@ -305,24 +321,27 @@ Open: `http://127.0.0.1:8765/review`
 
 ## Known Limitations
 
-- No formal client-versus-non-client schema distinction (all active people appear in search)
+- No formal client-versus-non-client schema distinction
 - No automatic payer classification
-- No invoice delivery (email/mail sending)
-- No paid-at-session backfill apply mode for legacy pre-workflow sessions (dry-run only; new approvals handle paid-at-session automatically)
+- No invoice delivery by email or mail
+- No paid-at-session backfill apply mode for legacy pre-workflow sessions
 - No credits, refunds, write-offs, automated multi-invoice payment allocation, formal reconciliation, or month-close workflows
 - No polished production dashboard
 - No notarized installer
 - V1 production installation requires the Python major/minor runtime recorded in `release_manifest.json`
-- Clean-Mac acceptance remains a manual release-validation step until recorded in `docs/TEST_MAC_ACCEPTANCE.md`
+- A one-click test install has succeeded, but the complete acceptance checklist and evidence record are not yet documented as complete
+- Installer replacement is not yet rollback-safe after the existing app has been removed
+- Finalization transaction ownership needs the narrow delivery-method synchronization fix described above
+- Installer package version is currently hardcoded to `0.1.0`
 - No permanent deletion of billing relationships (by design — deactivation only)
-- No clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, or session-content notes beyond raw calendar evidence (structured insurance diagnosis codes are permitted per the policy decision above)
+- No clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, or session-content notes beyond raw calendar evidence; structured insurance diagnosis codes are permitted only under the policy above
 
 ## Recommended Next Steps
 
-1. Finish the one-click launcher and synchronization experience
-2. Re-run imports and review until clean
-3. Confirm rate exceptions and bill-to defaults with Jordana
-4. Implement invoice delivery workflow
-5. Implement paid-at-session backfill apply mode for legacy pre-workflow sessions
-6. Build dashboard integration
-7. Add credits, multi-invoice payments, reconciliation, and month-close workflows
+1. Fix invoice finalization transaction ownership and add rollback coverage
+2. Make installer replacement rollback-safe and derive the package version from the release manifest
+3. Record the completed one-click test details and finish the remaining clean-Mac acceptance checklist scenarios
+4. Run the current release against Jordana's intended workflow: sync, review, approval, invoice preview, finalization, PDF opening, payment, and restart
+5. Confirm rate exceptions and Bill To defaults with Jordana
+6. Add sanitized CI for tests and safety checks
+7. Treat invoice delivery, historical paid-at-session backfill, dashboard, credits, reconciliation, and month-close as later enhancements rather than blockers to the core handoff
