@@ -31,7 +31,8 @@ TOTAL_LEADING = 18.0
 
 LOGO_MAX_WIDTH = 1.725 * POINTS_PER_INCH
 LOGO_MAX_HEIGHT = 1.2075 * POINTS_PER_INCH
-LOGO_LEFT_SHIFT = 0.10 * POINTS_PER_INCH
+LOGO_LEFT_SHIFT = 0.24 * POINTS_PER_INCH
+LOGO_SENDER_SPACING = 0.01 * POINTS_PER_INCH
 
 HEADER_LEFT_WIDTH = 4.55 * POINTS_PER_INCH
 HEADER_RIGHT_WIDTH = CONTENT_WIDTH - HEADER_LEFT_WIDTH
@@ -179,7 +180,7 @@ def generate_invoice_pdf(
         logo_cell = fallback
     else:
         logo_cell = [logo_flowable]
-        logo_cell.append(Spacer(1, 0.08 * inch))
+        logo_cell.append(Spacer(1, LOGO_SENDER_SPACING))
         for value in render.get("sender_lines") or []:
             logo_cell.append(para(value, small))
     meta = [para("INVOICE", title)]
@@ -515,7 +516,7 @@ def generate_draft_pdf_bytes(
         logo_cell = fallback
     else:
         logo_cell = [logo_flowable]
-        logo_cell.append(Spacer(1, 0.08 * inch))
+        logo_cell.append(Spacer(1, LOGO_SENDER_SPACING))
         for value in render.get("sender_lines") or []:
             logo_cell.append(para(value, small))
     meta = [para("INVOICE", title), para("DRAFT", draft_label_style)]

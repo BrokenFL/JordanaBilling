@@ -15,6 +15,7 @@ from jordana_invoice.invoice_pdf import (
     LOGO_LEFT_SHIFT,
     LOGO_MAX_HEIGHT,
     LOGO_MAX_WIDTH,
+    LOGO_SENDER_SPACING,
     PAYMENT_FOOTER_MIN_CLEARANCE,
     SMALL_FONT_SIZE,
     TABLE_CELL_LEFT_PADDING,
@@ -189,7 +190,14 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertLessEqual(image.drawHeight, LOGO_MAX_HEIGHT + 0.1)
 
     def test_logo_left_shift_matches_optical_padding(self):
-        self.assertAlmostEqual(LOGO_LEFT_SHIFT, 0.10 * 72, delta=0.1)
+        self.assertAlmostEqual(LOGO_LEFT_SHIFT, 0.24 * 72, delta=0.1)
+
+    def test_logo_sender_spacing_reduced_from_original(self):
+        original_spacing = 0.08 * 72
+        self.assertLess(LOGO_SENDER_SPACING, original_spacing)
+        reduction = original_spacing - LOGO_SENDER_SPACING
+        self.assertGreaterEqual(reduction, 4.0)
+        self.assertLessEqual(reduction, 6.0)
 
     def test_row_padding_matches_print_spacing(self):
         self.assertEqual(TABLE_ROW_TOP_PADDING, 9)
