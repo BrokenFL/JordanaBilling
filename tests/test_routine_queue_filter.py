@@ -317,6 +317,21 @@ class ParserSarahCancelledRegressionTest(unittest.TestCase):
                     f"billing_treatment must be in fields_requiring_review for '{title}'",
                 )
 
+    def test_late_cx_suggests_late_cancellation_without_auto_approval(self):
+        from jordana_invoice.parser import parse_event
+        result = parse_event({
+            "event_title": "Sara Lieppe 5 late cx",
+            "start_at": "2026-06-17T17:00:00-04:00",
+            "end_at": "2026-06-17T18:00:00-04:00",
+            "duration_minutes": 60,
+        })
+        self.assertEqual(result.classification, "client_session")
+        self.assertEqual(result.appointment_status, "late_cancellation")
+        self.assertIn("Sara Lieppe", result.candidate_person_names or [])
+        self.assertNotIn("late cx", [n.lower() for n in result.candidate_person_names or []])
+        self.assertIn("billing_treatment", result.fields_requiring_review)
+        self.assertIn("client_rate", result.fields_requiring_review)
+
 
 class QueueExclusionAndRestoreTests(unittest.TestCase):
     def setUp(self):

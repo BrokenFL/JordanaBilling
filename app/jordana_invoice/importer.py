@@ -906,7 +906,7 @@ def bool_to_db(value: bool | None) -> int | None:
 
 
 def initial_billing_treatment(result: ParseResult) -> str:
-    if result.appointment_status in {"cancelled", "no_show"}:
+    if result.appointment_status in {"cancelled", "no_show", "late_cancellation", "timely_cancellation"}:
         return "unresolved"
     if result.classification == "client_session":
         return "billable"

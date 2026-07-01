@@ -79,17 +79,13 @@ class InvoiceStagingTests(unittest.TestCase):
             "service_mode": "office", "time_category": "standard", "approved_rate": amount,
             "payment_status": payment_status, "billing_treatment": treatment,
         }
+        if appointment:
+            payload["appointment_status"] = appointment
         if normalize_payment_status(payment_status) == "paid_at_session":
             payload["amount_received"] = amount
             payload["payment_date"] = f"2026-05-{day:02d}"
             payload["payment_method"] = "zelle"
         detail = approve_candidate(self.conn, candidate_id, payload)
-        if appointment:
-            self.conn.execute(
-                "UPDATE sessions SET appointment_status = ?, billing_treatment = ? WHERE id = ?",
-                (appointment, treatment, detail["session"]["id"]),
-            )
-            self.conn.commit()
         return self.conn.execute(
             "SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)
         ).fetchone()
@@ -434,6 +430,67 @@ class InvoiceStagingTests(unittest.TestCase):
         # Session should be in skipped list
         skipped_ids = [s["session_id"] for s in result["sessions_skipped"]]
         self.assertTrue(len(skipped_ids) > 0)
+
+    def test_late_cancellation_full_fee_line_uses_fee_description(self):
+        session = self.approved_session(
+            "late-full",
+            title="Avery Stone 10 late cx",
+            appointment="late_cancellation",
+            treatment="bill_full_fee",
+            amount="150.00",
+        )
+        result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+        self.assertEqual(result["sessions_staged"], 1)
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        line = self.conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = ?",
+            (draft["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(line["description_snapshot"], "Late Cancellation Fee - Psychotherapy Session")
+        self.assertEqual(line["line_amount_cents"], 15000)
+        self.assertEqual(draft["total_cents"], 15000)
+
+    def test_late_cancellation_custom_fee_is_session_specific(self):
+        session = self.approved_session(
+            "late-custom",
+            title="Avery Stone 10 late cancellation",
+            appointment="late_cancellation",
+            treatment="custom_fee",
+            amount="75.00",
+        )
+        self.assertEqual(session["approved_rate_cents"], 7500)
+        self.assertEqual(session["rate_cents_snapshot"], 7500)
+        result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+        self.assertEqual(result["sessions_staged"], 1)
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        line = self.conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = ?",
+            (draft["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(line["description_snapshot"], "Late Cancellation Fee - Psychotherapy Session")
+        self.assertEqual(line["line_amount_cents"], 7500)
+
+    def test_late_cancellation_waived_line_visible_at_zero(self):
+        session = self.approved_session(
+            "late-waived",
+            title="Avery Stone 10 late cx",
+            appointment="late_cancellation",
+            treatment="waived",
+            amount="0.00",
+        )
+        self.assertEqual(session["approved_rate_cents"], 0)
+        self.assertEqual(session["rate_cents_snapshot"], 0)
+        self.assertEqual(session["billing_treatment"], "waived")
+        result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+        self.assertEqual(result["sessions_staged"], 1)
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        line = self.conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = ?",
+            (draft["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(line["description_snapshot"], "Late Cancellation - Fee Waived")
+        self.assertEqual(line["line_amount_cents"], 0)
+        self.assertEqual(draft["total_cents"], 0)
 
     def test_future_scheduled_session_skipped_with_exact_reason(self):
         session = self.approved_session("future1", day=10)

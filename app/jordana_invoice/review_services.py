@@ -29,6 +29,8 @@ from .session_types import (
     DURATION_CHOICE_OPTIONS,
     appointment_status_label,
     get_user_facing_session_label,
+    normalize_attendance_outcome,
+    normalize_billing_treatment_for_outcome,
     rate_rule_appointment_status_for_session,
     validate_rate_rule_appointment_status,
     validate_billing_session_type,
@@ -75,6 +77,38 @@ def get_session_type_options() -> list[dict[str, str]]:
 def get_duration_options() -> list[dict[str, str]]:
     """Return the exactly 5 allowed duration choice options for UI dropdowns."""
     return list(DURATION_CHOICE_OPTIONS)
+
+
+def _coerce_charge_for_attendance(
+    appointment_status: str | None,
+    billing_treatment: str | None,
+    approved_rate_cents: int | None,
+    suggested_rate_cents: int | None,
+    session: sqlite3.Row | dict[str, Any],
+) -> tuple[str, str, int | None, int | None]:
+    outcome = normalize_attendance_outcome(appointment_status)
+    treatment = normalize_billing_treatment_for_outcome(outcome, billing_treatment)
+    current_scheduled = (
+        session["scheduled_rate_cents"]
+        if "scheduled_rate_cents" in session.keys()  # type: ignore[attr-defined]
+        else None
+    )
+    scheduled_rate_cents = suggested_rate_cents
+    if scheduled_rate_cents is None:
+        scheduled_rate_cents = current_scheduled
+    if scheduled_rate_cents is None:
+        scheduled_rate_cents = session["suggested_rate_cents"]
+
+    if outcome == "late_cancellation":
+        if treatment == "waived":
+            return outcome, treatment, 0, scheduled_rate_cents
+        if treatment == "bill_full_fee":
+            return outcome, treatment, approved_rate_cents if approved_rate_cents is not None else scheduled_rate_cents, scheduled_rate_cents
+        if treatment == "custom_fee":
+            return outcome, treatment, approved_rate_cents, scheduled_rate_cents
+        return outcome, treatment, approved_rate_cents, scheduled_rate_cents
+
+    return outcome, treatment, approved_rate_cents, scheduled_rate_cents
 
 
 def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -632,9 +666,19 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
     duration_choice, custom_duration_minutes = validate_duration_choice(raw_duration_choice, raw_custom_minutes)
     custom_service_description = payload.get("custom_service_description") or None
     custom_service_code = payload.get("custom_service_code") or None
+    appointment_status = normalize_attendance_outcome(
+        payload.get("appointment_status") or session["appointment_status"]
+    )
     payment_status = normalize_payment_status(payload.get("payment_status") or session["payment_status"])
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
     billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
+    appointment_status, billing_treatment, approved_rate_cents, scheduled_rate_cents = _coerce_charge_for_attendance(
+        appointment_status,
+        billing_treatment,
+        approved_rate_cents,
+        suggested_rate_cents,
+        session,
+    )
     rate_override_reason = payload.get("rate_override_reason") or None
     rate_scope = payload.get("rate_scope") or "session_only"
     approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
@@ -694,7 +738,7 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
         rate_rule_id=session["rate_rule_id"],
         rate_needs_review=0 if approved_rate_cents is not None else session["rate_needs_review"],
         payment_status=payment_status,
-        appointment_status=session["appointment_status"],
+        appointment_status=appointment_status,
         billing_treatment=billing_treatment,
         custom_service_description=custom_service_description,
     )
@@ -718,6 +762,7 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
             custom_service_code = ?,
             billing_type_source = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
+            scheduled_rate_cents = COALESCE(?, scheduled_rate_cents),
             approved_rate_cents = ?,
             approved_rate_source = ?,
             approved_rate_rule_id = CASE WHEN ? = 'manual_override' THEN NULL ELSE approved_rate_rule_id END,
@@ -725,6 +770,7 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
             rate_override_reason = ?,
             payment_status = ?,
             billable_status = ?,
+            appointment_status = ?,
             billing_treatment = ?,
             review_status = ?,
             updated_at = ?
@@ -747,6 +793,7 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
             custom_service_code,
             "manual" if payload.get("billing_session_type") else (session["billing_type_source"] if "billing_type_source" in session.keys() else None) or "auto",
             suggested_rate_cents,
+            scheduled_rate_cents,
             approved_rate_cents,
             approved_source,
             approved_source,
@@ -754,6 +801,7 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
             rate_override_reason,
             payment_status,
             billable_status,
+            appointment_status,
             billing_treatment,
             review_status,
             now,
@@ -951,6 +999,7 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
                 billable_status = 'approved',
                 service_catalog_id = ?,
                 rate_cents_snapshot = approved_rate_cents,
+                scheduled_rate_cents_snapshot = COALESCE(scheduled_rate_cents, suggested_rate_cents, approved_rate_cents),
                 approved_rate_rule_id = COALESCE(approved_rate_rule_id, rate_rule_id),
                 approved_rate_source = COALESCE(approved_rate_source, rate_source, 'manual_override'),
                 updated_at = ?
@@ -1157,9 +1206,19 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     custom_service_description = text(payload.get("custom_service_description") or session["custom_service_description"] or "").strip() or None
     custom_service_code = text(payload.get("custom_service_code") or session["custom_service_code"] or "").strip() or None
     time_category = normalize_time_category(payload.get("time_category") or session["time_category"])
+    appointment_status = normalize_attendance_outcome(
+        payload.get("appointment_status") or session["appointment_status"]
+    )
     payment_status = normalize_payment_status(payload.get("payment_status") or session["payment_status"])
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
     billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
+    appointment_status, billing_treatment, approved_rate_cents, scheduled_rate_cents = _coerce_charge_for_attendance(
+        appointment_status,
+        billing_treatment,
+        approved_rate_cents,
+        suggested_rate_cents,
+        session,
+    )
     rate_scope = payload.get("rate_scope") or "session_only"
     approved_source = approved_rate_source_for(session, approved_rate_cents, rate_scope)
     conn.execute(
@@ -1177,6 +1236,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             custom_service_description = ?,
             custom_service_code = ?,
             suggested_rate_cents = COALESCE(?, suggested_rate_cents),
+            scheduled_rate_cents = COALESCE(?, scheduled_rate_cents),
             approved_rate_cents = ?,
             approved_rate_source = ?,
             approved_rate_rule_id = CASE WHEN ? = 'manual_override' THEN NULL ELSE approved_rate_rule_id END,
@@ -1184,6 +1244,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             rate_override_reason = ?,
             payment_status = ?,
             billable_status = ?,
+            appointment_status = ?,
             billing_treatment = ?,
             updated_at = ?
         WHERE id = ?
@@ -1201,6 +1262,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             custom_service_description,
             custom_service_code,
             suggested_rate_cents,
+            scheduled_rate_cents,
             approved_rate_cents,
             approved_source,
             approved_source,
@@ -1208,6 +1270,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
             payload.get("rate_override_reason") or None,
             payment_status,
             billable_status,
+            appointment_status,
             billing_treatment,
             now,
             session["id"],
@@ -3467,6 +3530,7 @@ def refresh_candidate_suggestions(
             """
             UPDATE sessions
             SET suggested_rate_cents = ?,
+                scheduled_rate_cents = COALESCE(scheduled_rate_cents, ?),
                 rate_rule_id = ?,
                 rate_source = ?,
                 rate_needs_review = ?,
@@ -3475,6 +3539,7 @@ def refresh_candidate_suggestions(
             WHERE id = ?
             """,
             (
+                suggestion.suggested_rate_cents,
                 suggestion.suggested_rate_cents,
                 suggestion.rate_rule_id,
                 suggestion.rate_source,
@@ -4047,13 +4112,23 @@ def unresolved_from_values(**values: Any) -> list[str]:
         unresolved.append("custom_service_description")
     if not values["time_category"]:
         unresolved.append("time_category")
+    appointment_status = normalize_attendance_outcome(values.get("appointment_status"))
+    billing_treatment = normalize_billing_treatment_for_outcome(
+        appointment_status,
+        values.get("billing_treatment"),
+    )
     if values["approved_rate_cents"] is None and not (
         values.get("suggested_rate_cents") is not None
         and values.get("rate_rule_id")
         and not values.get("rate_needs_review")
     ):
         unresolved.append("approved_rate_cents")
-    if values.get("appointment_status") in {"cancelled", "no_show"} and values.get("billing_treatment") in {"", None, "unresolved"}:
+    if appointment_status == "late_cancellation":
+        if billing_treatment in {"", None, "unresolved"}:
+            unresolved.append("billing_treatment")
+        elif billing_treatment == "custom_fee" and values["approved_rate_cents"] is None:
+            unresolved.append("approved_rate_cents")
+    elif appointment_status in {"cancelled", "no_show", "timely_cancellation"} and billing_treatment in {"", None, "unresolved"}:
         unresolved.append("billing_treatment")
     return unresolved
 

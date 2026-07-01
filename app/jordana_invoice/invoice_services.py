@@ -782,6 +782,8 @@ def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row
     if normalize_payment_status(s.get("payment_status")) == "paid_at_session": reasons.append("Session was paid at time of session")
     if s.get("appointment_status") in {"cancelled", "no_show"} and s.get("billing_treatment") != "billable":
         reasons.append("Cancelled or no-show session requires explicit billable treatment")
+    if s.get("appointment_status") == "late_cancellation" and s.get("billing_treatment") not in {"bill_full_fee", "custom_fee", "waived"}:
+        reasons.append("Late cancellation requires explicit billing treatment")
     params: list[Any] = [s["id"]]
     invoice_filter = ""
     if excluding_invoice_id:
@@ -903,13 +905,16 @@ def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite
         """INSERT INTO invoice_line_items (
           invoice_line_item_id, invoice_id, source_session_id, sort_order, service_date,
           participants_snapshot, service_catalog_id, service_name_snapshot, billing_session_type_snapshot,
-          time_category_snapshot, appointment_status_snapshot, duration_minutes, description_snapshot,
+          time_category_snapshot, appointment_status_snapshot, billing_treatment_snapshot,
+          scheduled_rate_cents_snapshot, duration_minutes, description_snapshot,
           custom_service_description_snapshot, custom_service_code_snapshot, quantity,
           unit_amount_cents, line_amount_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
         (new_id(), invoice_id, session_id, order, session["session_date"], participants,
          catalog["service_catalog_id"], service_name, billing_type, session["time_category"],
-         session["appointment_status"], session["approved_duration_minutes"] or session["duration_minutes"],
+         session["appointment_status"], session["billing_treatment"],
+         session["scheduled_rate_cents_snapshot"] if "scheduled_rate_cents_snapshot" in session.keys() else None,
+         session["approved_duration_minutes"] or session["duration_minutes"],
          description, custom_desc, custom_code, amount, amount, now, now),
     )
 
@@ -1790,6 +1795,10 @@ def _service_description(session: sqlite3.Row, service_name: str) -> str:
     billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
     custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
     appointment_status = session["appointment_status"] if "appointment_status" in session.keys() else None
+    billing_treatment = session["billing_treatment"] if "billing_treatment" in session.keys() else None
+
+    if appointment_status == "late_cancellation" and billing_treatment == "waived":
+        return "Late Cancellation - Fee Waived"
 
     if billing_type == "custom" and custom_desc:
         return get_user_facing_session_label(billing_type, appointment_status, custom_desc)

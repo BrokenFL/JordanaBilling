@@ -659,6 +659,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   is_evening INTEGER NOT NULL DEFAULT 0,
   is_weekend INTEGER NOT NULL DEFAULT 0,
   suggested_rate_cents INTEGER,
+  scheduled_rate_cents INTEGER,
   approved_rate_cents INTEGER,
   rate_rule_id TEXT REFERENCES rate_rules(rate_rule_id),
   rate_source TEXT,
@@ -678,6 +679,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   calendar_is_preferred_work INTEGER NOT NULL DEFAULT 0,
   hidden_from_review INTEGER NOT NULL DEFAULT 0,
   rate_cents_snapshot INTEGER,
+  scheduled_rate_cents_snapshot INTEGER,
   source_raw_snapshot_id TEXT NOT NULL REFERENCES raw_calendar_snapshots(id),
   raw_calendar_title TEXT,
   review_status TEXT NOT NULL DEFAULT 'needs_review',
@@ -852,6 +854,8 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
   billing_session_type_snapshot TEXT,
   time_category_snapshot TEXT,
   appointment_status_snapshot TEXT,
+  billing_treatment_snapshot TEXT,
+  scheduled_rate_cents_snapshot INTEGER,
   duration_minutes INTEGER,
   description_snapshot TEXT NOT NULL,
   custom_service_description_snapshot TEXT,
@@ -1562,6 +1566,28 @@ def _apply_migration_015(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_016_LATE_CANCELLATION_BILLING = "016_late_cancellation_billing"
+
+
+def _apply_migration_016(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "sessions",
+        {
+            "scheduled_rate_cents": "INTEGER",
+            "scheduled_rate_cents_snapshot": "INTEGER",
+        },
+    )
+    add_columns(
+        conn,
+        "invoice_line_items",
+        {
+            "billing_treatment_snapshot": "TEXT",
+            "scheduled_rate_cents_snapshot": "INTEGER",
+        },
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1578,6 +1604,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_013_SYNC_STATE_HARDENING, _apply_migration_013),
     (MIGRATION_014_CANDIDATE_IDENTITY_ALIASES, _apply_migration_014),
     (MIGRATION_015_DUPLICATE_REPAIR_REVERSAL_STATE, _apply_migration_015),
+    (MIGRATION_016_LATE_CANCELLATION_BILLING, _apply_migration_016),
 ]
 
 
@@ -1792,6 +1819,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "is_evening": "INTEGER NOT NULL DEFAULT 0",
             "is_weekend": "INTEGER NOT NULL DEFAULT 0",
             "suggested_rate_cents": "INTEGER",
+            "scheduled_rate_cents": "INTEGER",
             "approved_rate_cents": "INTEGER",
             "rate_rule_id": "TEXT",
             "rate_source": "TEXT",
@@ -1819,6 +1847,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "custom_service_description": "TEXT",
             "custom_service_code": "TEXT",
             "location_text": "TEXT",
+            "scheduled_rate_cents_snapshot": "INTEGER",
         },
     )
     add_columns(
@@ -1843,6 +1872,8 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "billing_session_type_snapshot": "TEXT",
             "custom_service_description_snapshot": "TEXT",
             "custom_service_code_snapshot": "TEXT",
+            "billing_treatment_snapshot": "TEXT",
+            "scheduled_rate_cents_snapshot": "INTEGER",
         },
     )
     add_columns(

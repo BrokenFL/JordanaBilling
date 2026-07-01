@@ -524,9 +524,11 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn('Save as this client', js)
         self.assertIn('Save as the future rate for these clients together', js)
 
-    def test_cancelled_no_show_billing_field_is_conditional(self):
+    def test_cancellation_billing_field_is_conditional(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
-        self.assertIn('const showCancellation = ["cancelled", "no_show"].includes(s.appointment_status);', js)
+        self.assertIn('const showCancellation = ["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome);', js)
+        self.assertIn('id="advancedReviewDetails"', js)
+        self.assertIn('cancellationBillingOptions(s.billing_treatment || "unresolved", attendanceOutcome)', js)
 
     def test_inline_relationship_roles_and_primary_controls_are_gone(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

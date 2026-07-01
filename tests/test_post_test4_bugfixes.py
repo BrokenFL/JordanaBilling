@@ -306,16 +306,17 @@ class TestAmbiguousTitleReviewRouting(unittest.TestCase):
         self.assertEqual(result.classification, "unresolved")
         self.assertEqual(result.proposed_client_name, "Fred")
 
-    def test_sara_lieppe_5_late_cx_extracts_name_guess(self):
+    def test_sara_lieppe_5_late_cx_suggests_late_cancellation(self):
         result = parse_event({
             "event_title": "Sara Lieppe 5 late cx",
             "start_at": "2026-06-18T17:00:00-04:00",
             "end_at": "2026-06-18T18:00:00-04:00",
             "duration_minutes": 60,
         })
-        self.assertEqual(result.classification, "unresolved")
+        self.assertEqual(result.classification, "client_session")
         self.assertEqual(result.proposed_client_name, "Sara Lieppe")
-        self.assertIsNotNone(result.unresolved_trailing_text)
+        self.assertEqual(result.appointment_status, "late_cancellation")
+        self.assertIn("billing_treatment", result.fields_requiring_review)
 
     def test_leah_grossman_6_leaves_for_israel(self):
         result = parse_event({

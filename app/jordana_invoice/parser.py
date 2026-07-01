@@ -99,6 +99,7 @@ ADMIN_KEYWORDS = {
     "showing",
 }
 CANCELLED_KEYWORDS = {"cancel", "cancelled", "canceled", "reschedule", "rescheduled"}
+LATE_CANCELLATION_KEYWORDS = {"late cx", "late cancel", "late cancellation"}
 NO_SHOW_KEYWORDS = {"no show", "noshow", "no-show", "did not attend"}
 NONBILLABLE_KEYWORDS = {"nonbillable", "non-billable", "free consult", "courtesy"}
 MULTI_PERSON_MARKERS = (" and ", " + ", " with ", " for ", "&")
@@ -106,6 +107,9 @@ STATUS_ALIASES = {
     "cancel": "cancelled",
     "cancelled": "cancelled",
     "canceled": "cancelled",
+    "late cx": "late_cancellation",
+    "late cancel": "late_cancellation",
+    "late cancellation": "late_cancellation",
     "no show": "no_show",
     "no-show": "no_show",
     "noshow": "no_show",
@@ -270,6 +274,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             starts_with_admin(lower)
             or contains_any(lower, ADMIN_KEYWORDS)
             or contains_any(lower, PERSONAL_KEYWORDS)
+            or contains_any(lower, LATE_CANCELLATION_KEYWORDS)
             or contains_any(lower, CANCELLED_KEYWORDS)
             or contains_any(lower, NO_SHOW_KEYWORDS)
             or contains_any(lower, NONBILLABLE_KEYWORDS)
@@ -551,6 +556,9 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             )
         )
 
+    if contains_any(lower, LATE_CANCELLATION_KEYWORDS):
+        return finalize_result(status_result("late_cancellation", start_at, computed_duration, time_info))
+
     if contains_any(lower, CANCELLED_KEYWORDS):
         return finalize_result(status_result("cancelled", start_at, computed_duration, time_info))
 
@@ -626,9 +634,17 @@ def strip_title_appointment_status(title: str) -> tuple[str, str | None]:
     _no_show_re = re.compile(
         r"(?i)\s+(?:did\s+not\s+attend|no[\s\-]?show|noshow)\s*$"
     )
+    _late_cancel_re = re.compile(
+        r"(?i)\s+(?:late\s+cx|late\s+cancel(?:lation|led|ed)?)\s*$"
+    )
     _cancelled_re = re.compile(
         r"(?i)\s+cancel(?:l?ed)?\s*$"
     )
+    m = _late_cancel_re.search(title)
+    if m:
+        cleaned = title[: m.start()].strip()
+        if cleaned:
+            return cleaned, "late_cancellation"
     m = _no_show_re.search(title)
     if m:
         cleaned = title[: m.start()].strip()
@@ -650,11 +666,13 @@ def status_result(
 ) -> ParseResult:
     explanations = {
         "cancelled": "Title contains cancellation or reschedule language.",
+        "late_cancellation": "Title contains late-cancellation language.",
         "no_show": "Title contains no-show language.",
         "nonbillable": "Title contains non-billable language.",
     }
     fields = {
         "cancelled": ["billing_disposition"],
+        "late_cancellation": ["client_full_name", "client_account", "billing_party", "client_rate", "billing_treatment"],
         "no_show": ["billing_disposition"],
         "nonbillable": ["nonbillable_reason"],
     }
@@ -667,7 +685,15 @@ def status_result(
         calendar_duration_minutes=computed_duration,
         proposed_duration_minutes=computed_duration or 60,
         duration_source="calendar" if computed_duration else "default",
-        appointment_status="cancelled" if classification == "cancelled" else "no_show" if classification == "no_show" else "unresolved",
+        appointment_status=(
+            "late_cancellation"
+            if classification == "late_cancellation"
+            else "cancelled"
+            if classification == "cancelled"
+            else "no_show"
+            if classification == "no_show"
+            else "unresolved"
+        ),
         **time_info,
     )
 

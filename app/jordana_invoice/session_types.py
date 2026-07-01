@@ -25,6 +25,19 @@ ALLOWED_RATE_RULE_APPOINTMENT_STATUSES = frozenset({
     "no_show",
 })
 
+ATTENDANCE_OUTCOME_OPTIONS = [
+    {"value": "completed", "label": "Completed"},
+    {"value": "late_cancellation", "label": "Late Cancellation"},
+    {"value": "no_show", "label": "No-Show"},
+    {"value": "timely_cancellation", "label": "Timely Cancellation"},
+]
+
+LATE_CANCELLATION_BILLING_TREATMENTS = frozenset({
+    "bill_full_fee",
+    "custom_fee",
+    "waived",
+})
+
 BILLING_SESSION_TYPE_LABELS = {
     "psychotherapy": "Psychotherapy Session",
     "psychotherapy_house_call": "Psychotherapy Session / House Call",
@@ -205,8 +218,8 @@ def rate_rule_appointment_status_for_session(value: str | None) -> str:
     """
     Normalize stored appointment statuses to the rate-rule dimension.
 
-    Normal sessions keep using scheduled rules; only cancelled/no-show sessions
-    require exact status-specific rules.
+    Normal sessions and late cancellations keep using scheduled rules; only
+    legacy cancelled/no-show sessions require exact status-specific rules.
     """
     if value in {"cancelled", "no_show"}:
         return value
@@ -218,6 +231,8 @@ def appointment_status_label(value: str | None) -> str:
         "scheduled": "Scheduled",
         "completed": "Completed",
         "cancelled": "Cancelled",
+        "late_cancellation": "Late Cancellation",
+        "timely_cancellation": "Timely Cancellation",
         "no_show": "No-Show",
         "unresolved": "Unresolved",
     }.get(value or "", value or "Unknown")
@@ -231,7 +246,7 @@ def get_user_facing_session_label(
     """Build the display label from appointment status plus billing type."""
     if billing_type == "custom" and custom_description:
         base = custom_description
-    elif appointment_status in {"cancelled", "no_show"}:
+    elif appointment_status in {"cancelled", "no_show", "late_cancellation", "timely_cancellation"}:
         base = {
             "psychotherapy": "Psychotherapy Session",
             "psychotherapy_house_call": "House Call Psychotherapy Session",
@@ -243,9 +258,70 @@ def get_user_facing_session_label(
         base = get_billing_type_label(billing_type)
     if appointment_status == "cancelled":
         return f"Cancelled {base}"
+    if appointment_status == "late_cancellation":
+        return f"Late Cancellation Fee - {base}"
+    if appointment_status == "timely_cancellation":
+        return f"Timely Cancellation - {base}"
     if appointment_status == "no_show":
         return f"No-Show {base}"
     return base
+
+
+def normalize_attendance_outcome(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    aliases = {
+        "scheduled": "completed",
+        "completed": "completed",
+        "late_cancel": "late_cancellation",
+        "late-cancellation": "late_cancellation",
+        "late cancellation": "late_cancellation",
+        "late_cancellation": "late_cancellation",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+        "timely_cancel": "timely_cancellation",
+        "timely cancellation": "timely_cancellation",
+        "timely_cancellation": "timely_cancellation",
+        "no show": "no_show",
+        "no-show": "no_show",
+        "noshow": "no_show",
+        "no_show": "no_show",
+        "unresolved": "unresolved",
+    }
+    return aliases.get(normalized, normalized or "unresolved")
+
+
+def normalize_billing_treatment_for_outcome(
+    attendance_outcome: str | None,
+    billing_treatment: str | None,
+) -> str:
+    outcome = normalize_attendance_outcome(attendance_outcome)
+    treatment = (billing_treatment or "").strip().lower()
+    if outcome == "late_cancellation":
+        aliases = {
+            "billable": "bill_full_fee",
+            "bill_full_fee": "bill_full_fee",
+            "full_fee": "bill_full_fee",
+            "custom": "custom_fee",
+            "custom_fee": "custom_fee",
+            "waive": "waived",
+            "waived": "waived",
+            "not_billable": "waived",
+            "unresolved": "unresolved",
+            "": "unresolved",
+        }
+        return aliases.get(treatment, treatment or "unresolved")
+    if outcome in {"timely_cancellation", "no_show", "cancelled"}:
+        aliases = {
+            "bill_full_fee": "billable",
+            "custom_fee": "billable",
+            "billable": "billable",
+            "not_billable": "not_billable",
+            "waived": "waived",
+            "unresolved": "unresolved",
+            "": "unresolved",
+        }
+        return aliases.get(treatment, treatment or "unresolved")
+    return treatment or "billable"
 
 
 def is_legacy_service_mode(value: str | None) -> bool:

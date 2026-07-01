@@ -128,7 +128,7 @@ const billingTypeLabel = (v, customDescription = "") => {
   if (v === "custom" && customDescription) return escapeHtml(customDescription);
   return ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || escapeHtml(v) || "Psychotherapy Session");
 };
-const appointmentStatusRuleLabel = (v) => ({scheduled:"Scheduled", cancelled:"Cancelled", no_show:"No-Show"}[v] || escapeHtml(v) || "Scheduled");
+const appointmentStatusRuleLabel = (v) => ({scheduled:"Scheduled", completed:"Completed", cancelled:"Cancelled", late_cancellation:"Late Cancellation", timely_cancellation:"Timely Cancellation", no_show:"No-Show"}[v] || escapeHtml(v) || "Scheduled");
 const userFacingSessionLabel = (billingType, appointmentStatus = "", customDescription = "") => {
   const specialBase = {
     psychotherapy: "Psychotherapy Session",
@@ -138,10 +138,12 @@ const userFacingSessionLabel = (billingType, appointmentStatus = "", customDescr
     custom: escapeHtml(customDescription) || "Custom"
   };
   const defaultBase = billingTypeLabel(billingType, customDescription);
-  const base = ["cancelled", "no_show"].includes(appointmentStatus)
+  const base = ["cancelled", "no_show", "late_cancellation", "timely_cancellation"].includes(appointmentStatus)
     ? (specialBase[billingType] || defaultBase)
     : defaultBase;
   if (appointmentStatus === "cancelled") return `Cancelled ${base}`;
+  if (appointmentStatus === "late_cancellation") return `Late Cancellation Fee - ${base}`;
+  if (appointmentStatus === "timely_cancellation") return `Timely Cancellation - ${base}`;
   if (appointmentStatus === "no_show") return `No-Show ${base}`;
   return defaultBase;
 };
@@ -309,7 +311,9 @@ function renderInspector(data) {
   const currentRate = centString(s.approved_rate_cents || s.suggested_rate_cents);
   const suggestedRate = centString(s.suggested_rate_cents);
   const rateChanged = currentRate !== suggestedRate && currentRate !== "";
-  const showCancellation = ["cancelled", "no_show"].includes(s.appointment_status);
+  const attendanceOutcome = s.appointment_status === "scheduled" ? "completed" : (s.appointment_status || "completed");
+  const showCancellation = ["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome);
+  const advancedOpen = attendanceOutcome === "late_cancellation" || safeList(s.fields_requiring_review).includes("billing_treatment") || safeList(s.unresolved_fields).includes("billing_treatment");
   const showSessionSave = !sessionLocked && (!readiness.session_ready || state.dirty.has("session"));
   const showRelationshipSave = !readiness.clients_ready || state.dirty.has("relationship");
   const showBillingSave = !billingLocked && (!readiness.billing_ready || state.dirty.has("billing"));
@@ -403,8 +407,11 @@ function renderInspector(data) {
                    <label class="field">Admin Note<input id="paymentNoteInput" placeholder="Optional"></label>
                  </div>
                </div>
-               ${showCancellation ? `<label class="field">Cancellation/No-Show Billing<select id="billingTreatmentInput">${optionSet(["unresolved","billable","not_billable","waived"], s.billing_treatment || "billable")}</select></label>` : ""}
-               <details class="field wide"><summary>Advanced</summary><div class="field-grid"><label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label></div></details>
+               <details class="field wide" id="advancedReviewDetails" ${advancedOpen ? "open" : ""}><summary>Advanced Review</summary><div class="field-grid">
+                 <label class="field">Attendance Outcome<select id="attendanceOutcomeInput">${attendanceOutcomeOptions(attendanceOutcome)}</select></label>
+                 ${showCancellation ? `<label class="field">Cancellation Billing<select id="billingTreatmentInput">${cancellationBillingOptions(s.billing_treatment || "unresolved", attendanceOutcome)}</select></label>` : ""}
+                 <label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label>
+               </div></details>
                ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${escapeAttr(s.rate_override_reason || "")}"></label>` : ""}
              </div>
              ${houseCallSuggestion(s)}
@@ -471,6 +478,7 @@ function wireInspector() {
     "customCodeInput",
     "approvedRateInput",
     "paymentInput",
+    "attendanceOutcomeInput",
     "billingTreatmentInput",
     "overrideReasonInput",
     "paymentAmountInput",
@@ -487,6 +495,20 @@ function wireInspector() {
     });
   });
   if ($("billToClientSelect")) $("billToClientSelect").addEventListener("input", () => markDirty("billing"));
+  if ($("attendanceOutcomeInput")) $("attendanceOutcomeInput").addEventListener("change", () => {
+    const session = state.detail?.session;
+    if (!session) return;
+    const nextOutcome = $("attendanceOutcomeInput").value;
+    session.appointment_status = nextOutcome === "completed" ? "completed" : nextOutcome;
+    if (nextOutcome !== "late_cancellation") {
+      session.billing_treatment = nextOutcome === "completed" ? "billable" : "unresolved";
+      session.approved_rate_cents = session.suggested_rate_cents || session.approved_rate_cents;
+    } else {
+      session.billing_treatment = "unresolved";
+    }
+    markDirty("session");
+    renderInspector(state.detail);
+  });
   syncSessionCustomFields();
   updateSessionRatePreview();
 }
@@ -494,9 +516,21 @@ function wireInspector() {
 function syncSessionCustomFields() {
   const billingType = $("billingTypeInput")?.value;
   const durationChoice = $("durationChoiceInput")?.value;
+  const attendanceOutcome = $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "completed";
+  const billingTreatment = $("billingTreatmentInput")?.value || "";
   if ($("customDurationField")) $("customDurationField").hidden = durationChoice !== "custom";
   if ($("customDescField")) $("customDescField").hidden = billingType !== "custom";
   if ($("customCodeField")) $("customCodeField").hidden = billingType !== "custom";
+
+  if ($("billingTreatmentInput") && !["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome)) {
+    $("billingTreatmentInput").value = "";
+  }
+  if ($("billingTreatmentInput") && attendanceOutcome === "late_cancellation" && !["unresolved", "bill_full_fee", "custom_fee", "waived"].includes($("billingTreatmentInput").value)) {
+    $("billingTreatmentInput").value = "unresolved";
+  }
+  if ($("approvedRateInput") && attendanceOutcome === "late_cancellation" && billingTreatment === "waived") {
+    $("approvedRateInput").value = "0.00";
+  }
 
   const paymentHandling = $("paymentInput")?.value;
   const isPaidAtSession = paymentHandling === "paid_at_session";
@@ -911,6 +945,7 @@ async function saveSessionSection() {
   const button = $("saveSessionBtn");
   if (button) button.disabled = true;
   try {
+    validateCancellationBillingChoice();
     const updated = await api(`/api/review/candidates/${state.selected}/save-session`, { method: "POST", body: JSON.stringify(collectPayload()) });
     state.detail = updated;
     state.editSteps.session = false;
@@ -935,6 +970,7 @@ async function save(approve) {
   }
   await resolveTypedSelections();
   try {
+    validateCancellationBillingChoice();
     const updated = await api(`/api/review/candidates/${state.selected}/${approve ? "approve" : "save"}`, {
       method: "POST",
       body: JSON.stringify(collectPayload())
@@ -1002,6 +1038,21 @@ async function save(approve) {
   }
 }
 
+function validateCancellationBillingChoice() {
+  const outcome = $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "";
+  const treatment = $("billingTreatmentInput")?.value || "";
+  if (outcome !== "late_cancellation") return;
+  if (!treatment || treatment === "unresolved") {
+    throw new Error("Choose how to bill this late cancellation.");
+  }
+  if (treatment === "custom_fee") {
+    const amount = Number(String($("approvedRateInput")?.value || "").replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error("Enter a valid custom fee amount.");
+    }
+  }
+}
+
 function collectSessionDraftValues() {
   const durationChoice = $("durationChoiceInput")?.value || "60";
   const customMinutes = $("customDurationInput")?.value || "";
@@ -1013,6 +1064,7 @@ function collectSessionDraftValues() {
     custom_duration_minutes: durationChoice === "custom" ? (customMinutes || null) : null,
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
+    appointment_status: $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "completed",
     approved_rate: $("approvedRateInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
     billing_treatment: $("billingTreatmentInput")?.value || "",
@@ -1027,6 +1079,7 @@ function restoreSessionDraftValues(values) {
   if ($("customDurationInput")) $("customDurationInput").value = values.custom_duration_minutes ?? "";
   if ($("customDescInput")) $("customDescInput").value = values.custom_service_description;
   if ($("customCodeInput")) $("customCodeInput").value = values.custom_service_code;
+  if ($("attendanceOutcomeInput")) $("attendanceOutcomeInput").value = values.appointment_status;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
   if ($("paymentInput")) $("paymentInput").value = values.payment_status;
   if ($("billingTreatmentInput")) $("billingTreatmentInput").value = values.billing_treatment;
@@ -1041,7 +1094,7 @@ async function updateSessionRatePreview() {
     duration_choice: $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes),
     custom_duration_minutes: ($("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes)) === "custom" ? ($("customDurationInput")?.value || null) : null,
     billing_session_type: $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy",
-    appointment_status: state.detail.session.appointment_status || "scheduled",
+    appointment_status: $("attendanceOutcomeInput")?.value || state.detail.session.appointment_status || "scheduled",
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
     time_category: state.detail.session.time_category || "standard",
@@ -1161,6 +1214,7 @@ function collectPayload() {
     ...collectRelationshipPayload(),
     approved_duration_minutes: approvedMinutes,
     billing_session_type: $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy",
+    appointment_status: $("attendanceOutcomeInput")?.value || session.appointment_status || "completed",
     duration_choice: durationChoice,
     custom_duration_minutes: durationChoice === "custom" ? (customMinutes || null) : null,
     custom_service_description: $("customDescInput")?.value || session.custom_service_description || "",
@@ -1216,6 +1270,35 @@ async function findOrCreate(path, label, value, createPayload) {
 function optionSet(options, selected) {
   return options.map(v => `<option value="${v}" ${v === selected ? "selected" : ""}>${timeLabel(serviceLabel(v))}</option>`).join("");
 }
+
+function attendanceOutcomeOptions(selected) {
+  const options = [
+    ["completed", "Completed"],
+    ["late_cancellation", "Late Cancellation"],
+    ["cancelled", "Cancelled"],
+    ["no_show", "No-Show"],
+    ["timely_cancellation", "Timely Cancellation"]
+  ];
+  return options.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function cancellationBillingOptions(selected, appointmentStatus) {
+  const options = appointmentStatus === "late_cancellation"
+    ? [
+        ["unresolved", "Choose cancellation billing..."],
+        ["bill_full_fee", "Bill full scheduled fee"],
+        ["custom_fee", "Custom fee"],
+        ["waived", "Waive fee"]
+      ]
+    : [
+        ["unresolved", "Choose billing treatment..."],
+        ["billable", "Billable"],
+        ["not_billable", "Not billable"],
+        ["waived", "Waived"]
+      ];
+  return options.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
 function billingTypeOptions(selected) {
   const types = [
     {value: "psychotherapy", label: "Psychotherapy Session"},
