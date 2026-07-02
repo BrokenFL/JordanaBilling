@@ -378,11 +378,13 @@ Returns a self-contained HTML page with a **DRAFT** watermark and banner. Side-e
 ```
 GET /api/invoices/{invoice_id}/draft-pdf
 POST /api/invoices/{invoice_id}/draft-pdf
+GET /api/invoices/{invoice_id}/finalization-preview-pdf
+POST /api/invoices/{invoice_id}/finalization-preview-token
 ```
 
 Returns a real PDF preview of a draft invoice using the same canonical ReportLab renderer (`_generate_invoice_pdf_bytes`) as final invoice generation. The PDF is clearly marked **DRAFT** and does not assign an invoice number. Side-effect free: does not write to the database, does not write `pdf_path` or `pdf_sha256`, does not change invoice status or revision, and does not create any audit event. Missing readiness errors (e.g. missing address or email) do not block the preview. Only available for draft invoices; finalized or void invoices return HTTP 400.
 
-The Review & Finalize confirmation step embeds the POST draft PDF endpoint instead of rendering a separate HTML invoice design. Optional insurance/coding preview values are passed only to the PDF/readiness preview and are not persisted until the user explicitly confirms finalization.
+The Review & Finalize confirmation step embeds the same-origin `GET /api/invoices/{id}/finalization-preview-pdf` endpoint instead of a blob URL or separate HTML invoice design. Optional insurance/coding preview values are stored only in a short-lived in-memory preview token and are not written to SQLite or persisted until the user explicitly confirms finalization.
 
 Both draft PDF and final PDF endpoints use dedicated inline PDF response headers (`Content-Type: application/pdf`, `Content-Disposition: inline`) compatible with Safari. PDF responses use `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` but do not apply the `X-Frame-Options: DENY` or CSP headers used for HTML/JSON responses, allowing inline browser preview.
 

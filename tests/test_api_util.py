@@ -65,7 +65,7 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     def test_review_js_direct_write_fetches_use_current_write_token(self):
         self.assertNotIn("const WRITE_TOKEN", self.review_js)
-        self.assertEqual(self.review_js.count('"X-Jordana-Write-Token": getWriteToken()'), 2)
+        self.assertEqual(self.review_js.count('"X-Jordana-Write-Token": getWriteToken()'), 1)
 
     def test_write_token_not_in_urls(self):
         self.assertNotIn("writeToken", self.api_js.replace(
@@ -196,9 +196,10 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     # --- Direct fetch inventory ---
 
-    def test_direct_fetch_pdf_blob_remains_in_review_js(self):
-        self.assertIn("await fetch(`/api/invoices/${i.invoice_id}/draft-pdf`", self.review_js)
-        self.assertIn("await res.blob()", self.review_js)
+    def test_approval_preview_uses_same_origin_pdf_url(self):
+        self.assertIn("/finalization-preview-token", self.review_js)
+        self.assertIn("preview_pdf_url", self.review_js)
+        self.assertNotIn("await res.blob()", self.review_js)
 
     def test_direct_fetch_billing_setup_remains_in_review_js(self):
         self.assertIn('await fetch("/api/billing-relationships/setup"', self.review_js)

@@ -1835,8 +1835,10 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
     def test_preview_embeds_canonical_pdf_renderer_output(self):
         self.assertIn("finalization-pdf-preview", self.fn)
         self.assertIn("finalizationPdfFrame", self.fn)
-        self.assertIn("/draft-pdf", self.fn)
-        self.assertIn("createObjectURL", self.fn)
+        self.assertIn("/finalization-preview-token", self.fn)
+        self.assertIn("preview_pdf_url", self.fn)
+        self.assertNotIn("createObjectURL", self.fn)
+        self.assertNotIn("blob:", self.fn)
 
     def test_preview_can_open_embedded_pdf_without_popup_dependency(self):
         self.assertIn("openFinalizationPdfPreview", self.fn)
@@ -1938,7 +1940,7 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
     def test_preview_does_not_assign_invoice_number_before_finalize(self):
         self.assertNotIn("i.invoice_number", self.fn)
         self.assertNotIn("invoice_number_display", self.fn)
-        self.assertIn("/draft-pdf", self.fn)
+        self.assertIn("/finalization-preview-token", self.fn)
 
     def test_state_has_finalize_in_progress_flag(self):
         self.assertIn("finalizeInProgress: false", self.js)

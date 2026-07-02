@@ -165,6 +165,67 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
         self.assertEqual(headers.get("Pragma"), "no-cache")
         self.assertEqual(headers.get("Expires"), "0")
 
+    def test_finalization_preview_token_returns_same_origin_get_url(self):
+        s = self._approved_session("preview-token")
+        draft = self._draft([s])
+        invoice_id = draft["invoice"]["invoice_id"]
+        body = json.dumps({
+            "insurance_coding_included": True,
+            "insurance_diagnosis_code": "Z00.0",
+        }).encode("utf-8")
+        handler, captured = self._handler(f"/api/invoices/{invoice_id}/finalization-preview-token", body)
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        self.assertEqual(captured.get("status"), 200)
+        url = captured["payload"]["preview_pdf_url"]
+        self.assertTrue(url.startswith(f"/api/invoices/{invoice_id}/finalization-preview-pdf?"))
+        self.assertIn("token=", url)
+        self.assertIn("&v=", url)
+        self.assertNotIn("Z00.0", url)
+        self.assertNotIn("blob:", url)
+
+    def test_finalization_preview_pdf_returns_pdf_headers_and_bytes(self):
+        s = self._approved_session("preview-pdf")
+        draft = self._draft([s])
+        invoice_id = draft["invoice"]["invoice_id"]
+        handler, captured = self._handler(f"/api/invoices/{invoice_id}/finalization-preview-pdf?v=test")
+        handler.conn = lambda: self.conn
+        handler.do_GET()
+
+        headers = captured.get("headers", {})
+        body = handler.wfile.getvalue()
+        self.assertEqual(captured.get("response_code"), 200)
+        self.assertTrue(body.startswith(b"%PDF"))
+        self.assertEqual(headers.get("Content-Type"), "application/pdf")
+        self.assertTrue(headers.get("Content-Disposition", "").startswith("inline;"))
+        self.assertEqual(headers.get("Cache-Control"), "no-store, no-cache, must-revalidate, max-age=0")
+        self.assertEqual(headers.get("Pragma"), "no-cache")
+        self.assertEqual(headers.get("Expires"), "0")
+
+    def test_finalization_preview_pdf_is_side_effect_free(self):
+        s = self._approved_session("preview-side-effect")
+        draft = self._draft([s])
+        invoice_id = draft["invoice"]["invoice_id"]
+        before = self.conn.execute(
+            "SELECT status, revision, invoice_number, pdf_path, pdf_sha256 FROM invoices WHERE invoice_id = ?",
+            (invoice_id,),
+        ).fetchone()
+        audit_before = self.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+
+        handler, captured = self._handler(f"/api/invoices/{invoice_id}/finalization-preview-pdf?v=test")
+        handler.conn = lambda: self.conn
+        handler.do_GET()
+
+        after = self.conn.execute(
+            "SELECT status, revision, invoice_number, pdf_path, pdf_sha256 FROM invoices WHERE invoice_id = ?",
+            (invoice_id,),
+        ).fetchone()
+        audit_after = self.conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        self.assertEqual(captured.get("response_code"), 200)
+        self.assertEqual(dict(after), dict(before))
+        self.assertEqual(audit_after, audit_before)
+
     def test_finalize_endpoint_returns_versioned_final_pdf_url_and_serves_same_file(self):
         s = self._approved_session("final-api")
         draft = self._draft([s])

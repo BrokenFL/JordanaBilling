@@ -6,6 +6,7 @@ import json
 import mimetypes
 import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -190,6 +191,37 @@ _PDF_SAFE_HEADERS = (
     ("X-Content-Type-Options", "nosniff"),
     ("Referrer-Policy", "no-referrer"),
 )
+_PREVIEW_TOKEN_TTL_SECONDS = 10 * 60
+_preview_tokens: dict[str, tuple[float, str, dict[str, object]]] = {}
+_preview_tokens_lock = threading.Lock()
+
+
+def _store_finalization_preview_payload(invoice_id: str, payload: dict[str, object]) -> str:
+    token = secrets.token_urlsafe(24)
+    expires_at = time.monotonic() + _PREVIEW_TOKEN_TTL_SECONDS
+    with _preview_tokens_lock:
+        now = time.monotonic()
+        expired = [key for key, (expiry, _, _) in _preview_tokens.items() if expiry < now]
+        for key in expired:
+            _preview_tokens.pop(key, None)
+        _preview_tokens[token] = (expires_at, invoice_id, dict(payload))
+    return token
+
+
+def _load_finalization_preview_payload(invoice_id: str, token: str | None) -> dict[str, object]:
+    if not token:
+        return {}
+    with _preview_tokens_lock:
+        entry = _preview_tokens.get(token)
+        if not entry:
+            raise ValueError("Preview PDF token is invalid or expired.")
+        expires_at, stored_invoice_id, payload = entry
+        if expires_at < time.monotonic():
+            _preview_tokens.pop(token, None)
+            raise ValueError("Preview PDF token is invalid or expired.")
+        if stored_invoice_id != invoice_id:
+            raise ValueError("Preview PDF token is invalid for this invoice.")
+        return dict(payload)
 
 
 class CalendarSyncRuntime:
@@ -766,6 +798,33 @@ def make_handler(
                     )
                     self.send_pdf(body, f"Invoice_{invoice_id}_draft.pdf")
                     return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/finalization-preview-pdf"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    query = parse_qs(parsed.query)
+                    preview_payload = _load_finalization_preview_payload(invoice_id, first(query, "token"))
+                    data = get_invoice(self.conn(), invoice_id)
+                    if data["invoice"]["status"] != "draft":
+                        self.send_json({"ok": False, "error": "Finalization PDF preview is only available for draft invoices."}, status=400)
+                        return
+                    insurance_payload = None
+                    if preview_payload.get("insurance_coding_included"):
+                        insurance_payload = {
+                            "insurance_coding_included": True,
+                            "insurance_diagnosis_code": preview_payload.get("insurance_diagnosis_code") or "",
+                        }
+                    render_model = build_invoice_render_model(
+                        data["invoice"], data["lines"],
+                        business_profile=data.get("business_profile"),
+                        billing_party=data.get("billing_party"),
+                        account_summary=(data.get("render_model") or {}).get("account_summary"),
+                        insurance_coding_payload=insurance_payload,
+                    )
+                    body = generate_draft_pdf_bytes(
+                        data["invoice"], data["lines"],
+                        render_model=render_model,
+                    )
+                    self.send_pdf(body, f"Invoice_{invoice_id}_finalization_preview.pdf")
+                    return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/final-pdf"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
                     row = self.conn().execute("SELECT status, pdf_path FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
@@ -875,6 +934,24 @@ def make_handler(
                         render_model=render_model,
                     )
                     self.send_pdf(body, f"Invoice_{invoice_id}_draft.pdf")
+                    return
+                if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/finalization-preview-token"):
+                    invoice_id = parsed.path.strip("/").split("/")[2]
+                    inv_data = get_invoice(self.conn(), invoice_id)
+                    if inv_data["invoice"]["status"] != "draft":
+                        self.send_json({"ok": False, "error": "Finalization PDF preview is only available for draft invoices."}, status=400)
+                        return
+                    req = parse_print_preview_request(data)
+                    payload = req.to_payload()
+                    token = _store_finalization_preview_payload(invoice_id, payload)
+                    revision = inv_data["invoice"].get("revision") or int(time.time())
+                    self.send_json({
+                        "ok": True,
+                        "preview_pdf_url": (
+                            f"/api/invoices/{invoice_id}/finalization-preview-pdf"
+                            f"?token={token}&v={revision}"
+                        ),
+                    })
                     return
                 if parsed.path == "/api/people":
                     req = parse_create_person_request(data)
@@ -1393,9 +1470,9 @@ def make_handler(
                 f"style-src 'self' 'unsafe-inline'; "
                 f"img-src 'self' data:; "
                 f"connect-src 'self'; "
-                f"frame-src 'self' blob:; "
+                f"frame-src 'self'; "
                 f"frame-ancestors 'none'; "
-                f"object-src 'self' blob:; "
+                f"object-src 'none'; "
                 f"base-uri 'self'; "
                 f"form-action 'self'"
             )

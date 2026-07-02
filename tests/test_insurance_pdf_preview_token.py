@@ -195,6 +195,29 @@ class DraftPdfPreviewTokenTests(unittest.TestCase):
         self.assertEqual(coding[2]["value"], FICTIONAL_NPI)
         self.assertEqual(coding[3]["value"], FICTIONAL_SW)
 
+    # 5b. The Safari GET preview path carries insurance coding through a token
+    @patch("jordana_invoice.review_server.generate_draft_pdf_bytes")
+    def test_finalization_preview_get_uses_token_payload(self, mock_pdf):
+        mock_pdf.return_value = b"%PDF-1.4 fake pdf bytes"
+        body = json.dumps({"insurance_coding_included": True, "insurance_diagnosis_code": FICTIONAL_DIAGNOSIS}).encode()
+        token_handler, token_captured = self._make_handler(f"/api/invoices/{self.invoice_id}/finalization-preview-token", body)
+        token_handler.conn = lambda: self.conn
+        token_handler.do_POST()
+
+        preview_url = token_captured["payload"]["preview_pdf_url"]
+        self.assertNotIn(FICTIONAL_DIAGNOSIS, preview_url)
+
+        pdf_handler, pdf_captured = self._make_handler(preview_url, b"")
+        pdf_handler.conn = lambda: self.conn
+        pdf_handler.do_GET()
+
+        self.assertIn("pdf", pdf_captured)
+        self.assertTrue(pdf_captured["pdf"].startswith(b"%PDF"))
+        render_model = mock_pdf.call_args.kwargs.get("render_model", {})
+        coding = render_model.get("insurance_coding")
+        self.assertIsNotNone(coding)
+        self.assertEqual(coding[0]["value"], FICTIONAL_DIAGNOSIS)
+
     # 6. Unchecked insurance coding produces no insurance block in render model
     @patch("jordana_invoice.review_server.generate_draft_pdf_bytes")
     def test_unchecked_insurance_no_block(self, mock_pdf):

@@ -3178,30 +3178,13 @@ function renderFinalizationPreview(preview, insuranceState) {
     }
     const payload = collectInsurancePayload();
     try {
-      const res = await fetch(`/api/invoices/${i.invoice_id}/draft-pdf`, {
+      const tokenResponse = await api(`/api/invoices/${i.invoice_id}/finalization-preview-token`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Jordana-Write-Token": getWriteToken(),
-        },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        let msg = "Failed to generate PDF preview.";
-        try {
-          const err = await res.json();
-          if (err && err.error) msg = err.error;
-        } catch {
-          try {
-            const text = await res.text();
-            if (text && text.length < 200) msg = text;
-          } catch { /* use default */ }
-        }
-        throw new Error(msg);
-      }
-      const blob = await res.blob();
-      revokeFinalizationPreviewPdfUrl();
-      finalizationPreviewPdfUrl = URL.createObjectURL(blob);
+      const previewUrl = tokenResponse.preview_pdf_url;
+      if (!previewUrl) throw new Error("Failed to generate PDF preview.");
+      finalizationPreviewPdfUrl = previewUrl;
       pdfFrame.src = finalizationPreviewPdfUrl;
       if (pdfOpenLink) pdfOpenLink.href = finalizationPreviewPdfUrl;
       if (pdfStatus) pdfStatus.textContent = "Canonical PDF preview loaded.";
@@ -3265,10 +3248,7 @@ function renderFinalizationPreview(preview, insuranceState) {
 }
 
 function revokeFinalizationPreviewPdfUrl() {
-  if (finalizationPreviewPdfUrl) {
-    URL.revokeObjectURL(finalizationPreviewPdfUrl);
-    finalizationPreviewPdfUrl = null;
-  }
+  finalizationPreviewPdfUrl = null;
 }
 
 function renderInvoicePreview(data) {

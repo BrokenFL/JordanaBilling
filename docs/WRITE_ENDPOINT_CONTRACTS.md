@@ -681,6 +681,26 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **DB tables**: none (read-only)
 - **Note**: POST version supports insurance coding payload; GET version does not
 
+### POST /api/invoices/{id}/finalization-preview-token
+
+- **Handler**: inline in `do_POST`
+- **Service**: short-lived in-memory preview token creation
+- **Accepted fields**: `insurance_coding_included`, `insurance_diagnosis_code`
+- **Success status**: 200 (JSON with `preview_pdf_url`)
+- **Error status codes**: 400 ("Finalization PDF preview is only available for draft invoices.")
+- **DB tables**: none (read-only; no SQLite writes)
+- **Note**: The token avoids putting diagnosis-code preview values in the iframe URL.
+
+### GET /api/invoices/{id}/finalization-preview-pdf
+
+- **Handler**: inline in `do_GET`
+- **Service**: `generate_draft_pdf_bytes` (read-only rendering)
+- **Accepted fields**: optional `token` query parameter from `finalization-preview-token`
+- **Success status**: 200 (PDF content)
+- **Error status codes**: 400 ("Finalization PDF preview is only available for draft invoices.")
+- **DB tables**: none (read-only)
+- **Note**: Review & Finalize embeds this same-origin PDF URL directly for Safari instead of using a blob URL.
+
 ---
 
 ## 8. Payments
