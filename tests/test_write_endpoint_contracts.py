@@ -638,6 +638,31 @@ class TestStageInvoicesContract(WriteEndpointContractTestBase):
 
 
 class TestFinalizeInvoiceContract(WriteEndpointContractTestBase):
+    def test_preview_finalize_endpoint_is_side_effect_free(self):
+        self._approved_session("pf-1", day=10)
+        self._post("/api/invoices/stage", {})
+        invoice = self.conn.execute(
+            "SELECT invoice_id, delivery_method, revision FROM invoices WHERE status = 'draft' LIMIT 1"
+        ).fetchone()
+        _, captured = self._post(
+            f"/api/invoices/{invoice['invoice_id']}/preview-finalize",
+            {
+                "delivery_method": "mail",
+                "insurance_coding_included": True,
+                "insurance_diagnosis_code": "Z00.0",
+            },
+        )
+        after = self.conn.execute(
+            "SELECT delivery_method, revision, status, invoice_number, pdf_path FROM invoices WHERE invoice_id = ?",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(after["delivery_method"], invoice["delivery_method"])
+        self.assertEqual(after["revision"], invoice["revision"])
+        self.assertEqual(after["status"], "draft")
+        self.assertIsNone(after["invoice_number"])
+        self.assertIsNone(after["pdf_path"])
+
     def test_finalize_without_confirmed_returns_400(self):
         sid, _ = self._approved_session("fn-1", day=10)
         # Stage first to create a draft

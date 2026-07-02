@@ -1832,45 +1832,36 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
     def test_preview_shows_draft_status_pill(self):
         self.assertIn('<span class="status-pill">Draft</span>', self.fn)
 
-    def test_preview_shows_business_name_and_provider(self):
-        self.assertIn("render_model", self.fn)
-        self.assertIn("sender_lines", self.fn)
-        self.assertIn("logo_data_uri", self.fn)
+    def test_preview_embeds_canonical_pdf_renderer_output(self):
+        self.assertIn("finalization-pdf-preview", self.fn)
+        self.assertIn("finalizationPdfFrame", self.fn)
+        self.assertIn("/draft-pdf", self.fn)
+        self.assertIn("createObjectURL", self.fn)
 
-    def test_preview_shows_invoice_date_and_billing_period(self):
-        self.assertIn("invoice_date_display", self.fn)
-        self.assertIn("billing_period_display", self.fn)
+    def test_preview_can_open_embedded_pdf_without_popup_dependency(self):
+        self.assertIn("openFinalizationPdfPreview", self.fn)
+        self.assertIn("Preview PDF", self.fn)
 
     def test_preview_hides_delivery_method(self):
         self.assertNotIn("Delivery method", self.fn)
         self.assertNotIn("deliveryLabel", self.fn)
 
-    def test_preview_shows_bill_to_address_block(self):
-        self.assertIn("bill_to_lines", self.fn)
-        self.assertNotIn("billing_email", self.fn)
-        self.assertNotIn("billing_phone", self.fn)
-
-    def test_preview_shows_line_items_table(self):
-        self.assertIn("invoice-preview-table", self.fn)
-        self.assertIn("service_date_display", self.fn)
-        self.assertIn("participants_display", self.fn)
-        self.assertIn("description_display", self.fn)
-        self.assertIn("duration_display", self.fn)
-        self.assertIn("amount_display", self.fn)
+    def test_preview_does_not_render_old_html_invoice_visual(self):
+        self.assertNotIn("invoice-preview-header", self.fn)
+        self.assertNotIn("invoice-preview-table", self.fn)
+        self.assertNotIn("invoice-preview-sender", self.fn)
+        self.assertNotIn("bill_to_lines", self.fn)
+        self.assertNotIn("sender_lines", self.fn)
+        self.assertNotIn("payment_lines", self.fn)
+        self.assertNotIn("payment_zelle_line", self.fn)
 
     def test_preview_shows_total(self):
         self.assertIn("invoice-total", self.js)
         self.assertIn("total_display", self.js)
         self.assertIn("total_label", self.js)
 
-    def test_preview_shows_single_payment_block(self):
-        self.assertIn("payment_title", self.fn)
+    def test_preview_does_not_use_legacy_print_copy(self):
         self.assertNotIn("Please send payment to:", self.fn)
-        self.assertIn("payment_lines", self.fn)
-        self.assertIn("payment_zelle_line", self.fn)
-
-    def test_preview_uses_shared_bill_to_lines_for_delivery_details(self):
-        self.assertIn("bill_to_lines", self.fn)
         self.assertNotIn("Via Mail", self.fn)
 
     def test_invoice_settings_include_zelle_field(self):
@@ -1880,9 +1871,9 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn('id="zelleRecipientInput"', html)
         self.assertIn("zelle_recipient", js)
 
-    def test_preview_shows_notes_if_present(self):
-        self.assertIn("notesHtml", self.fn)
-        self.assertIn("render.notes", self.fn)
+    def test_preview_uses_canonical_pdf_for_notes_and_layout(self):
+        self.assertNotIn("notesHtml", self.fn)
+        self.assertNotIn("render.notes", self.fn)
 
     def test_preview_has_finalize_and_back_buttons(self):
         self.assertIn('id="confirmFinalizeBtn"', self.fn)
@@ -1946,7 +1937,8 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
 
     def test_preview_does_not_assign_invoice_number_before_finalize(self):
         self.assertNotIn("i.invoice_number", self.fn)
-        self.assertIn("invoice_number_display", self.fn)
+        self.assertNotIn("invoice_number_display", self.fn)
+        self.assertIn("/draft-pdf", self.fn)
 
     def test_state_has_finalize_in_progress_flag(self):
         self.assertIn("finalizeInProgress: false", self.js)

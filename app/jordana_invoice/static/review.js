@@ -28,6 +28,7 @@ function futureAppointmentMessage(session) {
 
 let paymentOverlayReturnFocus = null;
 let paymentDetailReturnFocus = null;
+let finalizationPreviewPdfUrl = null;
 
 const state = {
   items: [],
@@ -2825,9 +2826,7 @@ async function renderInvoiceEditor(data) {
   };
 
   $("reviewFinalizeBtn").onclick = async () => {
-    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
-    const draftData = {invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines};
-    const preview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
+    const preview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify({})});
     renderFinalizationPreview(preview, {included: false, diagnosisCode: ""});
   };
 
@@ -3102,13 +3101,8 @@ function buildPreviewSummaryHtml(render, data, invoice) {
 }
 
 function renderFinalizationPreview(preview, insuranceState) {
+  revokeFinalizationPreviewPdfUrl();
   const i = preview.invoice;
-  const render = preview.render_model || {};
-  const logoHtml = render.logo_data_uri
-    ? `<div class="invoice-preview-logo"><img src="${escapeAttr(render.logo_data_uri)}" alt="Jordana invoice logo"></div>`
-    : "";
-  const senderHtml = (render.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
-  const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
   const revision = preview.preview_revision;
   const readiness = preview.readiness || {ready: true, errors: []};
   const filing = preview.filing_owner || {};
@@ -3117,7 +3111,6 @@ function renderFinalizationPreview(preview, insuranceState) {
   const readinessHtml = ready
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
     : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
-  const notesHtml = render.notes ? `<div class="invoice-notes"><b>Notes:</b> ${escapeHtml(render.notes)}</div>` : "";
   const profile = preview.business_profile || {};
   const insState = insuranceState || {included: false, diagnosisCode: ""};
   const insuranceChecked = insState.included ? "checked" : "";
@@ -3125,15 +3118,8 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insuranceEin = escapeHtml(profile.insurance_ein || "");
   const insuranceNpi = escapeHtml(profile.insurance_npi || "");
   const insuranceSw = escapeHtml(profile.insurance_sw || "");
-  const insuranceBlockHtml = insState.included ? `
-      <div class="insurance-coding-preview" style="margin-top:10px;font-size:9pt;line-height:1.3;">
-        <div>Diagnosis Code: ${escapeHtml(insState.diagnosisCode || "")}</div>
-        <div>EIN: ${insuranceEin}</div>
-        <div>NPI: ${insuranceNpi}</div>
-        <div>SW: ${insuranceSw}</div>
-      </div>` : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
-    <div class="help">Review the invoice below carefully. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
+    <div class="help">Review the PDF below carefully. It uses the same invoice renderer as finalization. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
     <div class="relationship-summary ${filingName ? "success" : ""}"><strong>File invoice under</strong><div>${fmt(filingName || "Selection required")}</div></div>
@@ -3150,26 +3136,11 @@ function renderFinalizationPreview(preview, insuranceState) {
         </div>
       </div>
     </div>
-    <article class="invoice-preview">
-      <header class="invoice-preview-header">
-        <div class="invoice-preview-left">
-          ${logoHtml}
-          <div class="invoice-preview-sender">${senderHtml}</div>
-          <div class="invoice-billto"><strong>BILL TO</strong>${billToHtml}</div>
-        </div>
-        <div class="invoice-preview-title">
-          <h3>INVOICE</h3>
-          <div><strong>Invoice Date:</strong> ${fmt(render.invoice_date_display)}</div>
-          <div><strong>Billing Period:</strong> ${fmt(render.billing_period_display)}</div>
-          <div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div>
-        </div>
-      </header>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}${buildPreviewSummaryHtml(render, preview, i).rowsHtml}</tbody></table>
-      ${buildPreviewSummaryHtml(render, preview, i).noteHtml}
-      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
-      ${insuranceBlockHtml}
-      ${notesHtml}
-    </article>
+    <section class="finalization-pdf-preview" aria-label="Canonical invoice PDF preview">
+      <div id="finalizationPdfStatus" class="finalization-pdf-status">Loading canonical PDF preview...</div>
+      <iframe id="finalizationPdfFrame" class="finalization-pdf-frame" title="Canonical invoice PDF preview"></iframe>
+      <div class="finalization-pdf-actions"><a id="openFinalizationPdfPreview" href="#" target="_blank" rel="noopener">Open PDF preview in new tab</a></div>
+    </section>
     <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="repreviewBtn">Update Preview</button><button id="draftPdfPreviewBtn">Preview PDF</button><button id="backToDraftBtn">Back to Draft</button></div>
   </div>`;
   const finalizeBtn = $("confirmFinalizeBtn");
@@ -3179,28 +3150,32 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insFields = $("insuranceCodingFields");
   const insDiagnosisInput = $("insuranceDiagnosisCodeInput");
   const repreviewBtn = $("repreviewBtn");
-  backBtn.onclick = () => { state.finalizeInProgress = false; renderInvoiceEditor(preview); };
+  const pdfStatus = $("finalizationPdfStatus");
+  const pdfFrame = $("finalizationPdfFrame");
+  const pdfOpenLink = $("openFinalizationPdfPreview");
+  backBtn.onclick = () => { state.finalizeInProgress = false; revokeFinalizationPreviewPdfUrl(); renderInvoiceEditor(preview); };
   if (insCheckbox) insCheckbox.onchange = () => {
     insFields.style.display = insCheckbox.checked ? "" : "none";
+    refreshFinalizationPdfPreview();
   };
+  if (insDiagnosisInput) insDiagnosisInput.oninput = () => scheduleFinalizationPdfRefresh();
   function collectInsurancePayload() {
     return {
       insurance_coding_included: insCheckbox ? insCheckbox.checked : false,
       insurance_diagnosis_code: insDiagnosisInput ? insDiagnosisInput.value.trim() : "",
     };
   }
-  if (repreviewBtn) repreviewBtn.onclick = async () => {
-    const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
-    const draftData = {invoice_date:$("editInvoiceDate")?.value || i.invoice_date, delivery_method:$("editDelivery")?.value || i.delivery_method, lines, ...collectInsurancePayload()};
-    try {
-      const repreview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(draftData)});
-      renderFinalizationPreview(repreview, {included: collectInsurancePayload().insurance_coding_included, diagnosisCode: collectInsurancePayload().insurance_diagnosis_code});
-    } catch (err) {
-      errorDiv.textContent = err.message || "Failed to update preview.";
-      errorDiv.style.display = "block";
+  let pdfRefreshTimer = null;
+  function scheduleFinalizationPdfRefresh() {
+    if (pdfRefreshTimer) window.clearTimeout(pdfRefreshTimer);
+    pdfRefreshTimer = window.setTimeout(refreshFinalizationPdfPreview, 300);
+  }
+  async function refreshFinalizationPdfPreview() {
+    if (!pdfFrame) return;
+    if (pdfStatus) {
+      pdfStatus.textContent = "Loading canonical PDF preview...";
+      pdfStatus.className = "finalization-pdf-status";
     }
-  };
-  if ($("draftPdfPreviewBtn")) $("draftPdfPreviewBtn").onclick = async () => {
     const payload = collectInsurancePayload();
     try {
       const res = await fetch(`/api/invoices/${i.invoice_id}/draft-pdf`, {
@@ -3225,8 +3200,33 @@ function renderFinalizationPreview(preview, insuranceState) {
         throw new Error(msg);
       }
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
+      revokeFinalizationPreviewPdfUrl();
+      finalizationPreviewPdfUrl = URL.createObjectURL(blob);
+      pdfFrame.src = finalizationPreviewPdfUrl;
+      if (pdfOpenLink) pdfOpenLink.href = finalizationPreviewPdfUrl;
+      if (pdfStatus) pdfStatus.textContent = "Canonical PDF preview loaded.";
+    } catch (err) {
+      if (pdfStatus) {
+        pdfStatus.textContent = err.message || "Failed to generate PDF preview.";
+        pdfStatus.className = "finalization-pdf-status error";
+      }
+      if (pdfOpenLink) pdfOpenLink.href = "#";
+    }
+  }
+  if (repreviewBtn) repreviewBtn.onclick = async () => {
+    try {
+      const repreview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(collectInsurancePayload())});
+      renderFinalizationPreview(repreview, {included: collectInsurancePayload().insurance_coding_included, diagnosisCode: collectInsurancePayload().insurance_diagnosis_code});
+    } catch (err) {
+      errorDiv.textContent = err.message || "Failed to update preview.";
+      errorDiv.style.display = "block";
+    }
+  };
+  if ($("draftPdfPreviewBtn")) $("draftPdfPreviewBtn").onclick = async () => {
+    try {
+      if (!finalizationPreviewPdfUrl) await refreshFinalizationPdfPreview();
+      if (!finalizationPreviewPdfUrl) throw new Error("Failed to generate PDF preview.");
+      window.open(finalizationPreviewPdfUrl, "_blank");
     } catch (err) {
       errorDiv.textContent = err.message || "Failed to generate PDF preview.";
       errorDiv.style.display = "block";
@@ -3248,6 +3248,7 @@ function renderFinalizationPreview(preview, insuranceState) {
       finalizeBtn.disabled = true;
       backBtn.disabled = true;
       await loadInvoices();
+      revokeFinalizationPreviewPdfUrl();
       renderInvoicePreview(final);
       openFinalInvoicePdf(final.invoice, finalPdfWindow);
       showInvoiceSuccess("Invoice finalized successfully.");
@@ -3260,6 +3261,14 @@ function renderFinalizationPreview(preview, insuranceState) {
       errorDiv.style.display = "block";
     }
   };
+  refreshFinalizationPdfPreview();
+}
+
+function revokeFinalizationPreviewPdfUrl() {
+  if (finalizationPreviewPdfUrl) {
+    URL.revokeObjectURL(finalizationPreviewPdfUrl);
+    finalizationPreviewPdfUrl = null;
+  }
 }
 
 function renderInvoicePreview(data) {

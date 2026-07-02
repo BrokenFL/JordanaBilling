@@ -122,8 +122,7 @@ The API key input is hidden. The setup app writes:
 ~/Library/Application Support/Jordana Billing/config/.env
 ```
 
-with permissions `600`. The config is not stored inside the `.app`, release
-DMG, GitHub, SQLite database, or browser storage. The installed launcher reads
+with permissions `600`. The config is not stored inside the `.app`, release DMG, GitHub, SQLite database, or browser storage. The installed launcher reads
 it at startup, validates the required keys, and exports them only to the local
 server process. The file persists across app restarts, Mac restarts,
 reinstalls, and updates. Removing the app bundle does not delete the config.

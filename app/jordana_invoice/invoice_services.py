@@ -1618,9 +1618,6 @@ def synchronize_draft_delivery_method(conn: sqlite3.Connection, invoice_id: str)
 
 def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dict[str, Any] | None = None) -> dict[str, Any]:
     _draft(conn, invoice_id)
-    if data:
-        update_invoice_draft(conn, invoice_id, data)
-    synchronize_draft_delivery_method(conn, invoice_id)
     result = get_invoice(conn, invoice_id)
     invoice = result["invoice"]
     lines = result["lines"]

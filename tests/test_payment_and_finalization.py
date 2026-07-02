@@ -184,8 +184,8 @@ class SafeFinalizationTests(unittest.TestCase):
         })
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_preview_saves_draft_and_returns_revision(self, fake_pdf):
-        """preview_finalization should save the draft and return a revision."""
+    def test_preview_reads_draft_and_returns_revision(self, fake_pdf):
+        """preview_finalization should return a revision without mutating the draft."""
         fake_pdf.return_value = "x" * 64
         session = self._approved_session("preview1")
         draft = self._draft([session])
@@ -282,16 +282,20 @@ class SafeFinalizationTests(unittest.TestCase):
         self.assertTrue(render["logo_data_uri"].startswith("data:image/png;base64,"))
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_preview_with_data_updates_draft(self, fake_pdf):
-        """preview_finalization with data should update the draft first."""
+    def test_preview_with_data_does_not_update_draft(self, fake_pdf):
+        """preview_finalization payload is read-only approval-preview metadata."""
         fake_pdf.return_value = "x" * 64
         session = self._approved_session("preview2")
         draft = self._draft([session])
+        before = get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]
         preview = preview_finalization(
             self.conn, draft["invoice"]["invoice_id"],
             data={"delivery_method": "mail"},
         )
-        self.assertEqual(preview["invoice"]["delivery_method"], "mail")
+        after = get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]
+        self.assertEqual(preview["invoice"]["delivery_method"], before["delivery_method"])
+        self.assertEqual(after["delivery_method"], before["delivery_method"])
+        self.assertEqual(after["revision"], before["revision"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_finalize_with_matching_revision_succeeds(self, fake_pdf):

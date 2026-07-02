@@ -121,7 +121,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Save the complete draft, reread from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, sync delivery, assign a number, write a PDF path/checksum, create audit rows, or change revision/status. The UI embeds the canonical draft PDF preview from `POST /api/invoices/{id}/draft-pdf`, so the approval preview uses the same ReportLab renderer as finalization. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -144,7 +144,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
-Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF exactly match the preview.
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF match the embedded canonical preview except for approved final metadata such as the real invoice number replacing the draft marker.
 
 ### Optional Insurance Coding
 
@@ -377,9 +377,12 @@ Returns a self-contained HTML page with a **DRAFT** watermark and banner. Side-e
 
 ```
 GET /api/invoices/{invoice_id}/draft-pdf
+POST /api/invoices/{invoice_id}/draft-pdf
 ```
 
 Returns a real PDF preview of a draft invoice using the same canonical ReportLab renderer (`_generate_invoice_pdf_bytes`) as final invoice generation. The PDF is clearly marked **DRAFT** and does not assign an invoice number. Side-effect free: does not write to the database, does not write `pdf_path` or `pdf_sha256`, does not change invoice status or revision, and does not create any audit event. Missing readiness errors (e.g. missing address or email) do not block the preview. Only available for draft invoices; finalized or void invoices return HTTP 400.
+
+The Review & Finalize confirmation step embeds the POST draft PDF endpoint instead of rendering a separate HTML invoice design. Optional insurance/coding preview values are passed only to the PDF/readiness preview and are not persisted until the user explicitly confirms finalization.
 
 Both draft PDF and final PDF endpoints use dedicated inline PDF response headers (`Content-Type: application/pdf`, `Content-Disposition: inline`) compatible with Safari. PDF responses use `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` but do not apply the `X-Frame-Options: DENY` or CSP headers used for HTML/JSON responses, allowing inline browser preview.
 

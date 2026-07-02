@@ -602,13 +602,13 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `preview_finalization(conn, invoice_id, data=data)`
-- **Accepted fields**: same as `update_invoice_draft` (applied before preview)
+- **Accepted fields**: optional draft-like fields for backward compatibility plus `insurance_coding_included`, `insurance_diagnosis_code`
 - **Success status**: 200
 - **Success response**: finalization preview dict
-- **DB tables**: `invoices` (draft update if data provided), read-only preview otherwise
+- **DB tables**: none mutated; read-only readiness/preview response
 - **Idempotent**: yes
-- **Existing tests**: `test_invoice_lifecycle.py`, `test_invoice_readiness.py`
-- **Missing contract coverage**: HTTP-level shape
+- **Existing tests**: `test_invoice_lifecycle.py`, `test_invoice_readiness.py`, `test_payment_and_finalization.py`, `test_write_endpoint_contracts.py`
+- **Note**: Review & Finalize uses this endpoint for readiness/revision only. The visual approval preview is the side-effect-free canonical PDF from `POST /api/invoices/{id}/draft-pdf`.
 
 ### POST /api/invoices/{id}/finalize
 

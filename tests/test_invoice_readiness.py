@@ -558,6 +558,7 @@ class StaleDraftDeliverySyncTests(unittest.TestCase):
         session = self._approved_session("sync4")
         draft = self._draft([session])
         update_billing_party(self.conn, self.party["billing_party_id"], {"preferred_delivery_method": "email"})
+        synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         self.assertEqual(preview["invoice"]["delivery_method"], "email")
         render = preview["render_model"]
@@ -663,6 +664,7 @@ class StaleDraftDeliverySyncTests(unittest.TestCase):
             "preferred_delivery_method": "email",
             "billing_email": "",
         })
+        synchronize_draft_delivery_method(self.conn, draft["invoice"]["invoice_id"])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         self.assertFalse(preview["readiness"]["ready"])
         fields = {e["field"] for e in preview["readiness"]["errors"]}

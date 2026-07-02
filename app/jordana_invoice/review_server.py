@@ -1393,7 +1393,9 @@ def make_handler(
                 f"style-src 'self' 'unsafe-inline'; "
                 f"img-src 'self' data:; "
                 f"connect-src 'self'; "
+                f"frame-src 'self' blob:; "
                 f"frame-ancestors 'none'; "
+                f"object-src 'self' blob:; "
                 f"base-uri 'self'; "
                 f"form-action 'self'"
             )

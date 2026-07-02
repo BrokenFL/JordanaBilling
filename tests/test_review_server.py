@@ -919,6 +919,14 @@ class SecurityHeaderTests(unittest.TestCase):
         csp = captured["headers"].get("Content-Security-Policy", "")
         self.assertIn("style-src 'self' 'unsafe-inline'", csp)
 
+    def test_review_page_csp_allows_embedded_pdf_preview(self):
+        handler, captured = self._handler()
+        handler.send_static("review.html")
+        csp = captured["headers"].get("Content-Security-Policy", "")
+        self.assertIn("frame-src 'self' blob:", csp)
+        self.assertIn("object-src 'self' blob:", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+
     def test_static_js_has_security_headers_no_unsafe_inline(self):
         handler, captured = self._handler()
         handler.send_static("review.js")

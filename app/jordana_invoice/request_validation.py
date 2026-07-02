@@ -1322,7 +1322,8 @@ def parse_preview_finalize_request(payload: Any) -> PreviewFinalizeRequest:
     """Parse POST /api/invoices/{id}/preview-finalize.
 
     Accepted fields: billing_period_start, billing_period_end, billing_month,
-    delivery_method, notes, supplement_sequence.
+    delivery_method, notes, supplement_sequence, insurance_coding_included,
+    insurance_diagnosis_code.
     """
     data = _require_object(payload)
     _optional_str(data, "billing_period_start")
@@ -1331,6 +1332,8 @@ def parse_preview_finalize_request(payload: Any) -> PreviewFinalizeRequest:
     _optional_str_choice(data, "delivery_method", _DELIVERY_METHODS)
     _optional_str(data, "notes")
     _optional_int_not_bool(data, "supplement_sequence")
+    _optional_bool(data, "insurance_coding_included")
+    _optional_str(data, "insurance_diagnosis_code")
     return PreviewFinalizeRequest(payload=data)
 
 

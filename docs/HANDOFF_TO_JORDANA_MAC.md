@@ -138,6 +138,10 @@ configuration is preserved on reinstall. Never commit or paste real secrets,
 Script Properties, spreadsheet IDs, or private paths into docs, screenshots,
 logs, GitHub, or chat.
 
+The release payload includes `scripts/install_release.sh`; the native setup app
+is the user-facing entrypoint and delegates to the release installer workflow
+inside the verified payload.
+
 ## Daily Launch Contract
 
 The installed launcher:
@@ -213,6 +217,12 @@ fixes the post-finalize user flow. Successful finalization returns a versioned
 in-app HTML invoice card is not the authoritative proof of final layout.
 Repeated finalize submissions return the existing immutable invoice and PDF
 without regenerating or renumbering.
+
+Review & Finalize now embeds the canonical draft PDF preview from
+`POST /api/invoices/{id}/draft-pdf` before Jordana confirms finalization. The
+confirmation screen no longer uses the duplicated HTML invoice card as the
+approval visual. The readiness endpoint is side-effect free and does not save
+draft edits, assign numbers, write PDF metadata, or change invoice status.
 
 The application does not yet send invoices by email or mail.
 

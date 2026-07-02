@@ -54,6 +54,7 @@ sessions → invoice preview/finalization → payment tracking.
 
 - Draft and finalized PDFs use one shared `_generate_invoice_pdf_bytes` renderer
 - Draft preview is in-memory, clearly marked DRAFT, and side-effect free
+- Review & Finalize embeds the canonical draft PDF preview before confirmation; the old duplicated HTML invoice card is not the approval visual
 - Finalized PDFs are immutable and stored locally
 - Draft and final endpoints use Safari-compatible inline PDF headers
 - Commit `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a` fixes the post-finalize workflow so the UI opens the canonical stored PDF rather than leaving the user on the older in-app HTML card
