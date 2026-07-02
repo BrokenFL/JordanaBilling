@@ -1,8 +1,47 @@
 import unittest
+import subprocess
 from pathlib import Path
 
 
 class ReviewUiStaticTests(unittest.TestCase):
+    def test_invoice_service_period_helper_formats_month_labels(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        helper = js[
+            js.index("const monthYearFormatter"):
+            js.index("const billingTypeLabel")
+        ]
+        script = helper + """
+const cases = [
+  [{ billing_month: "2026-06", billing_period_start: "2026-05-01" }, "June 2026"],
+  [{ billing_month: "2026-07", billing_period_start: "2026-06-01" }, "July 2026"],
+  [{ billing_month: "2026-07", billing_period_start: "2026-06-01", billing_period_end: "2026-06-30" }, "July 2026"],
+  [{ billing_period_start: "2026-06-01", billing_period_end: "2026-06-30" }, "June 2026"],
+  [{ billing_month: "", billing_period_start: "" }, "—"],
+  [{}, "—"],
+];
+for (const [input, expected] of cases) {
+  const actual = invoiceServicePeriodLabel(input);
+  if (actual !== expected) {
+    throw new Error(`${JSON.stringify(input)} -> ${actual}, expected ${expected}`);
+  }
+}
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_invoice_tables_use_shared_service_period_helper(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("function invoiceServicePeriodLabel(invoice)", js)
+        self.assertEqual(js.count("invoiceServicePeriodLabel("), 4)
+        self.assertIn("<td>${escapeHtml(invoiceServicePeriodLabel(row))}</td>", js)
+        self.assertIn("<td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>", js)
+        self.assertNotIn("${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}", js)
+        self.assertNotIn("${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}", js)
+
+    def test_pdf_preview_still_uses_existing_render_period_display(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("render.billing_period_display", js)
+        self.assertIn("<strong>Billing Period:</strong>", js)
+
     def test_inspector_dirty_list_does_not_reference_removed_session_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
@@ -366,6 +405,15 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertIn("<th>Paid</th>", person_record)
         self.assertIn("<th>Balance</th>", person_record)
         self.assertIn("<th>Open</th>", person_record)
+
+    def test_client_invoice_table_uses_month_label_helper(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openPersonRecord")
+        end = js.index('["clientSearch","peopleSearch"]')
+        person_record = js[start:end]
+
+        self.assertIn("invoiceServicePeriodLabel(inv)", person_record)
+        self.assertNotIn("billing_period_start)} – ${fmt(inv.billing_period_end", person_record)
 
     def test_invoice_open_uses_existing_route(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

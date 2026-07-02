@@ -268,6 +268,30 @@ class OrganizationBillingRecordTests(unittest.TestCase):
         self.assertEqual(inv["balance_cents"], inv["total_cents"])
         self.assertIsNotNone(inv["finalized_at"])
 
+    def test_invoice_history_includes_billing_month_without_changing_period(self):
+        taylor = create_person(self.conn, {"display_name": "Taylor Reed", "first_name": "Taylor", "last_name": "Reed"})
+        org = self._make_org()
+        self._import_and_approve(
+            "snap-month",
+            "Taylor Reed 6",
+            [taylor["person_id"]],
+            org["billing_party_id"],
+            start="2026-07-01T18:00:00-04:00",
+        )
+        session = self.conn.execute("SELECT id FROM sessions WHERE billing_party_id = ?", (org["billing_party_id"],)).fetchone()
+        create_invoice_draft(self.conn, {
+            "bill_to_party_id": org["billing_party_id"],
+            "billing_month": "2026-07",
+            "invoice_date": "2026-07-31",
+            "session_ids": [session["id"]],
+        })
+
+        rec = get_organization_billing_record(self.conn, org["billing_party_id"])
+        inv = rec["invoices"][0]
+        self.assertEqual(inv["billing_month"], "2026-07")
+        self.assertEqual(inv["billing_period_start"], "2026-07-01")
+        self.assertEqual(inv["billing_period_end"], "2026-07-31")
+
     def test_void_invoices_have_zero_balance(self):
         taylor = create_person(self.conn, {"display_name": "Taylor Reed", "first_name": "Taylor", "last_name": "Reed"})
         org = self._make_org()

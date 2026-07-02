@@ -1694,6 +1694,7 @@ def _invoices_for_person(conn: sqlite3.Connection, person_id: str) -> list[dict[
           i.invoice_number,
           i.status,
           i.invoice_date,
+          i.billing_month,
           i.billing_period_start,
           i.billing_period_end,
           i.subtotal_cents,
@@ -4130,6 +4131,7 @@ def get_organization_billing_record(conn: sqlite3.Connection, billing_party_id: 
         SELECT
           i.invoice_id,
           i.invoice_number,
+          i.billing_month,
           i.billing_period_start,
           i.billing_period_end,
           i.invoice_date,

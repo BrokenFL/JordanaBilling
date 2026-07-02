@@ -136,6 +136,22 @@ class InvoiceLibraryTests(unittest.TestCase):
         result_empty = list_invoice_records(self.conn, invoice_date_from="2026-06-01", invoice_date_to="2026-06-30")
         self.assertEqual(result_empty["total"], 0)
 
+    def test_service_period_filter_still_uses_raw_period_values(self):
+        may = self.approved_session("period-may", start="2026-05-10T10:00:00-04:00")
+        june = self.approved_session("period-june", start="2026-06-10T10:00:00-04:00")
+        self.draft([may], invoice_date="2026-05-31", period_start="2026-05-01", period_end="2026-05-31")
+        self.draft([june], invoice_date="2026-06-30", period_start="2026-06-01", period_end="2026-06-30")
+
+        result = list_invoice_records(
+            self.conn,
+            service_period_from="2026-06-01",
+            service_period_to="2026-06-30",
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["billing_period_start"], "2026-06-01")
+        self.assertEqual(result["items"][0]["billing_period_end"], "2026-06-30")
+
     def test_pagination(self):
         for i in range(3):
             s = self.approved_session(f"page{i}", start=f"2026-0{1+i}-10T10:00:00-04:00")

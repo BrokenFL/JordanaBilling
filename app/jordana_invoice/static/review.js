@@ -125,6 +125,27 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v) => v ? escapeHtml(v) : "-";
 const money = (v) => v ? `$${v}` : "—";
 const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
+const monthYearFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+function monthLabelFromYearMonth(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "";
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return "";
+  return monthYearFormatter.format(new Date(Date.UTC(year, monthIndex, 1)));
+}
+function monthLabelFromDate(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-\d{2}/);
+  if (!match) return "";
+  return monthLabelFromYearMonth(`${match[1]}-${match[2]}`);
+}
+function invoiceServicePeriodLabel(invoice) {
+  return monthLabelFromYearMonth(invoice?.billing_month)
+    || monthLabelFromDate(invoice?.billing_period_start)
+    || "—";
+}
 const billingTypeLabel = (v, customDescription = "") => {
   if (v === "custom" && customDescription) return escapeHtml(customDescription);
   return ({psychotherapy:"Psychotherapy Session", psychotherapy_house_call:"Psychotherapy Session / House Call", psychotherapy_weekend:"Psychotherapy Session / Weekend", psychotherapy_evening:"Psychotherapy Session / Evening", custom:"Custom"}[v] || escapeHtml(v) || "Psychotherapy Session");
@@ -2702,7 +2723,7 @@ function renderInvoiceLibrary() {
       <tr data-invoice="${escapeAttr(row.invoice_id)}">
         <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
         <td>${fmt(row.invoice_date)}</td>
-        <td>${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}</td>
+        <td>${escapeHtml(invoiceServicePeriodLabel(row))}</td>
         <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
         <td>${fmt(row.filing_owner_display || "—")}</td>
         <td>${escapeHtml(row.participants_display || "—")}</td>
@@ -4017,7 +4038,7 @@ async function openOrganizationRecord(billingPartyId) {
     ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Status</th><th>Total</th><th>Balance</th><th>Open</th></tr></thead><tbody>
         ${(data.invoices || []).map(inv => `<tr>
           <td>${escapeHtml(inv.invoice_number || "—")}</td>
-          <td>${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}</td>
+          <td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>
           <td>${fmt(inv.invoice_date)}</td>
           <td><span class="status-pill ${escapeAttr(inv.status)}">${escapeHtml(orgInvoiceStatusLabel(inv.status))}</span></td>
           <td>${money(centString(inv.total_cents))}</td>
@@ -4868,7 +4889,7 @@ async function openPersonRecord(personId, options = {}) {
   const invoiceRowsHtml = invoices.length
     ? invoices.map(inv => `<tr data-invoice-id="${escapeAttr(inv.invoice_id)}">
         <td><span class="primary">${fmt(inv.invoice_number || "Draft")}</span></td>
-        <td>${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}</td>
+        <td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>
         <td>${fmt(inv.invoice_date)}</td>
         <td>${fmt(inv.bill_to_name)}</td>
         <td><span class="status-pill ${escapeAttr(inv.status)}">${fmt(inv.status)}</span></td>

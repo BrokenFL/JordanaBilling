@@ -1024,6 +1024,24 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
         self.assertEqual(invoices[0]["status"], "draft")
         self.assertIsNone(invoices[0]["finalized_at"])
 
+    def test_client_invoice_history_includes_billing_month_without_changing_period(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+        session = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (self.candidate_id,)).fetchone()
+        create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_month": "2026-06",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session["id"]],
+        })
+
+        record = get_person_record(self.conn, fred["person_id"])
+        invoice = record["invoices"][0]
+        self.assertEqual(invoice["billing_month"], "2026-06")
+        self.assertEqual(invoice["billing_period_start"], "2026-06-01")
+        self.assertEqual(invoice["billing_period_end"], "2026-06-30")
+
     def test_finalized_invoice_has_finalized_at(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
         payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"], "preferred_delivery_method": "email", "billing_email": "fred@example.test"})
