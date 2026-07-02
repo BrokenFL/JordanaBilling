@@ -10,7 +10,12 @@ The checklist is not yet recorded as fully complete. Do not assume restart, dupl
 
 Before final production handoff, record the release filename and commit, checksum result, test Mac and macOS version, Python version, Gatekeeper behavior, completed steps, deferred steps, and operational smoke-test result.
 
-Known packaging limitation: the installer currently replaces the existing app before final verification and does not automatically restore the previous app if that verification fails. Private configuration and SQLite data remain outside the app and are preserved, but app-bundle replacement is not yet rollback-safe.
+Installer rollback behavior is implemented in the release installer but still
+needs clean-Mac evidence. During reinstall, the previous app bundle is kept as
+`Jordana Billing.app.previous` until the replacement verifies. If verification
+fails, the installer should restore `.previous`; if no previous app existed, it
+should remove the failed app. Private configuration and SQLite data remain
+outside the app and must be preserved.
 
 ## Prerequisites
 
@@ -109,4 +114,6 @@ Stop before Jordana's Mac if any step creates a blank DB unexpectedly, overwrite
 
 Move `~/Applications/Jordana Billing.app` to Trash. Keep `~/Library/Application Support/Jordana Billing` intact unless Brooke explicitly chooses to remove private data.
 
-Until automatic app-bundle rollback is implemented, retain the prior verified release DMG and checksum so the previous version can be reinstalled manually if a new release fails after replacement.
+If automatic app-bundle restore fails, preserve any
+`Jordana Billing.app.previous` or failed app bundle left in `~/Applications`
+and use the prior verified release DMG and checksum for manual recovery.

@@ -96,6 +96,13 @@ Run the one-time setup app from the DMG. It installs
 `~/Applications/Jordana Billing.app`, creates the private runtime from the
 offline wheelhouse, and runs installation verification.
 
+On reinstall, the installer keeps any existing app bundle as
+`Jordana Billing.app.previous` until the replacement verifies. If verification
+fails, it restores the previous app when possible; if restore fails, preserve
+the `.previous` bundle and follow manual recovery guidance. Private
+configuration, the SQLite database, and Documents outputs remain outside the
+app bundle.
+
 After installation, double-click `~/Applications/Jordana Billing.app` in Finder.
 The app is ad-hoc code-signed, not notarized, so Gatekeeper may require
 right-click Open or Security & Privacy approval.

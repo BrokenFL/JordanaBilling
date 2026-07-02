@@ -156,18 +156,21 @@ the temporary directory is removed through an EXIT trap. Application Support,
 the database, config, invoices, receipts, reports, and user data are never
 touched by temporary cleanup.
 
-### Known Replacement Rollback Gap
+### Rollback-Safe App Replacement
 
-The current installer removes an existing `Jordana Billing.app`, moves the
-staged replacement into place, and then runs final verification. If final
-verification fails after that replacement, private data remains preserved but
-the prior working app bundle is not automatically restored.
+Before replacing an existing `Jordana Billing.app`, the installer moves it to
+`Jordana Billing.app.previous` in the same parent directory. The staged
+replacement remains at `Jordana Billing.app.installing` until its runtime is
+ready, then moves into the final app path and runs final verification.
 
-Do not describe the current installer as fully rollback-safe. Before final
-production handoff, harden the replacement sequence so the existing app is
-renamed to a recoverable previous-app path, the new app is installed and
-verified, and the previous app is deleted only after success. On failure, the
-previous app should be restored atomically.
+If verification succeeds, `.previous` and stale `.installing` artifacts are
+removed. If verification fails, the failed replacement is removed or
+quarantined and `.previous` is restored to the original app path. If no
+previous app existed, the failed replacement is removed. If automatic restore
+fails, the installer preserves `.previous` where possible and reports a
+sanitized manual recovery message. Private Application Support data and
+Documents output folders remain outside the app bundle and are not touched by
+app-bundle rollback cleanup.
 
 ### Current Package-Version Coupling
 
@@ -207,9 +210,10 @@ scripts/update_release.sh
 ```
 
 It creates and verifies a private SQLite backup before delegating to the
-installer. That protects the database and private operational state. It does
-not yet provide automatic app-bundle rollback after the old app has been
-replaced; see the known replacement rollback gap above.
+installer. That protects the database and private operational state. The
+installer also keeps the previous app bundle at `Jordana Billing.app.previous`
+until the replacement verifies, then removes it after success or restores it on
+verification failure.
 
 ## Uninstall
 

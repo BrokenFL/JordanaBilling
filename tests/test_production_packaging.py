@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -209,6 +210,197 @@ class NativeSetupWizardContractTest(unittest.TestCase):
         self.assertIn("port_accepts_tcp", launcher)
         self.assertIn("Jordana Billing is already running under another macOS user account", launcher)
         self.assertLess(launcher.index("status=\"$(http_service_status"), launcher.index("port_pid=\"$(pid_on_port)\""))
+
+
+class InstallerRollbackSafetyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="jordana_installer_rollback_")
+        self.root = Path(self.temp.name)
+        self.release = self.root / "release"
+        self.app_dest = self.root / "Applications" / "Jordana Billing.app"
+        self.support = self.root / "Support"
+        self.docs = self.root / "Documents"
+        self.bin = self.root / "bin"
+        self._build_fake_release()
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _write_executable(self, path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o755)
+
+    def _build_fake_release(self) -> None:
+        payload_app = self.release / "Jordana Billing.app"
+        (payload_app / "Contents" / "Resources").mkdir(parents=True)
+        (payload_app / "Contents" / "marker.txt").write_text("new", encoding="utf-8")
+        (self.release / "wheelhouse").mkdir(parents=True)
+        (self.release / "release_manifest.json").write_text(
+            json.dumps({"runtime": {"requires_python": "3.14.x"}}),
+            encoding="utf-8",
+        )
+        scripts = self.release / "scripts"
+        scripts.mkdir()
+        shutil.copy(PROJECT_DIR / "scripts" / "install_release.sh", scripts / "install_release.sh")
+        (scripts / "install_release.sh").chmod(0o755)
+        self._write_verify_script(0)
+        self._write_fake_tools()
+        self._write_private_files()
+
+    def _write_fake_tools(self) -> None:
+        self._write_executable(
+            self.bin / "uname",
+            """#!/usr/bin/env bash
+if [[ "${1:-}" == "-s" ]]; then echo Darwin; elif [[ "${1:-}" == "-m" ]]; then echo arm64; else /usr/bin/uname "$@"; fi
+""",
+        )
+        self._write_executable(
+            self.bin / "ditto",
+            """#!/usr/bin/env bash
+if [[ "${1:-}" == "--norsrc" ]]; then shift; fi
+cp -R "$1" "$2"
+""",
+        )
+        for name in ("xattr", "codesign"):
+            self._write_executable(self.bin / name, "#!/usr/bin/env bash\nexit 0\n")
+        self._write_executable(
+            self.bin / "python3",
+            """#!/usr/bin/env bash
+if [[ "${1:-}" == "-" ]]; then exit 0; fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+  mkdir -p "$3/bin"
+  cp "$0" "$3/bin/python"
+  exit 0
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then exit 0; fi
+if [[ "${1:-}" == "-c" ]]; then exit 0; fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "jordana_invoice" ]]; then
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--db" ]]; then shift; touch "$1"; exit 0; fi
+    shift
+  done
+fi
+exit 0
+""",
+        )
+
+    def _write_private_files(self) -> None:
+        (self.support / "config").mkdir(parents=True)
+        (self.support / "data").mkdir(parents=True)
+        (self.support / "config" / ".env").write_text(
+            "JORDANA_APPS_SCRIPT_URL=https://example.invalid/app\nJORDANA_INGEST_API_KEY=secret-test-key\n",
+            encoding="utf-8",
+        )
+        (self.support / "data" / "jordana_invoice.sqlite3").write_text("db", encoding="utf-8")
+
+    def _write_verify_script(self, exit_code: int, output: str = "") -> None:
+        self._write_executable(
+            self.release / "scripts" / "verify_installation.sh",
+            f"#!/usr/bin/env bash\nprintf '%s' {output!r}\nexit {exit_code}\n",
+        )
+
+    def _write_existing_app(self, marker: str = "old") -> None:
+        (self.app_dest / "Contents").mkdir(parents=True)
+        (self.app_dest / "Contents" / "marker.txt").write_text(marker, encoding="utf-8")
+
+    def _run_installer(self) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{self.bin}:{env['PATH']}",
+                "JORDANA_INSTALL_PYTHON": str(self.bin / "python3"),
+                "JORDANA_INSTALL_APP_DEST": str(self.app_dest),
+                "JORDANA_APP_SUPPORT_DIR": str(self.support),
+                "JORDANA_DOCUMENTS_ROOT": str(self.docs),
+            }
+        )
+        return subprocess.run(
+            ["bash", str(self.release / "scripts" / "install_release.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(self.release),
+        )
+
+    def _private_contents(self) -> tuple[str, str]:
+        return (
+            (self.support / "config" / ".env").read_text(encoding="utf-8"),
+            (self.support / "data" / "jordana_invoice.sqlite3").read_text(encoding="utf-8"),
+        )
+
+    def test_fresh_install_with_no_previous_app(self) -> None:
+        before = self._private_contents()
+        result = self._run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.app_dest / "Contents" / "marker.txt").read_text(encoding="utf-8"), "new")
+        self.assertFalse(Path(f"{self.app_dest}.previous").exists())
+        self.assertFalse(Path(f"{self.app_dest}.installing").exists())
+        self.assertEqual(self._private_contents(), before)
+
+    def test_successful_upgrade_removes_backup(self) -> None:
+        self._write_existing_app("old")
+        result = self._run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.app_dest / "Contents" / "marker.txt").read_text(encoding="utf-8"), "new")
+        self.assertFalse(Path(f"{self.app_dest}.previous").exists())
+
+    def test_failed_verification_restores_previous_app(self) -> None:
+        self._write_existing_app("old")
+        self._write_verify_script(42, "secret-test-key https://example.invalid/app")
+        before = self._private_contents()
+        result = self._run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.app_dest / "Contents" / "marker.txt").read_text(encoding="utf-8"), "old")
+        self.assertFalse(Path(f"{self.app_dest}.previous").exists())
+        self.assertFalse(Path(f"{self.app_dest}.installing").exists())
+        self.assertEqual(self._private_contents(), before)
+        self.assertNotIn("secret-test-key", result.stderr + result.stdout)
+        self.assertNotIn("https://example.invalid/app", result.stderr + result.stdout)
+
+    def test_failed_verification_without_previous_app_removes_failed_app(self) -> None:
+        self._write_verify_script(42)
+        result = self._run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.app_dest.exists())
+        self.assertFalse(Path(f"{self.app_dest}.installing").exists())
+
+    def test_stale_installing_path_is_cleaned_before_install(self) -> None:
+        stale = Path(f"{self.app_dest}.installing")
+        (stale / "Contents").mkdir(parents=True)
+        (stale / "Contents" / "marker.txt").write_text("stale", encoding="utf-8")
+        result = self._run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(stale.exists())
+        self.assertEqual((self.app_dest / "Contents" / "marker.txt").read_text(encoding="utf-8"), "new")
+
+    def test_stale_backup_is_removed_when_current_app_exists(self) -> None:
+        self._write_existing_app("current")
+        previous = Path(f"{self.app_dest}.previous")
+        (previous / "Contents").mkdir(parents=True)
+        (previous / "Contents" / "marker.txt").write_text("stale", encoding="utf-8")
+        result = self._run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(previous.exists())
+        self.assertEqual((self.app_dest / "Contents" / "marker.txt").read_text(encoding="utf-8"), "new")
+
+    def test_interrupted_install_backup_recovers_and_upgrades(self) -> None:
+        previous = Path(f"{self.app_dest}.previous")
+        (previous / "Contents").mkdir(parents=True)
+        (previous / "Contents" / "marker.txt").write_text("old", encoding="utf-8")
+        result = self._run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(previous.exists())
+        self.assertEqual((self.app_dest / "Contents" / "marker.txt").read_text(encoding="utf-8"), "new")
+
+    def test_restore_failure_message_preserves_manual_recovery_contract(self) -> None:
+        installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
+        rollback_block = installer[
+            installer.index("rollback_replacement()") : installer.index("replace_app_bundle()")
+        ]
+        self.assertIn("Automatic restore failed", rollback_block)
+        self.assertIn("Jordana Billing.app.previous", rollback_block)
+        self.assertNotIn('rm -rf "$PREVIOUS_APP"', rollback_block)
 
 
 class PrivateConfigHelperTest(unittest.TestCase):

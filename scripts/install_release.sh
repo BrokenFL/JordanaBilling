@@ -110,7 +110,19 @@ if [[ "$INIT_EMPTY_DB" -eq 1 && ! -f "$DB_DEST" && "$YES" -ne 1 ]]; then
 fi
 
 TMP_APP="${APP_DEST}.installing"
+PREVIOUS_APP="${APP_DEST}.previous"
+FAILED_APP="${APP_DEST}.failed-install"
 rm -rf "$TMP_APP"
+
+recover_interrupted_install() {
+  if [[ -e "$PREVIOUS_APP" ]]; then
+    if [[ -e "$APP_DEST" ]]; then
+      rm -rf "$PREVIOUS_APP"
+    else
+      mv "$PREVIOUS_APP" "$APP_DEST" || fail "Previous app could not be restored. Keep any Jordana Billing app bundles in ~/Applications for manual recovery."
+    fi
+  fi
+}
 
 cleanup_temp_app() {
   if [[ -e "$TMP_APP" && "$TMP_APP" != "$APP_DEST" ]]; then
@@ -119,6 +131,40 @@ cleanup_temp_app() {
 }
 trap cleanup_temp_app EXIT
 
+rollback_replacement() {
+  local message="$1"
+  local failed_quarantined=0
+  if [[ -e "$APP_DEST" ]]; then
+    rm -rf "$FAILED_APP"
+    if mv "$APP_DEST" "$FAILED_APP" 2>/dev/null; then
+      failed_quarantined=1
+    fi
+  fi
+  if [[ -e "$PREVIOUS_APP" ]]; then
+    if mv "$PREVIOUS_APP" "$APP_DEST"; then
+      rm -rf "$TMP_APP"
+      if [[ "$failed_quarantined" -eq 1 ]]; then
+        rm -rf "$FAILED_APP"
+      fi
+      fail "$message Previous app was restored."
+    fi
+    fail "$message Automatic restore failed. Keep Jordana Billing.app.previous and any failed installed app in ~/Applications for manual recovery."
+  fi
+  rm -rf "$APP_DEST" "$TMP_APP" "$FAILED_APP"
+  fail "$message No previous app existed."
+}
+
+replace_app_bundle() {
+  rm -rf "$PREVIOUS_APP" "$FAILED_APP"
+  if [[ -e "$APP_DEST" ]]; then
+    mv "$APP_DEST" "$PREVIOUS_APP" || fail "Existing app could not be prepared for replacement."
+  fi
+  if ! mv "$TMP_APP" "$APP_DEST"; then
+    rollback_replacement "App replacement failed."
+  fi
+}
+
+recover_interrupted_install
 ditto --norsrc "$SOURCE_APP" "$TMP_APP"
 rm -rf "$TMP_APP/Contents/Resources/runtime/venv"
 mkdir -p "$TMP_APP/Contents/Resources/runtime"
@@ -126,16 +172,16 @@ mkdir -p "$TMP_APP/Contents/Resources/runtime"
 VENV_PYTHON="$TMP_APP/Contents/Resources/runtime/venv/bin/python"
 "$VENV_PYTHON" -m pip install --no-index --find-links "$WHEELHOUSE" jordana-invoice==0.1.0 >/dev/null
 "$VENV_PYTHON" -c 'import jordana_invoice, reportlab' >/dev/null
-rm -rf "$APP_DEST"
-mv "$TMP_APP" "$APP_DEST"
+replace_app_bundle
 xattr -cr "$APP_DEST" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DEST" >/dev/null 2>&1 || true
 
 if [[ "$INIT_EMPTY_DB" -eq 1 && ! -f "$DB_DEST" ]]; then
-  JORDANA_DATABASE_PATH="$DB_DEST" "$APP_DEST/Contents/Resources/runtime/venv/bin/python" -m jordana_invoice --db "$DB_DEST" init-db >/dev/null
-  chmod 600 "$DB_DEST"
+  JORDANA_DATABASE_PATH="$DB_DEST" "$APP_DEST/Contents/Resources/runtime/venv/bin/python" -m jordana_invoice --db "$DB_DEST" init-db >/dev/null || rollback_replacement "Database initialization failed."
+  chmod 600 "$DB_DEST" || rollback_replacement "Database permissions could not be secured."
   echo "Initialized empty test database: $DB_DEST"
 fi
 
-"$RELEASE_DIR/scripts/verify_installation.sh" --app "$APP_DEST" --support-dir "$APP_SUPPORT_DIR"
+"$RELEASE_DIR/scripts/verify_installation.sh" --app "$APP_DEST" --support-dir "$APP_SUPPORT_DIR" >/dev/null 2>&1 || rollback_replacement "Installation verification failed."
+rm -rf "$PREVIOUS_APP" "$FAILED_APP"
 echo "Jordana Billing release installed successfully."

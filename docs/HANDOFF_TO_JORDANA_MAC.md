@@ -106,13 +106,17 @@ version, Gatekeeper behavior, restart, duplicate launch, port-conflict behavior,
 reinstall preservation, and operational smoke path in
 `docs/TEST_MAC_ACCEPTANCE.md`.
 
-### Installer Rollback Caution
+### Installer App-Bundle Rollback
 
-The installer safely stages a replacement app in a temporary path, but it
-currently removes the existing app before final verification. Private data is
-preserved, but a verification failure can leave the prior working app
-unavailable. The next packaging round should retain the previous app until the
-replacement verifies and restore it automatically on failure.
+The installer stages the replacement at `Jordana Billing.app.installing`. When
+an installed app already exists, it is moved to `Jordana Billing.app.previous`
+before the staged app is moved into the final path. Final verification runs
+against the new app. On success, `.previous` and stale `.installing` artifacts
+are removed. On verification failure, the failed replacement is removed or
+quarantined and `.previous` is restored. If restore fails, `.previous` is
+preserved where possible and the installer reports sanitized manual recovery
+guidance. Private Application Support data and Documents outputs remain outside
+the app bundle.
 
 ### Installer Version Caution
 
@@ -282,7 +286,7 @@ ad hoc acceptance imports against the operational database.
 - no notarized installer
 - matching Python runtime required for V1 installation
 - full clean-Mac evidence record incomplete
-- installer replacement not yet rollback-safe
+- clean-Mac rollback-safe installer evidence still incomplete
 - finalization transaction ownership needs the narrow fix above
 - no formal client-versus-non-client distinction
 - no automatic payer classification
@@ -309,7 +313,7 @@ Every completed code round must report:
 ## Immediate Handoff Order
 
 1. Fix finalization transaction ownership.
-2. Make installer replacement rollback-safe and manifest-version driven.
+2. Make installer package version manifest-driven.
 3. Rerun the full suite on the latest code head.
 4. Complete and record clean-Mac acceptance.
 5. Build the final release from a clean synchronized checkout.
