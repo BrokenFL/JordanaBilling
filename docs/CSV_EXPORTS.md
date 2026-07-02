@@ -79,14 +79,20 @@ Reports/Jordana_Session_Log_2026.csv
 Columns:
 
 - `Date`
-- `Time`
-- `Client / Participants`
-- `Session Length`
-- `Session Type`
+- `Participants`
+- `Bill To`
+- `Duration`
 - `Time Category`
+- `Outcome`
 - `Rate`
+- `Review Status`
+- `Invoice Status`
 - `Payment Status`
-- `Review Needed`
+
+`Outcome` is derived from structured appointment status and billing treatment
+fields, never from raw calendar titles or notes. Invoice and payment statuses
+are derived from SQLite invoice line items, invoices, posted payments, and
+active payment allocations.
 
 ## All Appointments Export
 

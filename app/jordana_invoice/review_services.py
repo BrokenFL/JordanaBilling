@@ -69,6 +69,14 @@ REQUIRED_APPROVAL_FIELDS = {
 EASTERN_TZ = ZoneInfo("America/New_York")
 
 
+def refresh_reports_after_commit(conn: sqlite3.Connection) -> str | None:
+    try:
+        write_reports(conn)
+    except Exception:
+        return "Report generation warning: reports could not be refreshed. They can be regenerated later."
+    return None
+
+
 def get_session_type_options() -> list[dict[str, str]]:
     """Return the exactly 5 allowed billing session type options for UI dropdowns."""
     return list(BILLING_SESSION_TYPE_OPTIONS)
@@ -834,10 +842,7 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
         conn.rollback()
         raise
 
-    try:
-        write_reports(conn)
-    except Exception:
-        pass
+    refresh_reports_after_commit(conn)
 
     return res
 
@@ -1065,11 +1070,7 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
         conn.rollback()
         raise
 
-    report_warning = None
-    try:
-        write_reports(conn)
-    except Exception as err:
-        report_warning = f"Report generation warning: {err}"
+    report_warning = refresh_reports_after_commit(conn)
         
     res = get_review_candidate(conn, candidate_id)
     if report_warning:
@@ -1097,6 +1098,7 @@ def save_person_section(conn: sqlite3.Connection, candidate_id: str, payload: di
     refresh_candidate_suggestions(conn, candidate_id)
     record_audit(conn, "calendar_event_candidate", candidate_id, "person_section_saved", {"payload": safe_payload(payload)})
     conn.commit()
+    refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
 
 
@@ -1147,6 +1149,7 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
     refresh_candidate_suggestions(conn, candidate_id)
     record_audit(conn, "session", session["id"], "relationship_section_saved", {"payload": safe_payload(payload)})
     conn.commit()
+    refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
 
 
@@ -1183,6 +1186,7 @@ def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: d
     refresh_candidate_suggestions(conn, candidate_id)
     record_audit(conn, "session", session["id"], "billing_section_saved", {"payload": safe_payload(payload)})
     conn.commit()
+    refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
 
 
@@ -1280,6 +1284,7 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     refresh_candidate_suggestions(conn, candidate_id, preserve_approved_rate=True)
     record_audit(conn, "session", session["id"], "session_draft_saved", {"payload": safe_payload(payload)})
     conn.commit()
+    refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
 
 
@@ -1324,6 +1329,7 @@ def mark_candidate(
             )
     record_audit(conn, "calendar_event_candidate", candidate_id, f"marked_{classification}", {"reason": reason})
     conn.commit()
+    refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
 
 
@@ -5018,9 +5024,12 @@ def create_rate_rule_from_payload(conn: sqlite3.Connection, data: dict[str, Any]
     )
     record_audit(conn, "rate_rule", rule_id, "created_inline", payload)
     _recalc_unapproved_session_rates(conn)
-    write_reports(conn)
     conn.commit()
-    return serialize_rate_rule(conn, get_rate_rule_row(conn, rule_id))
+    warning = refresh_reports_after_commit(conn)
+    result = serialize_rate_rule(conn, get_rate_rule_row(conn, rule_id))
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def replace_rate_rule_from_payload(conn: sqlite3.Connection, rule_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -5085,9 +5094,12 @@ def replace_rate_rule_from_payload(conn: sqlite3.Connection, rule_id: str, data:
         {"replaced_rate_rule_id": rule_id, "payload": payload},
     )
     _recalc_unapproved_session_rates(conn)
-    write_reports(conn)
     conn.commit()
-    return serialize_rate_rule(conn, get_rate_rule_row(conn, new_rule_id))
+    warning = refresh_reports_after_commit(conn)
+    result = serialize_rate_rule(conn, get_rate_rule_row(conn, new_rule_id))
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def end_rate_rule(conn: sqlite3.Connection, rule_id: str, effective_through: str) -> dict[str, Any]:
@@ -5108,9 +5120,12 @@ def end_rate_rule(conn: sqlite3.Connection, rule_id: str, effective_through: str
         {"effective_through": effective_through},
     )
     _recalc_unapproved_session_rates(conn)
-    write_reports(conn)
     conn.commit()
-    return serialize_rate_rule(conn, get_rate_rule_row(conn, rule_id))
+    warning = refresh_reports_after_commit(conn)
+    result = serialize_rate_rule(conn, get_rate_rule_row(conn, rule_id))
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def serialize_rate_rule(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:

@@ -17,6 +17,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .csv_reports import refresh_reports_after_commit
 from .db import DatabaseBusyError
 from .util import json_dumps, new_id, now_iso, text
 
@@ -414,6 +415,9 @@ def allocate_payment_to_session(
             invoice_line_item_id=invoice_line_item_id,
         )
         conn.commit()
+        warning = refresh_reports_after_commit(conn)
+        if warning:
+            row["report_warning"] = warning
         return row
     except Exception:
         conn.rollback()
@@ -544,10 +548,14 @@ def reverse_allocation(
             "reason": reason_val,
         })
         conn.commit()
+        warning = refresh_reports_after_commit(conn)
         updated = conn.execute(
             "SELECT * FROM payment_allocations WHERE allocation_id = ?", (allocation_id,)
         ).fetchone()
-        return dict(updated)
+        result = dict(updated)
+        if warning:
+            result["report_warning"] = warning
+        return result
     except Exception:
         conn.rollback()
         raise
@@ -593,8 +601,12 @@ def void_payment(
             "reason": reason_val,
         })
         conn.commit()
+        warning = refresh_reports_after_commit(conn)
         updated = conn.execute("SELECT * FROM payments WHERE payment_id = ?", (payment_id,)).fetchone()
-        return dict(updated)
+        result = dict(updated)
+        if warning:
+            result["report_warning"] = warning
+        return result
     except Exception:
         conn.rollback()
         raise
@@ -667,11 +679,15 @@ def apply_available_funds(
             "amount_cents": amount_cents,
         })
         conn.commit()
-        return {
+        warning = refresh_reports_after_commit(conn)
+        result = {
             "payment": dict(_payment_row(conn, payment_id)),
             "invoice": _invoice_balance_summary(conn, invoice_id),
             "allocations": allocations,
         }
+        if warning:
+            result["report_warning"] = warning
+        return result
     except Exception:
         conn.rollback()
         raise
@@ -1143,12 +1159,16 @@ def record_invoice_payment(
         if remaining != 0:
             raise RuntimeError("Payment allocation did not fully apply to the invoice.")
         conn.commit()
-        return {
+        warning = refresh_reports_after_commit(conn)
+        result = {
             "invoice": _invoice_balance_summary(conn, invoice_id),
             "payment": payment,
             "allocations": allocations,
             "duplicate_submission_ignored": False,
         }
+        if warning:
+            result["report_warning"] = warning
+        return result
     except Exception:
         conn.rollback()
         raise

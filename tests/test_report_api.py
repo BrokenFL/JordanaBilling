@@ -18,6 +18,7 @@ from jordana_invoice.csv_reports import (
     default_report_year,
     generate_report_csv,
     report_filename,
+    resolve_reports_dir,
     write_reports,
 )
 from jordana_invoice.appointment_ledger import APPOINTMENT_LEDGER_COLUMNS
@@ -189,6 +190,71 @@ class GenerateReportCsvTests(unittest.TestCase):
         reader = csv.DictReader(io.StringIO(csv_text))
         return list(reader)
 
+    def _session_id(self, offset: int = 0) -> str:
+        rows = self.conn.execute("SELECT id FROM sessions WHERE substr(start_at, 1, 4) = '2026' ORDER BY start_at").fetchall()
+        return rows[offset]["id"]
+
+    def _set_session(self, session_id: str, **fields: object) -> None:
+        if fields:
+            assignments = ", ".join(f"{key} = ?" for key in fields)
+            self.conn.execute(f"UPDATE sessions SET {assignments} WHERE id = ?", (*fields.values(), session_id))
+            self.conn.commit()
+
+    def _party(self, party_id: str, name: str, party_type: str = "person") -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO billing_parties
+              (billing_party_id, billing_party_type, billing_name, preferred_delivery_method, created_at, updated_at)
+            VALUES (?, ?, ?, 'email', '2026-06-01', '2026-06-01')
+            """,
+            (party_id, party_type, name),
+        )
+        self.conn.commit()
+
+    def _invoice(self, session_id: str, status: str, amount_cents: int, invoice_id: str = "inv-1") -> str:
+        self._party("party-1", "Demo Payer")
+        self.conn.execute(
+            """
+            INSERT INTO invoices
+              (invoice_id, invoice_number, status, bill_to_party_id, billing_period_start,
+               billing_period_end, invoice_date, subtotal_cents, total_cents, created_at, updated_at)
+            VALUES (?, ?, ?, 'party-1', '2026-06-01', '2026-06-30', '2026-06-30', ?, ?, '2026-06-30', '2026-06-30')
+            """,
+            (invoice_id, f"2026-{invoice_id}", status, amount_cents, amount_cents),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO invoice_line_items
+              (invoice_line_item_id, invoice_id, source_session_id, service_date, participants_snapshot,
+               service_name_snapshot, description_snapshot, quantity, unit_amount_cents, line_amount_cents,
+               created_at, updated_at)
+            VALUES (?, ?, ?, '2026-06-23', 'Bonnie', 'Psychotherapy Session',
+                    'Psychotherapy Session', 1, ?, ?, '2026-06-30', '2026-06-30')
+            """,
+            (f"line-{invoice_id}", invoice_id, session_id, amount_cents, amount_cents),
+        )
+        self.conn.commit()
+        return f"line-{invoice_id}"
+
+    def _payment(self, session_id: str, line_id: str, amount_cents: int, status: str = "active") -> None:
+        self.conn.execute(
+            """
+            INSERT INTO payments
+              (payment_id, billing_party_id, amount_cents, received_at, method, status, created_at, updated_at)
+            VALUES ('pay-1', 'party-1', ?, '2026-07-01', 'other', 'posted', '2026-07-01', '2026-07-01')
+            """,
+            (amount_cents,),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO payment_allocations
+              (allocation_id, payment_id, session_id, invoice_line_item_id, amount_cents, status, created_at, updated_at)
+            VALUES ('alloc-1', 'pay-1', ?, ?, ?, ?, '2026-07-01', '2026-07-01')
+            """,
+            (session_id, line_id, amount_cents, status),
+        )
+        self.conn.commit()
+
     def test_sessions_returns_valid_csv_with_existing_headers(self):
         self._import_sample_data()
         csv_text = generate_report_csv(self.conn, "sessions", 2026)
@@ -208,6 +274,80 @@ class GenerateReportCsvTests(unittest.TestCase):
         rows = self._parse_csv(csv_text)
         self.assertTrue(len(rows) > 0)
         self.assertEqual(list(rows[0].keys()), SIMPLE_COLUMNS)
+
+    def test_simple_session_log_has_ledger_columns_and_no_raw_title(self):
+        self._import_sample_data()
+        row = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]
+        self.assertEqual(list(row.keys()), [
+            "Date", "Participants", "Bill To", "Duration", "Time Category",
+            "Outcome", "Rate", "Review Status", "Invoice Status", "Payment Status",
+        ])
+        self.assertNotIn("raw_calendar_title", row)
+        self.assertNotIn("Calendar Title", row)
+
+    def test_simple_session_log_derives_outcome_from_structured_fields(self):
+        self._import_sample_data()
+        sid = self._session_id()
+        self._set_session(sid, appointment_status="late_cancellation", billing_treatment="bill_full_fee", custom_service_description="Cancelled in title")
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Outcome"], "Late Cancellation — Full Fee")
+        self._set_session(sid, billing_treatment="custom_fee")
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Outcome"], "Late Cancellation — Custom Fee")
+        self._set_session(sid, billing_treatment="waived")
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Outcome"], "Late Cancellation — Waived")
+        self._set_session(sid, appointment_status="cancelled", billing_treatment="not_billable")
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Outcome"], "Cancelled — Not Billable")
+        self._set_session(sid, appointment_status="completed", billing_treatment="billable")
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Outcome"], "Completed")
+
+    def test_simple_session_log_bill_to_review_invoice_and_payment_statuses(self):
+        self._import_sample_data()
+        sid = self._session_id()
+        self._party("org-1", "Demo Organization", "organization")
+        self._set_session(
+            sid,
+            billing_party_id="org-1",
+            duration_minutes=90,
+            time_category="evening",
+            approved_rate_cents=20000,
+            review_status="ready_for_approval",
+        )
+        row = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]
+        self.assertEqual(row["Bill To"], "Demo Organization")
+        self.assertEqual(row["Duration"], "90 min")
+        self.assertEqual(row["Time Category"], "Evening")
+        self.assertEqual(row["Rate"], "200.00")
+        self.assertEqual(row["Review Status"], "Reviewed")
+        self.assertEqual(row["Invoice Status"], "Not Invoiced")
+        self.assertEqual(row["Payment Status"], "Not Invoiced")
+        line_id = self._invoice(sid, "draft", 20000)
+        row = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]
+        self.assertEqual(row["Invoice Status"], "Draft")
+        self.assertEqual(row["Payment Status"], "Unpaid")
+        self.conn.execute("UPDATE invoices SET status = 'finalized' WHERE invoice_id = 'inv-1'")
+        self.conn.commit()
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Payment Status"], "Unpaid")
+        self._payment(sid, line_id, 10000)
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Payment Status"], "Partially Paid")
+        self.conn.execute("UPDATE payment_allocations SET amount_cents = 20000 WHERE allocation_id = 'alloc-1'")
+        self.conn.commit()
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Payment Status"], "Paid")
+        self.conn.execute("UPDATE payment_allocations SET status = 'reversed' WHERE allocation_id = 'alloc-1'")
+        self.conn.commit()
+        self.assertEqual(self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]["Payment Status"], "Unpaid")
+        self.conn.execute("UPDATE invoices SET status = 'void' WHERE invoice_id = 'inv-1'")
+        self.conn.commit()
+        row = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]
+        self.assertEqual(row["Invoice Status"], "Voided")
+        self.assertEqual(row["Payment Status"], "Not Invoiced")
+
+    def test_waived_zero_dollar_line_displays_waived(self):
+        self._import_sample_data()
+        sid = self._session_id()
+        self._set_session(sid, appointment_status="late_cancellation", billing_treatment="waived", approved_rate_cents=0)
+        self._invoice(sid, "finalized", 0)
+        row = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))[0]
+        self.assertEqual(row["Outcome"], "Late Cancellation — Waived")
+        self.assertEqual(row["Payment Status"], "Waived")
 
     def test_appointments_returns_valid_csv_with_existing_headers(self):
         self._import_sample_data()
@@ -260,6 +400,21 @@ class GenerateReportCsvTests(unittest.TestCase):
         generate_report_csv(self.conn, "sessions", 2026)
         generate_report_csv(self.conn, "appointments", 2026)
         self.assertFalse(self.reports_dir.exists())
+
+    def test_write_reports_uses_configured_env_dir_and_disk_api_parity(self):
+        self._import_sample_data()
+        configured = self.root / "Configured Reports"
+        with patch.dict(os.environ, {"JORDANA_REPORTS_DIR": str(configured)}):
+            self.assertEqual(resolve_reports_dir(), configured)
+            paths = write_reports(self.conn, year=2026)
+        simple_path = configured / "Jordana_Session_Log_2026.csv"
+        self.assertIn(simple_path, paths)
+        self.assertTrue(simple_path.exists())
+        self.assertFalse(self.reports_dir.exists())
+        self.assertEqual(
+            simple_path.read_text(encoding="utf-8").splitlines(),
+            generate_report_csv(self.conn, "simple", 2026).splitlines(),
+        )
 
 
 class ReportFilenameTests(unittest.TestCase):

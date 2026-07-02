@@ -13,7 +13,6 @@ from .appointment_ledger import (
     build_appointment_ledger_csv_rows,
 )
 from .rates import cents_to_dollars
-from .session_types import get_user_facing_session_label
 from .util import csv_safe, normalize_payment_status, text
 
 
@@ -59,10 +58,10 @@ SUMMARY_COLUMNS = [
 
 def write_reports(
     conn: sqlite3.Connection,
-    reports_dir: str | Path = "Reports",
+    reports_dir: str | Path | None = None,
     year: int | None = None,
 ) -> tuple[Path, Path, Path, Path]:
-    target_dir = Path(reports_dir)
+    target_dir = resolve_reports_dir(reports_dir)
     report_year = current_eastern_year() if year is None else int(year)
     target_dir.mkdir(parents=True, exist_ok=True)
     session_path = target_dir / f"Jordana_Client_Sessions_{report_year}.csv"
@@ -76,9 +75,23 @@ def write_reports(
 
     atomic_write_csv(session_path, SESSION_COLUMNS, session_rows)
     atomic_write_csv(summary_path, SUMMARY_COLUMNS, summary_rows)
-    atomic_write_csv(simple_path, SIMPLE_COLUMNS, build_simple_rows(session_rows))
+    atomic_write_csv(simple_path, SIMPLE_COLUMNS, build_simple_rows(conn, session_rows))
     atomic_write_csv(appointment_path, APPOINTMENT_LEDGER_COLUMNS, appointment_rows)
     return session_path, summary_path, simple_path, appointment_path
+
+
+def resolve_reports_dir(reports_dir: str | Path | None = None) -> Path:
+    if reports_dir is not None:
+        return Path(reports_dir)
+    return Path(os.environ.get("JORDANA_REPORTS_DIR", "Reports"))
+
+
+def refresh_reports_after_commit(conn: sqlite3.Connection) -> str | None:
+    try:
+        write_reports(conn)
+    except Exception:
+        return "Report generation warning: reports could not be refreshed. They can be regenerated later."
+    return None
 
 
 def current_eastern_year(now: datetime | None = None) -> int:
@@ -91,14 +104,15 @@ def current_eastern_year(now: datetime | None = None) -> int:
 
 SIMPLE_COLUMNS = [
     "Date",
-    "Time",
-    "Client / Participants",
-    "Session Length",
-    "Session Type",
+    "Participants",
+    "Bill To",
+    "Duration",
     "Time Category",
+    "Outcome",
     "Rate",
+    "Review Status",
+    "Invoice Status",
     "Payment Status",
-    "Review Needed",
 ]
 
 
@@ -122,6 +136,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
           s.rate_source,
           s.payment_status,
           s.appointment_status,
+          s.billing_treatment,
           s.review_status,
           s.raw_calendar_title,
           s.billing_session_type,
@@ -152,6 +167,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
         account_code = row["account_code"] or row["candidate_account_code"] or make_account_code(account_name or participants)
         output.append(
             {
+                "id": row["id"],
                 "session_date": row["session_date"] or (row["start_at"] or "")[:10],
                 "start_time": start_time(row["start_at"]),
                 "raw_calendar_title": row["raw_calendar_title"] or "",
@@ -174,6 +190,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
                 "rate_source": row["approved_rate_source"] or row["rate_source"] or "",
                 "payment_status": normalize_payment_status(row["payment_status"]),
                 "appointment_status": row["appointment_status"] or "unresolved",
+                "billing_treatment": row["billing_treatment"] or "unresolved",
                 "review_status": row["review_status"] or "needs_review",
                 "review_reasons": jsonish_to_list_text(row["review_reasons"]),
                 "invoice_number": "",
@@ -215,27 +232,122 @@ def build_summary_rows(
     return [grouped[key] for key in sorted(grouped)]
 
 
-def build_simple_rows(session_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+def build_simple_rows(conn: sqlite3.Connection, session_rows: list[dict[str, object]]) -> list[dict[str, object]]:
     rows = []
     for row in session_rows:
+        ledger = session_ledger_status(conn, text(row.get("id")), money_to_cents(row.get("approved_rate") or row.get("suggested_rate")))
         rows.append(
             {
                 "Date": row["session_date"],
-                "Time": row["start_time"],
-                "Client / Participants": row["participant_names"] or row["candidate_person_names"],
-                "Session Length": row["duration_minutes"],
-                "Session Type": get_user_facing_session_label(
-                    text(row.get("billing_session_type")) or None,
-                    text(row.get("appointment_status")) or None,
-                    text(row.get("custom_service_description")) or None,
-                ),
-                "Time Category": row["time_category"],
+                "Participants": row["participant_names"] or row["candidate_person_names"],
+                "Bill To": row["billing_party_name"],
+                "Duration": duration_label(row["duration_minutes"]),
+                "Time Category": time_category_label(row["time_category"]),
+                "Outcome": outcome_label(row["appointment_status"], row["billing_treatment"]),
                 "Rate": row["approved_rate"] or row["suggested_rate"],
-                "Payment Status": normalize_payment_status(row["payment_status"]),
-                "Review Needed": "No" if row["review_status"] == "approved" else "Yes",
+                "Review Status": review_status_label(row["review_status"]),
+                "Invoice Status": ledger["invoice_status"],
+                "Payment Status": ledger["payment_status"],
             }
         )
     return rows
+
+
+def session_ledger_status(conn: sqlite3.Connection, session_id: str, rate_cents: int) -> dict[str, str]:
+    rows = conn.execute(
+        """
+        SELECT i.invoice_id, i.status, li.line_amount_cents, li.invoice_line_item_id
+        FROM invoice_line_items li
+        JOIN invoices i ON i.invoice_id = li.invoice_id
+        WHERE li.source_session_id = ?
+        ORDER BY
+          CASE i.status WHEN 'draft' THEN 0 WHEN 'finalized' THEN 1 WHEN 'void' THEN 2 ELSE 3 END,
+          i.updated_at DESC,
+          i.created_at DESC
+        """,
+        (session_id,),
+    ).fetchall()
+    active = next((row for row in rows if row["status"] != "void"), None)
+    if active is None:
+        if rows:
+            return {"invoice_status": "Voided", "payment_status": "Not Invoiced"}
+        return {"invoice_status": "Not Invoiced", "payment_status": "Waived" if rate_cents == 0 else "Not Invoiced"}
+    invoice_status = {"draft": "Draft", "finalized": "Finalized"}.get(active["status"], text(active["status"]).title())
+    line_cents = int(active["line_amount_cents"] or 0)
+    if line_cents == 0:
+        payment_status = "Waived"
+    elif active["status"] != "finalized":
+        payment_status = "Unpaid"
+    else:
+        paid_cents = conn.execute(
+            """
+            SELECT COALESCE(SUM(pa.amount_cents), 0)
+            FROM payment_allocations pa
+            JOIN payments p ON p.payment_id = pa.payment_id
+            WHERE pa.invoice_line_item_id = ?
+              AND pa.status = 'active'
+              AND p.status = 'posted'
+            """,
+            (active["invoice_line_item_id"],),
+        ).fetchone()[0]
+        if paid_cents <= 0:
+            payment_status = "Unpaid"
+        elif paid_cents >= line_cents:
+            payment_status = "Paid"
+        else:
+            payment_status = "Partially Paid"
+    return {"invoice_status": invoice_status, "payment_status": payment_status}
+
+
+def outcome_label(appointment_status: object, billing_treatment: object) -> str:
+    status = text(appointment_status).lower()
+    treatment = text(billing_treatment).lower()
+    if status in {"scheduled", "completed"}:
+        return "Completed"
+    if status == "late_cancellation":
+        return {
+            "bill_full_fee": "Late Cancellation — Full Fee",
+            "billable": "Late Cancellation — Full Fee",
+            "custom_fee": "Late Cancellation — Custom Fee",
+            "waived": "Late Cancellation — Waived",
+            "not_billable": "Late Cancellation — Waived",
+        }.get(treatment, "—")
+    if status in {"cancelled", "timely_cancellation"}:
+        return "Cancelled — Not Billable"
+    if status == "no_show":
+        return "No Show"
+    return "—"
+
+
+def review_status_label(value: object) -> str:
+    status = text(value)
+    if status == "approved":
+        return "Approved"
+    if status in {"ready_for_approval", "reviewed"}:
+        return "Reviewed"
+    return "Needs Review"
+
+
+def time_category_label(value: object) -> str:
+    raw = text(value) or "standard"
+    return {
+        "standard": "Standard",
+        "evening": "Evening",
+        "weekend": "Weekend",
+        "weekend_evening": "Weekend",
+    }.get(raw, raw.replace("_", " ").title())
+
+
+def duration_label(value: object) -> str:
+    raw = text(value)
+    return f"{raw} min" if raw else ""
+
+
+def money_to_cents(value: object) -> int:
+    try:
+        return int(round(float(text(value) or "0") * 100))
+    except ValueError:
+        return 0
 
 
 def participant_names(conn: sqlite3.Connection, session_id: str) -> str:
@@ -406,7 +518,7 @@ def generate_report_csv(
         columns = SUMMARY_COLUMNS
     elif report_type == "simple":
         session_rows = build_session_rows(conn, year)
-        rows = build_simple_rows(session_rows)
+        rows = build_simple_rows(conn, session_rows)
         columns = SIMPLE_COLUMNS
     else:
         all_rows = build_appointment_ledger_csv_rows(conn)

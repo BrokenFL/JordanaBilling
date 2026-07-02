@@ -10,6 +10,7 @@ from typing import Any
 
 from .invoice_rendering import build_invoice_render_model, resolve_logo_path
 from .invoice_pdf import generate_invoice_pdf
+from .csv_reports import refresh_reports_after_commit
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
 from .util import json_dumps, new_id, normalize_payment_status, now_iso
@@ -1017,7 +1018,11 @@ def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
             conn.execute("DELETE FROM invoices WHERE invoice_id = ?", (invoice_id,))
             conn.commit()
             raise
-    return get_invoice(conn, invoice_id)
+    result = get_invoice(conn, invoice_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite3.Row | dict[str, Any], order: int) -> None:
@@ -1074,7 +1079,11 @@ def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids
     except Exception:
         conn.rollback()
         raise
-    return get_invoice(conn, invoice_id)
+    result = get_invoice(conn, invoice_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def update_invoice_draft(conn: sqlite3.Connection, invoice_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1106,7 +1115,11 @@ def update_invoice_draft(conn: sqlite3.Connection, invoice_id: str, data: dict[s
     except Exception:
         conn.rollback()
         raise
-    return get_invoice(conn, invoice_id)
+    result = get_invoice(conn, invoice_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: str) -> dict[str, Any]:
@@ -1122,7 +1135,11 @@ def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: s
     except Exception:
         conn.rollback()
         raise
-    return get_invoice(conn, invoice_id)
+    result = get_invoice(conn, invoice_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def _session_month(session_date: str | None) -> str | None:
@@ -1543,6 +1560,9 @@ def stage_approved_sessions_to_monthly_drafts(
             })
             continue
 
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
     return result
 
 
@@ -1883,7 +1903,11 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         if pdf_path and not pdf_existed_before and pdf_path.exists():
             pdf_path.unlink()
         raise
-    return get_invoice(conn, invoice_id)
+    result = get_invoice(conn, invoice_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def void_invoice(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict[str, Any]:
@@ -1907,7 +1931,11 @@ def void_invoice(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict
     except Exception:
         conn.rollback()
         raise
-    return get_invoice(conn, invoice_id)
+    result = get_invoice(conn, invoice_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def _draft(conn: sqlite3.Connection, invoice_id: str) -> sqlite3.Row:
