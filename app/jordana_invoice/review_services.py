@@ -2175,6 +2175,11 @@ def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, A
         raise ValueError("Account not found.")
     members = get_account_members(conn, account_id)
     billing_party = get_billing_party(conn, account.get("default_billing_party_id"))
+    filing_owner = _resolve_relationship_filing_owner(
+        conn,
+        account_id=account_id,
+        billing_party_id=account.get("default_billing_party_id"),
+    )
     rates = conn.execute(
         """
         SELECT rr.*, p.display_name
@@ -2204,10 +2209,126 @@ def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, A
         "account": account,
         "members": members,
         "billing_party": billing_party,
+        "filing_owner": filing_owner,
         "rates": [dict(row) for row in rates],
         "sessions": [dict(row) for row in sessions],
         "aliases": [dict(row) for row in aliases],
         "audit": audit_history_for_entity(conn, "client_account", account_id),
+    }
+
+
+def _relationship_filing_owner_options(
+    conn: sqlite3.Connection,
+    *,
+    account_id: str,
+    billing_party_id: str | None,
+    covered_client_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    options: dict[tuple[str, str], dict[str, Any]] = {}
+    if billing_party_id:
+        party = conn.execute(
+            "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1",
+            (billing_party_id,),
+        ).fetchone()
+        if party and party["billing_party_type"] == "organization":
+            display = party["organization_name"] or party["billing_name"]
+            options[("billing_party", party["billing_party_id"])] = {
+                "owner_kind": "billing_party",
+                "owner_id": party["billing_party_id"],
+                "display_name": display,
+                "source_role": "billing_organization",
+            }
+        if party and party["person_id"]:
+            person = conn.execute(
+                "SELECT person_id, display_name, person_code FROM people WHERE person_id = ? AND active = 1",
+                (party["person_id"],),
+            ).fetchone()
+            if person:
+                options[("person", person["person_id"])] = {
+                    "owner_kind": "person",
+                    "owner_id": person["person_id"],
+                    "person_id": person["person_id"],
+                    "person_code": person["person_code"],
+                    "display_name": person["display_name"],
+                    "source_role": "payer",
+                }
+    if covered_client_ids is None:
+        member_rows = conn.execute(
+            """
+            SELECT p.person_id, p.display_name, p.person_code
+            FROM account_members am
+            JOIN people p ON p.person_id = am.person_id
+            WHERE am.account_id = ? AND p.active = 1
+            ORDER BY p.display_name, p.person_id
+            """,
+            (account_id,),
+        ).fetchall()
+    else:
+        if covered_client_ids:
+            placeholders = ", ".join("?" for _ in covered_client_ids)
+            member_rows = conn.execute(
+                f"""
+                SELECT person_id, display_name, person_code
+                FROM people
+                WHERE person_id IN ({placeholders}) AND active = 1
+                ORDER BY display_name, person_id
+                """,
+                covered_client_ids,
+            ).fetchall()
+        else:
+            member_rows = []
+    for person in member_rows:
+        key = ("person", person["person_id"])
+        options.setdefault(key, {
+            "owner_kind": "person",
+            "owner_id": person["person_id"],
+            "person_id": person["person_id"],
+            "person_code": person["person_code"],
+            "display_name": person["display_name"],
+            "source_role": "covered_client",
+        })
+    return sorted(options.values(), key=lambda row: (
+        0 if row["source_role"] == "billing_organization" else 1 if row["source_role"] == "payer" else 2,
+        row.get("display_name") or "",
+        row.get("owner_id") or "",
+    ))
+
+
+def _fallback_relationship_filing_owner(options: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for role in ("billing_organization", "payer", "covered_client"):
+        for option in options:
+            if option.get("source_role") == role:
+                return option
+    return options[0] if options else None
+
+
+def _resolve_relationship_filing_owner(
+    conn: sqlite3.Connection,
+    *,
+    account_id: str,
+    billing_party_id: str | None,
+    covered_client_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    account = conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+    if not account:
+        raise ValueError("Account not found.")
+    options = _relationship_filing_owner_options(
+        conn,
+        account_id=account_id,
+        billing_party_id=billing_party_id,
+        covered_client_ids=covered_client_ids,
+    )
+    option_map = {(row["owner_kind"], row["owner_id"]): row for row in options}
+    kind = account["default_filing_owner_kind"] or ("person" if account["default_filing_owner_person_id"] else None)
+    record_id = account["default_filing_owner_record_id"] or account["default_filing_owner_person_id"]
+    selected = option_map.get((kind, record_id)) if kind and record_id else None
+    source = "saved" if selected else "default"
+    if not selected:
+        selected = _fallback_relationship_filing_owner(options)
+    return {
+        "selected": selected,
+        "options": options,
+        "source": source if selected else "unresolved",
     }
 
 
@@ -2534,12 +2655,40 @@ def update_billing_relationship(
             primary_person_id = payer_person_id
         elif covered_client_ids:
             primary_person_id = covered_client_ids[0]
-        requested_filing_owner = payload.get("default_filing_owner_person_id", account["default_filing_owner_person_id"])
-        requested_filing_owner = str(requested_filing_owner or "").strip() or None
-        if requested_filing_owner and requested_filing_owner not in new_set:
-            raise ValueError("Default filing client must be one of the covered clients.")
-        if not requested_filing_owner and len(covered_client_ids) == 1:
-            requested_filing_owner = covered_client_ids[0]
+        explicit_filing_owner = bool(payload.get("filing_owner_explicit"))
+        requested_kind = (
+            payload.get("filing_owner_kind")
+            or payload.get("default_filing_owner_kind")
+            or account["default_filing_owner_kind"]
+            or ("person" if account["default_filing_owner_person_id"] else None)
+        )
+        requested_id = (
+            payload.get("filing_owner_record_id")
+            or payload.get("default_filing_owner_record_id")
+            or payload.get("default_filing_owner_person_id")
+            or account["default_filing_owner_record_id"]
+            or account["default_filing_owner_person_id"]
+        )
+        if payload.get("default_filing_owner_person_id"):
+            requested_kind = "person"
+        requested_kind = str(requested_kind or "").strip() or None
+        requested_id = str(requested_id or "").strip() or None
+        filing_options = _relationship_filing_owner_options(
+            conn,
+            account_id=account_id,
+            billing_party_id=billing_party_id,
+            covered_client_ids=covered_client_ids,
+        )
+        option_map = {(row["owner_kind"], row["owner_id"]): row for row in filing_options}
+        requested_owner = option_map.get((requested_kind, requested_id)) if requested_kind and requested_id else None
+        if explicit_filing_owner and requested_kind and requested_id and not requested_owner:
+            raise ValueError("Save invoices under must be a connected payer, organization, or covered client.")
+        filing_owner = requested_owner or _fallback_relationship_filing_owner(filing_options)
+        filing_owner_kind = filing_owner["owner_kind"] if filing_owner else None
+        filing_owner_record_id = filing_owner["owner_id"] if filing_owner else None
+        legacy_filing_owner_person_id = (
+            filing_owner_record_id if filing_owner_kind == "person" else None
+        )
 
         for cid in covered_client_ids:
             if cid in current_members:
@@ -2556,8 +2705,23 @@ def update_billing_relationship(
 
         now = now_iso()
         conn.execute(
-            "UPDATE client_accounts SET default_billing_party_id = ?, default_filing_owner_person_id = ?, updated_at = ? WHERE account_id = ?",
-            (billing_party_id, requested_filing_owner, now, account_id),
+            """
+            UPDATE client_accounts
+            SET default_billing_party_id = ?,
+                default_filing_owner_person_id = ?,
+                default_filing_owner_kind = ?,
+                default_filing_owner_record_id = ?,
+                updated_at = ?
+            WHERE account_id = ?
+            """,
+            (
+                billing_party_id,
+                legacy_filing_owner_person_id,
+                filing_owner_kind,
+                filing_owner_record_id,
+                now,
+                account_id,
+            ),
         )
 
         conn.execute(
@@ -6444,11 +6608,38 @@ def setup_billing_relationship(
             role = "primary" if is_primary else "family_member"
             add_account_member(conn, account["account_id"], cid, role, is_primary, commit=False)
 
-        # Set default billing party on account
+        # Set default billing party and filing owner on account
         now = now_iso()
+        filing_options = _relationship_filing_owner_options(
+            conn,
+            account_id=account["account_id"],
+            billing_party_id=billing_party_id,
+            covered_client_ids=covered_client_ids,
+        )
+        filing_owner = _fallback_relationship_filing_owner(filing_options)
+        filing_owner_kind = filing_owner["owner_kind"] if filing_owner else None
+        filing_owner_record_id = filing_owner["owner_id"] if filing_owner else None
+        legacy_filing_owner_person_id = (
+            filing_owner_record_id if filing_owner_kind == "person" else None
+        )
         conn.execute(
-            "UPDATE client_accounts SET default_billing_party_id = ?, updated_at = ? WHERE account_id = ?",
-            (billing_party_id, now, account["account_id"]),
+            """
+            UPDATE client_accounts
+            SET default_billing_party_id = ?,
+                default_filing_owner_person_id = ?,
+                default_filing_owner_kind = ?,
+                default_filing_owner_record_id = ?,
+                updated_at = ?
+            WHERE account_id = ?
+            """,
+            (
+                billing_party_id,
+                legacy_filing_owner_person_id,
+                filing_owner_kind,
+                filing_owner_record_id,
+                now,
+                account["account_id"],
+            ),
         )
         _upsert_billing_relationship_key(
             conn,

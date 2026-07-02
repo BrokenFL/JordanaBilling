@@ -6,7 +6,7 @@ migrations, tests, and explicit decisions remain authoritative.
 - **Latest code commit reviewed:** `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
 - **Latest recorded full-suite verification commit:** `033d2634fa33688f686c66160ec0eff3e71bf8d7`
 - **Documentation reconciliation date:** 2026-07-02
-- **Migration head:** `015_duplicate_repair_reversal_state`
+- **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,612 passing, 11 skipped, 0 failures (`2623` tests run)
 
 ## Architecture

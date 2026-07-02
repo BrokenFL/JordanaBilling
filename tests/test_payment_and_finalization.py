@@ -628,10 +628,11 @@ class FilingOwnerTests(unittest.TestCase):
         session = self._session("orgone", [{"person_id": client["person_id"], "display_name": "Org Client"}], org["billing_party_id"])
         draft = self._draft(org["billing_party_id"], [session])
         filing = resolve_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"])
-        self.assertEqual(filing["selected"]["person_id"], client["person_id"])
-        self.assertEqual(filing["source"], "single_eligible_client")
+        self.assertEqual(filing["selected"]["owner_kind"], "billing_party")
+        self.assertEqual(filing["selected"]["owner_id"], org["billing_party_id"])
+        self.assertEqual(filing["source"], "billing_organization")
 
-    def test_organization_multiple_clients_requires_choice_and_rejects_outside_client(self):
+    def test_organization_multiple_clients_defaults_to_org_and_rejects_outside_client(self):
         a = self._person("Alpha", "Client")
         b = self._person("Beta", "Client")
         outside = self._person("Outside", "Client")
@@ -643,8 +644,8 @@ class FilingOwnerTests(unittest.TestCase):
         ]
         draft = self._draft(org["billing_party_id"], sessions)
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
-        self.assertFalse(preview["readiness"]["ready"])
-        self.assertIn("filing_owner", {e["field"] for e in preview["readiness"]["errors"]})
+        self.assertTrue(preview["readiness"]["ready"])
+        self.assertEqual(preview["filing_owner"]["selected"]["owner_id"], org["billing_party_id"])
         with self.assertRaises(ValueError):
             update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], outside["person_id"])
         updated = update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], b["person_id"])
@@ -871,6 +872,56 @@ class FilingOwnerTests(unittest.TestCase):
         self.assertEqual(invoice["status"], "draft")
         self.assertIsNone(invoice["pdf_path"])
         self.assertFalse((self.root / "Invoices" / "Partial Client" / "May 2026" / "Invoice_2026-0001.pdf").exists())
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_billing_party_owner_snapshot_survives_ineligibility(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "h" * 64
+        fake_pdf.side_effect = write_pdf
+        client = self._person("Org", "Client")
+        org = self._party("Snapshot Org", organization=True)
+        self._relationship("Snapshot Org Rel", org["billing_party_id"], [client])
+        session = self._session("snaporg", [{"person_id": client["person_id"], "display_name": "Org Client"}], org["billing_party_id"])
+        draft = self._draft(org["billing_party_id"], [session])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertEqual(final["invoice"]["filing_owner_kind"], "billing_party")
+        self.assertEqual(final["invoice"]["filing_owner_record_id"], org["billing_party_id"])
+        self.assertIn("Snapshot Org/May 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.conn.execute("UPDATE billing_parties SET active = 0 WHERE billing_party_id = ?", (org["billing_party_id"],))
+        self.conn.commit()
+        reopened = resolve_invoice_filing_owner(self.conn, final["invoice"]["invoice_id"])
+        self.assertIsNotNone(reopened["selected"])
+        self.assertEqual(reopened["source"], "finalized_snapshot")
+        self.assertEqual(reopened["selected"]["owner_kind"], "billing_party")
+        self.assertEqual(reopened["selected"]["owner_id"], org["billing_party_id"])
+        self.assertEqual(reopened["selected"]["display_name"], "Snapshot Org")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_month_folder_falls_back_to_billing_period_start_when_month_absent(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "i" * 64
+        fake_pdf.side_effect = write_pdf
+        client = self._person("Fallback", "Client")
+        party = self._party("Fallback Client", client["person_id"])
+        session = self._session("fallback", [{"person_id": client["person_id"], "display_name": "Fallback Client"}], party["billing_party_id"])
+        self.conn.execute("UPDATE sessions SET session_date = ? WHERE id = ?", ("2026-06-20", session["id"]))
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": party["billing_party_id"],
+            "billing_period_start": "2026-06-15",
+            "billing_period_end": "2026-07-14",
+            "invoice_date": "2026-07-14",
+            "session_ids": [session["id"]],
+        })
+        inv = get_invoice(self.conn, draft["invoice"]["invoice_id"])["invoice"]
+        self.assertIsNone(inv["billing_month"])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertIn("Fallback Client/June 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.assertNotIn("July 2026", final["invoice"]["pdf_path"])
 
 
 if __name__ == "__main__":

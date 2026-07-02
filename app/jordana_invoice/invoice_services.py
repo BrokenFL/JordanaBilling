@@ -250,15 +250,21 @@ def _sanitize_path_part(value: Any, fallback: str = "Unknown") -> str:
     return text or fallback
 
 
+def _row_get(row: sqlite3.Row | dict[str, Any], key: str, default: Any = None) -> Any:
+    if isinstance(row, sqlite3.Row):
+        return row[key] if key in row.keys() else default
+    return row.get(key, default)
+
+
 def _month_folder_label(invoice: sqlite3.Row | dict[str, Any]) -> str:
-    billing_month = str(invoice["billing_month"] if isinstance(invoice, sqlite3.Row) else invoice.get("billing_month") or "").strip()
+    billing_month = str(_row_get(invoice, "billing_month") or "").strip()
     if billing_month:
         try:
             parsed = date(int(billing_month[:4]), int(billing_month[5:7]), 1)
             return parsed.strftime("%B %Y")
         except (TypeError, ValueError):
             pass
-    period_start = str(invoice["billing_period_start"] if isinstance(invoice, sqlite3.Row) else invoice.get("billing_period_start") or "").strip()
+    period_start = str(_row_get(invoice, "billing_period_start") or "").strip()
     try:
         parsed = date.fromisoformat(period_start[:10])
     except (TypeError, ValueError):
@@ -266,17 +272,31 @@ def _month_folder_label(invoice: sqlite3.Row | dict[str, Any]) -> str:
     return parsed.strftime("%B %Y")
 
 
-def _existing_filing_folder_for_person(conn: sqlite3.Connection, root: Path, person_id: str) -> Path | None:
+def _filing_owner_key(filing_owner: dict[str, Any]) -> tuple[str, str]:
+    kind = str(filing_owner.get("owner_kind") or filing_owner.get("filing_owner_kind") or "person").strip() or "person"
+    record_id = str(
+        filing_owner.get("owner_id")
+        or filing_owner.get("filing_owner_record_id")
+        or filing_owner.get("person_id")
+        or ""
+    ).strip()
+    return kind, record_id
+
+
+def _existing_filing_folder_for_owner(conn: sqlite3.Connection, root: Path, owner_kind: str, owner_id: str) -> Path | None:
     rows = conn.execute(
         """
         SELECT pdf_path
         FROM invoices
         WHERE status IN ('finalized', 'void')
-          AND filing_owner_person_id = ?
+          AND (
+            (filing_owner_kind = ? AND filing_owner_record_id = ?)
+            OR (? = 'person' AND filing_owner_person_id = ?)
+          )
           AND pdf_path IS NOT NULL
         ORDER BY finalized_at DESC, updated_at DESC
         """,
-        (person_id,),
+        (owner_kind, owner_id, owner_kind, owner_id),
     ).fetchall()
     for row in rows:
         try:
@@ -289,33 +309,37 @@ def _existing_filing_folder_for_person(conn: sqlite3.Connection, root: Path, per
     return None
 
 
-def _plain_filing_folder_owned_by_different_person(conn: sqlite3.Connection, folder_name: str, person_id: str) -> bool:
+def _plain_filing_folder_owned_by_different_owner(conn: sqlite3.Connection, folder_name: str, owner_kind: str, owner_id: str) -> bool:
     rows = conn.execute(
         """
-        SELECT DISTINCT filing_owner_person_id, filing_owner_display_name_snapshot
+        SELECT DISTINCT filing_owner_kind, filing_owner_record_id, filing_owner_person_id, filing_owner_display_name_snapshot
         FROM invoices
         WHERE status IN ('finalized', 'void')
-          AND filing_owner_person_id IS NOT NULL
-          AND filing_owner_person_id != ?
           AND filing_owner_display_name_snapshot IS NOT NULL
         """,
-        (person_id,),
     ).fetchall()
-    return any(_sanitize_path_part(row["filing_owner_display_name_snapshot"]) == folder_name for row in rows)
+    for row in rows:
+        row_kind = row["filing_owner_kind"] or ("person" if row["filing_owner_person_id"] else "")
+        row_id = row["filing_owner_record_id"] or row["filing_owner_person_id"] or ""
+        if row_kind == owner_kind and row_id == owner_id:
+            continue
+        if _sanitize_path_part(row["filing_owner_display_name_snapshot"]) == folder_name:
+            return True
+    return False
 
 
 def _filing_owner_folder(conn: sqlite3.Connection, root: Path, filing_owner: dict[str, Any]) -> Path:
-    person_id = str(filing_owner.get("person_id") or "")
-    display_name = _sanitize_path_part(filing_owner.get("display_name"), person_id or "Unknown Client")
-    person_code = _sanitize_path_part(filing_owner.get("person_code"), person_id or "Unknown")
-    existing = _existing_filing_folder_for_person(conn, root, person_id)
+    owner_kind, owner_id = _filing_owner_key(filing_owner)
+    display_name = _sanitize_path_part(filing_owner.get("display_name"), owner_id or "Unknown Client")
+    disambiguator = _sanitize_path_part(filing_owner.get("person_code") or filing_owner.get("display_name"), display_name)
+    existing = _existing_filing_folder_for_owner(conn, root, owner_kind, owner_id)
     if existing:
         return existing
     plain = root / display_name
-    if _plain_filing_folder_owned_by_different_person(conn, display_name, person_id):
-        return root / f"{display_name} [{person_code}]"
+    if _plain_filing_folder_owned_by_different_owner(conn, display_name, owner_kind, owner_id):
+        return root / f"{display_name} [{disambiguator}]"
     if plain.exists():
-        return root / f"{display_name} [{person_code}]"
+        return root / f"{display_name} [{disambiguator}]"
     return plain
 
 
@@ -357,6 +381,70 @@ def _eligible_filing_clients(conn: sqlite3.Connection, invoice_id: str) -> list[
     return sorted(clients.values(), key=lambda row: (row.get("display_name") or "", row.get("person_id") or ""))
 
 
+def _person_owner(row: sqlite3.Row | dict[str, Any], *, source_role: str) -> dict[str, Any]:
+    person_id = _row_get(row, "person_id")
+    return {
+        "owner_kind": "person",
+        "owner_id": person_id,
+        "person_id": person_id,
+        "person_code": _row_get(row, "person_code"),
+        "display_name": _row_get(row, "display_name"),
+        "source_role": source_role,
+    }
+
+
+def _billing_party_owner(row: sqlite3.Row | dict[str, Any], *, source_role: str) -> dict[str, Any]:
+    billing_party_id = _row_get(row, "billing_party_id")
+    display_name = _row_get(row, "organization_name") or _row_get(row, "billing_name")
+    return {
+        "owner_kind": "billing_party",
+        "owner_id": billing_party_id,
+        "billing_party_id": billing_party_id,
+        "display_name": display_name,
+        "source_role": source_role,
+    }
+
+
+def _eligible_filing_owners(conn: sqlite3.Connection, invoice_id: str) -> list[dict[str, Any]]:
+    invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+    if not invoice:
+        return []
+    owners: dict[tuple[str, str], dict[str, Any]] = {}
+    party = conn.execute(
+        "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1",
+        (invoice["bill_to_party_id"],),
+    ).fetchone()
+    if party and party["billing_party_type"] == "organization":
+        owner = _billing_party_owner(party, source_role="billing_organization")
+        owners[(owner["owner_kind"], owner["owner_id"])] = owner
+    if party and party["person_id"]:
+        payer = conn.execute(
+            "SELECT person_id, display_name, person_code FROM people WHERE person_id = ? AND active = 1",
+            (party["person_id"],),
+        ).fetchone()
+        if payer:
+            owner = _person_owner(payer, source_role="payer")
+            owners[(owner["owner_kind"], owner["owner_id"])] = owner
+    for client in _eligible_filing_clients(conn, invoice_id):
+        owner = _person_owner(client, source_role="covered_client")
+        owners[(owner["owner_kind"], owner["owner_id"])] = owner
+    for relationship in _relationship_defaults_for_invoice(conn, dict(invoice)):
+        rows = conn.execute(
+            """
+            SELECT p.person_id, p.display_name, p.person_code
+            FROM account_members am
+            JOIN people p ON p.person_id = am.person_id
+            WHERE am.account_id = ? AND p.active = 1
+            ORDER BY p.display_name, p.person_id
+            """,
+            (relationship["account_id"],),
+        ).fetchall()
+        for row in rows:
+            owner = _person_owner(row, source_role="covered_client")
+            owners[(owner["owner_kind"], owner["owner_id"])] = owner
+    return sorted(owners.values(), key=lambda row: (row.get("display_name") or "", row.get("owner_kind") or "", row.get("owner_id") or ""))
+
+
 def _relationship_defaults_for_invoice(conn: sqlite3.Connection, invoice: dict[str, Any]) -> list[sqlite3.Row]:
     eligible_ids = {client["person_id"] for client in _eligible_filing_clients(conn, invoice["invoice_id"])}
     if not eligible_ids:
@@ -390,8 +478,15 @@ def resolve_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str) -> d
         raise ValueError("Invoice was not found.")
     invoice = dict(invoice_row)
     eligible = _eligible_filing_clients(conn, invoice_id)
+    eligible_owners = _eligible_filing_owners(conn, invoice_id)
     eligible_ids = {client["person_id"] for client in eligible}
+    eligible_owner_map = {
+        (owner["owner_kind"], owner["owner_id"]): owner
+        for owner in eligible_owners
+    }
     stored_id = invoice.get("filing_owner_person_id")
+    stored_kind = invoice.get("filing_owner_kind") or ("person" if stored_id else None)
+    stored_record_id = invoice.get("filing_owner_record_id") or stored_id
     party = conn.execute(
         "SELECT * FROM billing_parties WHERE billing_party_id = ?",
         (invoice["bill_to_party_id"],),
@@ -400,47 +495,69 @@ def resolve_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str) -> d
     source = "unresolved"
     message = ""
 
-    if stored_id:
-        selected = next((client for client in eligible if client["person_id"] == stored_id), None)
+    if stored_record_id and stored_kind:
+        selected = eligible_owner_map.get((stored_kind, stored_record_id))
         if selected:
             source = "invoice_selection"
         elif invoice["status"] in ("finalized", "void"):
-            selected = {
-                "person_id": stored_id,
-                "person_code": invoice.get("filing_owner_person_code_snapshot"),
-                "display_name": invoice.get("filing_owner_display_name_snapshot"),
-            }
-            source = "finalized_snapshot"
+            if stored_kind == "billing_party" and stored_record_id:
+                selected = {
+                    "owner_kind": "billing_party",
+                    "owner_id": stored_record_id,
+                    "billing_party_id": stored_record_id,
+                    "display_name": invoice.get("filing_owner_display_name_snapshot"),
+                }
+                source = "finalized_snapshot"
+            elif stored_id:
+                selected = {
+                    "owner_kind": "person",
+                    "owner_id": stored_id,
+                    "person_id": stored_id,
+                    "person_code": invoice.get("filing_owner_person_code_snapshot"),
+                    "display_name": invoice.get("filing_owner_display_name_snapshot"),
+                }
+                source = "finalized_snapshot"
+            else:
+                message = "Selected filing client is no longer eligible for this draft."
         else:
             message = "Selected filing client is no longer eligible for this draft."
 
-    if not selected and party and party["person_id"] and party["person_id"] in eligible_ids:
-        selected = next(client for client in eligible if client["person_id"] == party["person_id"])
-        source = "bill_to_client"
-
     relationships = _relationship_defaults_for_invoice(conn, invoice)
     if not selected:
-        default_ids = []
+        default_keys = []
         for relationship in relationships:
-            default_id = relationship["default_filing_owner_person_id"]
-            if default_id and default_id in eligible_ids:
-                default_ids.append(default_id)
-        unique_defaults = sorted(set(default_ids))
+            default_kind = relationship["default_filing_owner_kind"] or ("person" if relationship["default_filing_owner_person_id"] else None)
+            default_id = relationship["default_filing_owner_record_id"] or relationship["default_filing_owner_person_id"]
+            if default_kind and default_id and (default_kind, default_id) in eligible_owner_map:
+                default_keys.append((default_kind, default_id))
+        unique_defaults = sorted(set(default_keys))
         if len(unique_defaults) == 1:
-            selected = next(client for client in eligible if client["person_id"] == unique_defaults[0])
+            selected = eligible_owner_map[unique_defaults[0]]
             source = "relationship_default"
-        elif len(eligible) == 1:
-            selected = eligible[0]
-            source = "single_eligible_client"
 
-    if not selected and len(eligible) > 1:
-        message = "Choose which covered client this invoice should be filed under."
-    elif not selected and not eligible:
-        message = "Add at least one eligible client before choosing where to file this invoice."
+    if not selected and party and party["billing_party_type"] == "organization":
+        selected = eligible_owner_map.get(("billing_party", party["billing_party_id"]))
+        if selected:
+            source = "billing_organization"
+
+    if not selected and party and party["person_id"]:
+        selected = eligible_owner_map.get(("person", party["person_id"]))
+        if selected:
+            source = "bill_to_client" if party["person_id"] in eligible_ids else "payer"
+
+    if not selected and len(eligible_owners) == 1:
+        selected = eligible_owners[0]
+        source = "single_eligible_owner"
+
+    if not selected and len(eligible_owners) > 1:
+        message = "Choose where this invoice should be filed."
+    elif not selected and not eligible_owners:
+        message = "Add at least one connected filing owner before choosing where to file this invoice."
 
     return {
         "selected": selected,
         "eligible_clients": eligible,
+        "eligible_owners": eligible_owners,
         "source": source,
         "required": invoice["status"] == "draft",
         "message": message,
@@ -457,8 +574,16 @@ def update_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str, perso
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
-            "UPDATE invoices SET filing_owner_person_id = ?, revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
-            (chosen or None, now_iso(), invoice_id),
+            """
+            UPDATE invoices
+            SET filing_owner_kind = ?,
+                filing_owner_record_id = ?,
+                filing_owner_person_id = ?,
+                revision = revision + 1,
+                updated_at = ?
+            WHERE invoice_id = ?
+            """,
+            ("person" if chosen else None, chosen or None, chosen or None, now_iso(), invoice_id),
         )
         _audit(conn, "invoice", invoice_id, "filing_owner_selected", {"filing_owner_person_id": chosen or None})
         conn.commit()
@@ -1715,7 +1840,9 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "payee_name_snapshot": profile["payee_name"],
             "payment_address_snapshot": _address(profile, "payment_", include_name=profile["payee_name"]),
             "zelle_recipient_snapshot": _present_text(profile["zelle_recipient"]),
-            "filing_owner_person_id": filing_owner["person_id"],
+            "filing_owner_kind": filing_owner.get("owner_kind") or "person",
+            "filing_owner_record_id": filing_owner.get("owner_id") or filing_owner.get("person_id"),
+            "filing_owner_person_id": filing_owner.get("person_id"),
             "filing_owner_person_code_snapshot": filing_owner.get("person_code"),
             "filing_owner_display_name_snapshot": filing_owner.get("display_name"),
             "logo_reference_snapshot": resolve_logo_path(profile["logo_path"]),

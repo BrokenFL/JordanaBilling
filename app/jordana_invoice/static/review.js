@@ -4259,6 +4259,20 @@ async function openAccountRecord(accountId, options = {}) {
   const payerTypeLabel = payerType === "organization" ? "Organization" : (bp.person_id && (data.members || []).some(m => m.person_id === bp.person_id) ? "Client" : "Another person");
   const addressSummary = billingAddressSummary(bp);
   const deliveryLabel = { email: "Email", mail: "Mail", both: "Both", unresolved: "Unresolved" }[bp.preferred_delivery_method] || "Unresolved";
+  const filingOwner = data.filing_owner || {};
+  const selectedFilingOwner = filingOwner.selected || {};
+  const selectedFilingValue = selectedFilingOwner.owner_kind && selectedFilingOwner.owner_id
+    ? `${selectedFilingOwner.owner_kind}:${selectedFilingOwner.owner_id}`
+    : "";
+  const filingOptions = (filingOwner.options || []).map(owner => {
+    const value = `${owner.owner_kind}:${owner.owner_id}`;
+    const roleLabel = owner.source_role === "billing_organization"
+      ? "Organization"
+      : owner.source_role === "payer"
+        ? "Payer"
+        : "Covered client";
+    return `<option value="${escapeAttr(value)}" ${value === selectedFilingValue ? "selected" : ""}>${fmt(owner.display_name)} (${escapeHtml(roleLabel)})</option>`;
+  }).join("");
 
   const coveredHtml = (data.members || []).length
     ? `<div class="covered-clients-list">${data.members.map(m => `
@@ -4317,6 +4331,12 @@ async function openAccountRecord(accountId, options = {}) {
             <option value="both" ${bp.preferred_delivery_method === "both" ? "selected" : ""}>Both</option>
           </select>
         </label>
+        <label class="field wide">Save invoices under
+          <select id="editFilingOwner">
+            ${filingOptions}
+          </select>
+          <span class="help">Controls where invoice files are organized. It does not change who receives or pays the invoice.</span>
+        </label>
         <label class="field wide">Administrative notes<input id="editAdminNotes" value="${escapeHtml(data.account.administrative_notes || "")}"></label>
       </div>
     </div>
@@ -4337,6 +4357,9 @@ async function openAccountRecord(accountId, options = {}) {
     payer_person_id: bp.person_id || null,
     organization_billing_party_id: payerType === "organization" ? bp.billing_party_id : null,
     covered_client_ids: (data.members || []).map(m => m.person_id),
+    filing_owner_kind: selectedFilingOwner.owner_kind || null,
+    filing_owner_record_id: selectedFilingOwner.owner_id || null,
+    filing_owner_explicit: false,
   };
 
   let editorDirty = false;
@@ -4404,6 +4427,17 @@ async function openAccountRecord(accountId, options = {}) {
       markEditorDirty();
     };
   });
+
+  const filingSelect = $("editFilingOwner");
+  if (filingSelect) {
+    filingSelect.addEventListener("change", () => {
+      const [kind, ...idParts] = filingSelect.value.split(":");
+      editState.filing_owner_kind = kind || null;
+      editState.filing_owner_record_id = idParts.join(":") || null;
+      editState.filing_owner_explicit = true;
+      markEditorDirty();
+    });
+  }
 
   const deliveryInputs = ["editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
   deliveryInputs.forEach(id => {
@@ -4633,6 +4667,9 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
   const payload = {
     payer_kind: editState.payer_kind,
     covered_client_ids: editState.covered_client_ids,
+    filing_owner_kind: editState.filing_owner_kind,
+    filing_owner_record_id: editState.filing_owner_record_id,
+    filing_owner_explicit: editState.filing_owner_explicit,
     billing_delivery: billingDelivery,
     administrative_notes: adminNotes,
   };

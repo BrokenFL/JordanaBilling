@@ -105,7 +105,7 @@ The person or organization responsible for payment. The billing party is not ass
 
 ## `client_accounts`
 
-Billing relationships/groupings for covered clients and the default Bill To party. `default_filing_owner_person_id` is an optional relationship-level default for `File invoice under`; it must reference a covered client and is used only to prefill draft/finalization filing ownership. Changing it does not rewrite approved sessions or finalized invoices.
+Billing relationships/groupings for covered clients and the default Bill To party. `default_filing_owner_kind` plus `default_filing_owner_record_id` store the relationship-level `Save invoices under` target, which may be the billing organization, payer person, or a covered client connected to the relationship. `default_filing_owner_person_id` remains for compatibility with existing person-based filing defaults. Changing this setting does not rewrite approved sessions, finalized invoices, payments, or historical PDFs.
 
 ## `calendar_aliases`
 
@@ -170,7 +170,7 @@ Append-only record of parsing, proposed sessions, review decisions, and future i
 
 ## Invoice Filing Owner Additions
 
-Finalized invoices can freeze `filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`. These identify the permanent client person whose folder contains the invoice PDF and are separate from `bill_to_party_id`, participants, account membership, and payment ownership. New visible folders normally use the display-name snapshot; the frozen person code disambiguates same-name collisions and remains the internal identity. Existing finalized invoices may have these fields blank and must keep their stored `pdf_path` and checksum.
+Finalized invoices can freeze `filing_owner_kind`, `filing_owner_record_id`, `filing_owner_person_id`, `filing_owner_person_code_snapshot`, and `filing_owner_display_name_snapshot`. These identify the permanent connected record whose folder contains the invoice PDF and are separate from `bill_to_party_id`, participants, account membership, and payment ownership. New visible folders normally use the display-name snapshot; the frozen person code disambiguates same-name person collisions and remains internal. Existing finalized invoices may have these fields blank and must keep their stored `pdf_path` and checksum.
 ## Calendar Status Additions
 
 Authoritative raw calendar evidence remains in `raw_calendar_snapshots`. The existing `calendar` payload/header maps to `calendar_name`.

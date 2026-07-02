@@ -334,7 +334,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `update_billing_relationship(conn, account_id, data)`
-- **Accepted fields**: `payer_kind`, `payer_person_id`, `organization_billing_party_id`, `covered_client_ids`, `default_billing_party_id`, `filing_owner_person_id`
+- **Accepted fields**: `payer_kind`, `payer_person_id`, `organization_billing_party_id`, `covered_client_ids`, `default_billing_party_id`, `filing_owner_kind`, `filing_owner_record_id`, `filing_owner_explicit`, legacy `default_filing_owner_person_id`
 - **Required fields**: context-dependent (service-level validation)
 - **Success status**: 200
 - **Success response**: updated account/relationship dict
@@ -375,7 +375,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `setup_billing_relationship(conn, data)`
-- **Accepted fields**: `payer_kind`, `payer_person_id`, `organization_billing_party_id`, `covered_client_ids`, `billing_name`, `billing_email`, `billing_address_line_1`, `billing_city`, `billing_state`, `billing_postal_code`, `preferred_delivery_method`, `filing_owner_person_id`
+- **Accepted fields**: `payer_kind`, `payer_person_id`, `organization_billing_party_id`, `covered_client_ids`, `billing_name`, `billing_email`, `billing_address_line_1`, `billing_city`, `billing_state`, `billing_postal_code`, `preferred_delivery_method`
 - **Required fields**: `payer_kind`, covered clients (service-level validation)
 - **Success status**: 200
 - **Success response**: relationship setup result dict

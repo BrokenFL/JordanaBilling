@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-015_duplicate_repair_reversal_state
+017_relationship_filing_owner_target
 ```
 
 The registered migrations are:
@@ -29,6 +29,8 @@ The registered migrations are:
 13. `013_sync_state_hardening` — durable sync outcome and cursor metadata
 14. `014_candidate_identity_aliases` — exact candidate identity aliases and duplicate-reconciliation records
 15. `015_duplicate_repair_reversal_state` — reversible duplicate-repair state snapshots
+16. `016_late_cancellation_billing` — late-cancellation billing snapshots and scheduled-rate preservation
+17. `017_relationship_filing_owner_target` — relationship filing-owner kind/record targets for people or billing organizations
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 

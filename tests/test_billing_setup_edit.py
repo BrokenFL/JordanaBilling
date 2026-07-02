@@ -18,11 +18,14 @@ from jordana_invoice.review_services import (
     approve_candidate,
     create_billing_party,
     create_person,
+    get_account_record,
     get_person_record,
     list_review_candidates,
     preview_copy_contact_details,
     apply_copy_contact_details,
+    setup_billing_relationship,
     update_billing_party,
+    update_billing_relationship,
 )
 
 
@@ -1154,6 +1157,205 @@ class CopyContactDetailsTests(unittest.TestCase):
         })
         result = apply_copy_contact_details(self.conn, self.active_bp["billing_party_id"], self.inactive_bp["billing_party_id"])
         self.assertEqual(result["copied_fields"], [])
+
+
+class BillingRelationshipFilingOwnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.conn = connect(self.root / "filing-owner.sqlite3")
+        init_db(self.conn)
+        save_business_profile(self.conn, {
+            "business_name": "Demo Practice",
+            "payee_name": "Demo Practice",
+            "payment_address_line_1": "100 Example Ave",
+            "payment_city": "Example",
+            "payment_state": "FL",
+            "payment_postal_code": "00000",
+            "zelle_recipient": "demo-zelle@example.test",
+        })
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _person(self, name):
+        first, _, last = name.partition(" ")
+        return create_person(self.conn, {
+            "display_name": name,
+            "first_name": first,
+            "last_name": last or first,
+        })
+
+    def _organization(self, name):
+        return create_billing_party(self.conn, {
+            "billing_name": name,
+            "organization_name": name,
+            "billing_party_type": "organization",
+            "billing_email": "trust@example.test",
+            "billing_address_line_1": "20 Trust Ave",
+            "billing_city": "Test",
+            "billing_state": "FL",
+            "billing_postal_code": "00000",
+            "preferred_delivery_method": "email",
+        })
+
+    def _relationship(self, payer_kind, payer, covered):
+        payload = {
+            "payer_kind": payer_kind,
+            "covered_client_ids": [p["person_id"] for p in covered],
+        }
+        if payer_kind == "organization":
+            payload["organization_billing_party_id"] = payer["billing_party_id"]
+        else:
+            payload["payer_person_id"] = payer["person_id"]
+        result = setup_billing_relationship(self.conn, payload)
+        return result["account_id"]
+
+    def _session(self, key, participant, bill_to_party):
+        import_rows(self.conn, [raw_row(key, f"{participant['display_name']} | 60 | Office", "2026-06-15T10:00:00-04:00")], "test")
+        candidate_id = list_review_candidates(self.conn)["items"][0]["candidate_id"]
+        approved = approve_candidate(self.conn, candidate_id, {
+            "participants": [
+                {"person_id": participant["person_id"], "display_name": participant["display_name"], "is_primary": True},
+            ],
+            "billing_party_id": bill_to_party["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "175.00",
+            "payment_status": "unpaid",
+            "billing_treatment": "billable",
+        })
+        return approved["session"]
+
+    def test_organization_is_default_and_persists_after_reopen(self):
+        child = self._person("Fictional Child")
+        org = self._organization("Demo Family Trust")
+        account_id = self._relationship("organization", org, [child])
+        record = get_account_record(self.conn, account_id)
+        self.assertEqual(record["filing_owner"]["selected"]["owner_kind"], "billing_party")
+        self.assertEqual(record["filing_owner"]["selected"]["owner_id"], org["billing_party_id"])
+        reopened = get_account_record(self.conn, account_id)
+        self.assertEqual(reopened["filing_owner"]["selected"]["display_name"], "Demo Family Trust")
+
+    def test_payer_is_default_without_organization(self):
+        child = self._person("Fictional Child")
+        payer = self._person("Fictional Parent")
+        account_id = self._relationship("person", payer, [child])
+        record = get_account_record(self.conn, account_id)
+        self.assertEqual(record["filing_owner"]["selected"]["owner_kind"], "person")
+        self.assertEqual(record["filing_owner"]["selected"]["owner_id"], payer["person_id"])
+
+    def test_connected_covered_client_can_be_selected_without_changing_bill_to(self):
+        child = self._person("Fictional Child")
+        sibling = self._person("Fictional Sibling")
+        org = self._organization("Demo Family Trust")
+        account_id = self._relationship("organization", org, [child, sibling])
+        before_party = self.conn.execute("SELECT default_billing_party_id FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()[0]
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "organization",
+            "organization_billing_party_id": org["billing_party_id"],
+            "covered_client_ids": [child["person_id"], sibling["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": sibling["person_id"],
+            "filing_owner_explicit": True,
+        })
+        account = self.conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+        self.assertEqual(account["default_filing_owner_kind"], "person")
+        self.assertEqual(account["default_filing_owner_record_id"], sibling["person_id"])
+        self.assertEqual(account["default_billing_party_id"], before_party)
+        self.assertEqual(get_account_record(self.conn, account_id)["filing_owner"]["selected"]["display_name"], "Fictional Sibling")
+
+    def test_unrelated_person_cannot_be_selected(self):
+        child = self._person("Fictional Child")
+        outside = self._person("Unrelated Person")
+        payer = self._person("Fictional Parent")
+        account_id = self._relationship("person", payer, [child])
+        with self.assertRaises(ValueError):
+            update_billing_relationship(self.conn, account_id, {
+                "payer_kind": "person",
+                "payer_person_id": payer["person_id"],
+                "covered_client_ids": [child["person_id"]],
+                "filing_owner_kind": "person",
+                "filing_owner_record_id": outside["person_id"],
+                "filing_owner_explicit": True,
+            })
+
+    def test_changing_payer_recomputes_invalid_filing_owner(self):
+        child = self._person("Fictional Child")
+        payer = self._person("Original Payer")
+        next_payer = self._person("Next Payer")
+        account_id = self._relationship("person", payer, [child])
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "person",
+            "payer_person_id": next_payer["person_id"],
+            "covered_client_ids": [child["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": payer["person_id"],
+        })
+        record = get_account_record(self.conn, account_id)
+        self.assertEqual(record["filing_owner"]["selected"]["owner_id"], next_payer["person_id"])
+
+    def test_removing_covered_client_recomputes_invalid_filing_owner(self):
+        child = self._person("Fictional Child")
+        sibling = self._person("Fictional Sibling")
+        org = self._organization("Demo Family Trust")
+        account_id = self._relationship("organization", org, [child, sibling])
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "organization",
+            "organization_billing_party_id": org["billing_party_id"],
+            "covered_client_ids": [child["person_id"], sibling["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": sibling["person_id"],
+            "filing_owner_explicit": True,
+        })
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "organization",
+            "organization_billing_party_id": org["billing_party_id"],
+            "covered_client_ids": [child["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": sibling["person_id"],
+        })
+        record = get_account_record(self.conn, account_id)
+        self.assertEqual(record["filing_owner"]["selected"]["owner_kind"], "billing_party")
+        self.assertEqual(record["filing_owner"]["selected"]["owner_id"], org["billing_party_id"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_final_invoice_path_uses_selected_owner_and_service_month_without_changing_identity(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "b" * 64
+
+        fake_pdf.side_effect = write_pdf
+        child = self._person("Fictional Child")
+        folder_owner = self._person("Fictional Folder Owner")
+        org = self._organization("Demo Family Trust")
+        account_id = self._relationship("organization", org, [child, folder_owner])
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "organization",
+            "organization_billing_party_id": org["billing_party_id"],
+            "covered_client_ids": [child["person_id"], folder_owner["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": folder_owner["person_id"],
+            "filing_owner_explicit": True,
+        })
+        session = self._session("filing-owner-final", child, org)
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": org["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-07-01",
+            "session_ids": [session["id"]],
+        })
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertIn("Fictional Folder Owner/June 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
+        self.assertEqual(final["invoice"]["invoice_date"], "2026-07-01")
+        self.assertEqual(final["invoice"]["invoice_number"], "2026-0001")
+        self.assertEqual(final["invoice"]["bill_to_name_snapshot"], "Demo Family Trust")
+        self.assertEqual(final["invoice"]["filing_owner_person_id"], folder_owner["person_id"])
+        self.assertEqual(final["invoice"]["filing_owner_kind"], "person")
 
 
 if __name__ == "__main__":

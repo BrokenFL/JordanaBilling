@@ -427,6 +427,8 @@ CREATE TABLE IF NOT EXISTS client_accounts (
   account_type TEXT NOT NULL DEFAULT 'individual',
   default_billing_party_id TEXT,
   default_filing_owner_person_id TEXT REFERENCES people(person_id),
+  default_filing_owner_kind TEXT,
+  default_filing_owner_record_id TEXT,
   administrative_notes TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -782,6 +784,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   payee_name_snapshot TEXT,
   payment_address_snapshot TEXT,
   zelle_recipient_snapshot TEXT,
+  filing_owner_kind TEXT,
+  filing_owner_record_id TEXT,
   filing_owner_person_id TEXT REFERENCES people(person_id),
   filing_owner_person_code_snapshot TEXT,
   filing_owner_display_name_snapshot TEXT,
@@ -1588,6 +1592,38 @@ def _apply_migration_016(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET = "017_relationship_filing_owner_target"
+
+
+def _apply_migration_017(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "client_accounts", {
+        "default_filing_owner_kind": "TEXT",
+        "default_filing_owner_record_id": "TEXT",
+    })
+    add_columns(conn, "invoices", {
+        "filing_owner_kind": "TEXT",
+        "filing_owner_record_id": "TEXT",
+    })
+    conn.execute(
+        "UPDATE client_accounts "
+        "SET default_filing_owner_kind = 'person', "
+        "    default_filing_owner_record_id = default_filing_owner_person_id "
+        "WHERE default_filing_owner_person_id IS NOT NULL "
+        "  AND (default_filing_owner_kind IS NULL OR default_filing_owner_record_id IS NULL)"
+    )
+    conn.execute(
+        "UPDATE invoices "
+        "SET filing_owner_kind = 'person', "
+        "    filing_owner_record_id = filing_owner_person_id "
+        "WHERE filing_owner_person_id IS NOT NULL "
+        "  AND (filing_owner_kind IS NULL OR filing_owner_record_id IS NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoices_filing_owner_target"
+        " ON invoices(filing_owner_kind, filing_owner_record_id, status)"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1605,6 +1641,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_014_CANDIDATE_IDENTITY_ALIASES, _apply_migration_014),
     (MIGRATION_015_DUPLICATE_REPAIR_REVERSAL_STATE, _apply_migration_015),
     (MIGRATION_016_LATE_CANCELLATION_BILLING, _apply_migration_016),
+    (MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET, _apply_migration_017),
 ]
 
 

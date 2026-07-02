@@ -160,28 +160,30 @@ During finalization, the user may optionally check "Add Insurance Coding" and en
 
 Diagnosis codes are local operational data. Real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, demo data, documentation, or committed databases. Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them. Standard self-pay invoices should not include diagnosis codes. Diagnosis-code values must never be inferred from calendar text, participant names, session descriptions, or other application data. Approved invoice snapshots must remain historically stable; removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records.
 
-### File Invoice Under
+### Save Invoices Under And File Invoice Under
 
-`File invoice under` is a separate filing-owner concept from Participants, Bill To, billing relationship/account, and payment owner. Bill To remains the payer and `billing_party_id` remains the payment owner. Filing owner determines the local client folder for newly finalized PDFs.
+`Save invoices under` is a relationship-level default for future invoice filing. `File invoice under` is the draft/finalization-level filing owner that is frozen when an invoice is finalized. Both are separate from Participants, Bill To, billing relationship/account, invoice recipient, billing email, rates, approved sessions, and payment owner. Bill To remains the payer and `billing_party_id` remains the payment owner. Filing owner determines the local folder for newly finalized PDFs.
 
 Resolution rules:
 
 - A self-paying client files under that client.
 - When Bill To is an established client person, the invoice files under that paying client, even if another client received the service.
-- When Bill To is an organization, the invoice files under a covered client from that billing relationship. One eligible covered client can be selected automatically; multiple eligible clients require Jordana to choose.
-- When Bill To is a non-client individual, the invoice files under the service client when unambiguous; multi-client ambiguity requires Jordana to choose.
-- Only eligible covered client people may be selected. Draft preview still works when unresolved, but finalization readiness fails with a filing-owner validation message.
+- When Bill To is an organization, the relationship default is the organization unless Jordana selects a connected payer or covered client instead.
+- When Bill To is a non-client individual, the relationship default is the payer unless Jordana selects a connected covered client instead.
+- Allowed relationship filing targets are existing connected records only: the payer, the billing organization when present, and covered clients connected to the billing relationship.
+- If payer or covered-client changes make the saved target invalid, the relationship editor falls back to the billing organization when available, otherwise to the payer. It does not keep an invalid hidden reference.
+- Draft preview still works when unresolved, but finalization readiness fails with a filing-owner validation message.
 
-Billing relationships may store `default_filing_owner_person_id`. It must reference a covered client. If relationship membership changes through the relationship editor and the default no longer belongs, the update must clear or replace the default; it must not silently choose among multiple remaining clients. Approved sessions are not rewritten by default changes.
+Billing relationships store the selected target with `default_filing_owner_kind` and `default_filing_owner_record_id`. Existing `default_filing_owner_person_id` values remain compatible for person-based defaults. Approved sessions, finalized invoices, payments, and historical PDFs are not rewritten by default changes.
 
-Finalization freezes `filing_owner_person_id`, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, and `pdf_path`. Later person-name or relationship changes do not move or rename finalized invoices. Existing finalized invoices keep their existing path/checksum/snapshots and are not backfilled by guessing.
+Finalization freezes `filing_owner_kind`, `filing_owner_record_id`, `filing_owner_person_id` when the selected target is a person, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, and `pdf_path`. Later person-name or relationship changes do not move or rename finalized invoices. Existing finalized invoices keep their existing path/checksum/snapshots and are not backfilled by guessing.
 
 New finalized PDFs are stored under the configured invoice root. Installed
 releases set that root to `~/Documents/Jordana Billing/Client Files`:
 
-`Client Files/<Client Display Name>/<Month YYYY>/Invoice_<number>.pdf`
+`Client Files/<Filing Owner Display Name>/<Month YYYY>/Invoice_<number>.pdf`
 
-The month folder uses `billing_month` when present. If `billing_month` is absent, it falls back to `billing_period_start`. It never uses the wall-clock date or PDF creation date. Path parts are sanitized, the stable person code remains frozen internally, and organization names are not used as the folder when the invoice is filed under a client.
+The month folder uses `billing_month` when present. If `billing_month` is absent, it falls back to `billing_period_start`. It never uses the wall-clock date, invoice date, finalization timestamp, email date, or PDF creation date. Path parts are sanitized, and stable internal identifiers are stored in SQLite rather than exposed in ordinary folder names.
 
 When two different filing-owner people would otherwise use the same sanitized display-name folder, the later conflicting folder is disambiguated with the permanent person code:
 

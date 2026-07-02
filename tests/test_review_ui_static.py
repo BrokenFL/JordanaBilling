@@ -80,6 +80,18 @@ class ReviewUiStaticTests(unittest.TestCase):
         self.assertNotIn("Same as sole participant", js)
         self.assertNotIn("Search or create a bill-to contact", js)
 
+    def test_billing_relationship_editor_has_save_invoices_under_control(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openAccountRecord")
+        end = js.index("function openRecipientSearch", start)
+        editor = js[start:end]
+
+        self.assertIn("Billing delivery", editor)
+        self.assertIn("Save invoices under", editor)
+        self.assertIn("Controls where invoice files are organized. It does not change who receives or pays the invoice.", editor)
+        self.assertIn("filing_owner_kind", editor)
+        self.assertIn("filing_owner_record_id", editor)
+
     def test_confirmed_client_summary_renders_without_participant_chips(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         self.assertIn("if (!chips) return;", js)
