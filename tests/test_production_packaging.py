@@ -69,6 +69,51 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("Private artifact path found", builder)
         self.assertIn('rm -rf "$PROJECT_DIR/build/lib"', builder)
 
+    def test_release_builder_supports_optional_release_label_without_package_version_change(self) -> None:
+        builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
+        self.assertIn('RELEASE_LABEL="${JORDANA_RELEASE_LABEL:-}"', builder)
+        self.assertIn("--release-label", builder)
+        self.assertIn('ARTIFACT_VERSION="${RELEASE_LABEL:-$VERSION}"', builder)
+        self.assertIn('RELEASE_NAME="JordanaBilling-${ARTIFACT_VERSION}-${COMMIT}-macos-arm64"', builder)
+        self.assertIn('"application_version": version', builder)
+        self.assertIn('manifest["release_label"] = release_label', builder)
+        self.assertIn('"source_tree_dirty": source_tree_dirty', builder)
+
+    def test_release_builder_rejects_unsafe_release_labels(self) -> None:
+        script = PROJECT_DIR / "scripts" / "build_release.sh"
+        for label in ("../bad", "bad/name", "bad name", "-bad"):
+            result = subprocess.run(
+                ["bash", str(script), "--release-label", label],
+                capture_output=True,
+                text=True,
+                cwd=str(PROJECT_DIR),
+            )
+            self.assertEqual(result.returncode, 2, label)
+            self.assertIn("Unsafe release label", result.stderr)
+
+    def test_release_builder_rejects_missing_release_label_argument(self) -> None:
+        script = PROJECT_DIR / "scripts" / "build_release.sh"
+        result = subprocess.run(
+            ["bash", str(script), "--release-label"],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_DIR),
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Missing value for --release-label", result.stderr)
+
+    def test_release_builder_keeps_wheel_version_pinned_to_application_version(self) -> None:
+        installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
+        pyproject = (PROJECT_DIR / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('version = "0.1.0"', pyproject)
+        self.assertIn("jordana-invoice==0.1.0", installer)
+
+    def test_release_builder_keeps_launcher_and_rollback_payload_contracts(self) -> None:
+        builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
+        self.assertIn('"$PROJECT_DIR/scripts/build_launcher.sh" --force', builder)
+        self.assertIn('cp "$PROJECT_DIR/scripts/install_release.sh"', builder)
+        self.assertIn("clean_and_sign_app", builder)
+
     def test_installed_launcher_resource_is_committed_without_private_data(self) -> None:
         resource = PROJECT_DIR / "Jordana Billing.app" / "Contents" / "Resources" / "launch_installed_app.sh"
         self.assertTrue(resource.is_file())

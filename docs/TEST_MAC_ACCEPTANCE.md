@@ -23,6 +23,9 @@ outside the app and must be preserved.
 - The Python major/minor version listed in `release_manifest.json` installed once.
 - Access to the private GitHub repository release page.
 - The versioned release DMG and matching `.sha256` file from the private pre-release.
+- For repeated test builds with the same application version, use the explicit
+  release label in the filename, for example
+  `JordanaBilling-v0.1.0-test.5-<commit>-macos-arm64.dmg`.
 - The private Apps Script URL and ingest API key available locally, not in GitHub, email, chat, screenshots, or logs.
 
 ## Steps
@@ -33,7 +36,7 @@ outside the app and must be preserved.
 4. Verify checksum. Expected result: the command prints `OK` and the checksum file names only the DMG filename, not Brooke's local build path.
 
 ```bash
-shasum -a 256 -c JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
+shasum -a 256 -c JordanaBilling-<release-label-or-version>-<commit>-macos-arm64.dmg.sha256
 ```
 
 5. Open the DMG. Expected result: the top level shows `Install Jordana Billing.app` and README only; the daily app and `ReleasePayload` folder are not exposed as separate DMG items.

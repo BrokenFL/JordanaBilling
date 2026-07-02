@@ -82,6 +82,19 @@ From a clean development checkout:
 scripts/build_release.sh
 ```
 
+For repeated test installers that share the same application/package version,
+pass a separate release label. This does not change the Python package version,
+database schema, migrations, invoice numbering, or data compatibility:
+
+```bash
+scripts/build_release.sh --release-label v0.1.0-test.5
+```
+
+`JORDANA_RELEASE_LABEL=v0.1.0-test.5 scripts/build_release.sh` is equivalent.
+Release labels must be simple path-safe values such as `v0.1.0-test.5` or
+`v0.1.0-rc.1`; blank, slash-containing, traversal, or shell-unsafe labels are
+rejected.
+
 The build writes:
 
 ```text
@@ -89,13 +102,23 @@ build/release/JordanaBilling-<version>-<commit>-macos-arm64.dmg
 build/release/JordanaBilling-<version>-<commit>-macos-arm64.dmg.sha256
 ```
 
+When a release label is provided, the label replaces `<version>` in the
+artifact filename while `application_version` remains the package version from
+`pyproject.toml`:
+
+```text
+build/release/JordanaBilling-v0.1.0-test.5-<commit>-macos-arm64.dmg
+build/release/JordanaBilling-v0.1.0-test.5-<commit>-macos-arm64.dmg.sha256
+```
+
 The artifact is inspected during build for forbidden private files such as
 `.env`, SQLite databases, PDFs, invoices, receipts, reports, and private data
 folders.
 
-The release manifest records the exact git commit, build timestamp, builder
-Python version, required Python major/minor family, payload checksums, and
-whether the artifact contains private data.
+The release manifest records the exact git commit, application version,
+optional release label, whether tracked source files were dirty at build time,
+build timestamp, builder Python version, required Python major/minor family,
+payload checksums, and whether the artifact contains private data.
 
 ## Private Configuration Setup
 

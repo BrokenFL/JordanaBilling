@@ -8,14 +8,41 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 BUILD_PYTHON="${JORDANA_RELEASE_PYTHON:-$(command -v python3)}"
+RELEASE_LABEL="${JORDANA_RELEASE_LABEL:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release-label)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --release-label" >&2
+        exit 2
+      fi
+      RELEASE_LABEL="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+if [[ -n "$RELEASE_LABEL" && ! "$RELEASE_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "Unsafe release label: $RELEASE_LABEL" >&2
+  exit 2
+fi
 VERSION="$("$BUILD_PYTHON" - <<'PY'
 import tomllib
 print(tomllib.loads(open("pyproject.toml", "rb").read().decode())["project"]["version"])
 PY
 )"
 COMMIT="$(git rev-parse --short=12 HEAD)"
+FULL_COMMIT="$(git rev-parse HEAD)"
+SOURCE_TREE_DIRTY=false
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  SOURCE_TREE_DIRTY=true
+fi
+ARTIFACT_VERSION="${RELEASE_LABEL:-$VERSION}"
 BUILD_ROOT="$PROJECT_DIR/build/release"
-RELEASE_NAME="JordanaBilling-${VERSION}-${COMMIT}-macos-arm64"
+RELEASE_NAME="JordanaBilling-${ARTIFACT_VERSION}-${COMMIT}-macos-arm64"
 RELEASE_DIR="$BUILD_ROOT/$RELEASE_NAME"
 DMG_PATH="$BUILD_ROOT/$RELEASE_NAME.dmg"
 DMG_ROOT="$BUILD_ROOT/$RELEASE_NAME-dmg"
@@ -63,7 +90,7 @@ chmod +x "$RELEASE_DIR/scripts/"*.sh
 "$BUILD_PYTHON" -m pip wheel --wheel-dir "$WHEELHOUSE" -r "$PROJECT_DIR/requirements-production.lock"
 "$BUILD_PYTHON" -m pip wheel --no-deps --wheel-dir "$WHEELHOUSE" "$PROJECT_DIR"
 
-"$BUILD_PYTHON" - "$RELEASE_DIR" "$VERSION" "$(git rev-parse HEAD)" <<'PY'
+"$BUILD_PYTHON" - "$RELEASE_DIR" "$VERSION" "$FULL_COMMIT" "$RELEASE_LABEL" "$SOURCE_TREE_DIRTY" <<'PY'
 import hashlib
 import json
 import os
@@ -75,6 +102,8 @@ from pathlib import Path
 release = Path(sys.argv[1])
 version = sys.argv[2]
 commit = sys.argv[3]
+release_label = sys.argv[4]
+source_tree_dirty = sys.argv[5] == "true"
 checksums = {}
 for path in sorted(p for p in release.rglob("*") if p.is_file()):
     rel = path.relative_to(release).as_posix()
@@ -84,7 +113,9 @@ for path in sorted(p for p in release.rglob("*") if p.is_file()):
 manifest = {
     "application": "Jordana Billing",
     "version": version,
+    "application_version": version,
     "git_commit": commit,
+    "source_tree_dirty": source_tree_dirty,
     "build_timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "supported_platform": "macOS",
     "supported_architecture": "arm64",
@@ -99,6 +130,8 @@ manifest = {
     },
     "checksums": checksums,
 }
+if release_label:
+    manifest["release_label"] = release_label
 (release / "release_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 with (release / "SHA256SUMS").open("w", encoding="utf-8") as fh:
     for rel, digest in checksums.items():
@@ -128,6 +161,9 @@ ditto --norsrc "$SETUP_APP" "$DMG_ROOT/Install Jordana Billing.app"
 clean_and_sign_app "$DMG_ROOT/Install Jordana Billing.app"
 cat > "$DMG_ROOT/README.txt" <<EOF
 Jordana Billing test release
+
+Release label: ${RELEASE_LABEL:-$VERSION}
+Application version: $VERSION
 
 Double-click "Install Jordana Billing.app" to install. The release payload is embedded inside the installer app.
 
