@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/review.css" />
   </head>
   <body>
+    <div id="workspaceBackdrop" class="workspace-backdrop" hidden></div>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">JB</span><strong>Jordana Billing</strong></div>
@@ -266,8 +267,8 @@
                 <tbody id="clientRows"></tbody>
               </table>
             </div>
-            <aside class="record-pane" id="accountRecord"><div class="empty-state">Open a billing relationship record.</div></aside>
-            <aside class="record-pane" id="organizationRecord" hidden><div class="empty-state">Open an organization billing record.</div></aside>
+            <aside class="record-pane responsive-sheet" id="accountRecord"><div class="empty-state">Open a billing relationship record.</div></aside>
+            <aside class="record-pane responsive-sheet" id="organizationRecord" hidden><div class="empty-state">Open an organization billing record.</div></aside>
           </div>
         </section>
 
@@ -362,7 +363,7 @@
                 <button id="invoiceNextPage">›</button>
               </footer>
             </section>
-            <aside class="invoice-workspace" id="invoiceWorkspace"><div class="empty-state">Create or open an invoice.</div></aside>
+            <aside class="invoice-workspace responsive-sheet" id="invoiceWorkspace"><div class="empty-state">Create or open an invoice.</div></aside>
           </div>
         </section>
 
@@ -391,7 +392,7 @@
                   <tbody id="unpaidRows"></tbody>
                 </table>
               </section>
-              <aside class="invoice-workspace" id="unpaidWorkspace"><div class="empty-state">Select an outstanding invoice to review payment history.</div></aside>
+              <aside class="invoice-workspace responsive-sheet" id="unpaidWorkspace"><div class="empty-state">Select an outstanding invoice to review payment history.</div></aside>
             </div>
           </div>
           <div class="payments-panel" id="paymentsPaidPanel" hidden>

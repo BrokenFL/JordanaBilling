@@ -147,19 +147,23 @@ Organization creation remains deferred.
 
 ## Responsive Panel Behavior
 
-On screens at or below 1100px, the CRM layout collapses to a single column. The account record (`#accountRecord`), organization record (`#organizationRecord`), invoice workspace (`.invoice-workspace`), and payment workspace (`#unpaidWorkspace`) become fixed bounded sheets with:
+On screens at or below 1800px, the CRM layout collapses to a single column. The account record (`#accountRecord`), organization record (`#organizationRecord`), invoice workspace (`.invoice-workspace`), and payment workspace (`#unpaidWorkspace`) all share a single `responsive-sheet` class and a single body-level backdrop (`#workspaceBackdrop`). When opened, the active panel becomes a fixed bounded sheet with:
 
 - Opaque white background and border
 - Fixed positioning with safe-area insets
 - Internal vertical scrolling, no horizontal overflow
-- A dimmed backdrop (`rgba(7, 20, 43, 0.48)`) that blocks interaction with the underlying page
-- A visible Close button (`.side-panel-close`) in each panel
+- A shared dimmed backdrop (`rgba(7, 20, 43, 0.48)`, z-index 8400) that blocks interaction with the underlying page
+- Body scroll locking via `body.responsive-sheet-open`
+- Background elements set to `inert` and `aria-hidden="true"`
+- Focus capture on open and focus restoration on close
+- A visible Close button (`.side-panel-close`) inside each panel
+- No duplicate backdrop on repeated open/close
 
 At or below 760px, the sheets expand to near-full-width with 8px safe margins and remain usable with visible close and action buttons.
 
-On wide desktop (above 1100px), panels retain their normal drawer/two-column behavior with opaque backgrounds and no full-screen takeover.
+On wide desktop (above 1800px), panels retain their normal drawer/two-column behavior with opaque backgrounds and no full-screen takeover.
 
-The `grid-column: 2` rule that previously forced account/organization records into an implicit off-screen column below 1100px is now overridden to `grid-column: 1` within the breakpoint.
+The `grid-column: 2` rule that previously forced account/organization records into an implicit off-screen column is now overridden to `grid-column: 1` within the breakpoint.
 
 ## Account Detail View
 

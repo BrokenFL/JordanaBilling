@@ -3,8 +3,8 @@
 This document supersedes older uploaded handoffs. Newer repository code, schema,
 migrations, tests, and explicit decisions remain authoritative.
 
-- **Latest code commit reviewed:** pending commit for responsive-panel and filing-owner fixes
-- **Latest recorded full-suite verification commit:** pending commit
+- **Latest code commit reviewed:** a4bf049 — responsive overlay fixes across billing workspaces
+- **Latest recorded full-suite verification commit:** a4bf049
 - **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,694 passing, 11 skipped, 0 failures (`2,705` tests run)

@@ -184,7 +184,7 @@ Saving persists transactionally to SQLite. Approved sessions are never silently 
 
 ### Responsive Panels
 
-On screens at or below 1100px, the Billing Relationship editor, organization record, invoice editor, and payment workspace become fixed bounded sheets with opaque backgrounds, dimmed backdrops, internal scrolling, and Close buttons. The underlying page is not interactive while a sheet is open. At or below 760px, sheets expand to near-full-width with safe viewport margins. See [Billing Relationships](CLIENTS_AND_ACCOUNTS.md#responsive-panel-behavior) for details.
+On screens at or below 1800px, the Billing Relationship editor, organization record, invoice editor, and payment workspace become fixed bounded sheets with opaque backgrounds, a shared dimmed backdrop (`#workspaceBackdrop`), body scroll locking, background inert/aria-hidden, focus restoration, internal scrolling, and Close buttons. The underlying page is not interactive while a sheet is open. At or below 760px, sheets expand to near-full-width with safe viewport margins. See [Billing Relationships](CLIENTS_AND_ACCOUNTS.md#responsive-panel-behavior) for details.
 
 ## Candidate Identity And Repair
 

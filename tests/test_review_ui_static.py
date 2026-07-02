@@ -133,17 +133,78 @@ for (const [input, expected] of cases) {
 
     def test_shared_side_panel_responsive_sheet_rules_exist(self):
         css = Path("app/jordana_invoice/static/review.css").read_text()
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
 
+        self.assertIn("@media (max-width: 1800px)", css)
         self.assertIn("@media (max-width: 1100px)", css)
-        self.assertIn("#accountRecord:has(.editor-section)", css)
-        self.assertIn(".invoice-workspace:has(.invoice-builder)", css)
-        self.assertIn("#unpaidWorkspace:has(.payment-panel)", css)
+        self.assertIn('id="workspaceBackdrop"', html)
+        self.assertIn("workspace-backdrop", css)
+        self.assertIn(".responsive-sheet.responsive-sheet-active", css)
+        self.assertIn("body.responsive-sheet-open", css)
+        self.assertIn("position: fixed;", css)
+        self.assertIn("inset: 0;", css)
+        self.assertIn("z-index: 8400;", css)
+        self.assertIn("z-index: 8501;", css)
         self.assertIn("background: white;", css)
+        self.assertIn("opacity: 1;", css)
         self.assertIn("overflow-y: auto;", css)
         self.assertIn("overflow-x: hidden;", css)
-        self.assertIn("rgba(7, 20, 43, 0.48)", css)
+        self.assertIn("width: calc(100vw - 32px);", css)
+        self.assertIn("max-height: calc(100vh - 32px);", css)
+        self.assertIn("width: calc(100vw - 16px);", css)
+        self.assertIn("max-height: calc(100vh - 16px);", css)
         self.assertIn("grid-column: 1;", css)
+        self.assertIn("rgba(7, 20, 43, 0.48)", css)
         self.assertIn(".side-panel-close", css)
+        self.assertIn("function activateResponsiveSheet", js)
+        self.assertIn("function closeResponsiveSheet", js)
+        self.assertIn('window.matchMedia("(max-width: 1800px)")', js)
+        self.assertIn('document.body.classList.add("responsive-sheet-open")', js)
+        self.assertIn('document.body.classList.remove("responsive-sheet-open")', js)
+
+    def test_all_responsive_sheet_panels_share_class_and_backdrop(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+
+        self.assertEqual(html.count('id="workspaceBackdrop"'), 1)
+        self.assertIn('class="record-pane responsive-sheet" id="accountRecord"', html)
+        self.assertIn('class="record-pane responsive-sheet" id="organizationRecord"', html)
+        self.assertIn('class="invoice-workspace responsive-sheet" id="invoiceWorkspace"', html)
+        self.assertIn('class="invoice-workspace responsive-sheet" id="unpaidWorkspace"', html)
+
+    def test_responsive_sheet_js_handles_lifecycle_and_background_interaction(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("responsiveSheetState.returnFocus", js)
+        self.assertIn("returnFocus.focus()", js)
+        self.assertIn("getWorkspaceBackdrop().hidden = true", js)
+        self.assertIn("backdrop.hidden = false", js)
+        self.assertIn('el.setAttribute("aria-hidden", "true")', js)
+        self.assertIn('if ("inert" in el) el.inert = true;', js)
+        self.assertIn('if ("inert" in el) el.inert = false;', js)
+        self.assertIn('responsiveSheetState.activePanel.classList.remove("responsive-sheet-active")', js)
+        self.assertIn('panel.classList.add("responsive-sheet-active")', js)
+
+    def test_invoice_and_payment_lists_stay_full_width_before_overlay(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn(".invoice-list-table { min-width: 1120px; table-layout: auto; }", css)
+        self.assertIn(".unpaid-list-table { min-width: 880px; }", css)
+        self.assertIn("#invoicesView .invoice-layout,", css)
+        self.assertIn("#paymentsView .invoice-layout", css)
+        self.assertIn("grid-template-columns: minmax(0, 1fr);", css)
+        self.assertIn("#invoicesView .invoice-workspace:not(.responsive-sheet-active)", css)
+        self.assertIn("#paymentsView #unpaidWorkspace:not(.responsive-sheet-active)", css)
+        self.assertIn("display: none;", css)
+
+    def test_billing_relationship_directory_stays_full_width_before_overlay(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn(".billing-dir-table { min-width: 1060px; table-layout: auto; }", css)
+        self.assertIn("#clientsView .crm-layout,", css)
+        self.assertIn("#clientsView .crm-layout > .table-scroll-wrap", css)
+        self.assertIn("#clientsView #accountRecord:not(.responsive-sheet-active)", css)
+        self.assertIn("#clientsView #organizationRecord:not(.responsive-sheet-active)", css)
 
     def test_payment_workspace_has_close_button(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -151,6 +212,17 @@ for (const [input, expected] of cases) {
         self.assertIn("function closePaymentWorkspace", js)
         self.assertIn("closePaymentWorkspace", js)
         self.assertIn('id="closePaymentPanel"', js)
+        self.assertIn('activateResponsiveSheet("unpaidWorkspace", closePaymentWorkspace)', js)
+
+    def test_payments_do_not_auto_open_detail_in_responsive_overlay_mode(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function loadOutstandingInvoices")
+        end = js.index("function renderOutstandingInvoices", start)
+        loader = js[start:end]
+
+        self.assertIn("responsiveSheetQuery.matches && !selectedInvoiceId", loader)
+        self.assertIn("Select an outstanding invoice to review payment history.", loader)
+        self.assertIn('closeResponsiveSheet("unpaidWorkspace")', loader)
 
     def test_all_panels_have_close_handlers(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -160,6 +232,9 @@ for (const [input, expected] of cases) {
         self.assertIn("function closeOrganizationRecord", js)
         self.assertIn("function closePaymentWorkspace", js)
         self.assertIn('class="side-panel-close"', js)
+        self.assertIn('activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace)', js)
+        self.assertIn('activateResponsiveSheet("accountRecord", closeAccountRecord)', js)
+        self.assertIn('activateResponsiveSheet("organizationRecord", closeOrganizationRecord)', js)
 
     def test_invoice_editor_uses_connected_filing_owner_targets(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

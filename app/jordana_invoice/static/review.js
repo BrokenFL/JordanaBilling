@@ -125,6 +125,136 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v) => v ? escapeHtml(v) : "-";
 const money = (v) => v ? `$${v}` : "—";
 const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
+const responsiveSheetQuery = window.matchMedia("(max-width: 1800px)");
+const responsiveSheetState = {
+  activePanel: null,
+  closeHandler: null,
+  returnFocus: null,
+  inerted: []
+};
+
+function getWorkspaceBackdrop() {
+  let backdrop = $("workspaceBackdrop");
+  if (!backdrop) {
+    backdrop = document.createElement("div");
+    backdrop.id = "workspaceBackdrop";
+    backdrop.className = "workspace-backdrop";
+    backdrop.hidden = true;
+    document.body.prepend(backdrop);
+  }
+  backdrop.onclick = () => {
+    const closeHandler = responsiveSheetState.closeHandler;
+    if (typeof closeHandler === "function") closeHandler();
+    else closeResponsiveSheet();
+  };
+  return backdrop;
+}
+
+function clearResponsiveSheetBackgroundState() {
+  responsiveSheetState.inerted.forEach(el => {
+    if (!el) return;
+    el.removeAttribute("aria-hidden");
+    if ("inert" in el) el.inert = false;
+  });
+  responsiveSheetState.inerted = [];
+}
+
+function setResponsiveSheetBackgroundState(panel) {
+  clearResponsiveSheetBackgroundState();
+  if (!panel || !responsiveSheetQuery.matches) return;
+  const inertTargets = [
+    document.querySelector(".sidebar"),
+    document.querySelector(".topbar"),
+    ...Array.from(panel.parentElement?.children || []).filter(el => el !== panel)
+  ].filter(Boolean);
+  inertTargets.forEach(el => {
+    el.setAttribute("aria-hidden", "true");
+    if ("inert" in el) el.inert = true;
+  });
+  responsiveSheetState.inerted = inertTargets;
+}
+
+function ensureResponsiveSheetHeader(panel) {
+  const close = panel?.querySelector(".side-panel-close");
+  if (!panel || !close || close.closest(".responsive-sheet-header")) return;
+  let title = close.nextElementSibling;
+  if (title?.classList.contains("return-link")) title = title.nextElementSibling;
+  if (title?.classList.contains("section-title-row") || title?.classList.contains("payment-panel-header")) {
+    title.classList.add("responsive-sheet-header");
+    title.appendChild(close);
+    return;
+  }
+  const header = document.createElement("div");
+  header.className = "responsive-sheet-header";
+  const titleWrap = document.createElement("div");
+  if (title && (title.tagName === "H3" || title.querySelector("h3"))) {
+    title.parentElement.insertBefore(header, title);
+    titleWrap.appendChild(title);
+  } else {
+    close.parentElement.insertBefore(header, close);
+  }
+  header.appendChild(titleWrap);
+  header.appendChild(close);
+}
+
+function updateResponsiveSheetMode() {
+  const panel = responsiveSheetState.activePanel;
+  const backdrop = getWorkspaceBackdrop();
+  if (!panel || !document.body.contains(panel)) {
+    backdrop.hidden = true;
+    document.body.classList.remove("responsive-sheet-open");
+    clearResponsiveSheetBackgroundState();
+    return;
+  }
+  if (responsiveSheetQuery.matches) {
+    backdrop.hidden = false;
+    document.body.classList.add("responsive-sheet-open");
+    setResponsiveSheetBackgroundState(panel);
+  } else {
+    backdrop.hidden = true;
+    document.body.classList.remove("responsive-sheet-open");
+    clearResponsiveSheetBackgroundState();
+  }
+}
+
+function activateResponsiveSheet(panelId, closeHandler) {
+  const panel = $(panelId);
+  if (!panel) return;
+  if (responsiveSheetState.activePanel && responsiveSheetState.activePanel !== panel) {
+    responsiveSheetState.activePanel.classList.remove("responsive-sheet-active");
+  }
+  if (!panel.contains(document.activeElement)) {
+    responsiveSheetState.returnFocus = document.activeElement;
+  }
+  responsiveSheetState.activePanel = panel;
+  responsiveSheetState.closeHandler = closeHandler;
+  panel.classList.add("responsive-sheet-active");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-modal", "true");
+  ensureResponsiveSheetHeader(panel);
+  updateResponsiveSheetMode();
+}
+
+function closeResponsiveSheet(panelId = null) {
+  const panel = panelId ? $(panelId) : responsiveSheetState.activePanel;
+  if (panel) {
+    panel.classList.remove("responsive-sheet-active");
+    panel.removeAttribute("role");
+    panel.removeAttribute("aria-modal");
+  }
+  if (!panelId || panel === responsiveSheetState.activePanel) {
+    responsiveSheetState.activePanel = null;
+    responsiveSheetState.closeHandler = null;
+    getWorkspaceBackdrop().hidden = true;
+    document.body.classList.remove("responsive-sheet-open");
+    clearResponsiveSheetBackgroundState();
+    const returnFocus = responsiveSheetState.returnFocus;
+    responsiveSheetState.returnFocus = null;
+    if (returnFocus && document.body.contains(returnFocus)) returnFocus.focus();
+  }
+}
+
+responsiveSheetQuery.addEventListener("change", updateResponsiveSheetMode);
 const monthYearFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 function monthLabelFromYearMonth(value) {
   const text = String(value || "").trim();
@@ -1475,6 +1605,7 @@ document.getElementById("reviewNav").onclick = () => {
 };
 
 function hideViews() {
+  closeResponsiveSheet();
   ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
   ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
@@ -1588,6 +1719,7 @@ function showUnpaidSuccess(message) {
 }
 
 function closePaymentWorkspace() {
+  closeResponsiveSheet("unpaidWorkspace");
   state.unpaid.selectedInvoiceId = null;
   const workspace = $("unpaidWorkspace");
   if (workspace) workspace.innerHTML = `<div class="empty-state">Select an invoice to view payment details.</div>`;
@@ -1603,6 +1735,12 @@ async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selected
   if (!state.unpaid.items.length) {
     state.unpaid.selectedInvoiceId = null;
     $("unpaidWorkspace").innerHTML = `<div class="empty-state">No outstanding finalized invoices.</div>`;
+    return;
+  }
+  if (responsiveSheetQuery.matches && !selectedInvoiceId) {
+    state.unpaid.selectedInvoiceId = null;
+    $("unpaidWorkspace").innerHTML = `<div class="empty-state">Select an outstanding invoice to review payment history.</div>`;
+    closeResponsiveSheet("unpaidWorkspace");
     return;
   }
   const nextId = state.unpaid.items.some(item => item.invoice_id === selectedInvoiceId)
@@ -1693,6 +1831,7 @@ function renderOutstandingInvoiceWorkspace(data) {
   `;
   if ($("closePaymentPanel")) $("closePaymentPanel").onclick = closePaymentWorkspace;
   $("workspaceRecordPayment").onclick = (event) => openPaymentOverlay(invoice.invoice_id, event.currentTarget);
+  activateResponsiveSheet("unpaidWorkspace", closePaymentWorkspace);
 }
 
 function closePaymentOverlay() {
@@ -1860,6 +1999,7 @@ function renderClientsLanding(returnContext = null) {
 }
 
 function closeAccountRecord() {
+  closeResponsiveSheet("accountRecord");
   $("accountRecord").innerHTML = `<div class="empty-state">Open a billing relationship record.</div>`;
   const firstOpen = document.querySelector("[data-open-account]");
   if (firstOpen) firstOpen.focus();
@@ -2131,6 +2271,7 @@ async function openPaidInvoice(invoiceId) {
   layout.appendChild($("unpaidWorkspace"));
   paidPanel.innerHTML = "";
   paidPanel.appendChild(layout);
+  activateResponsiveSheet("unpaidWorkspace", closePaymentWorkspace);
 }
 
 async function loadAllPayments() {
@@ -2806,6 +2947,7 @@ async function startInvoiceBuilder() {
     <div class="actions"><button id="saveInvoiceDraft" class="save">Save Draft</button></div>
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
+  activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
   ["draftBillTo","draftPeriodStart","draftPeriodEnd"].forEach(id => $(id).onchange = loadEligibleInvoiceSessions);
   $("draftBillTo").onchange = () => {
     const pid = $("draftBillTo").value;
@@ -2843,6 +2985,7 @@ async function openInvoice(invoiceId) {
 }
 
 function closeInvoiceWorkspace() {
+  closeResponsiveSheet("invoiceWorkspace");
   state.invoice = null;
   revokeFinalizationPreviewPdfUrl();
   const workspace = $("invoiceWorkspace");
@@ -2884,6 +3027,7 @@ async function renderInvoiceEditor(data) {
     <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Preview PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
+  activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
 
   document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
     const row = button.closest("tr");
@@ -3141,6 +3285,7 @@ async function showAddSessionsToDraft(data) {
     <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${escapeAttr(row.id)}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(firstPresent(row.rate_cents_snapshot, row.approved_rate_cents)))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
     <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
+  activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
   $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
   $("confirmAddSessions").onclick = async () => {
     const sessionIds = [...document.querySelectorAll("#invoiceWorkspace input:checked")].map(input => input.value);
@@ -3242,6 +3387,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const finalizeBtn = $("confirmFinalizeBtn");
   const backBtn = $("backToDraftBtn");
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
+  activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
   const errorDiv = $("finalizeError");
   const insCheckbox = $("insuranceCodingCheckbox");
   const insFields = $("insuranceCodingFields");
@@ -3400,6 +3546,7 @@ function renderInvoicePreview(data) {
     </article>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
+  activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
   if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
@@ -3949,6 +4096,7 @@ async function loadClients() {
 }
 
 function closeOrganizationRecord() {
+  closeResponsiveSheet("organizationRecord");
   const panel = $("organizationRecord");
   if (!panel) return;
   panel.hidden = true;
@@ -4068,8 +4216,9 @@ async function openOrganizationRecord(billingPartyId) {
     data = await api(`/api/billing-parties/${billingPartyId}`);
   } catch (err) {
     panel.innerHTML = `<div class="org-error">${escapeHtml(err.message || "Failed to load organization record.")}</div>
-      <div style="margin-top:8px"><button class="mini" id="orgCloseBtn">Close</button></div>`;
+      <div style="margin-top:8px"><button class="mini side-panel-close" id="orgCloseBtn">Close</button></div>`;
     if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
+    activateResponsiveSheet("organizationRecord", closeOrganizationRecord);
     return;
   }
 
@@ -4141,7 +4290,7 @@ async function openOrganizationRecord(billingPartyId) {
     : `<span class="readonly-note">No administrative history.</span>`;
 
   panel.innerHTML = `
-    <button class="mini org-close-btn" id="orgCloseBtn">Close</button>
+    <button class="mini side-panel-close org-close-btn" id="orgCloseBtn">Close</button>
     <h3>${escapeHtml(displayName)}</h3>
     ${billingNameSecondary ? `<div class="org-header-meta"><span>Billing name: ${escapeHtml(billingNameSecondary)}</span></div>` : ""}
     <div class="org-header-meta"><span class="${statusClass}">${statusText}</span></div>
@@ -4206,6 +4355,7 @@ async function openOrganizationRecord(billingPartyId) {
   `;
 
   if ($("orgCloseBtn")) $("orgCloseBtn").onclick = () => closeOrganizationRecord();
+  activateResponsiveSheet("organizationRecord", closeOrganizationRecord);
 
   if ($("orgEditBtn")) $("orgEditBtn").onclick = () => showOrgEditForm(data.billing_party);
   if ($("orgDeactivateBtn")) $("orgDeactivateBtn").onclick = () => {
@@ -4477,6 +4627,7 @@ async function openAccountRecord(accountId, options = {}) {
   const markEditorDirty = () => { editorDirty = true; };
 
   if ($("closeAccountPanel")) $("closeAccountPanel").onclick = closeAccountRecord;
+  activateResponsiveSheet("accountRecord", closeAccountRecord);
 
   if ($("returnFromAccount")) $("returnFromAccount").onclick = async (event) => {
     event.preventDefault();
