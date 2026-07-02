@@ -1242,7 +1242,14 @@ def make_handler(
                         return
                     if action == "filing-owner":
                         req = parse_update_invoice_filing_owner_request(data)
-                        self.send_json(update_invoice_filing_owner(self.conn(), invoice_id, req.to_payload().get("person_id")))
+                        payload = req.to_payload()
+                        self.send_json(update_invoice_filing_owner(
+                            self.conn(),
+                            invoice_id,
+                            payload.get("person_id"),
+                            owner_kind=payload.get("filing_owner_kind"),
+                            owner_id=payload.get("filing_owner_record_id"),
+                        ))
                         return
                     if action == "document-action":
                         req = parse_document_action_request(data)

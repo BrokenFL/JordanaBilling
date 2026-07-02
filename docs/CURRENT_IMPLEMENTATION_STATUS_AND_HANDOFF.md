@@ -3,11 +3,11 @@
 This document supersedes older uploaded handoffs. Newer repository code, schema,
 migrations, tests, and explicit decisions remain authoritative.
 
-- **Latest code commit reviewed:** pending commit for billing-relationship/delivery-contact/waived-cancellation fixes
+- **Latest code commit reviewed:** pending commit for responsive-panel and filing-owner fixes
 - **Latest recorded full-suite verification commit:** pending commit
 - **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,672 passing, 11 skipped, 0 failures (`2683` tests run)
+- **Latest recorded full-suite baseline:** 2,694 passing, 11 skipped, 0 failures (`2,705` tests run)
 
 ## Architecture
 
@@ -45,6 +45,9 @@ sessions → invoice preview/finalization → payment tracking.
 - Draft line editing with optimistic revision locking
 - Two-step finalization with transaction-safe numbering and immutable snapshots
 - Filing-owner selection and client/month PDF folders
+- Filing owner supports organization, payer person, and covered client targets with stable `kind` + `record_id` contract
+- Draft invoice filing owner override via `filing_owner_kind` + `filing_owner_record_id`; legacy `person_id` remains backward compatible
+- Draft override does not mutate relationship default; finalized snapshots remain immutable
 - Prior unpaid balance and account-summary snapshots
 - Optional invoice-specific insurance coding
 - Void and reissue under a new number
@@ -113,11 +116,11 @@ sessions → invoice preview/finalization → payment tracking.
 Latest recorded full suite:
 
 ```text
-Ran 2683 tests in 206.961s
+Ran 2705 tests in 211.700s
 OK (skipped=11)
 ```
 
-Exact counts: 2,672 passing, 11 skipped, 0 failures.
+Exact counts: 2,694 passing, 11 skipped, 0 failures.
 
 This baseline includes focused tests for Bill To delivery resolution, stale-draft
 refresh, insurance/coding block layout spacing, and render-model delivery fallback.

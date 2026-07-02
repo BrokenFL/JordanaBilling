@@ -1371,10 +1371,13 @@ def parse_void_invoice_request(payload: Any) -> VoidInvoiceRequest:
 def parse_update_invoice_filing_owner_request(payload: Any) -> UpdateInvoiceFilingOwnerRequest:
     """Parse POST /api/invoices/{id}/filing-owner.
 
-    Accepted fields: person_id (optional, can be None to clear).
+    Accepted fields: filing_owner_kind and filing_owner_record_id.
+    Legacy person_id remains accepted for person-only callers.
     """
     data = _require_object(payload)
     _optional_str(data, "person_id")
+    _optional_str(data, "filing_owner_kind")
+    _optional_str(data, "filing_owner_record_id")
     return UpdateInvoiceFilingOwnerRequest(payload=data)
 
 

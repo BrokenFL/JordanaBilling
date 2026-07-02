@@ -176,6 +176,20 @@ Resolution rules:
 
 Billing relationships store the selected target with `default_filing_owner_kind` and `default_filing_owner_record_id`. Existing `default_filing_owner_person_id` values remain compatible for person-based defaults. Approved sessions, finalized invoices, payments, and historical PDFs are not rewritten by default changes.
 
+#### Draft Invoice Filing Owner Override
+
+A draft invoice may override the relationship default via `POST /api/invoices/{id}/filing-owner`. The endpoint accepts:
+
+- `filing_owner_kind` and `filing_owner_record_id` — the preferred kind+ID contract.
+- `person_id` — legacy field, still accepted for backward compatibility. When only `person_id` is provided, it is treated as `filing_owner_kind="person"` with `filing_owner_record_id` set to that person ID.
+- Empty or null values clear the draft override.
+
+The override is validated against `eligible_owners` returned by `resolve_invoice_filing_owner`. Invalid or unrelated owner targets are rejected with a sanitized error. The override does not mutate the relationship default — `default_filing_owner_kind` and `default_filing_owner_record_id` on the `client_accounts` row remain unchanged.
+
+New draft invoices inherit the relationship default during staging. The invoice editor's `File invoice under` dropdown uses `eligible_owners` (organization payer, payer person, covered clients) with role labels (Organization, Payer, Covered client). Selecting an option sends `filing_owner_kind` and `filing_owner_record_id`; reopening the editor shows the saved draft override.
+
+Finalized invoice snapshots (`filing_owner_kind`, `filing_owner_record_id`, `filing_owner_person_id`, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, `pdf_path`) remain immutable. Changing a draft override after finalization has no effect on the finalized invoice or its PDF.
+
 Finalization freezes `filing_owner_kind`, `filing_owner_record_id`, `filing_owner_person_id` when the selected target is a person, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, and `pdf_path`. Later person-name or relationship changes do not move or rename finalized invoices. Existing finalized invoices keep their existing path/checksum/snapshots and are not backfilled by guessing.
 
 New finalized PDFs are stored under the configured invoice root. Installed

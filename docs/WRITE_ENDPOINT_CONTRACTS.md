@@ -640,8 +640,8 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 ### POST /api/invoices/{id}/filing-owner
 
 - **Handler**: inline in `do_POST`
-- **Service**: `update_invoice_filing_owner(conn, invoice_id, data.get("person_id"))`
-- **Accepted fields**: `person_id` (optional, can be None to clear)
+- **Service**: `update_invoice_filing_owner(conn, invoice_id, data.get("person_id"), owner_kind=data.get("filing_owner_kind"), owner_id=data.get("filing_owner_record_id"))`
+- **Accepted fields**: `filing_owner_kind`, `filing_owner_record_id`; legacy `person_id` remains accepted for person-only callers; null/empty clears the draft override
 - **Success status**: 200
 - **Success response**: updated invoice dict
 - **DB tables**: `invoices`, `audit_log`

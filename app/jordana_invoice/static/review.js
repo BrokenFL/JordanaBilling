@@ -1587,6 +1587,14 @@ function showUnpaidSuccess(message) {
   setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 5000);
 }
 
+function closePaymentWorkspace() {
+  state.unpaid.selectedInvoiceId = null;
+  const workspace = $("unpaidWorkspace");
+  if (workspace) workspace.innerHTML = `<div class="empty-state">Select an invoice to view payment details.</div>`;
+  const firstRow = document.querySelector("#unpaidRows tr[data-invoice-id]");
+  if (firstRow) firstRow.focus?.();
+}
+
 async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selectedInvoiceId) {
   const data = await api("/api/payments/outstanding-invoices");
   state.unpaid.items = data.items || [];
@@ -1652,6 +1660,7 @@ function renderOutstandingInvoiceWorkspace(data) {
   const invoice = data.invoice;
   $("unpaidWorkspace").innerHTML = `
     <div class="payment-panel">
+      <button type="button" class="side-panel-close" id="closePaymentPanel">Close</button>
       <div class="payment-panel-header">
         <div>
           <h3>${fmt(invoice.invoice_number)}</h3>
@@ -1682,6 +1691,7 @@ function renderOutstandingInvoiceWorkspace(data) {
       </section>
     </div>
   `;
+  if ($("closePaymentPanel")) $("closePaymentPanel").onclick = closePaymentWorkspace;
   $("workspaceRecordPayment").onclick = (event) => openPaymentOverlay(invoice.invoice_id, event.currentTarget);
 }
 
@@ -1847,6 +1857,12 @@ function renderClientsLanding(returnContext = null) {
     const current = readReturnContext();
     openCreateRelationshipModal(current, $("createRelationshipForReturn"));
   };
+}
+
+function closeAccountRecord() {
+  $("accountRecord").innerHTML = `<div class="empty-state">Open a billing relationship record.</div>`;
+  const firstOpen = document.querySelector("[data-open-account]");
+  if (firstOpen) firstOpen.focus();
 }
 
 async function showClients() {
@@ -2071,6 +2087,7 @@ async function openPaidInvoice(invoiceId) {
   const payments = data.payments || [];
   $("unpaidWorkspace").innerHTML = `
     <div class="payment-panel">
+      <button type="button" class="side-panel-close" id="closePaymentPanel">Close</button>
       <div class="payment-panel-header">
         <div>
           <h3>${fmt(invoice.invoice_number)}</h3>
@@ -2100,6 +2117,7 @@ async function openPaidInvoice(invoiceId) {
       </section>
     </div>
   `;
+  if ($("closePaymentPanel")) $("closePaymentPanel").onclick = closePaymentWorkspace;
   switchPaymentsTab("paid");
   $("paymentsOutstandingPanel").hidden = true;
   $("paymentsAllPaymentsPanel").hidden = true;
@@ -2775,6 +2793,7 @@ async function startInvoiceBuilder() {
   const today = new Date().toISOString().slice(0, 10);
   const monthStart = `${today.slice(0,7)}-01`;
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
+    <button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button>
     <div><h3>Create Invoice Draft</h3><div class="help">Only approved, invoice-eligible sessions can be selected.</div></div>
     <div class="field-grid">
       <label class="field wide">Bill to<select id="draftBillTo"><option value="">Select bill-to party</option>${parties.map(p => `<option value="${escapeAttr(p.billing_party_id)}">${fmt(p.billing_name)}</option>`).join("")}</select></label>
@@ -2786,6 +2805,7 @@ async function startInvoiceBuilder() {
     <div><div class="section-title-row"><h3>Eligible sessions</h3><button id="refreshEligible" class="mini">Refresh</button></div><div class="eligible-list" id="eligibleSessions"><div class="empty-state">Select a bill-to party and period.</div></div></div>
     <div class="actions"><button id="saveInvoiceDraft" class="save">Save Draft</button></div>
   </div>`;
+  $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   ["draftBillTo","draftPeriodStart","draftPeriodEnd"].forEach(id => $(id).onchange = loadEligibleInvoiceSessions);
   $("draftBillTo").onchange = () => {
     const pid = $("draftBillTo").value;
@@ -2822,16 +2842,37 @@ async function openInvoice(invoiceId) {
   renderInvoicePreview(data);
 }
 
+function closeInvoiceWorkspace() {
+  state.invoice = null;
+  revokeFinalizationPreviewPdfUrl();
+  const workspace = $("invoiceWorkspace");
+  if (workspace) workspace.innerHTML = `<div class="empty-state">Create or open an invoice.</div>`;
+  const firstOpen = document.querySelector("#invoiceRows [data-open-invoice]");
+  if (firstOpen) firstOpen.focus();
+}
+
 async function renderInvoiceEditor(data) {
   state.invoice = data;
   const i = data.invoice;
   const filing = data.filing_owner || {};
-  const selectedFilingId = (filing.selected && filing.selected.person_id) || i.filing_owner_person_id || "";
-  const filingOptions = (filing.eligible_clients || []).map(person =>
-    `<option value="${escapeAttr(person.person_id)}" ${person.person_id === selectedFilingId ? "selected" : ""}>${fmt(person.display_name)}${person.person_code ? ` (${escapeHtml(person.person_code)})` : ""}</option>`
+  const selectedFilingValue = filing.selected && filing.selected.owner_kind && filing.selected.owner_id
+    ? `${filing.selected.owner_kind}:${filing.selected.owner_id}`
+    : (i.filing_owner_kind && i.filing_owner_record_id ? `${i.filing_owner_kind}:${i.filing_owner_record_id}` : "");
+  const filingOptions = (filing.eligible_owners || filing.eligible_clients || []).map(owner => {
+    const kind = owner.owner_kind || "person";
+    const ownerId = owner.owner_id || owner.person_id || "";
+    const value = `${kind}:${ownerId}`;
+    const roleLabel = owner.source_role === "billing_organization"
+      ? "Organization"
+      : owner.source_role === "payer"
+        ? "Payer"
+        : "Covered client";
+    return `<option value="${escapeAttr(value)}" ${value === selectedFilingValue ? "selected" : ""}>${fmt(owner.display_name)} (${escapeHtml(roleLabel)})${owner.person_code ? ` ${escapeHtml(owner.person_code)}` : ""}</option>`;
+  }
   ).join("");
-  const filingControl = `<label class="field wide">File invoice under<select id="filingOwnerSelect"><option value="">Select filing client</option>${filingOptions}</select><span class="help">${escapeHtml(filing.message || (filing.selected ? `Resolved from ${String(filing.source || "").replaceAll("_", " ")}.` : "Choose the client folder for the finalized PDF."))}</span></label>`;
+  const filingControl = `<label class="field wide">File invoice under<select id="filingOwnerSelect"><option value="">Select filing owner</option>${filingOptions}</select><span class="help">${escapeHtml(filing.message || (filing.selected ? `Resolved from ${String(filing.source || "").replaceAll("_", " ")}.` : "Choose the connected folder owner for the finalized PDF."))}</span></label>`;
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
+    <button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button>
     <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
     <div class="field-grid">
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
@@ -2842,6 +2883,7 @@ async function renderInvoiceEditor(data) {
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Preview PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
+  $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
 
   document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
     const row = button.closest("tr");
@@ -2864,7 +2906,16 @@ async function renderInvoiceEditor(data) {
 
   $("addDraftSessions").onclick = () => showAddSessionsToDraft(data);
   if ($("filingOwnerSelect")) $("filingOwnerSelect").onchange = async () => {
-    const updated = await api(`/api/invoices/${i.invoice_id}/filing-owner`, {method:"POST", body:JSON.stringify({person_id:$("filingOwnerSelect").value})});
+    const value = $("filingOwnerSelect").value;
+    const [kind, ...idParts] = value.split(":");
+    const recordId = idParts.join(":");
+    const updated = await api(`/api/invoices/${i.invoice_id}/filing-owner`, {
+      method:"POST",
+      body:JSON.stringify({
+        filing_owner_kind: kind || null,
+        filing_owner_record_id: recordId || null,
+      })
+    });
     await renderInvoiceEditor(updated); await loadInvoices();
   };
 
@@ -3085,9 +3136,11 @@ async function showAddSessionsToDraft(data) {
   const rows = await api(`/api/invoices/eligible-sessions?bill_to_party_id=${encodeURIComponent(i.bill_to_party_id)}&period_start=${i.billing_period_start}&period_end=${i.billing_period_end}`);
   const eligible = rows.filter(row => row.eligible);
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
+    <button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button>
     <div><h3>Add Sessions to Draft</h3><div class="help">Sessions already attached to an invoice are excluded by the backend.</div></div>
     <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${escapeAttr(row.id)}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(firstPresent(row.rate_cents_snapshot, row.approved_rate_cents)))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
     <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>`;
+  $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
   $("confirmAddSessions").onclick = async () => {
     const sessionIds = [...document.querySelectorAll("#invoiceWorkspace input:checked")].map(input => input.value);
@@ -3161,7 +3214,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insuranceEin = escapeHtml(profile.insurance_ein || "");
   const insuranceNpi = escapeHtml(profile.insurance_npi || "");
   const insuranceSw = escapeHtml(profile.insurance_sw || "");
-  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
     <div class="help">Review the PDF below carefully. It uses the same invoice renderer as finalization. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
@@ -3188,6 +3241,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   </div>`;
   const finalizeBtn = $("confirmFinalizeBtn");
   const backBtn = $("backToDraftBtn");
+  $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   const errorDiv = $("finalizeError");
   const insCheckbox = $("insuranceCodingCheckbox");
   const insFields = $("insuranceCodingFields");
@@ -3325,7 +3379,7 @@ function renderInvoicePreview(data) {
     : "";
   const insCoding = render.insurance_coding;
   const insCodingHtml = insCoding ? `<div class="insurance-coding-preview" style="margin-top:10px;font-size:9pt;line-height:1.3;">${insCoding.map(item => `<div>${escapeHtml(item.label)}: ${escapeHtml(item.value)}</div>`).join("")}</div>` : "";
-  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
+  $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     ${voidHtml}
     ${paymentSummaryHtml}
     <div class="relationship-summary"><strong>File invoice under</strong><div>${fmt(filingDisplay || "—")}</div></div>
@@ -3345,6 +3399,7 @@ function renderInvoicePreview(data) {
       ${notesHtml}
     </article>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
+  $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
   if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
@@ -4327,6 +4382,7 @@ async function openAccountRecord(accountId, options = {}) {
     : '<div class="readonly-note">No covered clients.</div>';
 
   $("accountRecord").innerHTML = `
+    <button type="button" class="side-panel-close" id="closeAccountPanel">Close</button>
     ${returnContext ? `<a href="#" class="return-link" id="returnFromAccount">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
     <h3>${escapeHtml(data.account.account_name)}</h3>
     <div class="meta">${statusPill}</div>
@@ -4419,6 +4475,8 @@ async function openAccountRecord(accountId, options = {}) {
 
   let editorDirty = false;
   const markEditorDirty = () => { editorDirty = true; };
+
+  if ($("closeAccountPanel")) $("closeAccountPanel").onclick = closeAccountRecord;
 
   if ($("returnFromAccount")) $("returnFromAccount").onclick = async (event) => {
     event.preventDefault();

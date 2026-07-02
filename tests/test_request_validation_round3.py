@@ -465,6 +465,14 @@ class TestParseUpdateInvoiceFilingOwner(unittest.TestCase):
         req = parse_update_invoice_filing_owner_request({"person_id": "p-1"})
         self.assertEqual(req.to_payload()["person_id"], "p-1")
 
+    def test_valid_kind_record_payload(self):
+        req = parse_update_invoice_filing_owner_request({
+            "filing_owner_kind": "billing_party",
+            "filing_owner_record_id": "bp-1",
+        })
+        self.assertEqual(req.to_payload()["filing_owner_kind"], "billing_party")
+        self.assertEqual(req.to_payload()["filing_owner_record_id"], "bp-1")
+
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
             parse_update_invoice_filing_owner_request(None)

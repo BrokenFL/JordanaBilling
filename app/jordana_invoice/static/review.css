@@ -596,11 +596,54 @@ tr.empty-row:hover { background: transparent; }
 @media (max-width: 1100px) {
   .sidebar { width: 190px; }
   .crm-layout { grid-template-columns: 1fr; }
+  #organizationRecord,
+  #accountRecord {
+    grid-column: 1;
+  }
   .invoice-layout { grid-template-columns: 1fr; }
   .invoice-workspace { border-left: 0; border-top: 1px solid var(--line); padding: 18px 0 0; }
   .metrics div { min-width: 90px; }
   .summary-cards { grid-template-columns: repeat(2, 1fr); }
   .payment-panel-summary { grid-template-columns: 1fr; }
+
+  #accountRecord:has(.editor-section),
+  #organizationRecord:not([hidden]):not(:has(.empty-state)),
+  .invoice-workspace:has(.invoice-builder),
+  #unpaidWorkspace:has(.payment-panel) {
+    position: fixed;
+    z-index: 8500;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    width: min(720px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    box-shadow: 0 20px 60px rgba(7, 20, 43, 0.28);
+  }
+
+  #accountRecord:has(.editor-section)::before,
+  #organizationRecord:not([hidden]):not(:has(.empty-state))::before,
+  .invoice-workspace:has(.invoice-builder)::before,
+  #unpaidWorkspace:has(.payment-panel)::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: rgba(7, 20, 43, 0.48);
+  }
+
+  .side-panel-close {
+    float: right;
+    min-height: 32px;
+    padding: 0 12px;
+    margin-left: 10px;
+  }
 }
 
 @media (max-width: 760px) {
@@ -670,6 +713,16 @@ tr.empty-row:hover { background: transparent; }
   .org-billing-details { grid-template-columns: 1fr; }
   .crm-tools { flex-wrap: wrap; }
   .payment-form-grid { grid-template-columns: 1fr; }
+  #accountRecord:has(.editor-section),
+  #organizationRecord:not([hidden]):not(:has(.empty-state)),
+  .invoice-workspace:has(.invoice-builder),
+  #unpaidWorkspace:has(.payment-panel) {
+    inset: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    width: auto;
+    max-width: none;
+    border-radius: 8px;
+    padding: 14px;
+  }
 }
 
 /* ─── In-page modal for billing relationship forms ─── */

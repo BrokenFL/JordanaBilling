@@ -131,6 +131,50 @@ for (const [input, expected] of cases) {
         self.assertIn("filing_owner_kind", editor)
         self.assertIn("filing_owner_record_id", editor)
 
+    def test_shared_side_panel_responsive_sheet_rules_exist(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn("@media (max-width: 1100px)", css)
+        self.assertIn("#accountRecord:has(.editor-section)", css)
+        self.assertIn(".invoice-workspace:has(.invoice-builder)", css)
+        self.assertIn("#unpaidWorkspace:has(.payment-panel)", css)
+        self.assertIn("background: white;", css)
+        self.assertIn("overflow-y: auto;", css)
+        self.assertIn("overflow-x: hidden;", css)
+        self.assertIn("rgba(7, 20, 43, 0.48)", css)
+        self.assertIn("grid-column: 1;", css)
+        self.assertIn(".side-panel-close", css)
+
+    def test_payment_workspace_has_close_button(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function closePaymentWorkspace", js)
+        self.assertIn("closePaymentWorkspace", js)
+        self.assertIn('id="closePaymentPanel"', js)
+
+    def test_all_panels_have_close_handlers(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function closeInvoiceWorkspace", js)
+        self.assertIn("function closeAccountRecord", js)
+        self.assertIn("function closeOrganizationRecord", js)
+        self.assertIn("function closePaymentWorkspace", js)
+        self.assertIn('class="side-panel-close"', js)
+
+    def test_invoice_editor_uses_connected_filing_owner_targets(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function renderInvoiceEditor")
+        end = js.index("function openLineEditModal", start)
+        editor = js[start:end]
+
+        self.assertIn("filing.eligible_owners", editor)
+        self.assertIn("filing_owner_kind", editor)
+        self.assertIn("filing_owner_record_id", editor)
+        self.assertIn("Organization", editor)
+        self.assertIn("Payer", editor)
+        self.assertIn("Covered client", editor)
+        self.assertNotIn('body:JSON.stringify({person_id:$("filingOwnerSelect").value})', editor)
+
     def test_review_bill_to_options_support_billing_party_ids(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("function billToClientOptions")

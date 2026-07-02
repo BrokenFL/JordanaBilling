@@ -565,13 +565,32 @@ def resolve_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str) -> d
     }
 
 
-def update_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str, person_id: str | None) -> dict[str, Any]:
+def update_invoice_filing_owner(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    person_id: str | None = None,
+    *,
+    owner_kind: str | None = None,
+    owner_id: str | None = None,
+) -> dict[str, Any]:
     _draft(conn, invoice_id)
     resolution = resolve_invoice_filing_owner(conn, invoice_id)
-    eligible_ids = {client["person_id"] for client in resolution["eligible_clients"]}
-    chosen = str(person_id or "").strip()
-    if chosen and chosen not in eligible_ids:
-        raise ValueError("File invoice under must be one of the eligible covered clients.")
+    eligible_owners = {
+        (owner["owner_kind"], owner["owner_id"]): owner
+        for owner in resolution["eligible_owners"]
+    }
+    requested_kind = str(owner_kind or "").strip()
+    requested_id = str(owner_id or "").strip()
+    legacy_person_id = str(person_id or "").strip()
+    if not requested_kind and legacy_person_id:
+        requested_kind = "person"
+        requested_id = legacy_person_id
+    chosen = eligible_owners.get((requested_kind, requested_id)) if requested_kind and requested_id else None
+    if requested_id and not chosen:
+        raise ValueError("File invoice under must be one of the eligible connected filing owners.")
+    chosen_kind = chosen["owner_kind"] if chosen else None
+    chosen_id = chosen["owner_id"] if chosen else None
+    chosen_person_id = chosen.get("person_id") if chosen_kind == "person" else None
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
@@ -584,9 +603,13 @@ def update_invoice_filing_owner(conn: sqlite3.Connection, invoice_id: str, perso
                 updated_at = ?
             WHERE invoice_id = ?
             """,
-            ("person" if chosen else None, chosen or None, chosen or None, now_iso(), invoice_id),
+            (chosen_kind, chosen_id, chosen_person_id, now_iso(), invoice_id),
         )
-        _audit(conn, "invoice", invoice_id, "filing_owner_selected", {"filing_owner_person_id": chosen or None})
+        _audit(conn, "invoice", invoice_id, "filing_owner_selected", {
+            "filing_owner_kind": chosen_kind,
+            "filing_owner_record_id": chosen_id,
+            "filing_owner_person_id": chosen_person_id,
+        })
         conn.commit()
     except Exception:
         conn.rollback()

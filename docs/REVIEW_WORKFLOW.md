@@ -182,6 +182,10 @@ The payer is not automatically covered. Session participants remain selectable b
 
 Saving persists transactionally to SQLite. Approved sessions are never silently rewritten. Deactivation preserves history; permanent deletion is not implemented.
 
+### Responsive Panels
+
+On screens at or below 1100px, the Billing Relationship editor, organization record, invoice editor, and payment workspace become fixed bounded sheets with opaque backgrounds, dimmed backdrops, internal scrolling, and Close buttons. The underlying page is not interactive while a sheet is open. At or below 760px, sheets expand to near-full-width with safe viewport margins. See [Billing Relationships](CLIENTS_AND_ACCOUNTS.md#responsive-panel-behavior) for details.
+
 ## Candidate Identity And Repair
 
 Candidate identity resolution uses exact event ID, exact fingerprint, then conservative exact structural matching. Ambiguous identity remains in review. Raw snapshots and existing identity evidence are preserved.

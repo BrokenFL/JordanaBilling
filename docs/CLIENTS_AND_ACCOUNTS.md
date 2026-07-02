@@ -145,13 +145,31 @@ The form always preserves `billing_party_type: "organization"` and never sends `
 
 Organization creation remains deferred.
 
+## Responsive Panel Behavior
+
+On screens at or below 1100px, the CRM layout collapses to a single column. The account record (`#accountRecord`), organization record (`#organizationRecord`), invoice workspace (`.invoice-workspace`), and payment workspace (`#unpaidWorkspace`) become fixed bounded sheets with:
+
+- Opaque white background and border
+- Fixed positioning with safe-area insets
+- Internal vertical scrolling, no horizontal overflow
+- A dimmed backdrop (`rgba(7, 20, 43, 0.48)`) that blocks interaction with the underlying page
+- A visible Close button (`.side-panel-close`) in each panel
+
+At or below 760px, the sheets expand to near-full-width with 8px safe margins and remain usable with visible close and action buttons.
+
+On wide desktop (above 1100px), panels retain their normal drawer/two-column behavior with opaque backgrounds and no full-screen takeover.
+
+The `grid-column: 2` rule that previously forced account/organization records into an implicit off-screen column below 1100px is now overridden to `grid-column: 1` within the breakpoint.
+
 ## Account Detail View
 
 The existing account-detail sidebar remains intact for genuine account rows. It shows:
 
 - Header details and active status
+- A Close button (visible in responsive sheet mode)
 - Members and relationship roles
 - Default billing party and contact information
+- **Save invoices under** — a filing owner dropdown showing connected records only (organization payer, payer person, covered clients). Organization is the preferred default when present; payer person is the fallback. Covered clients are selectable but not auto-selected merely because they are covered. Saving persists `default_filing_owner_kind` and `default_filing_owner_record_id`; reopening shows the saved value. Changing payer or covered clients recomputes stale eligibility. Unrelated people or organizations are excluded.
 - Account-specific rates
 - Calendar aliases
 - Session history

@@ -650,6 +650,38 @@ class FilingOwnerTests(unittest.TestCase):
             update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], outside["person_id"])
         updated = update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], b["person_id"])
         self.assertEqual(updated["filing_owner"]["selected"]["person_id"], b["person_id"])
+        org_updated = update_invoice_filing_owner(
+            self.conn,
+            draft["invoice"]["invoice_id"],
+            owner_kind="billing_party",
+            owner_id=org["billing_party_id"],
+        )
+        self.assertEqual(org_updated["filing_owner"]["selected"]["owner_kind"], "billing_party")
+        self.assertEqual(org_updated["filing_owner"]["selected"]["owner_id"], org["billing_party_id"])
+        self.assertIsNone(org_updated["invoice"]["filing_owner_person_id"])
+
+    def test_invoice_override_does_not_change_relationship_default(self):
+        a = self._person("Override", "Alpha")
+        b = self._person("Override", "Beta")
+        org = self._party("Override Org", organization=True)
+        account = self._relationship("Override Org Relationship", org["billing_party_id"], [a, b])
+        self.conn.execute(
+            "UPDATE client_accounts SET default_filing_owner_kind = ?, default_filing_owner_record_id = ? WHERE account_id = ?",
+            ("billing_party", org["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        sessions = [
+            self._session("overa", [{"person_id": a["person_id"], "display_name": "Override Alpha"}], org["billing_party_id"]),
+            self._session("overb", [{"person_id": b["person_id"], "display_name": "Override Beta"}], org["billing_party_id"]),
+        ]
+        draft = self._draft(org["billing_party_id"], sessions)
+        update_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"], b["person_id"])
+        account_row = self.conn.execute(
+            "SELECT default_filing_owner_kind, default_filing_owner_record_id FROM client_accounts WHERE account_id = ?",
+            (account["account_id"],),
+        ).fetchone()
+        self.assertEqual(account_row["default_filing_owner_kind"], "billing_party")
+        self.assertEqual(account_row["default_filing_owner_record_id"], org["billing_party_id"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_finalization_freezes_filing_owner_snapshots_and_human_folder(self, fake_pdf):
