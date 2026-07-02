@@ -130,7 +130,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 - Bill-to party exists and is active
 - At least one eligible invoice line
-- All line amounts are positive
+- All line amounts are positive, except waived late-cancellation lines which are valid at exactly $0.00 (identified by structured `appointment_status_snapshot="late_cancellation"` and `billing_treatment_snapshot="waived"` on the line item, not by description text)
 - Valid invoice date
 - Active business profile
 - Required bill-to contact details for the selected delivery method (email for email/both, mailing address for mail/both)

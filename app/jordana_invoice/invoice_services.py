@@ -1453,10 +1453,14 @@ def validate_invoice_readiness(
     if not lines:
         errors.append({"field": "lines", "message": "Add at least one eligible session before finalizing."})
 
-    # 3. Valid positive line amounts
+    # 3. Valid positive line amounts (waived late cancellation is valid at $0.00)
     for line in lines:
         amount = line.get("line_amount_cents")
-        if amount is None or int(amount) <= 0:
+        is_waived_late_cancel = (
+            line.get("appointment_status_snapshot") == "late_cancellation"
+            and line.get("billing_treatment_snapshot") == "waived"
+        )
+        if amount is None or int(amount) < 0 or (int(amount) == 0 and not is_waived_late_cancel):
             errors.append({
                 "field": "line_amount",
                 "message": f"Line for {line['service_date']} has an invalid or non-positive amount.",

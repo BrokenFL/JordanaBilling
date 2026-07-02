@@ -681,5 +681,208 @@ class StaleDraftDeliverySyncTests(unittest.TestCase):
         self.assertIn("delivery_method", fields)
 
 
+class WaivedLateCancellationReadinessTests(unittest.TestCase):
+    """Focused tests for waived late-cancellation $0.00 lines in invoice readiness."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.conn = connect(self.root / "waived.sqlite3")
+        init_db(self.conn)
+        self.person = create_person(self.conn, {"first_name": "Wade", "last_name": "Waiver", "display_name": "Wade Waiver"})
+        self.party = create_billing_party(self.conn, {
+            "billing_name": "Wade Waiver", "person_id": self.person["person_id"],
+            "billing_email": "wade@example.test", "billing_address_line_1": "12 Waiver Ln",
+            "billing_city": "Waiverville", "billing_state": "FL", "billing_postal_code": "00000",
+            "preferred_delivery_method": "both",
+        })
+        save_business_profile(self.conn, {
+            "business_name": "Waiver Practice", "provider_display_name": "Waiver Provider",
+            "address_line_1": "200 Waiver Ave", "city": "Waiverville", "state": "FL", "postal_code": "00000",
+            "phone": "555-0300", "email": "billing@waiver", "payee_name": "Waiver Payee",
+            "payment_address_line_1": "200 Waiver Ave", "payment_city": "Waiverville", "payment_state": "FL",
+            "payment_postal_code": "00000", "zelle_recipient": "waiver@example.test",
+        })
+
+    def tearDown(self):
+        self.conn.close()
+        self.temp.cleanup()
+
+    def _approved_session(self, key, *, amount="150.00", appointment_status="completed",
+                          billing_treatment="billable"):
+        import_rows(self.conn, [raw_row(key, f"Wade Waiver | 60 | Office", f"2026-05-{10 + len(key):02d}T10:00:00-04:00")], "test")
+        candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash(f"calendar_event_id:event-{key}"),),
+        ).fetchone()[0]
+        detail = approve_candidate(self.conn, candidate_id, {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Wade Waiver"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60, "service_mode": "office",
+            "time_category": "standard", "approved_rate": amount,
+            "payment_status": "unpaid",
+            "appointment_status": appointment_status,
+            "billing_treatment": billing_treatment,
+        })
+        return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
+
+    def _draft(self, sessions):
+        return create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [s["id"] for s in sessions],
+        })
+
+    # 1. Waived late cancellation at $0.00 passes readiness
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_waived_late_cancel_zero_passes_readiness(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w1", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([session])
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(readiness["ready"], f"Expected ready but got errors: {readiness['errors']}")
+        self.assertEqual(readiness["errors"], [])
+
+    # 2. Waived line remains on draft and final invoice
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_waived_line_remains_on_invoice(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w2", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([session])
+        result = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(len(result["lines"]), 1)
+        self.assertEqual(result["lines"][0]["line_amount_cents"], 0)
+        self.assertEqual(result["lines"][0]["appointment_status_snapshot"], "late_cancellation")
+        self.assertEqual(result["lines"][0]["billing_treatment_snapshot"], "waived")
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(preview["readiness"]["ready"])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        self.assertEqual(final["invoice"]["status"], "finalized")
+        self.assertEqual(len(final["lines"]), 1)
+        self.assertEqual(final["lines"][0]["line_amount_cents"], 0)
+
+    # 3. Waived line contributes zero to total
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_waived_line_contributes_zero_to_total(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        regular = self._approved_session("w3a", amount="150.00")
+        waived = self._approved_session("w3b", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([regular, waived])
+        result = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(result["invoice"]["total_cents"], 15000)
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(preview["readiness"]["ready"])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        self.assertEqual(final["invoice"]["total_cents"], 15000)
+
+    # 4. Ordinary $0 line still fails
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_ordinary_zero_line_still_fails(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w4", amount="150.00")
+        draft = self._draft([session])
+        self.conn.execute("UPDATE invoice_line_items SET line_amount_cents = 0 WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],))
+        self.conn.commit()
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("line_amount", fields)
+
+    # 5. Full-fee late cancellation at $0 fails
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_full_fee_late_cancel_zero_fails(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w5", amount="150.00", appointment_status="late_cancellation", billing_treatment="bill_full_fee")
+        draft = self._draft([session])
+        self.conn.execute("UPDATE invoice_line_items SET line_amount_cents = 0 WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],))
+        self.conn.commit()
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("line_amount", fields)
+
+    # 6. Custom-fee late cancellation at $0 fails
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_custom_fee_late_cancel_zero_fails(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w6", amount="75.00", appointment_status="late_cancellation", billing_treatment="custom_fee")
+        draft = self._draft([session])
+        self.conn.execute("UPDATE invoice_line_items SET line_amount_cents = 0 WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],))
+        self.conn.commit()
+        readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
+        self.assertFalse(readiness["ready"])
+        fields = {e["field"] for e in readiness["errors"]}
+        self.assertIn("line_amount", fields)
+
+    # 7. Finalized snapshot preserves waived status
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_snapshot_preserves_waived_status(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w7", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(preview["readiness"]["ready"])
+        finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        line = self.conn.execute(
+            "SELECT appointment_status_snapshot, billing_treatment_snapshot, line_amount_cents FROM invoice_line_items WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(line["appointment_status_snapshot"], "late_cancellation")
+        self.assertEqual(line["billing_treatment_snapshot"], "waived")
+        self.assertEqual(line["line_amount_cents"], 0)
+
+    # 8. Preview and finalized PDF render models match for waived line
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_preview_and_finalized_pdf_match(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        regular = self._approved_session("w8a", amount="150.00")
+        waived = self._approved_session("w8b", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([regular, waived])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(preview["readiness"]["ready"])
+        preview_lines = preview["render_model"]["lines"]
+        finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        final_result = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+        profile = self.conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
+        party = self.conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (final_result["invoice"]["bill_to_party_id"],)).fetchone()
+        final_render = build_invoice_render_model(
+            dict(final_result["invoice"]),
+            [dict(l) for l in final_result["lines"]],
+            business_profile=dict(profile),
+            billing_party=dict(party),
+        )
+        final_lines = final_render["lines"]
+        self.assertEqual(len(preview_lines), len(final_lines))
+        for pl, fl in zip(preview_lines, final_lines):
+            self.assertEqual(pl["description_display"], fl["description_display"])
+            self.assertEqual(pl["amount_display"], fl["amount_display"])
+
+    # 9. Repeat finalization remains idempotent
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_repeat_finalization_idempotent(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w9", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([session])
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+        self.assertTrue(preview["readiness"]["ready"])
+        first = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        self.assertEqual(first["invoice"]["status"], "finalized")
+        second = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "pdf")
+        self.assertEqual(second["invoice"]["status"], "finalized")
+        self.assertEqual(second["invoice"]["invoice_number"], first["invoice"]["invoice_number"])
+
+    # 10. Waived line shows correct description
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_waived_line_description(self, fake_pdf):
+        fake_pdf.return_value = "a" * 64
+        session = self._approved_session("w10", appointment_status="late_cancellation", billing_treatment="waived")
+        draft = self._draft([session])
+        result = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+        desc = result["lines"][0]["description_snapshot"]
+        self.assertIn("Late Cancellation", desc)
+        self.assertIn("Fee Waived", desc)
+
+
 if __name__ == "__main__":
     unittest.main()
