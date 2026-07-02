@@ -234,8 +234,8 @@ class SafeFinalizationTests(unittest.TestCase):
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
         self.assertEqual(render["bill_to_lines"], ["Robin Test", "Via Email: robin@example.test"])
-        self.assertIn("Or send payment via Zelle to: sample-zelle@example.test", render["payment_zelle_line"])
-        self.assertEqual(render["payment_lines"], ["200 Sample Ave · Sample, FL 00000"])
+        self.assertIn("Or pay via Zelle: sample-zelle@example.test", render["payment_zelle_line"])
+        self.assertEqual(render["payment_lines"], ["200 Sample Ave", "Sample, FL 00000"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_preview_render_model_shows_both_delivery_values(self, fake_pdf):
