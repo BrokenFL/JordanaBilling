@@ -59,7 +59,7 @@ This layout is identical in both the HTML print preview and the ReportLab PDF re
 
 ## Optional Insurance Coding Block
 
-When insurance coding is enabled at finalization, a compact four-line block appears at the bottom-left of the invoice content area, after the payment section and before any notes:
+When insurance coding is enabled at finalization, a compact four-line block appears at the bottom-left of the invoice content area, below the payment block. The first coding line begins approximately four body-text lines below the final payment-information line, using a layout-driven spacer of `4 × body leading`. The block is left-aligned to the normal invoice content margin:
 
 ```
 Diagnosis Code: <value>
@@ -70,6 +70,7 @@ SW: <value>
 
 - The block is rendered as a single `KeepTogether` unit with zero paragraph spacing and compact leading.
 - There is no blank line or spacer between the Diagnosis Code line and the EIN line.
+- The spacer between the final payment-information line and the first coding line is `4 × body leading` (a layout-driven value, not a one-off pixel coordinate).
 - The block appears only on the final page (it is part of the footer `KeepTogether`).
 - EIN, NPI, and SW values come from Invoice Settings and are frozen into the finalized invoice snapshot at finalization time.
 - The diagnosis code is entered or approved per-invoice during finalization and is never persisted on draft invoices.

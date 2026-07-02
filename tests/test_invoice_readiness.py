@@ -215,10 +215,10 @@ class InvoiceReadinessTests(unittest.TestCase):
         session = self._approved_session("unresolved1")
         draft = self._draft([session])
         update_invoice_draft(self.conn, draft["invoice"]["invoice_id"], {"delivery_method": "unresolved"})
+        # get_invoice now auto-syncs stale "unresolved" from the active billing party,
+        # so validate_invoice_readiness sees the resolved delivery method.
         readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
-        self.assertFalse(readiness["ready"])
-        fields = {e["field"] for e in readiness["errors"]}
-        self.assertIn("delivery_method", fields)
+        self.assertEqual(readiness["ready"], True)
         final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
         self.assertEqual(final["invoice"]["status"], "finalized")
         self.assertEqual(final["invoice"]["delivery_method"], "both")

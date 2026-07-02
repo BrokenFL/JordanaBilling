@@ -121,7 +121,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, sync delivery, assign a number, write a PDF path/checksum, create audit rows, or change revision/status. The UI embeds the canonical draft PDF preview from `POST /api/invoices/{id}/draft-pdf`, so the approval preview uses the same ReportLab renderer as finalization. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI embeds the canonical draft PDF preview from `POST /api/invoices/{id}/draft-pdf`, so the approval preview uses the same ReportLab renderer as finalization. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -196,6 +196,26 @@ Bill To rendering is delivery-aware:
 - `both` => name, mailing address, then `Via Email: ...`
 
 The payment block remains one centered block and now always includes both the check instructions and a Zelle line. Draft previews show `Not configured` when Zelle is missing so readiness errors are clear; finalized invoices use the frozen `zelle_recipient_snapshot`.
+
+### Bill To Delivery Resolution and Stale-Draft Refresh
+
+The render model (`build_invoice_render_model`) resolves the delivery method for Bill To as follows:
+
+1. If the invoice row has a deliberate `delivery_method` of `email`, `mail`, or `both`, that value is used.
+2. If the invoice row has `unresolved` or blank delivery, the active billing party's `preferred_delivery_method` is used as a fallback.
+3. If neither produces a valid method, `unresolved` is used (which blocks finalization).
+
+This ensures that a draft created before the Billing Setup was completed still renders the correct email/address lines once the billing party has a valid delivery preference, without overwriting a deliberate invoice-specific override.
+
+`get_invoice` auto-syncs stale `unresolved`/blank delivery methods on draft invoices by calling `synchronize_draft_delivery_method` before returning. This means:
+- Draft preview, Review & Finalize readiness, and Update Preview all see the resolved delivery.
+- A deliberate invoice-specific override (`email`, `mail`, or `both`) is never overwritten.
+- Finalized invoices are never touched.
+- The sync writes to SQLite immediately and audits the change.
+
+`finalize_invoice` calls `synchronize_draft_delivery_method` with `commit=False` inside its existing `BEGIN IMMEDIATE` transaction, so the sync no longer commits independently.
+
+Finalized invoice snapshots (`bill_to_name_snapshot`, `bill_to_email_snapshot`, `bill_to_address_snapshot`, `delivery_method`) remain immutable. Changes to the billing party after finalization do not affect the finalized invoice or its PDF.
 
 ## Void And Reissue
 

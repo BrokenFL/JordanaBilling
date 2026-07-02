@@ -221,7 +221,10 @@ def build_invoice_render_model(
         party.get("billing_state"),
         party.get("billing_postal_code"),
     )
-    delivery_method = str(invoice.get("delivery_method") or party.get("preferred_delivery_method") or "unresolved")
+    _raw_delivery = str(invoice.get("delivery_method") or "").strip()
+    delivery_method = _raw_delivery if _raw_delivery in ("email", "mail", "both") else str(party.get("preferred_delivery_method") or "unresolved").strip()
+    if delivery_method not in ("email", "mail", "both"):
+        delivery_method = "unresolved"
     bill_to_email = str(invoice.get("bill_to_email_snapshot") or party.get("billing_email") or "").strip()
 
     sender_lines = [

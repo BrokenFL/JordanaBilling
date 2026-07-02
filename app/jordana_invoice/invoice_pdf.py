@@ -673,7 +673,7 @@ def _build_insurance_coding_flowables(render: dict[str, Any], small_style: Any):
         spaceAfter=0,
     )
 
-    flowables = [Spacer(1, 0.14 * 72.0)]
+    flowables = [Spacer(1, 4 * BODY_LEADING)]
     for item in insurance_coding:
         text = f"{_escape(item['label'])}: {_escape(item['value'])}"
         flowables.append(Paragraph(text, coding_style))

@@ -653,6 +653,9 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     if not row:
         raise ValueError("Invoice was not found.")
+    if row["status"] == "draft":
+        synchronize_draft_delivery_method(conn, invoice_id)
+        row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order, created_at", (invoice_id,)).fetchall()
     current_profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     current_party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (row["bill_to_party_id"],)).fetchone()
@@ -1578,7 +1581,7 @@ def validate_invoice_readiness(
     }
 
 
-def synchronize_draft_delivery_method(conn: sqlite3.Connection, invoice_id: str) -> bool:
+def synchronize_draft_delivery_method(conn: sqlite3.Connection, invoice_id: str, *, commit: bool = True) -> bool:
     """Resolve a stale unresolved/blank delivery_method on a draft invoice from the active billing setup.
 
     Only operates on draft invoices. Only fills in blank or 'unresolved' values —
@@ -1586,6 +1589,7 @@ def synchronize_draft_delivery_method(conn: sqlite3.Connection, invoice_id: str)
     Increments revision and writes audit exactly once when a real change occurs.
     Idempotent: repeated calls with no change produce no writes.
 
+    When *commit* is False the caller manages the transaction (e.g. finalize_invoice).
     Returns True if a change was made.
     """
     invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
@@ -1612,7 +1616,8 @@ def synchronize_draft_delivery_method(conn: sqlite3.Connection, invoice_id: str)
         "to": resolved,
         "source": "active_billing_setup",
     })
-    conn.commit()
+    if commit:
+        conn.commit()
     return True
 
 
@@ -1673,7 +1678,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
     pdf_path: Path | None = None
     pdf_existed_before = False
     try:
-        synchronize_draft_delivery_method(conn, invoice_id)
+        synchronize_draft_delivery_method(conn, invoice_id, commit=False)
         insurance_payload = {
             "insurance_coding_included": insurance_coding_included,
             "insurance_diagnosis_code": insurance_diagnosis_code,

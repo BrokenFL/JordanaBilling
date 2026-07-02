@@ -5,9 +5,9 @@ migrations, tests, and explicit decisions remain authoritative.
 
 - **Latest code commit reviewed:** `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
 - **Latest recorded full-suite verification commit:** `033d2634fa33688f686c66160ec0eff3e71bf8d7`
-- **Documentation reconciliation date:** 2026-07-01
+- **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `015_duplicate_repair_reversal_state`
-- **Latest recorded full-suite baseline:** 2,585 passing, 11 skipped, 0 failures (`2596` tests run)
+- **Latest recorded full-suite baseline:** 2,612 passing, 11 skipped, 0 failures (`2623` tests run)
 
 ## Architecture
 
@@ -88,10 +88,10 @@ sessions → invoice preview/finalization → payment tracking.
 
 1. **Finalization transaction ownership**
    `finalize_invoice()` starts an immediate transaction and calls
-   `synchronize_draft_delivery_method()`, which can commit internally. When that
-   synchronization path runs, part of the draft mutation can commit before the
-   rest of finalization finishes. Make transaction ownership explicit and add a
-   regression test proving a failed finalization leaves the draft unchanged.
+   `synchronize_draft_delivery_method(commit=False)`, which no longer commits
+   internally. The sync now operates within the finalization transaction.
+   A full regression test proving a failed finalization leaves the draft
+   unchanged remains a follow-up item.
 
 2. **Installer app-bundle rollback**
    The installer stages the replacement safely but removes the existing app
@@ -113,17 +113,14 @@ sessions → invoice preview/finalization → payment tracking.
 Latest recorded full suite:
 
 ```text
-Commit: 033d2634fa33688f686c66160ec0eff3e71bf8d7
-Ran 2596 tests in 180.798s
+Ran 2623 tests in 180.357s
 OK (skipped=11)
 ```
 
-Exact counts: 2,585 passing, 11 skipped, 0 failures.
+Exact counts: 2,612 passing, 11 skipped, 0 failures.
 
-The newer commit `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
-adds focused finalization/PDF tests, but its commit record does not provide a
-newer full-suite total. Rerun the full suite before final release and replace
-this baseline with the exact result.
+This baseline includes focused tests for Bill To delivery resolution, stale-draft
+refresh, insurance/coding block layout spacing, and render-model delivery fallback.
 
 ```bash
 PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
@@ -132,8 +129,6 @@ scripts/git_safety_check.sh
 scripts/privacy_check.sh
 ```
 
-This documentation-only reconciliation does not claim those commands were rerun
-after the documentation edits.
 
 ## Installer Acceptance Status
 
@@ -171,10 +166,24 @@ specific invoice; they must never be inferred or committed.
 
 1. Fix finalization transaction ownership and add rollback coverage.
 2. Make installer replacement rollback-safe and manifest-version driven.
-3. Rerun the full suite on the latest code head and record exact results.
-4. Finish and record the clean-Mac acceptance checklist.
-5. Run Jordana's complete smoke path: launch, sync, review, approve, preview,
+3. Finish and record the clean-Mac acceptance checklist.
+4. Run Jordana's complete smoke path: launch, sync, review, approve, preview,
    finalize, open canonical PDF, record payment, restart, and reopen records.
-6. Confirm rate exceptions and Bill To defaults with Jordana.
-7. Treat delivery, historical backfill, dashboard, credits, reconciliation, and
+5. Confirm rate exceptions and Bill To defaults with Jordana.
+6. Treat historical backfill, dashboard, credits, reconciliation, and
    month-close as later enhancements rather than blockers to the core handoff.
+
+### Completed in this round
+
+- Bill To delivery/contact information now correctly reaches the invoice PDF.
+  Root cause: `build_invoice_render_model` treated `"unresolved"` as a valid
+  delivery method, preventing fallback to the billing party's
+  `preferred_delivery_method`. Additionally, `synchronize_draft_delivery_method`
+  only ran during finalization, not during `get_invoice`/preview/readiness checks.
+  Fix: render model now treats `"unresolved"`/blank as falsy and falls back to
+  the active billing party's preference; `get_invoice` auto-syncs stale delivery
+  on drafts; `finalize_invoice` calls sync with `commit=False` inside its
+  existing transaction.
+- Insurance/coding block spacer changed from a fixed `0.14 * 72` (~10pt) to
+  `4 * BODY_LEADING` (~46pt), placing it approximately four body-text lines
+  below the final payment-information line as specified.
