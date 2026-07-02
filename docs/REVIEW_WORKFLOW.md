@@ -37,6 +37,24 @@ Bill To is the person or organization responsible for receiving and paying the i
 
 An existing deliberate session payer is preserved. Valid relationship defaults may be suggested for unapproved sessions, but ambiguous payer choices remain unresolved. Automatic matching never creates a billing party, and approved sessions are never silently reassigned.
 
+### Organization Bill To Eligibility
+
+When a billing relationship with an organization payer is saved, that organization becomes immediately eligible as Bill To for covered clients in the review UI. The candidate payload includes `bill_to_options` listing active billing-party records connected to confirmed participants via `client_accounts`. The UI renders these as `party:`-prefixed option values.
+
+`refresh_candidate_suggestions` auto-assigns the relationship default account/billing-party to a session only when:
+- the session has no account_id and no billing_party_id, and
+- the session is not approved, and
+- exactly one active relationship covers all confirmed participants.
+
+Deliberate session-specific Bill To, approved session Bill To, and finalized invoice snapshots are never overwritten. Unrelated organizations are never offered.
+
+### Invoice Delivery Contact
+
+The billing relationship editor can create or select an invoice delivery contact.
+
+- **Organization payer**: The delivery contact person is durably linked via `billing_parties.person_id`. The contact does not become a covered client, participant, payer, or Bill To.
+- **Person payer**: The selected contact's delivery details (name, email, phone) are copied onto the billing-party record as a **deliberate contact-detail override**. The payer's `person_id` is preserved. This is not a separate delivery-recipient link — changing contacts overwrites the prior contact's details on the billing party. The duplicate-person creation safeguard still applies when creating a new contact.
+
 ## Session Details
 
 The active duration choices are 30, 60, 90, 120, and Custom. Custom requires actual minutes.
@@ -90,6 +108,10 @@ Cancelled and no-show appointments remain preserved and reviewable. They require
 - `not_billable`
 - `waived`
 - `unresolved`
+
+Late cancellation supports an additional `bill_full_fee` and `custom_fee` treatment.
+
+When billing treatment is `waived` or `not_billable` and the approved rate is `$0.00`, the zero rate is valid and persists through save, reload, approval, invoice staging, and finalization. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
 
 Calendar start time is authoritative. Parsed title time remains evidence and may create a warning.
 

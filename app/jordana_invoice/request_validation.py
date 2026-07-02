@@ -756,7 +756,8 @@ def parse_update_billing_relationship_request(payload: Any) -> UpdateBillingRela
     """Parse POST /api/accounts/{id}/update-billing-relationship.
 
     Accepted fields: payer_kind, covered_client_ids, payer_person_id,
-    organization_billing_party_id, delivery_method, billing_notes.
+    organization_billing_party_id, delivery_method, billing_notes,
+    billing_delivery, delivery_contact.
     """
     data = _require_object(payload)
     _optional_str_choice(data, "payer_kind", _PAYER_KINDS)
@@ -765,6 +766,8 @@ def parse_update_billing_relationship_request(payload: Any) -> UpdateBillingRela
     _optional_str(data, "organization_billing_party_id")
     _optional_str(data, "delivery_method")
     _optional_str(data, "billing_notes")
+    _optional_dict(data, "billing_delivery")
+    _optional_dict(data, "delivery_contact")
     return UpdateBillingRelationshipRequest(payload=data)
 
 

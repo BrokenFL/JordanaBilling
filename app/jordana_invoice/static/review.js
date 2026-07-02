@@ -330,7 +330,7 @@ function renderInspector(data) {
   const clientsLocked = !readiness.clients_ready;
   const billingLocked = !readiness.clients_ready;
   const sessionLocked = !readiness.clients_ready || !readiness.billing_ready;
-  const currentRate = centString(s.approved_rate_cents || s.suggested_rate_cents);
+  const currentRate = centString(firstPresent(s.approved_rate_cents, s.suggested_rate_cents));
   const suggestedRate = centString(s.suggested_rate_cents);
   const rateChanged = currentRate !== suggestedRate && currentRate !== "";
   const attendanceOutcome = s.appointment_status === "scheduled" ? "completed" : (s.appointment_status || "completed");
@@ -340,7 +340,7 @@ function renderInspector(data) {
   const showRelationshipSave = !readiness.clients_ready || state.dirty.has("relationship");
   const showBillingSave = !billingLocked && (!readiness.billing_ready || state.dirty.has("billing"));
   const confirmedDuration = s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes;
-  const confirmedRate = centString(s.approved_rate_cents || s.suggested_rate_cents);
+  const confirmedRate = centString(firstPresent(s.approved_rate_cents, s.suggested_rate_cents));
   const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
   const overlayContent = $("reviewOverlayContent");
   if (!overlayContent) return;
@@ -636,8 +636,24 @@ function confirmedSessionClients() {
 
 function billToClientOptions(data) {
   const clients = confirmedSessionClients();
-  const selectedPersonId = data.effective_billing_party?.person_id || data.billing_party?.person_id || "";
+  const options = data.bill_to_options || [];
+  const selectedPartyId = data.effective_billing_party?.billing_party_id || data.billing_party?.billing_party_id || "";
   if (!clients.length) return `<option value="">Confirm Client(s) first</option>`;
+  if (options.length) {
+    const needsChoice = options.length > 1 && !selectedPartyId;
+    return [
+      needsChoice ? `<option value="">Choose payer...</option>` : "",
+      ...options.map(option => {
+        const label = option.billing_party_type === "organization"
+          ? `${option.organization_name || option.billing_name || "Organization"}`
+          : `${option.billing_name || clients.find(p => p.person_id === option.person_id)?.display_name || "Client"}`;
+        const suffix = option.source === "billing_relationship" && option.account_name ? ` (${option.account_name})` : "";
+        const selected = option.billing_party_id === selectedPartyId ? "selected" : "";
+        return `<option value="party:${escapeAttr(option.billing_party_id)}" ${selected}>${fmt(label)}${escapeHtml(suffix)}</option>`;
+      })
+    ].join("");
+  }
+  const selectedPersonId = data.effective_billing_party?.person_id || data.billing_party?.person_id || "";
   const needsChoice = clients.length > 1 && !selectedPersonId;
   return [
     needsChoice ? `<option value="">Choose payer...</option>` : "",
@@ -948,12 +964,15 @@ async function saveRelationshipSection() {
 
 async function saveBillingSection() {
   await resolveTypedSelections();
-  const selectedPersonId = $("billToClientSelect").value;
-  if (!selectedPersonId) return alert("Choose a confirmed client before saving Bill To.");
+  const selectedValue = $("billToClientSelect").value;
+  if (!selectedValue) return alert("Choose who should be billed before saving Bill To.");
+  const payload = selectedValue.startsWith("party:")
+    ? { billing_party_id: selectedValue.slice("party:".length) }
+    : { bill_to_person_id: selectedValue };
   const sessionDraft = collectSessionDraftValues();
   const updated = await api(`/api/review/candidates/${state.selected}/save-billing`, {
     method: "POST",
-    body: JSON.stringify({ bill_to_person_id: selectedPersonId })
+    body: JSON.stringify(payload)
   });
   state.detail = updated;
   state.billingParty = updated.billing_party || updated.effective_billing_party;
@@ -1228,7 +1247,7 @@ function collectPayload() {
   }
 
   const rate = $("approvedRateInput")?.value
-    || centString(session.approved_rate_cents)
+    || centString(firstPresent(session.approved_rate_cents, null))
     || centString(session.suggested_rate_cents)
     || "";
 
@@ -1356,7 +1375,10 @@ function houseCallSuggestion(s) {
   if (!s.house_call_suggested) return "";
   return `<div class="suggestion-note"><strong>Location suggests House Call:</strong> ${escapeHtml(s.location_text || "Location field present")}. Please confirm the session type.</div>`;
 }
-function centString(cents) { return cents ? (Number(cents) / 100).toFixed(2) : ""; }
+function firstPresent(...values) {
+  return values.find(value => value !== null && value !== undefined && value !== "");
+}
+function centString(cents) { return cents !== null && cents !== undefined && cents !== "" ? (Number(cents) / 100).toFixed(2) : ""; }
 function parseMoneyToCents(value) {
   const raw = String(value || "").trim().replace(/[$,]/g, "");
   if (!raw) return null;
@@ -2789,7 +2811,7 @@ async function loadEligibleInvoiceSessions() {
   const rows = await api(`/api/invoices/eligible-sessions?bill_to_party_id=${encodeURIComponent(party)}&period_start=${$("draftPeriodStart").value}&period_end=${$("draftPeriodEnd").value}`);
   state.eligibleSessions = rows;
   $("eligibleSessions").innerHTML = rows.map(row => `<label class="eligible-row ${row.eligible ? "" : "ineligible"}">
-    <input type="checkbox" value="${escapeAttr(row.id)}" ${row.eligible ? "" : "disabled"}><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}<small class="secondary">${escapeHtml(row.ineligibility_reasons.join("; "))}</small></span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong>
+    <input type="checkbox" value="${escapeAttr(row.id)}" ${row.eligible ? "" : "disabled"}><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}<small class="secondary">${escapeHtml(row.ineligibility_reasons.join("; "))}</small></span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(firstPresent(row.rate_cents_snapshot, row.approved_rate_cents)))}</strong>
   </label>`).join("") || `<div class="empty-state">No sessions in this period.</div>`;
 }
 
@@ -3064,7 +3086,7 @@ async function showAddSessionsToDraft(data) {
   const eligible = rows.filter(row => row.eligible);
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <div><h3>Add Sessions to Draft</h3><div class="help">Sessions already attached to an invoice are excluded by the backend.</div></div>
-    <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${escapeAttr(row.id)}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(row.rate_cents_snapshot || row.approved_rate_cents))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
+    <div class="eligible-list">${eligible.map(row => `<label class="eligible-row"><input type="checkbox" value="${escapeAttr(row.id)}"><span>${fmt(row.session_date)}</span><span>${fmt(row.participants)}</span><span>${serviceLabel(row.service_mode)}</span><strong>${money(centString(firstPresent(row.rate_cents_snapshot, row.approved_rate_cents)))}</strong></label>`).join("") || `<div class="empty-state">No additional eligible sessions.</div>`}</div>
     <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>`;
   $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
   $("confirmAddSessions").onclick = async () => {
@@ -4335,6 +4357,18 @@ async function openAccountRecord(accountId, options = {}) {
     <div class="editor-section" id="editorDeliverySection">
       <h4>Billing delivery</h4>
       <div class="field-grid">
+        <label class="field wide">Send invoice to
+          <select id="editDeliveryContact">
+            ${deliveryContactOptions(data)}
+            <option value="new">Add new delivery contact...</option>
+          </select>
+        </label>
+        <div class="field-grid wide" id="newDeliveryContactFields" hidden>
+          <label class="field">First name<input id="newDeliveryContactFirst" autocomplete="off"></label>
+          <label class="field">Last name<input id="newDeliveryContactLast" autocomplete="off"></label>
+          <label class="field">Email<input id="newDeliveryContactEmail" type="email" autocomplete="off"></label>
+          <label class="field">Phone<input id="newDeliveryContactPhone" type="tel" autocomplete="off"></label>
+        </div>
         <label class="field">Billing name<input id="editBillingName" value="${escapeHtml(bp.billing_name || "")}"></label>
         <label class="field">Billing email<input id="editBillingEmail" type="email" value="${escapeHtml(bp.billing_email || "")}"></label>
         <label class="field">Billing phone<input id="editBillingPhone" type="tel" value="${escapeHtml(bp.billing_phone || "")}"></label>
@@ -4460,16 +4494,45 @@ async function openAccountRecord(accountId, options = {}) {
     });
   }
 
-  const deliveryInputs = ["editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
+  const deliveryInputs = ["editDeliveryContact", "newDeliveryContactFirst", "newDeliveryContactLast", "newDeliveryContactEmail", "newDeliveryContactPhone", "editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
   deliveryInputs.forEach(id => {
     const el = $(id);
     if (el) el.addEventListener("change", markEditorDirty);
   });
+  if ($("editDeliveryContact")) {
+    $("editDeliveryContact").addEventListener("change", () => {
+      const contactValue = $("editDeliveryContact").value;
+      const isNew = contactValue === "new";
+      if ($("newDeliveryContactFields")) $("newDeliveryContactFields").hidden = !isNew;
+      const selectedContact = (data.delivery_contacts || []).find(contact => contact.person_id === contactValue);
+      if (selectedContact) {
+        if ($("editBillingName")) $("editBillingName").value = selectedContact.display_name || $("editBillingName").value || "";
+        if ($("editBillingEmail")) $("editBillingEmail").value = selectedContact.billing_email || "";
+        if ($("editBillingPhone")) $("editBillingPhone").value = selectedContact.billing_phone || "";
+      }
+      markEditorDirty();
+      if (isNew) $("newDeliveryContactFirst")?.focus();
+    });
+  }
 
   if (!location.hash.startsWith("#clients")) {
     location.hash = "clients";
     showClients();
   }
+}
+
+function deliveryContactOptions(data) {
+  const contacts = data.delivery_contacts || [];
+  const savedPersonId = data.billing_party?.person_id || "";
+  const rows = contacts.map(contact => {
+    const selected = contact.person_id === savedPersonId || contact.selected ? "selected" : "";
+    const detail = contact.billing_email || contact.billing_phone ? ` (${contact.billing_email || contact.billing_phone})` : "";
+    return `<option value="${escapeAttr(contact.person_id)}" ${selected}>${fmt(contact.display_name || "Unnamed contact")}${escapeHtml(detail)}</option>`;
+  });
+  if (!rows.length) {
+    rows.push(`<option value="">Use billing recipient details</option>`);
+  }
+  return rows.join("");
 }
 
 function openRecipientSearch(accountId, data, editState, returnContext) {
@@ -4684,6 +4747,35 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
   }
   const adminNotesEl = $("editAdminNotes");
   const adminNotes = adminNotesEl ? adminNotesEl.value.trim() : null;
+  const contactChoice = $("editDeliveryContact")?.value || "";
+  let deliveryContact = null;
+  if (contactChoice === "new") {
+    const first = $("newDeliveryContactFirst")?.value.trim() || "";
+    const last = $("newDeliveryContactLast")?.value.trim() || "";
+    const email = $("newDeliveryContactEmail")?.value.trim() || "";
+    const phone = $("newDeliveryContactPhone")?.value.trim() || "";
+    if (!first || !last) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save changes";
+      errorBox.hidden = false;
+      errorBox.textContent = "Enter first and last name for the new delivery contact.";
+      return;
+    }
+    deliveryContact = {
+      person: {
+        first_name: first,
+        last_name: last,
+        display_name: `${first} ${last}`.trim(),
+        billing_email: email || null,
+        billing_phone: phone || null,
+      }
+    };
+    billingDelivery.billing_name = `${first} ${last}`.trim();
+    if (email) billingDelivery.billing_email = email;
+    if (phone) billingDelivery.billing_phone = phone;
+  } else if (contactChoice) {
+    deliveryContact = { person_id: contactChoice };
+  }
 
   const payload = {
     payer_kind: editState.payer_kind,
@@ -4692,6 +4784,7 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
     filing_owner_record_id: editState.filing_owner_record_id,
     filing_owner_explicit: editState.filing_owner_explicit,
     billing_delivery: billingDelivery,
+    delivery_contact: deliveryContact,
     administrative_notes: adminNotes,
   };
   if (editState.payer_kind === "organization") {

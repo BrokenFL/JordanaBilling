@@ -3,11 +3,11 @@
 This document supersedes older uploaded handoffs. Newer repository code, schema,
 migrations, tests, and explicit decisions remain authoritative.
 
-- **Latest code commit reviewed:** `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
-- **Latest recorded full-suite verification commit:** `033d2634fa33688f686c66160ec0eff3e71bf8d7`
+- **Latest code commit reviewed:** pending commit for billing-relationship/delivery-contact/waived-cancellation fixes
+- **Latest recorded full-suite verification commit:** pending commit
 - **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,612 passing, 11 skipped, 0 failures (`2623` tests run)
+- **Latest recorded full-suite baseline:** 2,672 passing, 11 skipped, 0 failures (`2683` tests run)
 
 ## Architecture
 
@@ -113,11 +113,11 @@ sessions → invoice preview/finalization → payment tracking.
 Latest recorded full suite:
 
 ```text
-Ran 2623 tests in 180.357s
+Ran 2683 tests in 206.961s
 OK (skipped=11)
 ```
 
-Exact counts: 2,612 passing, 11 skipped, 0 failures.
+Exact counts: 2,672 passing, 11 skipped, 0 failures.
 
 This baseline includes focused tests for Bill To delivery resolution, stale-draft
 refresh, insurance/coding block layout spacing, and render-model delivery fallback.
@@ -187,3 +187,33 @@ specific invoice; they must never be inferred or committed.
 - Insurance/coding block spacer changed from a fixed `0.14 * 72` (~10pt) to
   `4 * BODY_LEADING` (~46pt), placing it approximately four body-text lines
   below the final payment-information line as specified.
+- Organization payer becomes available as Bill To after saving a billing
+  relationship. Root cause: `get_review_candidate` did not expose eligible
+  Bill To options from saved billing relationships, and
+  `refresh_candidate_suggestions` did not auto-link sessions to the matching
+  relationship default. Fix: `eligible_bill_to_options` queries active
+  client-account/billing-party rows for confirmed participants and returns
+  them as `bill_to_options` in the candidate payload; `billToClientOptions` in
+  the UI renders `party:`-prefixed option values; `saveBillingSection` accepts
+  `billing_party_id` directly. `refresh_candidate_suggestions` now calls
+  `default_relationship_for_participants` to auto-assign account/billing-party
+  only when the session has neither and is not approved.
+- Invoice delivery contact can be created or selected from the billing
+  relationship editor. For organization payers, the delivery contact person is
+  durably linked via `billing_parties.person_id` and does not become a covered
+  client, participant, or Bill To. For person payers, the selected contact's
+  delivery details (name, email, phone) are copied onto the billing-party
+  record as a deliberate contact-detail override; the payer's `person_id` is
+  preserved. This is a detail override, not a separate delivery-recipient link;
+  changing contacts overwrites the prior contact's details on the billing
+  party. No schema migration was required.
+- Waived late cancellation with $0.00 rate now persists end-to-end. Root cause:
+  `centString` and `firstPresent` used truthiness checks that treated `0` as
+  falsy, causing the saved zero to disappear on reload; `unresolved_from_values`
+  and `review_readiness` rejected any zero rate regardless of treatment. Fix:
+  `centString` uses explicit null/undefined/empty-string checks; `firstPresent`
+  returns the first non-null/non-undefined/non-empty value; readiness and
+  unresolved logic exempt `waived`/`not_billable` treatment with zero rate for
+  any cancellation outcome. The JS auto-sets the rate to `$0.00` when
+  `billingTreatment === "waived"` and `attendanceOutcome === "late_cancellation"`.
+  Invoice staging and finalization preserve the $0.00 line.

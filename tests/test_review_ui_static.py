@@ -131,6 +131,33 @@ for (const [input, expected] of cases) {
         self.assertIn("filing_owner_kind", editor)
         self.assertIn("filing_owner_record_id", editor)
 
+    def test_review_bill_to_options_support_billing_party_ids(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function billToClientOptions")
+        end = js.index("function billToSummary", start)
+        fn = js[start:end]
+
+        self.assertIn("data.bill_to_options", fn)
+        self.assertIn('value="party:${escapeAttr(option.billing_party_id)}"', fn)
+        self.assertIn("billing_party_type", fn)
+
+    def test_billing_delivery_editor_can_create_delivery_contact(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openAccountRecord")
+        end = js.index("function openRecipientSearch", start)
+        editor = js[start:end]
+
+        self.assertIn("Send invoice to", editor)
+        self.assertIn("newDeliveryContactFields", editor)
+        self.assertIn("delivery_contact: deliveryContact", js)
+
+    def test_late_cancellation_zero_rate_uses_explicit_zero_helpers(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function firstPresent", js)
+        self.assertIn("firstPresent(s.approved_rate_cents, s.suggested_rate_cents)", js)
+        self.assertIn('if ($("approvedRateInput") && attendanceOutcome === "late_cancellation" && billingTreatment === "waived")', js)
+
     def test_confirmed_client_summary_renders_without_participant_chips(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         self.assertIn("if (!chips) return;", js)

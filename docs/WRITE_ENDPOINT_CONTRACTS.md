@@ -334,7 +334,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `update_billing_relationship(conn, account_id, data)`
-- **Accepted fields**: `payer_kind`, `payer_person_id`, `organization_billing_party_id`, `covered_client_ids`, `default_billing_party_id`, `filing_owner_kind`, `filing_owner_record_id`, `filing_owner_explicit`, legacy `default_filing_owner_person_id`
+- **Accepted fields**: `payer_kind`, `payer_person_id`, `organization_billing_party_id`, `covered_client_ids`, `default_billing_party_id`, `filing_owner_kind`, `filing_owner_record_id`, `filing_owner_explicit`, legacy `default_filing_owner_person_id`, `billing_delivery` (dict: billing name/email/phone/address/delivery method/admin notes), `delivery_contact` (dict: `person_id` for existing contact or `person` for new contact creation)
 - **Required fields**: context-dependent (service-level validation)
 - **Success status**: 200
 - **Success response**: updated account/relationship dict

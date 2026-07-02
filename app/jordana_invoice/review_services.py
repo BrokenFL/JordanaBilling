@@ -185,9 +185,23 @@ def review_readiness(
     billing_type = values.get("billing_session_type") or map_service_mode_to_billing_type(values.get("service_mode"))
     session_type_known = billing_type in ALLOWED_BILLING_SESSION_TYPES
     time_category_known = bool(values.get("time_category"))
-    cancellation_needed = values.get("appointment_status") in {"cancelled", "no_show"}
+    cancellation_needed = values.get("appointment_status") in {"cancelled", "no_show", "late_cancellation", "timely_cancellation"}
     cancellation_ready = not cancellation_needed or values.get("billing_treatment") not in {"", None, "unresolved"}
-    rate_ready = bool(values.get("approved_rate_cents")) or (
+    normalized_outcome = normalize_attendance_outcome(values.get("appointment_status"))
+    normalized_treatment = normalize_billing_treatment_for_outcome(
+        normalized_outcome,
+        values.get("billing_treatment"),
+    )
+    zero_rate_exempt = (
+        normalized_outcome in {"late_cancellation", "cancelled", "no_show", "timely_cancellation"}
+        and normalized_treatment in {"waived", "not_billable"}
+        and values.get("approved_rate_cents") == 0
+    )
+    approved_rate_value = values.get("approved_rate_cents")
+    rate_ready = (
+        approved_rate_value is not None
+        and int(approved_rate_value) > 0
+    ) or zero_rate_exempt or (
         values.get("suggested_rate_cents") is not None
         and values.get("rate_rule_id")
         and not values.get("rate_needs_review")
@@ -268,6 +282,86 @@ def effective_billing_party_lookup(
         if len(rows) == 1:
             return rows[0]["billing_party_id"], "person_default"
     return None, "unresolved"
+
+
+def eligible_bill_to_options(
+    conn: sqlite3.Connection,
+    participants: list[dict[str, Any]],
+    selected_billing_party_id: str | None = None,
+) -> list[dict[str, Any]]:
+    person_ids = sorted({p.get("person_id") for p in participants if p.get("person_id")})
+    if not person_ids:
+        return []
+    placeholders = ",".join("?" for _ in person_ids)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT
+          bp.billing_party_id,
+          bp.billing_party_type,
+          bp.person_id,
+          bp.billing_name,
+          bp.organization_name,
+          ca.account_id,
+          ca.account_name
+        FROM account_members am
+        JOIN client_accounts ca ON ca.account_id = am.account_id
+        JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+        WHERE am.person_id IN ({placeholders})
+          AND ca.active = 1
+          AND bp.active = 1
+          AND ca.default_billing_party_id IS NOT NULL
+        ORDER BY bp.billing_party_type, bp.billing_name
+        """,
+        tuple(person_ids),
+    ).fetchall()
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        party_id = row["billing_party_id"]
+        if not party_id or party_id in seen:
+            continue
+        seen.add(party_id)
+        options.append({
+            "billing_party_id": party_id,
+            "billing_party_type": row["billing_party_type"],
+            "person_id": row["person_id"],
+            "billing_name": row["billing_name"],
+            "organization_name": row["organization_name"],
+            "account_id": row["account_id"],
+            "account_name": row["account_name"],
+            "selected": row["billing_party_id"] == selected_billing_party_id,
+            "source": "billing_relationship",
+        })
+    for participant in participants:
+        person_id = participant.get("person_id")
+        if not person_id:
+            continue
+        row = conn.execute(
+            """
+            SELECT billing_party_id, billing_name
+            FROM billing_parties
+            WHERE person_id = ? AND active = 1
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (person_id,),
+        ).fetchone()
+        if not row or row["billing_party_id"] in seen:
+            continue
+        seen.add(row["billing_party_id"])
+        name = participant.get("display_name") or participant.get("participant_name") or ""
+        options.append({
+            "billing_party_id": row["billing_party_id"],
+            "billing_party_type": "person",
+            "person_id": person_id,
+            "billing_name": row["billing_name"] or name,
+            "organization_name": None,
+            "account_id": None,
+            "account_name": None,
+            "selected": row["billing_party_id"] == selected_billing_party_id,
+            "source": "session_participant",
+        })
+    return options
 
 
 def map_service_mode_to_billing_type(service_mode: str | None) -> str | None:
@@ -466,13 +560,19 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
     readiness = review_readiness(conn, row, display_participants)
     effective_billing_party = get_billing_party(conn, readiness["effective_billing_party_id"])
     saved_billing_party = get_billing_party(conn, row["billing_party_id"])
+    active_billing_party = saved_billing_party or effective_billing_party
     return {
         "session": {**dict(row), "authority_score": readiness["authority_score"], "authority_reasons": readiness["authority_reasons"]},
         "participants": display_participants,
         "account": get_account(conn, row["account_id"]),
         "account_members": get_account_members(conn, row["account_id"]),
-        "billing_party": saved_billing_party or effective_billing_party,
+        "billing_party": active_billing_party,
         "effective_billing_party": effective_billing_party,
+        "bill_to_options": eligible_bill_to_options(
+            conn,
+            display_participants,
+            active_billing_party["billing_party_id"] if active_billing_party else None,
+        ),
         "checklist": checklist_for(row, display_participants, readiness),
         "readiness": readiness,
         "audit": audit_history(conn, row["id"], row["candidate_id"]),
@@ -645,6 +745,7 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
         "account": None,
         "account_members": [],
         "billing_party": None,
+        "bill_to_options": [],
         "checklist": [
             {"label": "Classification confirmed", "resolved": row["review_status"] in {"excluded", "approved"}},
             {"label": "Reusable alias decision", "resolved": False},
@@ -1885,8 +1986,9 @@ def get_person_record(conn: sqlite3.Connection, person_id: str) -> dict[str, Any
     }
 
 
-def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any]) -> dict[str, Any]:
-    init_db(conn)
+def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any], *, commit: bool = True) -> dict[str, Any]:
+    if commit:
+        init_db(conn)
     data = display_name if isinstance(display_name, dict) else {"display_name": display_name}
     display_name = text(
         data.get("display_name")
@@ -1933,11 +2035,33 @@ def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any]) 
         ),
     )
     record_audit(conn, "person", person_id, "created_inline", {"display_name": display_name, "person_code": person_code})
-    conn.commit()
+    if commit:
+        conn.commit()
     result = dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
     result["created"] = True
     result["existing"] = False
     return result
+
+
+def resolve_delivery_contact_person(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any] | None:
+    person_id = text(data.get("person_id")).strip()
+    if person_id:
+        row = conn.execute(
+            "SELECT * FROM people WHERE person_id = ? AND active = 1",
+            (person_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Delivery contact person does not exist or is not active.")
+        result = dict(row)
+        result["created"] = False
+        result["existing"] = True
+        return result
+    person_payload = data.get("person") or data.get("new_person")
+    if not person_payload:
+        return None
+    if not isinstance(person_payload, dict):
+        raise ValueError("Delivery contact must be a person record.")
+    return create_person(conn, person_payload, commit=False)
 
 
 def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -2182,6 +2306,7 @@ def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, A
         raise ValueError("Account not found.")
     members = get_account_members(conn, account_id)
     billing_party = get_billing_party(conn, account.get("default_billing_party_id"))
+    delivery_contacts = relationship_delivery_contact_options(conn, billing_party, members)
     filing_owner = _resolve_relationship_filing_owner(
         conn,
         account_id=account_id,
@@ -2216,12 +2341,44 @@ def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, A
         "account": account,
         "members": members,
         "billing_party": billing_party,
+        "delivery_contacts": delivery_contacts,
         "filing_owner": filing_owner,
         "rates": [dict(row) for row in rates],
         "sessions": [dict(row) for row in sessions],
         "aliases": [dict(row) for row in aliases],
         "audit": audit_history_for_entity(conn, "client_account", account_id),
     }
+
+
+def relationship_delivery_contact_options(
+    conn: sqlite3.Connection,
+    billing_party: dict[str, Any] | None,
+    members: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if billing_party and billing_party.get("person_id"):
+        row = conn.execute(
+            "SELECT person_id, display_name, billing_email, billing_phone FROM people WHERE person_id = ? AND active = 1",
+            (billing_party["person_id"],),
+        ).fetchone()
+        if row:
+            seen.add(row["person_id"])
+            options.append({**dict(row), "selected": True, "source": "saved_delivery_contact"})
+    for member in members:
+        person_id = member.get("person_id")
+        if not person_id or person_id in seen:
+            continue
+        seen.add(person_id)
+        options.append({
+            "person_id": person_id,
+            "display_name": member.get("display_name"),
+            "billing_email": member.get("billing_email"),
+            "billing_phone": member.get("billing_phone"),
+            "selected": False,
+            "source": "covered_client",
+        })
+    return options
 
 
 def _relationship_filing_owner_options(
@@ -2741,16 +2898,35 @@ def update_billing_relationship(
         )
 
         billing_delivery = payload.get("billing_delivery") or {}
+        delivery_contact = payload.get("delivery_contact") or {}
+        if delivery_contact:
+            contact_person = resolve_delivery_contact_person(conn, delivery_contact)
+            if contact_person:
+                if not billing_delivery.get("billing_name"):
+                    billing_delivery["billing_name"] = contact_person["display_name"]
+                if not billing_delivery.get("billing_email"):
+                    billing_delivery["billing_email"] = contact_person["billing_email"]
+                if not billing_delivery.get("billing_phone"):
+                    billing_delivery["billing_phone"] = contact_person["billing_phone"]
+                if payer_kind == "organization":
+                    billing_delivery["person_id"] = contact_person["person_id"]
+                record_audit(
+                    conn,
+                    "billing_party",
+                    billing_party_id,
+                    "invoice_delivery_contact_linked",
+                    {"person_id": contact_person["person_id"], "created": bool(contact_person.get("created"))},
+                )
         if billing_delivery:
             bp_update = {}
             for field in ("billing_email", "billing_phone", "billing_name", "billing_address_line_1",
                           "billing_address_line_2", "billing_city", "billing_state", "billing_postal_code",
-                          "preferred_delivery_method", "administrative_notes", "organization_name"):
+                          "preferred_delivery_method", "administrative_notes", "organization_name", "person_id"):
                 if field in billing_delivery:
                     bp_update[field] = billing_delivery[field]
             if bp_update:
                 bp_update["billing_party_id"] = billing_party_id
-                update_billing_party(conn, billing_party_id, bp_update)
+                update_billing_party(conn, billing_party_id, bp_update, commit=False)
 
         admin_notes = payload.get("administrative_notes")
         if admin_notes is not None:
@@ -3091,8 +3267,9 @@ def billing_party_for_person(conn: sqlite3.Connection, person_id: str, *, commit
     return created["billing_party_id"]
 
 
-def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: dict[str, Any]) -> dict[str, Any]:
-    init_db(conn)
+def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: dict[str, Any], *, commit: bool = True) -> dict[str, Any]:
+    if commit:
+        init_db(conn)
     existing = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone()
     if not existing:
         raise ValueError("Billing party not found.")
@@ -3120,11 +3297,18 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     else:
         billing_party_type = existing["billing_party_type"]
 
-    # --- person_id: reject reassignment ---
+    # --- person_id: person payers cannot be reassigned; organization rows may store a delivery contact person. ---
     if "person_id" in data:
         new_person_id = data.get("person_id") or None
-        if new_person_id and new_person_id != existing["person_id"]:
+        if billing_party_type == "person" and new_person_id and new_person_id != existing["person_id"]:
             raise ValueError("Cannot reassign billing party to a different person through this operation.")
+        if new_person_id:
+            person = conn.execute(
+                "SELECT person_id FROM people WHERE person_id = ? AND active = 1",
+                (new_person_id,),
+            ).fetchone()
+            if not person:
+                raise ValueError("Delivery contact person does not exist or is not active.")
         person_id = new_person_id or existing["person_id"]
     else:
         person_id = existing["person_id"]
@@ -3231,7 +3415,8 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     if "active" in data:
         audit_detail["active_changed_to"] = active
     record_audit(conn, "billing_party", billing_party_id, "updated_inline", audit_detail)
-    conn.commit()
+    if commit:
+        conn.commit()
     return dict(conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone())
 
 
@@ -3665,6 +3850,23 @@ def refresh_candidate_suggestions(
     now = now_iso()
     account_id = session["account_id"]
     billing_party_id = session["billing_party_id"]
+    if not account_id and not billing_party_id:
+        relationship = default_relationship_for_participants(conn, participants)
+        if relationship:
+            account_id = relationship["account_id"]
+            billing_party_id = relationship["billing_party_id"]
+            conn.execute(
+                """
+                UPDATE sessions
+                SET account_id = ?,
+                    billing_party_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND review_status != 'approved'
+                  AND billing_party_id IS NULL
+                """,
+                (account_id, billing_party_id, now, session["id"]),
+            )
 
     if not primary_person_id and len(participants) == 1 and participants[0].get("person_id"):
         primary_person_id = participants[0]["person_id"]
@@ -3780,7 +3982,7 @@ def get_account_members(conn: sqlite3.Connection, account_id: str | None) -> lis
         return []
     rows = conn.execute(
         """
-        SELECT am.*, p.display_name, p.person_code
+        SELECT am.*, p.display_name, p.person_code, p.billing_email, p.billing_phone
         FROM account_members am
         JOIN people p ON p.person_id = am.person_id
         WHERE am.account_id = ?
@@ -3789,6 +3991,43 @@ def get_account_members(conn: sqlite3.Connection, account_id: str | None) -> lis
         (account_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def default_relationship_for_participants(
+    conn: sqlite3.Connection,
+    participants: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    person_ids = sorted({p.get("person_id") for p in participants if p.get("person_id")})
+    if not person_ids:
+        return None
+    placeholders = ",".join("?" for _ in person_ids)
+    rows = conn.execute(
+        f"""
+        SELECT
+          ca.account_id,
+          ca.default_billing_party_id AS billing_party_id,
+          COUNT(DISTINCT am.person_id) AS matched_count,
+          (
+            SELECT COUNT(DISTINCT all_am.person_id)
+            FROM account_members all_am
+            WHERE all_am.account_id = ca.account_id
+          ) AS covered_count
+        FROM client_accounts ca
+        JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+        JOIN account_members am ON am.account_id = ca.account_id
+        WHERE ca.active = 1
+          AND bp.active = 1
+          AND ca.default_billing_party_id IS NOT NULL
+          AND am.person_id IN ({placeholders})
+        GROUP BY ca.account_id, ca.default_billing_party_id
+        HAVING matched_count = ?
+        ORDER BY covered_count ASC, ca.updated_at DESC, ca.account_id
+        """,
+        (*person_ids, len(person_ids)),
+    ).fetchall()
+    if len(rows) != 1:
+        return None
+    return dict(rows[0])
 
 
 def apply_smart_prefill(conn: sqlite3.Connection) -> int:
@@ -4289,16 +4528,26 @@ def unresolved_from_values(**values: Any) -> list[str]:
         appointment_status,
         values.get("billing_treatment"),
     )
-    if values["approved_rate_cents"] is None and not (
+    zero_rate_exempt = (
+        appointment_status in {"late_cancellation", "cancelled", "no_show", "timely_cancellation"}
+        and billing_treatment in {"waived", "not_billable"}
+        and values["approved_rate_cents"] == 0
+    )
+    positive_approved_rate = (
+        values["approved_rate_cents"] is not None
+        and int(values["approved_rate_cents"]) > 0
+    )
+    explicit_invalid_zero = values["approved_rate_cents"] is not None and not positive_approved_rate and not zero_rate_exempt
+    if explicit_invalid_zero or (not positive_approved_rate and not zero_rate_exempt and not (
         values.get("suggested_rate_cents") is not None
         and values.get("rate_rule_id")
         and not values.get("rate_needs_review")
-    ):
+    )):
         unresolved.append("approved_rate_cents")
     if appointment_status == "late_cancellation":
         if billing_treatment in {"", None, "unresolved"}:
             unresolved.append("billing_treatment")
-        elif billing_treatment == "custom_fee" and values["approved_rate_cents"] is None:
+        elif billing_treatment in {"custom_fee", "bill_full_fee"} and not positive_approved_rate:
             unresolved.append("approved_rate_cents")
     elif appointment_status in {"cancelled", "no_show", "timely_cancellation"} and billing_treatment in {"", None, "unresolved"}:
         unresolved.append("billing_treatment")

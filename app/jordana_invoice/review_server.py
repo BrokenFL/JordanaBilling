@@ -1295,6 +1295,7 @@ def make_handler(
                         return
                     if action == "refresh":
                         refresh_candidate_suggestions(self.conn(), candidate_id)
+                        self.conn().commit()
                         self.send_json(get_review_candidate(self.conn(), candidate_id))
                         return
                     if action == "approve":
