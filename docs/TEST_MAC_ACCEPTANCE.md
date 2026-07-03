@@ -17,27 +17,44 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.7
+### Current Test Build — v0.1.0-test.8
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.7
-- **DMG:** `JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg`
-- **Manifest commit:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
+- **Release label:** v0.1.0-test.8
+- **DMG:** `JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg`
+- **Manifest commit:** `d97d6babc2278bd1e19fbc36319d65acce24fbb4`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
 - **builder Python:** 3.14.4
 - **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
-- **DMG SHA-256:** `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
+- **DMG SHA-256:** `8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b`
+- **hdiutil verify:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
 - **Local browser smoke:** canonical draft PDF preview and stored finalized PDF preview load inline in the Invoices workspace
+- **Unit tests:** 2,729 passed, 68 skipped
+- **Temporary-DB acceptance test:** passed (operational database untouched)
+- **Privacy and Git safety checks:** passed
 
-test.7 was built from commit `179da1f` with Python 3.14.4. It is locally
+test.8 was built from commit `d97d6ba` with Python 3.14.4. It is locally
 built, checksum-verified, and privacy-scanned. It has not yet been installed on
 brooketest in this acceptance record.
+
+### Bug Fixes In test.8
+
+1. **Needs Classification ledger filter corrected** — the `needs_classification` review-status filter now correctly queries unclassified candidates instead of matching against session review status.
+2. **Future appointments excluded from actionable dashboard/review counts** — dashboard status counts and the review queue now apply a time filter so future appointments do not inflate actionable counts.
+3. **Missing Needs Classification / Send to Review filter option added** — the review status filter dropdown in the review UI now includes a "Needs classification / Send to Review" option.
+4. **Review overlay scroll resets to top** — opening the review overlay or selecting a candidate now resets scroll position to the top of the modal content.
+
+### Prior Test Builds
+
+`v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
+never published. It is superseded by test.8 as the current built and
+distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
 DMG was installed successfully on the brooketest account. Existing private
@@ -50,24 +67,24 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5 and test.6 builds remain historically accurate for the periods
-in which they were the current builds. test.7 supersedes test.6 as the current
-built test artifact, but test.6 remains the latest installed-smoke baseline
-until test.7 installation evidence is recorded.
+The prior test.5, test.6, and test.7 builds remain historically accurate for the
+periods in which they were the current builds. test.8 supersedes test.7 as the
+current built test artifact, but test.6 remains the latest installed-smoke
+baseline until test.8 installation evidence is recorded.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
 missing-database, uninstall preservation) remains incomplete and should
 be recorded before final production handoff.
 
-### v0.1.0-test.7 Acceptance Checklist Results
+### v0.1.0-test.8 Acceptance Checklist Results
 
-1. **Build exact test.7 DMG** — passed
+1. **Build exact test.8 DMG** — passed
 2. **Verify checksum locally** — passed
-3. **Verify release manifest** — passed (v0.1.0-test.7, commit 179da1f)
+3. **Verify release manifest** — passed (v0.1.0-test.8, commit d97d6ba)
 4. **Verify private-file scan** — passed
 5. **Verify inline draft and stored finalized PDF previews in local browser** — passed
-6. **Install test.7 over existing brooketest installation** — pending
+6. **Install test.8 over existing brooketest installation** — pending
 7. **Run clean-account acceptance** — pending
 8. **Publish/download/checksum the GitHub release asset before installation** — pending
 
@@ -83,7 +100,7 @@ be recorded before final production handoff.
 8. **Verify future draft inheritance** — passed
 9. **Verify finalized invoice immutability** — passed
 10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
-11. **Publish only the exact verified DMG after brooketest passes** — superseded by test.7 release publication path
+11. **Publish only the exact verified DMG after brooketest passes** — superseded by test.8 release publication path
 
 ### Unresolved-Client Refresh Behavior
 
@@ -110,7 +127,7 @@ refresh. This improvement is not yet implemented.
 - The versioned release DMG and matching `.sha256` file from the private pre-release.
 - For repeated test builds with the same application version, use the explicit
   release label in the filename, for example
-  `JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg`.
+  `JordanaBilling-v0.1.0-test.8-<commit>-macos-arm64.dmg`.
 - The private Apps Script URL and ingest API key available locally, not in GitHub, email, chat, screenshots, or logs.
 
 ## Steps
@@ -208,6 +225,28 @@ Test Mac / macOS: not yet installed
 Installer Python: 3.14.4 builder; installed runtime not yet recorded
 Gatekeeper result: not yet recorded
 Passed steps: build, manifest check, checksum verification, private-file scan,
+  local browser smoke for inline draft PDF and stored finalized PDF previews
+Deferred steps: brooketest install, clean-account acceptance, restart,
+  duplicate launch, reinstall preservation, uninstall preservation
+Operational smoke path: local browser preview smoke passed; installed app smoke pending
+Known limitations accepted: full clean-Mac evidence record incomplete
+Tester: Brooke/Codex local release build
+Note: test.7 was never published and is superseded by test.8
+```
+
+```text
+Date: 2026-07-03
+Release DMG: JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg
+Release commit: d97d6babc2278bd1e19fbc36319d65acce24fbb4
+Checksum verified: passed
+SHA-256: 8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b
+hdiutil verify: passed
+Test Mac / macOS: not yet installed
+Installer Python: 3.14.4 builder; installed runtime not yet recorded
+Gatekeeper result: not yet recorded
+Passed steps: build, manifest check, checksum verification, hdiutil verify,
+  private-file scan, unit tests (2,729 passed, 68 skipped), temporary-DB
+  acceptance test, privacy and Git safety checks, git diff --check,
   local browser smoke for inline draft PDF and stored finalized PDF previews
 Deferred steps: brooketest install, clean-account acceptance, restart,
   duplicate launch, reinstall preservation, uninstall preservation

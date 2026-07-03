@@ -20,29 +20,46 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.7
+### Current Test Build — v0.1.0-test.8
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.7
-- **DMG:** `JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg`
-- **Manifest commit:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
+- **Release label:** v0.1.0-test.8
+- **DMG:** `JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg`
+- **Manifest commit:** `d97d6babc2278bd1e19fbc36319d65acce24fbb4`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
 - **builder Python:** 3.14.4
 - **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
-- **DMG SHA-256:** `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
+- **DMG SHA-256:** `8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b`
+- **hdiutil verify:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
 - **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
 - **Local browser smoke:** canonical draft PDF preview and stored finalized PDF preview load inline in the Invoices workspace
+- **Unit tests:** 2,729 passed, 68 skipped
+- **Temporary-DB acceptance test:** passed (operational database untouched)
+- **Privacy and Git safety checks:** passed
 
-test.7 was built from commit `179da1f` with Python 3.14.4. It is locally
+test.8 was built from commit `d97d6ba` with Python 3.14.4. It is locally
 built, checksum-verified, and privacy-scanned. Install and clean-Mac acceptance
 for this exact artifact remain pending and must be recorded in
 `docs/TEST_MAC_ACCEPTANCE.md`.
+
+### Bug Fixes In test.8
+
+1. **Needs Classification ledger filter corrected** — the `needs_classification` review-status filter now correctly queries unclassified candidates instead of matching against session review status.
+2. **Future appointments excluded from actionable dashboard/review counts** — dashboard status counts and the review queue now apply a time filter so future appointments do not inflate actionable counts.
+3. **Missing Needs Classification / Send to Review filter option added** — the review status filter dropdown in the review UI now includes a "Needs classification / Send to Review" option.
+4. **Review overlay scroll resets to top** — opening the review overlay or selecting a candidate now resets scroll position to the top of the modal content.
+
+### Prior Test Builds
+
+`v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
+never published. It is superseded by test.8 as the current built and
+distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
 DMG was installed successfully on the brooketest account. Existing private
@@ -55,10 +72,10 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5 and test.6 builds remain historically accurate for the periods
-in which they were the current builds. test.7 supersedes test.6 as the current
-built test artifact, but test.6 remains the latest installed-smoke baseline
-until test.7 installation evidence is recorded.
+The prior test.5, test.6, and test.7 builds remain historically accurate for the
+periods in which they were the current builds. test.8 supersedes test.7 as the
+current built test artifact, but test.6 remains the latest installed-smoke
+baseline until test.8 installation evidence is recorded.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
@@ -148,11 +165,11 @@ pass a separate release label. This does not change the Python package version,
 database schema, migrations, invoice numbering, or data compatibility:
 
 ```bash
-scripts/build_release.sh --release-label v0.1.0-test.7
+scripts/build_release.sh --release-label v0.1.0-test.8
 ```
 
-`JORDANA_RELEASE_LABEL=v0.1.0-test.7 scripts/build_release.sh` is equivalent.
-Release labels must be simple path-safe values such as `v0.1.0-test.7` or
+`JORDANA_RELEASE_LABEL=v0.1.0-test.8 scripts/build_release.sh` is equivalent.
+Release labels must be simple path-safe values such as `v0.1.0-test.8` or
 `v0.1.0-rc.1`; blank, slash-containing, traversal, or shell-unsafe labels are
 rejected.
 
@@ -168,8 +185,8 @@ artifact filename while `application_version` remains the package version from
 `pyproject.toml`:
 
 ```text
-build/release/JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg
-build/release/JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg.sha256
+build/release/JordanaBilling-v0.1.0-test.8-<commit>-macos-arm64.dmg
+build/release/JordanaBilling-v0.1.0-test.8-<commit>-macos-arm64.dmg.sha256
 ```
 
 The artifact is inspected during build for forbidden private files such as

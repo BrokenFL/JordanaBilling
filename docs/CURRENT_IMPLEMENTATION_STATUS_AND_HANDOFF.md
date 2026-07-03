@@ -7,10 +7,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,725 tests, 0 failures, 68 skipped on Python 3.14.4
-- **Current built test release:** `v0.1.0-test.7`
-- **Current release artifact:** `JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg`
+- **Latest recorded full-suite baseline:** 2,729 tests passed, 0 failures, 68 skipped on Python 3.14.4
+- **Current built test release:** `v0.1.0-test.8`
+- **Current release artifact:** `JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
+- **Prior test release:** `v0.1.0-test.7` was never published and is superseded by test.8
 
 ## Architecture
 
@@ -108,24 +109,41 @@ This is not yet a final production declaration. Brooke should remain available d
 The verified controlled-beta artifact is:
 
 ```text
-JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg
 ```
 
 Recorded release facts:
 
-- Release label: `v0.1.0-test.7`
-- Manifest commit: `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
+- Release label: `v0.1.0-test.8`
+- Manifest commit: `d97d6babc2278bd1e19fbc36319d65acce24fbb4`
 - Application version: `0.1.0`
 - Source tree dirty: false
 - Builder Python: 3.14.4
 - Required Python family: 3.14.x
 - Architecture: arm64
 - DMG checksum verification: passed
-- DMG SHA-256: `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
+- DMG SHA-256: `8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b`
+- `hdiutil verify`: passed
 - Private-file scan: no `.env`, SQLite, or PDF files found
 - `contains_private_data`: false
 - Wheelhouse includes explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing passed for canonical inline draft PDF previews and stored finalized PDF previews in the Invoices workspace
+- Unit tests: 2,729 passed, 68 skipped
+- Temporary-DB acceptance test: passed (operational database untouched)
+- `scripts/privacy_check.sh`: passed
+- `scripts/git_safety_check.sh`: passed
+- `git diff --check`: passed
+
+### Bug Fixes In test.8
+
+1. **Needs Classification ledger filter corrected** — the `needs_classification` review-status filter now correctly queries unclassified candidates (`s.id IS NULL` with `c.review_status = 'needs_classification'`) instead of matching against session review status.
+2. **Future appointments excluded from actionable dashboard/review counts** — dashboard status counts and the review queue now apply a time filter (`datetime(COALESCE(end_at, start_at)) <= datetime('now')`) so future appointments do not inflate actionable counts.
+3. **Missing Needs Classification / Send to Review filter option added** — the review status filter dropdown in the review UI now includes a "Needs classification / Send to Review" option.
+4. **Review overlay scroll resets to top** — opening the review overlay or selecting a candidate now resets scroll position to the top of the modal content.
+
+### Prior Test Releases
+
+`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.8 as the current built and distributable controlled-beta release.
 
 The prior installed-smoke baseline remains `v0.1.0-test.6` from commit `0dec58b6bf5ab35e2d48600b57fec83a477e304d`, which preserved existing private configuration and SQLite data during the brooketest upgrade installation and passed the major Billing Relationship, filing-owner, delivery-contact, invoice, and data-preservation workflows.
 
@@ -133,7 +151,7 @@ An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rej
 
 ## Controlled Beta Decision
 
-The test.7 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
+The test.8 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
 
 1. Brooke has a verified backup of the source operational database.
 2. The private `.env` and SQLite database are transferred separately through a direct or encrypted method.
