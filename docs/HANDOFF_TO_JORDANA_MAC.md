@@ -1,68 +1,85 @@
 # Handoff To Jordana Mac
 
-This is the continuation contract for installing, verifying, or continuing
-development on Jordana's computer. Read `AGENTS.md` and
-`docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md` first.
+This is the operational guide for installing Jordana Billing on Jordana's Mac and beginning the controlled June-invoice beta.
 
-- **Latest code commit reviewed:** `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
-- **Latest recorded full-suite verification commit:** `033d2634fa33688f686c66160ec0eff3e71bf8d7`
-- **Recorded baseline:** 2,585 passing, 11 skipped, 0 failures (`2596` tests run)
-- **Migration head:** `015_duplicate_repair_reversal_state`
+Read first:
 
-## Source Of Truth
+1. `AGENTS.md`
+2. `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md`
+3. `docs/PRIVATE_DATA_TRANSFER.md`
+4. `docs/FRESH_INSTALL.md`
+5. `docs/TEST_MAC_ACCEPTANCE.md`
 
-1. latest explicit approved decision
-2. current repository, schema, migrations, tests, and documentation
-3. `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md`
-4. current private configuration and operational data
-5. older historical notes
+## Current Handoff Decision
 
-Do not revive obsolete schemas, terminology, editable time-category controls,
-side-inspector behavior, or abandoned workflows.
+The verified release may be used for a supervised Jordana beta. It is not represented as final production software.
 
-## Before Any Change
+Use this exact artifact:
 
-```bash
-pwd
-git status --short --branch
-git rev-parse HEAD
-git rev-parse origin/main
-git log -1 --oneline
+```text
+JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg
 ```
 
-- clean and synchronized: proceed
-- dirty: stop and inspect every change
-- behind: `git pull --ff-only`
-- diverged: stop and investigate
-- locally ahead from a completed prior round: inspect and push; never reset automatically
+Verified release facts:
 
-Read the applicable docs before editing, especially `AGENTS.md`, the current
-status handoff, private-data transfer, fresh install, production packaging,
-acceptance, write endpoint contracts, schema audit, review workflow, invoice
-lifecycle, and invoice template.
+- Manifest commit: `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
+- Application version: 0.1.0
+- Builder Python: 3.14.4
+- Required Python family: 3.14.x
+- Architecture: Apple Silicon arm64
+- Checksum verification: passed
+- Private-file scan: passed
+- Existing config/database preservation during brooketest upgrade: passed
+- Major billing workflow smoke testing: passed
 
-## Production Handoff Path
+Do not use the rejected Python 3.11 test.6 artifact from commit `6c3dbab`.
 
-1. Build a versioned DMG from a clean synchronized checkout.
-2. Transfer the DMG and checksum separately from all private production data.
-3. Verify the DMG checksum and private transfer checksums.
-4. Place the verified operational SQLite database and private configuration in their documented Application Support locations.
-5. Open the DMG and run `Install Jordana Billing.app`.
-6. Launch `~/Applications/Jordana Billing.app` by double-clicking.
-7. Complete the clean-Mac checklist and Jordana workflow smoke path.
+## Before Leaving Brooke's Mac
 
-The V1 release requires the Python major/minor version recorded in
-`release_manifest.json` during one-time installation. Daily use does not require
-Terminal, Git, GitHub, PyPI, pip, or a source checkout.
+Stop the application and preserve the current operational state.
 
-A production handoff must include the operational SQLite database. Google
-Sheets preserves raw calendar evidence but cannot reconstruct reviewed people,
-billing relationships, approved sessions, invoices, payments, receipts, or
-audit history.
+Required safeguards:
 
-Never transfer private production files through GitHub.
+1. Create a verified SQLite backup outside the repository.
+2. Run `PRAGMA integrity_check` against the backup.
+3. Record the current migration IDs through `017_relationship_filing_owner_target`.
+4. Record row counts for critical operational tables.
+5. Calculate SHA-256 checksums for every private file being transferred.
+6. Keep Brooke's original database and backup unchanged until Jordana completes the June billing cycle.
 
-## Installed Locations
+The source database must not be deleted, reset, overwritten, or treated as disposable.
+
+## Files That Must Transfer Separately
+
+GitHub and the DMG contain sanitized application code only. Transfer private operational data directly or through an encrypted method.
+
+Minimum production/beta state:
+
+```text
+config/.env
+data/jordana_invoice.sqlite3
+backups/
+```
+
+Preserve when available:
+
+```text
+Session Lists/
+Client Files/
+private branding
+existing invoices and receipts
+TRANSFER_MANIFEST.txt
+```
+
+Recommended transfer methods:
+
+- direct AirDrop between trusted Macs
+- encrypted external drive
+- encrypted archive through an approved secure channel
+
+Do not use GitHub, ordinary email, chat, screenshots, issue comments, or unencrypted cloud folders for private data.
+
+## Destination Locations
 
 Application:
 
@@ -84,83 +101,91 @@ Private operational state:
 User-facing outputs:
 
 ```text
-~/Documents/Jordana Billing/Session Lists/
-~/Documents/Jordana Billing/Client Files/
+~/Documents/Jordana Billing/
+  Session Lists/
+  Client Files/
 ```
 
-The setup and launcher must preserve the operational database, create verified
-backups before migrations or updates, and apply only additive migrations. A
-missing production database is an error; daily launch must never create a blank
-replacement.
+## Installation Order
 
-## Current Installer Status
+1. Confirm Jordana's Mac is Apple Silicon.
+2. Install the Python 3.14 family required by this release if it is not already available.
+3. Transfer the DMG and matching `.sha256` file.
+4. Verify the checksum.
+5. Transfer the private package separately.
+6. Verify private-file checksums and SQLite integrity.
+7. Open the DMG.
+8. Double-click `Install Jordana Billing.app`.
+9. Allow the setup app to preserve the transferred config and database.
+10. Do not choose clean-start database initialization when the transferred operational database exists.
+11. Complete installation and open the installed app.
 
-Brooke reports that the current one-click installer successfully completed an
-install and launch on a test Mac. The native setup app, offline wheelhouse,
-private runtime, installed launcher, Application Support storage, and Documents
-output folders are implemented.
+Checksum pattern:
 
-The full acceptance evidence record is still incomplete. Before final handoff,
-record the release filename and commit, checksum, Mac and macOS version, Python
-version, Gatekeeper behavior, restart, duplicate launch, port-conflict behavior,
-reinstall preservation, and operational smoke path in
-`docs/TEST_MAC_ACCEPTANCE.md`.
-
-### Installer App-Bundle Rollback
-
-The installer stages the replacement at `Jordana Billing.app.installing`. When
-an installed app already exists, it is moved to `Jordana Billing.app.previous`
-before the staged app is moved into the final path. Final verification runs
-against the new app. On success, `.previous` and stale `.installing` artifacts
-are removed. On verification failure, the failed replacement is removed or
-quarantined and `.previous` is restored. If restore fails, `.previous` is
-preserved where possible and the installer reports sanitized manual recovery
-guidance. Private Application Support data and Documents outputs remain outside
-the app bundle.
-
-### Installer Version Caution
-
-The installer currently installs `jordana-invoice==0.1.0` directly. This
-matches the current project version, but future releases should read the
-expected package version from `release_manifest.json`.
-
-## Configuration
-
-The native setup app writes private configuration to:
-
-```text
-~/Library/Application Support/Jordana Billing/config/.env
+```bash
+shasum -a 256 -c JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg.sha256
 ```
 
-Required values:
+Expected result: the command reports `OK`.
 
-- `JORDANA_APPS_SCRIPT_URL`
-- `JORDANA_INGEST_API_KEY`
+## Gatekeeper
 
-The key field is hidden and the file permissions must be `600`. Existing
-configuration is preserved on reinstall. Never commit or paste real secrets,
-Script Properties, spreadsheet IDs, or private paths into docs, screenshots,
-logs, GitHub, or chat.
+The application is ad-hoc signed and not notarized. macOS may require:
 
-The release payload includes `scripts/install_release.sh`; the native setup app
-is the user-facing entrypoint and delegates to the release installer workflow
-inside the verified payload.
+1. Right-click the installer app.
+2. Choose **Open**.
+3. Confirm the Security & Privacy prompt when required.
 
-## Daily Launch Contract
+Do not silently disable Gatekeeper. Stop if macOS asks to install Rosetta; this release is intended to run natively on Apple Silicon.
 
-The installed launcher:
+## Installer Safety Contract
 
-- validates the installed runtime
-- validates private configuration
-- opens the SQLite database read-only for integrity checks before startup
-- refuses to create a blank production database
-- reuses a verified healthy existing Jordana server
-- refuses to kill or reuse an unrelated process on port `8765`
-- applies only safe pending migrations through the app startup contract
-- starts the local review server and opens the browser after health readiness
-- does not run pip, Git, PyPI, editable installs, or dependency repair
+The installer must:
 
-## Review Workflow
+- preserve existing private config
+- preserve the operational database
+- stage the replacement app before changing the installed app
+- move the prior app to `Jordana Billing.app.previous`
+- verify the replacement before deleting the prior app
+- restore the prior app automatically when replacement verification fails
+- leave Application Support data and Documents outputs untouched during app-bundle rollback
+
+A failed app update must not destroy the only working app or private operational data.
+
+## First Launch Verification
+
+Confirm all of the following before Jordana begins real review:
+
+1. The app opens from `~/Applications/Jordana Billing.app`.
+2. The browser opens only after the local server is healthy.
+3. Existing people, relationships, sessions, invoices, payments, and audit history are visible when they were transferred.
+4. The database was not replaced with a blank database.
+5. Calendar Sync succeeds.
+6. Sync does not duplicate snapshots or sessions.
+7. The expected Documents folders exist and are writable.
+8. A fresh private backup is created on Jordana's Mac.
+
+## June Beta Smoke Path
+
+Complete this path with Brooke present before Jordana processes the full month:
+
+1. Open one unresolved June calendar item.
+2. Confirm and save Participants.
+3. Confirm and save Bill To.
+4. Confirm duration, session type, time category, rate, and payment handling.
+5. Save the Session Draft.
+6. Approve the session.
+7. Confirm the overlay closes and the same session cannot be submitted again.
+8. Open the resulting draft invoice.
+9. Review the canonical draft PDF.
+10. Confirm line items, rates, total, filing owner, and delivery method.
+11. Finalize one carefully verified invoice.
+12. Open the stored PDF from the expected client/month folder.
+13. Record or apply a supported payment.
+14. Restart the Mac.
+15. Confirm the same records remain visible and unchanged.
+
+## Routine Jordana Workflow
 
 Routine review focuses on:
 
@@ -173,150 +198,79 @@ Routine review focuses on:
 - Payment Handling
 - Approve
 
-The focused review overlay uses independent **Save Client(s)**, **Save Bill To**,
-**Save Session Draft**, and **Approve Session** actions. Section saves do not
-approve a session. Successful approval prevents duplicate submission, closes
-and unmounts the overlay, clears stale state, refreshes the queue, restores
-focus, and treats invoice-staging warnings as warnings rather than approval
-failures.
+Section saves do not approve a session automatically. No invoice is finalized without Jordana's explicit review and confirmation.
 
-Duplicate resolution uses **Confirm Duplicate & Next** with the same completed
-action behavior.
+Duplicate resolution uses **Confirm Duplicate & Next** and must complete by closing the overlay, clearing stale state, and advancing safely.
 
-## Billing Relationships And Rates
+## Billing Relationship Concepts
 
-Visible concepts are Who receives the invoice, Who are they paying for, Bill
-To, and Participants. The payer is not automatically covered. Selected-client
-chips are the source of truth. Saving persists immediately to SQLite. Approved
-sessions are never silently rewritten.
+Keep these concepts separate:
 
-Rate priority:
+- **Who pays / Bill To:** person or organization responsible for payment
+- **Who are they paying for:** covered clients
+- **Participants:** people who attended the session
+- **Save invoices under:** filing owner and client-folder organization
+- **Send invoice to:** delivery contact
 
-1. session-specific approved override
-2. exact participant-combination exception
-3. person exception
-4. billing-relationship exception
-5. global/default rate
+Changing one concept must not silently convert the person into another role.
 
-Approved session rates remain frozen.
+## Unresolved-Client Refresh
 
-## Invoice Behavior
+An unknown client may initially show safe fallback values such as Standard 60. After the client identity is confirmed and saved, Jordana may need to refresh or reopen the session before the final duration, time category, and related defaults appear.
 
-Implemented:
+Do not approve until the refreshed values are visible and correct.
 
-- monthly staging by Bill To and billing month
-- draft correction audit and optimistic locking
-- two-step finalization
-- one canonical ReportLab renderer for draft and final PDFs
-- immutable finalized snapshots and PDFs
-- filing-owner selection and client/month folders
-- prior-balance and account-summary snapshots
-- optional invoice-specific insurance coding
-- void and reissue
-- searchable invoice library
+## What The Beta Does Not Automate
 
-Commit `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
-fixes the post-finalize user flow. Successful finalization returns a versioned
-`final_pdf_url` and opens the canonical stored PDF with no-cache headers. The
-in-app HTML invoice card is not the authoritative proof of final layout.
-Repeated finalize submissions return the existing immutable invoice and PDF
-without regenerating or renumbering.
+The application does not currently:
 
-Review & Finalize now embeds the canonical draft PDF preview from
-`POST /api/invoices/{id}/draft-pdf` before Jordana confirms finalization. The
-confirmation screen no longer uses the duplicated HTML invoice card as the
-approval visual. The readiness endpoint is side-effect free and does not save
-draft edits, assign numbers, write PDF metadata, or change invoice status.
+- send invoices by email or mail
+- track invoice delivery
+- process credits, refunds, or write-offs
+- perform formal reconciliation or month close
+- automatically allocate one payment across multiple invoices
+- apply the historical paid-at-session analyzer to production data
 
-The application does not yet send invoices by email or mail.
+These are later enhancements, not reasons to bypass the implemented review controls.
 
-### Finalization Transaction Caution
+## Stop Conditions
 
-`finalize_invoice()` starts an immediate transaction and calls
-`synchronize_draft_delivery_method()`, which can commit internally when it fills
-a stale delivery method. Make transaction ownership explicit and add rollback
-coverage before describing every finalization failure path as fully atomic.
+Stop the beta and preserve all data if any of the following occurs:
 
-## Payment Behavior
+- the installer creates or proposes a blank database unexpectedly
+- the transferred operational database is missing or unreadable
+- private config is overwritten
+- a migration fails
+- an invoice number is consumed after a failed finalization
+- a finalized invoice changes after reopening
+- duplicate sessions or duplicate invoice lines appear after sync
+- the application kills or reuses an unrelated process on port 8765
+- a secret appears in logs, screenshots, or output
+- the prior working app cannot be restored after an update failure
 
-Implemented:
+Do not troubleshoot by deleting the database.
 
-- payment ledger and allocations
-- paid-at-session approval workflow
-- apply available funds
-- allocation reversal and payment voiding
-- correction history
-- manual immutable receipts
-- Outstanding, Paid, and All Payments views
+## Beta Support Rule
 
-The legacy historical paid-at-session analyzer remains dry-run only.
+During the first June cycle:
 
-## Verification
+- keep Brooke's source backup intact
+- make a fresh backup before migrations, bulk corrections, imports, or relationship merges
+- document unexpected behavior before retrying destructive or financial actions
+- prefer void/reissue over editing finalized invoice history
+- never use GitHub to move private data
 
-Latest recorded full suite:
+## Completion Criteria
 
-```text
-Commit: 033d2634fa33688f686c66160ec0eff3e71bf8d7
-Ran 2596 tests in 180.798s
-OK (skipped=11)
-```
+The controlled beta is successful when Jordana can:
 
-The newer code commit `d99a42263cd48b0c454b1de7fdc5dd01db02ee5a`
-adds focused finalization and PDF tests but does not record a newer full-suite
-total. Rerun the suite before final release.
+1. launch without Terminal
+2. sync Calendar evidence safely
+3. review and approve June sessions
+4. create and review draft invoices
+5. finalize and open canonical PDFs
+6. record supported payments
+7. restart and reopen without losing state
+8. complete the cycle without duplicate sessions, stale approvals, overwritten history, or private-data exposure
 
-```bash
-PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
-scripts/run_acceptance_test.sh
-scripts/git_safety_check.sh
-scripts/privacy_check.sh
-```
-
-Acceptance testing must use the provided temporary-database script. Never run
-ad hoc acceptance imports against the operational database.
-
-## Known Limitations
-
-- no invoice delivery and tracking
-- no historical paid-at-session apply mode
-- no credits, refunds, or write-offs
-- no automated multi-invoice allocation
-- no formal reconciliation or month-close workflow
-- no polished production dashboard
-- no notarized installer
-- matching Python runtime required for V1 installation
-- full clean-Mac evidence record incomplete
-- clean-Mac rollback-safe installer evidence still incomplete
-- finalization transaction ownership needs the narrow fix above
-- no formal client-versus-non-client distinction
-- no automatic payer classification
-- no permanent billing-relationship deletion by design
-
-## Privacy And Completion
-
-Never commit live SQLite databases, calendar exports, private spreadsheets,
-invoices, receipts, credentials, `.env`, private branding, logs with names,
-screenshots, backups, or real diagnosis codes.
-
-Every completed code round must report:
-
-- goal or root cause
-- files changed
-- focused and full test results
-- documentation changed
-- privacy and Git-safety results
-- commit hash
-- branch synchronization and worktree state
-- known limitations
-- local-only private files requiring secure transfer
-
-## Immediate Handoff Order
-
-1. Fix finalization transaction ownership.
-2. Make installer package version manifest-driven.
-3. Rerun the full suite on the latest code head.
-4. Complete and record clean-Mac acceptance.
-5. Build the final release from a clean synchronized checkout.
-6. Transfer private production data separately and verify it.
-7. Run the complete operational smoke path: launch, sync, review, approve,
-   preview, finalize, open canonical PDF, record payment, restart, and reopen.
+Final production declaration still requires the remaining clean-Mac acceptance evidence and the narrow follow-up items listed in `docs/CURRENT_IMPLEMENTATION_STATUS_AND_HANDOFF.md`.
