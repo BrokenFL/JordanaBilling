@@ -1,128 +1,154 @@
-# Jordana Billing v0.1.0 Test Release
+# Jordana Billing v0.1.0-test.6 Release Notes
 
-This is a private clean-Mac test release for Brooke's spare Mac. It is a pre-release and is not approved for Jordana's production Mac.
+## Release Status
 
-## Current Test Build — v0.1.0-test.6
+This private release is approved for a supervised Jordana beta using June invoices. It remains a controlled pilot/test release and is not represented as final production software.
 
-This is a controlled pilot/test release, not a final production release.
+Use this exact artifact:
+
+```text
+JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg
+```
+
+Release facts:
 
 - **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
 - **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
-- **application_version:** 0.1.0
-- **source_tree_dirty:** false
-- **builder Python:** 3.14.4
-- **requires_python:** 3.14.x
-- **architecture:** arm64
+- **Application version:** 0.1.0
+- **Source tree dirty:** false
+- **Builder Python:** 3.14.4
+- **Required Python family:** 3.14.x
+- **Architecture:** arm64
 - **DMG checksum verification:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
-- **contains_private_data:** false
-- **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
-- **Stale build artifacts removed** after wheel creation
-- **DMG and checksum copied to `/Users/Shared`** and verified there
+- **Contains private data:** false
+- **Wheelhouse:** `jordana_invoice-0.1.0`, ReportLab 4.5.1, Pillow 12.2.0, charset-normalizer 3.4.7
 
-### Release History Correction
+An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. Do not use it.
 
-An initial test.6 artifact was built from commit `6c3dbab` using Python 3.11
-and was rejected before installation. It was not published. A correct
-replacement was built from commit `0dec58b` using Python 3.14.4 in a clean
-temporary clone outside the Documents directory. The replacement passed
-checksum and manifest verification and installed successfully on the
-test Mac.
+## Acceptance Completed
 
-### Status
+The verified artifact was installed successfully on the brooketest account.
 
-- test.6 was built from commit `0dec58b` with Python 3.14.4
-- brooketest upgrade/data-preservation installation completed successfully
-- Existing private configuration and SQLite database were preserved during upgrade
-- Live smoke testing passed for the major Billing Relationship, filing-owner,
-  delivery-contact, invoice, and data-preservation workflows
-- This is a controlled pilot/test release — not final production
-- GitHub Release publication follows the final documentation-embedded rebuild
+Confirmed:
 
-### Billing Relationship Separation
+1. Installation over the existing test installation passed.
+2. Existing private configuration was preserved.
+3. Existing SQLite data was preserved.
+4. Release label and manifest matched the intended build.
+5. Arbitrary existing filing-person selection passed.
+6. Inline filing-person creation passed.
+7. Filing choice persisted after close and reopen.
+8. Filing owner remained separate from payer, Bill To, Participants, covered clients, and delivery contact.
+9. Future draft inheritance passed.
+10. Finalized invoice immutability passed.
+11. Major Billing Relationship, delivery-contact, invoice, and data-preservation smoke workflows passed.
 
-The Billing Relationship editor now separates four distinct concepts:
+## Controlled Beta Conditions
 
-1. **Save invoices under** (filing owner) — can choose connected
-   organization/payer/covered clients, search the active people directory,
-   or create a new filing person
-2. **Send invoice to** (delivery contact) — can search the active people
-   directory or create a new delivery contact
-3. **Bill To** — the payer organization or person responsible for payment
-4. **Participants / covered clients** — the session attendees and covered
-   people
+Install on Jordana's Mac only when:
 
-Filing owner and delivery contact remain separate from payer, Bill To,
-Participants, and covered clients.
+- Brooke has retained a verified source database backup.
+- The private `.env` and operational SQLite database are transferred separately and securely.
+- Transfer checksums and SQLite integrity pass.
+- Python 3.14.x is available for the one-time installation.
+- Brooke is present for installation and the first complete smoke path.
+- Jordana reviews every session and invoice before approval or finalization.
+- The prior working installation and source backup remain available until the June billing cycle is completed successfully.
 
-### Unresolved-Client Refresh Behavior
+## Feature Highlights
 
-During smoke testing, some unresolved/unknown-client sessions initially
-appeared with safe fallback defaults (e.g., Standard 60) and did not yet
-show the final time classification. This is expected workflow behavior,
-not a parser defect:
+### Review
 
-1. An unknown/unresolved client appears with a safe fallback.
-2. The user confirms and saves the client identity.
-3. After a manual refresh, the system recognizes the client.
-4. The correct session duration, time category, and related defaults are
-   then applied.
+- Independent saves for Participants, Bill To, and Session Draft
+- Approval single-submit protection
+- Clean overlay completion and stale-state removal
+- Duplicate resolution using **Confirm Duplicate & Next**
+- Conservative handling of unresolved calendar evidence
 
-A future UX improvement may automatically reparse/refresh the session
-immediately after client confirmation so the user does not need a manual
-refresh. This improvement is not yet implemented.
+### Billing Relationships
 
-### Launcher Build Notes
+The editor separates:
 
-Launcher builds are not byte-reproducible because the Mach-O UUID and ad-hoc
-code-signature metadata change on each compilation. The release intentionally
-contains the newly rebuilt launcher. The repository launcher was restored to
-the tracked verified binary after the release build. This is expected and does
-not indicate corruption or obsolescence.
+1. **Bill To / payer** — responsible for payment
+2. **Covered clients** — people whose sessions the payer covers
+3. **Participants** — people who attended
+4. **Save invoices under** — filing owner and folder organization
+5. **Send invoice to** — delivery contact
 
-### Feature Highlights in test.6
+Filing owners and delivery contacts can be selected from the active people directory or created inline. Neither action silently changes payer, Bill To, covered-client, or Participant roles.
 
-- "Save invoices under" supports any active existing person from the full
-  people directory, inline creation of a new filing person, and storage as
-  `default_filing_owner_kind = "person"` + `default_filing_owner_record_id = person_id`
-- Complete separation from payer, Bill To, Participants, covered clients, and
-  Send invoice to / delivery contact
-- Organization-first default with payer fallback
-- Future-draft inheritance
-- Finalized-invoice immutability preserved
+### Invoices
 
-### Acceptance Checklist Results
+- Monthly staging by Bill To and billing month
+- Canonical draft PDF preview
+- Shared PDF renderer for draft and final output
+- Transaction-safe numbering and immutable finalization
+- Repeated finalization returns the existing canonical PDF
+- Client/month filing folders
+- Organization, payer, covered-client, and explicitly selected person filing owners
+- Prior-balance and account-summary snapshots
+- Optional invoice-specific insurance coding
+- Void and reissue
+- Waived late-cancellation $0.00 line support
 
-1. **Install test.6 over existing brooketest installation** — passed
-2. **Verify private configuration and DB preservation** — passed
-3. **Verify release label and manifest** — passed (v0.1.0-test.6, commit 0dec58b)
-4. **Test arbitrary existing filing person** — passed
-5. **Test inline-created filing person** — passed
-6. **Verify persistence after close/reopen** — passed
-7. **Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage** — passed
-8. **Verify future draft inheritance** — passed
-9. **Verify finalized invoice immutability** — passed
-10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
-11. **Publish only the exact verified DMG after brooketest passes** — pending final rebuild
+### Payments
 
-## Previous Test Build — v0.1.0-test.5
+- Payment ledger and allocations
+- Paid-at-session workflow
+- Available-funds application
+- Reversals, voids, corrections, receipts, and balance views
 
-The test.5 build was the prior test release. Historical references to test.5
-remain accurate for the period in which test.5 was the current build. test.6
-supersedes test.5 as the current test build.
+### Installation
 
-## General Test Release Information
+- Native setup app
+- Offline wheelhouse
+- Private runtime
+- Application Support storage for config and SQLite
+- Documents storage for reports and client files
+- Daily launch without Git, pip, PyPI, or Terminal
+- Rollback-safe app-bundle replacement
 
-- Required Mac: Apple Silicon.
-- Required Python runtime: see `release_manifest.json` for the exact required major/minor family for this artifact.
-- After download, installation uses the shipped wheelhouse and can run offline.
-- Normal daily launch does not require Git, GitHub, PyPI, pip, or a source checkout.
-- No private configuration, database, credentials, invoices, receipts, reports, logs, or client data are included.
-- The native setup app writes private configuration on first install and preserves it on reinstall.
-- The spare-Mac test should use an explicitly initialized disposable database.
-- Gatekeeper may require right-click Open or Security & Privacy approval.
-- Verify the `.dmg` checksum before installing.
-- Follow `docs/TEST_MAC_ACCEPTANCE.md`.
+## Known Beta Friction
 
-Do not install this test release on Jordana's production Mac yet.
+### Client Refresh After Confirmation
+
+An unresolved client may initially show fallback values such as Standard 60. After the client identity is confirmed and saved, refresh or reopen the session before approval so the final duration, time category, and related defaults are visible.
+
+### Delivery Is Manual
+
+The application creates and files invoice PDFs but does not send or track them by email or mail.
+
+## Known Limitations
+
+Not included in this release:
+
+- credits, refunds, or write-offs
+- formal reconciliation or month close
+- automated multi-invoice payment allocation
+- production historical paid-at-session backfill
+- polished management dashboard
+- notarized installer
+- bundled Python runtime
+
+## Remaining Production Evidence
+
+The following acceptance scenarios still require a fully recorded clean-Mac result before final production declaration:
+
+- restart launch
+- duplicate launch
+- cross-user port ownership
+- unrelated process on port 8765
+- missing-config failure
+- missing-database failure
+- reinstall preservation
+- uninstall preservation
+- installer rollback behavior
+
+Follow `docs/HANDOFF_TO_JORDANA_MAC.md` and `docs/TEST_MAC_ACCEPTANCE.md`.
+
+## Privacy
+
+No private configuration, operational database, credentials, invoices, receipts, reports, logs, real client data, or real diagnosis codes are included in the release artifact.
+
+Private production data must never move through GitHub or a public release asset.
