@@ -20,6 +20,45 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
+### Current Pending Acceptance Build — v0.1.0-test.6
+
+- **Release label:** v0.1.0-test.6
+- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
+- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **application_version:** 0.1.0
+- **source_tree_dirty:** false
+- **builder Python:** 3.11.11
+- **architecture:** arm64
+- **DMG checksum verification:** passed
+- **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
+- **Stale build artifacts removed** after wheel creation
+- **DMG and checksum copied to `/Users/Shared`** and verified there
+
+test.6 has been built and copied to `/Users/Shared`. brooketest
+upgrade/data-preservation installation, full clean-account acceptance, and
+GitHub Release publication have **not** yet been run. Do not claim test.6 is
+accepted, production-ready, or published.
+
+The prior test.5 build remains historically accurate for the period in which it
+was the current build. test.6 supersedes test.5 as the current pending
+acceptance build.
+
+### Launcher Build Non-Reproducibility
+
+Launcher builds are not byte-reproducible because the Mach-O UUID and ad-hoc
+code-signature metadata change on each compilation. The tracked verified
+launcher binary hash is
+`05288036d84eec8d635afd507af523949f8abb1af33e66b49a262e5abb51f154`. The
+official build script recompiles the launcher and produces
+`55b76bfc5e10a11b8311916089d0ef54b918d806705371ee9d5c9e14b7f7c7b5`. The
+difference is limited to Mach-O UUID and ad-hoc code-signature hash metadata.
+Both launchers use `Identifier=com.jordana.billing.launcher`,
+`Signature=adhoc`, `TeamIdentifier=not set`. The release intentionally contains
+the newly rebuilt launcher. The repository launcher was restored to the tracked
+verified binary after the release build. This is expected and does not indicate
+corruption or obsolescence.
+
 ## Strategy
 
 V1 uses an offline pinned runtime install with a native macOS setup app:
@@ -87,11 +126,11 @@ pass a separate release label. This does not change the Python package version,
 database schema, migrations, invoice numbering, or data compatibility:
 
 ```bash
-scripts/build_release.sh --release-label v0.1.0-test.5
+scripts/build_release.sh --release-label v0.1.0-test.6
 ```
 
-`JORDANA_RELEASE_LABEL=v0.1.0-test.5 scripts/build_release.sh` is equivalent.
-Release labels must be simple path-safe values such as `v0.1.0-test.5` or
+`JORDANA_RELEASE_LABEL=v0.1.0-test.6 scripts/build_release.sh` is equivalent.
+Release labels must be simple path-safe values such as `v0.1.0-test.6` or
 `v0.1.0-rc.1`; blank, slash-containing, traversal, or shell-unsafe labels are
 rejected.
 
@@ -107,8 +146,8 @@ artifact filename while `application_version` remains the package version from
 `pyproject.toml`:
 
 ```text
-build/release/JordanaBilling-v0.1.0-test.5-<commit>-macos-arm64.dmg
-build/release/JordanaBilling-v0.1.0-test.5-<commit>-macos-arm64.dmg.sha256
+build/release/JordanaBilling-v0.1.0-test.6-<commit>-macos-arm64.dmg
+build/release/JordanaBilling-v0.1.0-test.6-<commit>-macos-arm64.dmg.sha256
 ```
 
 The artifact is inspected during build for forbidden private files such as

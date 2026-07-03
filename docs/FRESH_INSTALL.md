@@ -183,6 +183,18 @@ The app uses one intelligent sync path:
 
 The app does not launch the iPhone Shortcut. The Shortcut remains responsible for placing new Apple Calendar snapshots into Google Sheets.
 
+### Rebuild Calendar from Data Sheet Is Not a Database Wipe
+
+The **Rebuild Calendar Data from Sheet** option performs a recovery-only full
+reread of staged Sheet evidence. It does not delete the database, wipe approved
+sessions, invoices, payments, or billing relationships, or reset the migration
+state. A private database backup is created before the reread. This was
+confirmed during fresh test database preparation on the source checkout at
+commit 6c3dbab: the app was stopped, a SQLite backup was created and verified
+outside the repo, the old DB and WAL/SHM were moved outside the repo, a fresh DB
+was initialized and migrated, `integrity_check` returned `ok`, and the source
+app launched healthy. Calendar sync can now populate the fresh test database.
+
 ## Optional Command Reference
 
 These scripts are available for terminal use:

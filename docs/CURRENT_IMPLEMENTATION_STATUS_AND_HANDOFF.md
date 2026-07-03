@@ -3,11 +3,11 @@
 This document supersedes older uploaded handoffs. Newer repository code, schema,
 migrations, tests, and explicit decisions remain authoritative.
 
-- **Latest code commit reviewed:** a4bf049 — responsive overlay fixes across billing workspaces
-- **Latest recorded full-suite verification commit:** a4bf049
+- **Latest code commit reviewed:** 6c3dbab — Allow people directory filing owners in billing relationships
+- **Latest recorded full-suite verification commit:** 6c3dbab
 - **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,710 passing, 11 skipped, 0 failures (`2,721` tests run)
+- **Latest recorded full-suite baseline:** 2,721 passing, 11 skipped, 0 failures
 
 ## Architecture
 
@@ -113,17 +113,15 @@ sessions → invoice preview/finalization → payment tracking.
 
 ## Test Status
 
-Latest recorded full suite:
+Latest recorded full suite at commit 6c3dbab:
 
 ```text
-Ran 2705 tests in 211.700s
-OK (skipped=11)
+2,721 tests, 0 failures, 11 skipped
 ```
 
-Exact counts: 2,694 passing, 11 skipped, 0 failures.
-
 This baseline includes focused tests for Bill To delivery resolution, stale-draft
-refresh, insurance/coding block layout spacing, and render-model delivery fallback.
+refresh, insurance/coding block layout spacing, render-model delivery fallback,
+and people-directory filing-owner selection with inline person creation.
 
 ```bash
 PYTHONPATH=app .venv/bin/python -m unittest discover -s tests
@@ -133,6 +131,58 @@ scripts/privacy_check.sh
 ```
 
 
+## Current Release Build
+
+- **Release label:** v0.1.0-test.6
+- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
+- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **application_version:** 0.1.0
+- **source_tree_dirty:** false
+- **builder Python:** 3.11.11
+- **architecture:** arm64
+- **DMG checksum verification:** passed
+- **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
+- **Stale build artifacts removed** after wheel creation
+- **DMG and checksum copied to `/Users/Shared`** and verified there
+
+### Launcher Build Notes
+
+The tracked verified launcher binary hash is
+`05288036d84eec8d635afd507af523949f8abb1af33e66b49a262e5abb51f154`. The
+official build script recompiles the launcher and produces
+`55b76bfc5e10a11b8311916089d0ef54b918d806705371ee9d5c9e14b7f7c7b5`. The
+difference is limited to Mach-O UUID and ad-hoc code-signature hash metadata.
+Both launchers use `Identifier=com.jordana.billing.launcher`,
+`Signature=adhoc`, `TeamIdentifier=not set`. The release intentionally contains
+the newly rebuilt launcher. The repository launcher was restored to the tracked
+verified binary after the release build.
+
+Launcher builds are not byte-reproducible because the Mach-O UUID and ad-hoc
+code-signature metadata change on each compilation. This is expected and does
+not indicate corruption or obsolescence.
+
+### Fresh Test Database Work
+
+On the source checkout, a fresh test database was prepared:
+
+- app stopped, no DB process, port 8765 free
+- SQLite backup created outside repo; `integrity_check` returned `ok`
+- old DB and WAL/SHM moved outside repo
+- fresh DB initialized and migrated; `integrity_check` returned `ok`
+- bootstrap repaired the editable package installation
+- source app launched healthy
+- calendar sync may now populate the fresh test database
+- Rebuild Calendar from Data Sheet is not a database wipe
+
+### Pending Acceptance
+
+- test.6 has been built and copied to `/Users/Shared`
+- brooketest upgrade/data-preservation installation has **not** yet been run
+- full clean-account acceptance has **not** yet been run
+- GitHub Release has **not** yet been published
+- Do not claim test.6 is accepted, production-ready, or published
+
 ## Installer Acceptance Status
 
 The one-click installer has been manually demonstrated successfully on a test
@@ -141,6 +191,20 @@ record the release filename and commit, checksum, Mac and macOS version, Python
 version, Gatekeeper behavior, restart, duplicate launch, port-conflict tests,
 reinstall preservation, and the operational smoke path in
 `docs/TEST_MAC_ACCEPTANCE.md`.
+
+### Pending Acceptance Checklist for v0.1.0-test.6
+
+1. Install test.6 over existing brooketest installation
+2. Verify private configuration and DB preservation
+3. Verify release label and manifest
+4. Test arbitrary existing filing person
+5. Test inline-created filing person
+6. Verify persistence after close/reopen
+7. Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage
+8. Verify future draft inheritance
+9. Verify finalized invoice immutability
+10. Run clean-account acceptance
+11. Publish only the exact verified DMG after brooketest passes
 
 ## Privacy Rules
 
@@ -167,17 +231,26 @@ specific invoice; they must never be inferred or committed.
 
 ## Immediate Next Steps
 
-1. Fix finalization transaction ownership and add rollback coverage.
-2. Make installer replacement rollback-safe and manifest-version driven.
-3. Finish and record the clean-Mac acceptance checklist.
-4. Run Jordana's complete smoke path: launch, sync, review, approve, preview,
+1. Complete the v0.1.0-test.6 pending acceptance checklist above.
+2. Fix finalization transaction ownership and add rollback coverage.
+3. Make installer replacement rollback-safe and manifest-version driven.
+4. Finish and record the clean-Mac acceptance checklist.
+5. Run Jordana's complete smoke path: launch, sync, review, approve, preview,
    finalize, open canonical PDF, record payment, restart, and reopen records.
-5. Confirm rate exceptions and Bill To defaults with Jordana.
-6. Treat historical backfill, dashboard, credits, reconciliation, and
+6. Confirm rate exceptions and Bill To defaults with Jordana.
+7. Treat historical backfill, dashboard, credits, reconciliation, and
    month-close as later enhancements rather than blockers to the core handoff.
 
 ### Completed in this round
 
+- "Save invoices under" now supports any active existing person from the full
+  people directory, inline creation of a new filing person, and storage as
+  `default_filing_owner_kind = "person"` + `default_filing_owner_record_id = person_id`.
+  The feature has complete separation from payer, Bill To, Participants,
+  covered clients, and Send invoice to / delivery contact. Organization-first
+  default and payer fallback are implemented. Future-draft inheritance is
+  implemented. Finalized-invoice immutability is preserved. Joint participant
+  rate exceptions use person UUIDs, not display names.
 - Bill To delivery/contact information now correctly reaches the invoice PDF.
   Root cause: `build_invoice_render_model` treated `"unresolved"` as a valid
   delivery method, preventing fallback to the billing party's

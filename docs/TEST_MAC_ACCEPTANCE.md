@@ -2,7 +2,7 @@
 
 Use this checklist on Brooke's spare clean Mac before installing anything on Jordana's Mac. Do not use real credentials in screenshots or notes.
 
-## Current Status — 2026-07-01
+## Current Status — 2026-07-02
 
 Brooke reports that the current one-click installer successfully completed an install and launch on a test Mac. This confirms that the basic native setup, offline runtime installation, and daily app launch work in at least one real installation.
 
@@ -17,6 +17,42 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
+### Current Pending Acceptance Build — v0.1.0-test.6
+
+- **Release label:** v0.1.0-test.6
+- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
+- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **application_version:** 0.1.0
+- **source_tree_dirty:** false
+- **builder Python:** 3.11.11
+- **architecture:** arm64
+- **DMG checksum verification:** passed
+- **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **DMG and checksum copied to `/Users/Shared`** and verified there
+
+test.6 has been built and copied to `/Users/Shared`. brooketest
+upgrade/data-preservation installation, full clean-account acceptance, and
+GitHub Release publication have **not** yet been run. Do not claim test.6 is
+accepted, production-ready, or published.
+
+The prior test.5 build remains historically accurate for the period in which it
+was the current build. test.6 supersedes test.5 as the current pending
+acceptance build.
+
+### v0.1.0-test.6 Pending Acceptance Checklist
+
+1. Install test.6 over existing brooketest installation
+2. Verify private configuration and DB preservation
+3. Verify release label and manifest
+4. Test arbitrary existing filing person
+5. Test inline-created filing person
+6. Verify persistence after close/reopen
+7. Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage
+8. Verify future draft inheritance
+9. Verify finalized invoice immutability
+10. Run clean-account acceptance
+11. Publish only the exact verified DMG after brooketest passes
+
 ## Prerequisites
 
 - macOS 12 or later on Apple Silicon.
@@ -25,7 +61,7 @@ outside the app and must be preserved.
 - The versioned release DMG and matching `.sha256` file from the private pre-release.
 - For repeated test builds with the same application version, use the explicit
   release label in the filename, for example
-  `JordanaBilling-v0.1.0-test.5-<commit>-macos-arm64.dmg`.
+  `JordanaBilling-v0.1.0-test.6-<commit>-macos-arm64.dmg`.
 - The private Apps Script URL and ingest API key available locally, not in GitHub, email, chat, screenshots, or logs.
 
 ## Steps
