@@ -1,11 +1,14 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from jordana_invoice.calendar_preferences import upsert_calendar_preference
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
 from jordana_invoice.review_services import (
+    dashboard_status,
     list_review_candidates,
     list_sessions_ledger,
     mark_candidate,
@@ -13,7 +16,8 @@ from jordana_invoice.review_services import (
 )
 
 
-def make_row(key, title, calendar, start="2026-06-17T18:00:00-04:00"):
+def make_row(key, title, calendar, start="2026-06-17T18:00:00-04:00", end=None):
+    end = end or (datetime.fromisoformat(start) + timedelta(hours=1)).isoformat()
     return {
         "ingested_at": "2026-06-22T02:00:00.000Z",
         "snapshot_key": key,
@@ -27,7 +31,7 @@ def make_row(key, title, calendar, start="2026-06-17T18:00:00-04:00"):
         "event_fingerprint": f"fp-{key}",
         "event_title": title,
         "start_at": start,
-        "end_at": "2026-06-17T19:00:00-04:00",
+        "end_at": end,
         "duration_minutes": "60",
         "calendar": calendar,
         "payload_version": "2",
@@ -60,6 +64,8 @@ class RoutineQueueFilterTests(unittest.TestCase):
                          start="2026-06-17T16:00:00-04:00"),
                 make_row("c-admin", "Email followup notes", "Regular Calendar",
                          start="2026-06-17T09:00:00-04:00"),
+                make_row("c-unresolved", "Raisin??", "Regular Calendar",
+                         start="2026-06-17T11:00:00-04:00"),
             ],
             "filter_test",
         )
@@ -161,6 +167,17 @@ class RoutineQueueFilterTests(unittest.TestCase):
         ids = candidate_ids_from_result(result)
         self.assertNotIn(cid, ids, "Administrative candidate must not appear in routine review")
 
+    def test_unresolved_candidate_only_record_not_in_default_routine(self):
+        cid = self._candidate_id_for("Raisin??")
+        self.assertIsNotNone(cid, "Unresolved candidate-only row not found")
+        session_row = self.conn.execute(
+            "SELECT id FROM sessions WHERE candidate_id = ?", (cid,)
+        ).fetchone()
+        self.assertIsNone(session_row, "Unresolved candidate-only row must stay out of sessions until promoted")
+        result = list_review_candidates(self.conn)
+        ids = candidate_ids_from_result(result)
+        self.assertNotIn(cid, ids, "Candidate-only classification rows belong in Sessions, not default Review")
+
     def test_7_personal_admin_calendar_records_in_personal_admin_filter(self):
         result = list_review_candidates(self.conn, calendar_filter="personal_admin")
         ids = candidate_ids_from_result(result)
@@ -214,24 +231,16 @@ class RoutineQueueFilterTests(unittest.TestCase):
         for cid in session_cids:
             self.assertIn(cid, all_ids, f"Session {cid} must appear in all-calendars filter")
 
-    def test_10_routine_total_equals_sessions_plus_unresolved_candidates(self):
+    def test_10_routine_total_equals_actionable_sessions_only(self):
         result = list_review_candidates(self.conn)
         total = result["total"]
         session_count = self.conn.execute(
             "SELECT COUNT(*) AS c FROM sessions WHERE review_status NOT IN ('excluded', 'approved')"
         ).fetchone()["c"]
-        unresolved_count = self.conn.execute(
-            """
-            SELECT COUNT(*) AS c FROM calendar_event_candidates
-            WHERE id NOT IN (SELECT candidate_id FROM sessions)
-              AND classification IN ('unresolved', 'cancelled', 'no_show')
-              AND review_status NOT IN ('excluded', 'approved')
-            """
-        ).fetchone()["c"]
         self.assertEqual(
             total,
-            session_count + unresolved_count,
-            f"Routine total {total} != non-excluded/approved sessions({session_count}) + unresolved candidates({unresolved_count})",
+            session_count,
+            f"Routine total {total} != non-excluded/approved actionable sessions({session_count})",
         )
 
     def test_11_all_sessions_visible_regardless_of_disposition(self):
@@ -530,6 +539,37 @@ class ApprovedQueueFilterTests(unittest.TestCase):
         result = list_review_candidates(self.conn)
         ids = candidate_ids_from_result(result)
         self.assertNotIn(bob_cid, ids, "Excluded session must not appear in default queue")
+
+    def test_default_queue_and_badge_exclude_future_sessions(self):
+        eastern = ZoneInfo("America/New_York")
+        future_start = datetime.now(eastern) + timedelta(days=30)
+        future_end = future_start + timedelta(hours=1)
+        import_rows(
+            self.conn,
+            [
+                make_row(
+                    "s-future",
+                    "Future Client 6",
+                    "Preferred Calendar",
+                    start=future_start.isoformat(),
+                    end=future_end.isoformat(),
+                )
+            ],
+            "future_filter_test",
+        )
+        future_cid = self._candidate_id_for("Future Client")
+        self.assertIsNotNone(future_cid)
+
+        result = list_review_candidates(self.conn)
+        ids = candidate_ids_from_result(result)
+        self.assertNotIn(future_cid, ids, "Future sessions must not appear in the default actionable queue")
+
+        status = dashboard_status(self.conn)
+        visible_need_count = sum(
+            1 for item in result["items"]
+            if item["status"] not in {"approved", "excluded", "ready_for_approval"}
+        )
+        self.assertEqual(status["needs_review"], visible_need_count)
 
     def test_approved_filter_returns_approved_only(self):
         alice_cid = self._approve_session("Alice")

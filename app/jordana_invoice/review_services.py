@@ -68,6 +68,24 @@ REQUIRED_APPROVAL_FIELDS = {
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 
+REVIEW_ACTIONABLE_STATUSES = (
+    "needs_classification",
+    "needs_person_match",
+    "needs_account",
+    "needs_participants",
+    "needs_billing_party",
+    "needs_duration",
+    "needs_service_mode",
+    "needs_rate",
+    "needs_review",
+)
+
+
+def actionable_review_time_filter(alias: str) -> str:
+    return (
+        f"datetime(COALESCE({alias}.end_at, {alias}.start_at)) <= datetime('now')"
+    )
+
 
 def refresh_reports_after_commit(conn: sqlite3.Connection) -> str | None:
     try:
@@ -124,6 +142,7 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
         """
         SELECT review_status, COUNT(*) AS count
         FROM sessions
+        WHERE datetime(COALESCE(end_at, start_at)) <= datetime('now')
         GROUP BY review_status
         """
     ).fetchall()
@@ -146,17 +165,7 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "last_sync": last_sync["last_success_at"] if last_sync else "",
         "needs_review": sum(
             counts.get(status, 0)
-            for status in (
-                "needs_classification",
-                "needs_person_match",
-                "needs_account",
-                "needs_participants",
-                "needs_billing_party",
-                "needs_duration",
-                "needs_service_mode",
-                "needs_rate",
-                "needs_review",
-            )
+            for status in REVIEW_ACTIONABLE_STATUSES
         ),
         "ready_to_approve": counts.get("ready_for_approval", 0),
         "approved_this_month": counts.get("approved", 0),
@@ -421,6 +430,7 @@ def list_review_candidates(
         params.append(review_status)
     else:
         filters.append("s.review_status NOT IN ('excluded', 'approved')")
+        filters.append(actionable_review_time_filter("s"))
     if billing_session_type:
         filters.append("s.billing_session_type = ?")
         params.append(billing_session_type)
@@ -488,7 +498,20 @@ def list_review_candidates(
         (*params, limit, offset),
     ).fetchall()
     items = [row_summary(conn, row) for row in rows]
-    candidate_only = list_candidate_only_rows(conn, query=query, review_status=review_status, calendar_filter=calendar_filter)
+    include_candidate_only = bool(
+        review_status or calendar_filter in {"personal_admin", "all", "hidden"}
+    )
+    candidate_only = (
+        list_candidate_only_rows(
+            conn,
+            query=query,
+            review_status=review_status,
+            calendar_filter=calendar_filter,
+            actionable_only=not bool(review_status),
+        )
+        if include_candidate_only
+        else []
+    )
     if offset == 0:
         items.extend(candidate_only[: max(0, limit - len(items))])
     return {
@@ -631,6 +654,7 @@ def list_candidate_only_rows(
     query: str = "",
     review_status: str = "",
     calendar_filter: str = "",
+    actionable_only: bool = False,
 ) -> list[dict[str, Any]]:
     if calendar_filter in ("personal_admin", "all", "hidden"):
         class_sql = "c.classification IN ('personal', 'administrative', 'nonbillable', 'cancelled', 'no_show', 'unresolved')"
@@ -650,6 +674,8 @@ def list_candidate_only_rows(
         params.append(review_status)
     else:
         filters.append("c.review_status NOT IN ('excluded', 'approved')")
+    if actionable_only:
+        filters.append(actionable_review_time_filter("c"))
     if calendar_filter:
         add_calendar_filter(filters, params, calendar_filter, "c")
     rows = conn.execute(

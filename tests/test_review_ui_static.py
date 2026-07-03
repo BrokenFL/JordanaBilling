@@ -943,6 +943,7 @@ for (const [input, expected] of cases) {
         self.assertIn('Rolling 30 days', html)
         self.assertIn('Previous month', html)
         self.assertIn('id="sessionsReviewStatusFilter"', html)
+        self.assertIn('Needs classification / Send to Review', html)
         self.assertIn('id="sessionsPaymentStatusFilter"', html)
         self.assertIn('id="sessionsRows"', html)
         self.assertIn('id="sessionsPrevPage"', html)
@@ -953,6 +954,14 @@ for (const [input, expected] of cases) {
         self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0 }', js)
         self.assertIn('Read-only appointment ledger', js)
         self.assertNotIn('saveSessions', js)
+
+    def test_review_overlay_resets_scroll_when_opening_candidate(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function resetReviewOverlayScroll()", js)
+        self.assertIn('$("reviewOverlayContent")', js)
+        self.assertIn("node.scrollTop = 0;", js)
+        self.assertIn("resetReviewOverlayScroll();", js)
 
     def test_send_to_review_button_for_candidate_only_records(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

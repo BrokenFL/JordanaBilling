@@ -119,8 +119,13 @@ class TestBase(unittest.TestCase):
 
     def import_one(self, key, title, **kw):
         import_rows(self.conn, [raw_row(key, title, **kw)], "test")
-        rows = list_review_candidates(self.conn)["items"]
-        return next(row["candidate_id"] for row in rows if row["raw_title"] == title)
+        row = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE title = ?",
+            (title,),
+        ).fetchone()
+        if not row:
+            raise AssertionError(f"Imported candidate not found for title: {title}")
+        return row["id"]
 
     def _create_default_rule(self, **extra):
         payload = {
@@ -377,14 +382,20 @@ class TestAmbiguousTitleReviewRouting(unittest.TestCase):
 
 
 class TestAmbiguousTitleReviewQueueIntegration(TestBase):
-    """Ambiguous titles must appear in the review queue when imported."""
+    """Ambiguous titles must remain preserved and review-routable when imported."""
 
-    def test_ambiguous_title_creates_review_queue_entry(self):
+    def test_ambiguous_title_creates_preserved_candidate_for_classification(self):
         import_rows(self.conn, [raw_row("snap-amb", "Leah Grossman 630 38")], "test")
-        rows = list_review_candidates(self.conn)["items"]
-        matching = [r for r in rows if r["raw_title"] == "Leah Grossman 630 38"]
-        self.assertTrue(len(matching) >= 1, "Ambiguous title should appear in review candidates")
-        self.assertNotEqual(matching[0]["classification"], "approved")
+        candidate = self.conn.execute(
+            """
+            SELECT id, classification, review_status
+            FROM calendar_event_candidates
+            WHERE title = 'Leah Grossman 630 38'
+            """
+        ).fetchone()
+        self.assertIsNotNone(candidate, "Ambiguous title should remain preserved as a candidate")
+        self.assertNotEqual(candidate["classification"], "approved")
+        self.assertIn(candidate["review_status"], {"needs_classification", "needs_review", "needs_rate"})
 
     def test_no_duplicate_operational_session(self):
         import_rows(self.conn, [raw_row("snap-amb", "Leah Grossman 630 38")], "test")

@@ -448,6 +448,7 @@ async function selectCandidate(candidateId) {
   state.billingParty = data.billing_party || data.effective_billing_party;
   renderInspector(data);
   openReviewOverlay();
+  resetReviewOverlayScroll();
 }
 
 function renderInspector(data) {
@@ -1654,6 +1655,15 @@ const reviewOverlayCtrl = createOverlay({
 function openReviewOverlay() {
   if (!reviewOverlayCtrl) return;
   reviewOverlayCtrl.open({});
+  resetReviewOverlayScroll();
+}
+
+function resetReviewOverlayScroll() {
+  const modal = $("reviewOverlay")?.querySelector(".review-overlay-modal");
+  const content = $("reviewOverlayContent");
+  [modal, content].forEach(node => {
+    if (node) node.scrollTop = 0;
+  });
 }
 
 function closeReviewOverlay({ clearCandidate = false, skipDirtyCheck = false } = {}) {

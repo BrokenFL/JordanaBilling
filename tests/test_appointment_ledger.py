@@ -153,6 +153,30 @@ class AppointmentLedgerTests(unittest.TestCase):
         self.assertTrue(all(item["review_status"] == "approved" for item in filtered["items"]))
         self.assertTrue(all(item["payment_status"] == "paid" for item in filtered["items"]))
 
+    def test_needs_classification_filter_returns_candidate_only_send_to_review_rows(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row("snap-session", "Bonnie 5", "2026-06-23T17:00:00-04:00"),
+                raw_row("snap-unresolved", "Raisin??", "2026-06-24T11:00:00-04:00"),
+            ],
+            "test",
+        )
+
+        result = list_appointment_ledger_page(
+            self.conn,
+            date_range="all",
+            review_status="needs_classification",
+            limit=30,
+            offset=0,
+            today=date(2026, 6, 30),
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["calendar_title"], "Raisin??")
+        self.assertIsNone(result["items"][0]["session_id"])
+        self.assertEqual(result["items"][0]["review_status"], "needs_classification")
+
 
 if __name__ == "__main__":
     unittest.main()

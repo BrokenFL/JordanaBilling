@@ -165,8 +165,13 @@ def ledger_where(filters: LedgerFilters) -> tuple[str, list[Any]]:
         clauses.append(f"{appointment_date_sql} < date(?)")
         params.append(date_end.isoformat())
     if filters.review_status:
-        clauses.append("COALESCE(s.review_status, c.review_status, 'needs_review') = ?")
-        params.append(filters.review_status)
+        if filters.review_status == "needs_classification":
+            clauses.append("s.id IS NULL")
+            clauses.append("COALESCE(c.review_status, 'needs_review') = ?")
+            params.append(filters.review_status)
+        else:
+            clauses.append("COALESCE(s.review_status, c.review_status, 'needs_review') = ?")
+            params.append(filters.review_status)
     if filters.payment_status:
         clauses.append(f"{payment_status_sql()} = ?")
         params.append(filters.payment_status)
