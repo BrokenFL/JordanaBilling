@@ -127,9 +127,17 @@ for (const [input, expected] of cases) {
 
         self.assertIn("Billing delivery", editor)
         self.assertIn("Save invoices under", editor)
-        self.assertIn("Controls where invoice files are organized. It does not change who receives or pays the invoice.", editor)
+        self.assertIn("Choose whose folder/name should be used to organize invoice files. This does not change Bill To or who receives the invoice.", editor)
+        self.assertIn("searchFilingOwnerBtn", editor)
+        self.assertIn("Find existing person", editor)
+        self.assertIn("addFilingPersonBtn", editor)
+        self.assertIn("Add filing person", editor)
+        self.assertIn("newFilingPersonFields", editor)
+        self.assertIn("newFilingPersonDisplay", editor)
+        self.assertIn("newFilingPersonAddr1", editor)
         self.assertIn("filing_owner_kind", editor)
         self.assertIn("filing_owner_record_id", editor)
+        self.assertIn("openFilingOwnerSearch(editState)", editor)
 
     def test_shared_side_panel_responsive_sheet_rules_exist(self):
         css = Path("app/jordana_invoice/static/review.css").read_text()

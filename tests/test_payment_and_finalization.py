@@ -683,6 +683,85 @@ class FilingOwnerTests(unittest.TestCase):
         self.assertEqual(account_row["default_filing_owner_kind"], "billing_party")
         self.assertEqual(account_row["default_filing_owner_record_id"], org["billing_party_id"])
 
+    def test_future_draft_inherits_arbitrary_relationship_filing_owner(self):
+        child = self._person("Arbitrary", "Child")
+        filing_person = self._person("Family", "Manager")
+        org = self._party("Arbitrary Org", organization=True)
+        account = self._relationship("Arbitrary Org Relationship", org["billing_party_id"], [child])
+        self.conn.execute(
+            """
+            UPDATE client_accounts
+            SET default_filing_owner_kind = ?, default_filing_owner_record_id = ?, default_filing_owner_person_id = ?
+            WHERE account_id = ?
+            """,
+            ("person", filing_person["person_id"], filing_person["person_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        session = self._session("arbitrarydefault", [{"person_id": child["person_id"], "display_name": "Arbitrary Child"}], org["billing_party_id"])
+        draft = self._draft(org["billing_party_id"], [session])
+        filing = resolve_invoice_filing_owner(self.conn, draft["invoice"]["invoice_id"])
+        self.assertEqual(filing["selected"]["owner_kind"], "person")
+        self.assertEqual(filing["selected"]["owner_id"], filing_person["person_id"])
+        self.assertEqual(filing["selected"]["source_role"], "filing_person")
+        self.assertEqual(filing["source"], "relationship_default")
+
+    def test_draft_override_to_connected_owner_does_not_change_arbitrary_relationship_default(self):
+        child = self._person("Draft", "Child")
+        filing_person = self._person("Draft", "Manager")
+        org = self._party("Draft Override Org", organization=True)
+        account = self._relationship("Draft Override Relationship", org["billing_party_id"], [child])
+        self.conn.execute(
+            "UPDATE client_accounts SET default_filing_owner_kind = ?, default_filing_owner_record_id = ? WHERE account_id = ?",
+            ("person", filing_person["person_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        session = self._session("overridearbitrary", [{"person_id": child["person_id"], "display_name": "Draft Child"}], org["billing_party_id"])
+        draft = self._draft(org["billing_party_id"], [session])
+        update_invoice_filing_owner(
+            self.conn,
+            draft["invoice"]["invoice_id"],
+            owner_kind="billing_party",
+            owner_id=org["billing_party_id"],
+        )
+        account_row = self.conn.execute(
+            "SELECT default_filing_owner_kind, default_filing_owner_record_id FROM client_accounts WHERE account_id = ?",
+            (account["account_id"],),
+        ).fetchone()
+        self.assertEqual(account_row["default_filing_owner_kind"], "person")
+        self.assertEqual(account_row["default_filing_owner_record_id"], filing_person["person_id"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalized_arbitrary_filing_owner_snapshot_remains_unchanged(self, fake_pdf):
+        def write_pdf(_invoice, _lines, output_path, **_kwargs):
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_bytes(b"pdf")
+            return "z" * 64
+
+        fake_pdf.side_effect = write_pdf
+        child = self._person("Frozen", "Child")
+        filing_person = self._person("Frozen", "Manager")
+        org = self._party("Frozen Org", organization=True)
+        account = self._relationship("Frozen Relationship", org["billing_party_id"], [child])
+        self.conn.execute(
+            "UPDATE client_accounts SET default_filing_owner_kind = ?, default_filing_owner_record_id = ? WHERE account_id = ?",
+            ("person", filing_person["person_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        session = self._session("frozenarbitrary", [{"person_id": child["person_id"], "display_name": "Frozen Child"}], org["billing_party_id"])
+        draft = self._draft(org["billing_party_id"], [session])
+        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        original_path = final["invoice"]["pdf_path"]
+        self.conn.execute(
+            "UPDATE client_accounts SET default_filing_owner_kind = ?, default_filing_owner_record_id = ? WHERE account_id = ?",
+            ("billing_party", org["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
+        self.assertEqual(reopened["invoice"]["filing_owner_kind"], "person")
+        self.assertEqual(reopened["invoice"]["filing_owner_record_id"], filing_person["person_id"])
+        self.assertEqual(reopened["invoice"]["filing_owner_display_name_snapshot"], "Frozen Manager")
+        self.assertEqual(reopened["invoice"]["pdf_path"], original_path)
+
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_finalization_freezes_filing_owner_snapshots_and_human_folder(self, fake_pdf):
         def write_pdf(_invoice, _lines, output_path, **_kwargs):

@@ -7,7 +7,7 @@ migrations, tests, and explicit decisions remain authoritative.
 - **Latest recorded full-suite verification commit:** a4bf049
 - **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,694 passing, 11 skipped, 0 failures (`2,705` tests run)
+- **Latest recorded full-suite baseline:** 2,710 passing, 11 skipped, 0 failures (`2,721` tests run)
 
 ## Architecture
 
@@ -45,7 +45,7 @@ sessions → invoice preview/finalization → payment tracking.
 - Draft line editing with optimistic revision locking
 - Two-step finalization with transaction-safe numbering and immutable snapshots
 - Filing-owner selection and client/month PDF folders
-- Filing owner supports organization, payer person, and covered client targets with stable `kind` + `record_id` contract
+- Filing owner supports organization, payer person, covered client, and arbitrary active person targets with stable `kind` + `record_id` contract
 - Draft invoice filing owner override via `filing_owner_kind` + `filing_owner_record_id`; legacy `person_id` remains backward compatible
 - Draft override does not mutate relationship default; finalized snapshots remain immutable
 - Prior unpaid balance and account-summary snapshots
@@ -203,8 +203,11 @@ specific invoice; they must never be inferred or committed.
   only when the session has neither and is not approved.
 - Invoice delivery contact can be created or selected from the billing
   relationship editor. The editor has two visibly separate sections: "Save
-  invoices under" (filing owner only — payer, organization, or covered
-  clients) and "Billing delivery" (Send invoice to). The delivery section
+  invoices under" (filing owner only — payer, organization, covered
+  clients, or an explicitly selected active person from the people directory)
+  and "Billing delivery" (Send invoice to). The Save invoices under section
+  includes a "Find existing person" search and an "Add filing person" form
+  that reuses the existing `create_person` duplicate safeguard. The delivery section
   includes a "Find existing person" search that queries the full active
   people directory via `/api/people?q=...` (unrelated people are allowed
   here), and an "Add invoice contact" form with first name, last name,

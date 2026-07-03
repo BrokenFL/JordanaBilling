@@ -170,8 +170,8 @@ Resolution rules:
 - When Bill To is an established client person, the invoice files under that paying client, even if another client received the service.
 - When Bill To is an organization, the relationship default is the organization unless Jordana selects a connected payer or covered client instead.
 - When Bill To is a non-client individual, the relationship default is the payer unless Jordana selects a connected covered client instead.
-- Allowed relationship filing targets are existing connected records only: the payer, the billing organization when present, and covered clients connected to the billing relationship.
-- If payer or covered-client changes make the saved target invalid, the relationship editor falls back to the billing organization when available, otherwise to the payer. It does not keep an invalid hidden reference.
+- Allowed relationship filing targets are the payer, the billing organization when present, covered clients connected to the billing relationship, or an explicitly selected active person from the people directory.
+- If payer or covered-client changes make a connected saved target invalid, the relationship editor falls back to the billing organization when available, otherwise to the payer. A deliberately selected arbitrary filing person is preserved while active; inactive or deleted people fall back and are not kept as hidden stale references.
 - Draft preview still works when unresolved, but finalization readiness fails with a filing-owner validation message.
 
 Billing relationships store the selected target with `default_filing_owner_kind` and `default_filing_owner_record_id`. Existing `default_filing_owner_person_id` values remain compatible for person-based defaults. Approved sessions, finalized invoices, payments, and historical PDFs are not rewritten by default changes.
@@ -186,7 +186,7 @@ A draft invoice may override the relationship default via `POST /api/invoices/{i
 
 The override is validated against `eligible_owners` returned by `resolve_invoice_filing_owner`. Invalid or unrelated owner targets are rejected with a sanitized error. The override does not mutate the relationship default — `default_filing_owner_kind` and `default_filing_owner_record_id` on the `client_accounts` row remain unchanged.
 
-New draft invoices inherit the relationship default during staging. The invoice editor's `File invoice under` dropdown uses `eligible_owners` (organization payer, payer person, covered clients) with role labels (Organization, Payer, Covered client). Selecting an option sends `filing_owner_kind` and `filing_owner_record_id`; reopening the editor shows the saved draft override.
+New draft invoices inherit the relationship default during staging, including an explicitly selected active filing person. The invoice editor's `File invoice under` dropdown uses `eligible_owners` (organization payer, payer person, covered clients, and relationship filing-person defaults) with role labels (Organization, Payer, Covered client, Filing person). Selecting an option sends `filing_owner_kind` and `filing_owner_record_id`; reopening the editor shows the saved draft override.
 
 Finalized invoice snapshots (`filing_owner_kind`, `filing_owner_record_id`, `filing_owner_person_id`, `filing_owner_person_code_snapshot`, `filing_owner_display_name_snapshot`, `pdf_path`) remain immutable. Changing a draft override after finalization has no effect on the finalized invoice or its PDF.
 

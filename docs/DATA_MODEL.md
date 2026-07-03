@@ -105,7 +105,7 @@ The person or organization responsible for payment. The billing party is not ass
 
 ## `client_accounts`
 
-Billing relationships/groupings for covered clients and the default Bill To party. `default_filing_owner_kind` plus `default_filing_owner_record_id` store the relationship-level `Save invoices under` target, which may be the billing organization, payer person, or a covered client connected to the relationship. `default_filing_owner_person_id` remains for compatibility with existing person-based filing defaults. Changing this setting does not rewrite approved sessions, finalized invoices, payments, or historical PDFs.
+Billing relationships/groupings for covered clients and the default Bill To party. `default_filing_owner_kind` plus `default_filing_owner_record_id` store the relationship-level `Save invoices under` target, which may be the billing organization, payer person, a covered client connected to the relationship, or an explicitly selected active person from the people directory. `default_filing_owner_person_id` remains for compatibility with existing person-based filing defaults. Changing this setting does not rewrite approved sessions, finalized invoices, payments, or historical PDFs.
 
 ## `calendar_aliases`
 

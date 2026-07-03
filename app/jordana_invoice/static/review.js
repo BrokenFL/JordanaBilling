@@ -3009,7 +3009,9 @@ async function renderInvoiceEditor(data) {
       ? "Organization"
       : owner.source_role === "payer"
         ? "Payer"
-        : "Covered client";
+        : owner.source_role === "filing_person"
+          ? "Filing person"
+          : "Covered client";
     return `<option value="${escapeAttr(value)}" ${value === selectedFilingValue ? "selected" : ""}>${fmt(owner.display_name)} (${escapeHtml(roleLabel)})${owner.person_code ? ` ${escapeHtml(owner.person_code)}` : ""}</option>`;
   }
   ).join("");
@@ -4518,7 +4520,9 @@ async function openAccountRecord(accountId, options = {}) {
       ? "Organization"
       : owner.source_role === "payer"
         ? "Payer"
-        : "Covered client";
+        : owner.source_role === "filing_person"
+          ? "Filing person"
+          : "Covered client";
     return `<option value="${escapeAttr(value)}" ${value === selectedFilingValue ? "selected" : ""}>${fmt(owner.display_name)} (${escapeHtml(roleLabel)})</option>`;
   }).join("");
 
@@ -4568,8 +4572,25 @@ async function openAccountRecord(accountId, options = {}) {
           <select id="editFilingOwner">
             ${filingOptions}
           </select>
-          <span class="help">Controls where invoice files are organized. It does not change who receives or pays the invoice. Choices are limited to the payer, organization, or covered clients.</span>
+          <span class="help">Choose whose folder/name should be used to organize invoice files. This does not change Bill To or who receives the invoice.</span>
         </label>
+        <div class="inline-actions wide">
+          <button type="button" id="searchFilingOwnerBtn" class="save">Find existing person</button>
+          <button type="button" id="addFilingPersonBtn" class="save">Add filing person</button>
+        </div>
+        <div class="wide" id="filingOwnerSearchArea" hidden></div>
+        <div class="field-grid wide" id="newFilingPersonFields" hidden>
+          <label class="field">First name<input id="newFilingPersonFirst" autocomplete="off"></label>
+          <label class="field">Last name<input id="newFilingPersonLast" autocomplete="off"></label>
+          <label class="field">Display name<input id="newFilingPersonDisplay" autocomplete="off"></label>
+          <label class="field">Email<input id="newFilingPersonEmail" type="email" autocomplete="off"></label>
+          <label class="field">Phone<input id="newFilingPersonPhone" type="tel" autocomplete="off"></label>
+          <label class="field">Address line 1<input id="newFilingPersonAddr1" autocomplete="off"></label>
+          <label class="field">Address line 2<input id="newFilingPersonAddr2" autocomplete="off"></label>
+          <label class="field">City<input id="newFilingPersonCity" autocomplete="off"></label>
+          <label class="field">State<input id="newFilingPersonState" autocomplete="off"></label>
+          <label class="field">Postal code<input id="newFilingPersonPostal" autocomplete="off"></label>
+        </div>
       </div>
     </div>
 
@@ -4726,6 +4747,25 @@ async function openAccountRecord(accountId, options = {}) {
     const el = $(id);
     if (el) el.addEventListener("change", markEditorDirty);
   });
+  const filingPersonInputs = ["newFilingPersonFirst", "newFilingPersonLast", "newFilingPersonDisplay", "newFilingPersonEmail", "newFilingPersonPhone", "newFilingPersonAddr1", "newFilingPersonAddr2", "newFilingPersonCity", "newFilingPersonState", "newFilingPersonPostal"];
+  filingPersonInputs.forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener("change", markEditorDirty);
+  });
+  $("searchFilingOwnerBtn")?.addEventListener("click", () => {
+    if ($("newFilingPersonFields")) $("newFilingPersonFields").hidden = true;
+    openFilingOwnerSearch(editState);
+    markEditorDirty();
+  });
+  $("addFilingPersonBtn")?.addEventListener("click", () => {
+    if ($("filingOwnerSearchArea")) $("filingOwnerSearchArea").hidden = true;
+    const fields = $("newFilingPersonFields");
+    if (fields) fields.hidden = false;
+    editState.new_filing_person = true;
+    editState.filing_owner_explicit = true;
+    $("newFilingPersonFirst")?.focus();
+    markEditorDirty();
+  });
   $("searchDeliveryContactBtn")?.addEventListener("click", () => {
     if ($("newDeliveryContactFields")) $("newDeliveryContactFields").hidden = true;
     openDeliveryContactSearch(data);
@@ -4788,6 +4828,74 @@ function appendDeliveryContactOption(person) {
     select.insertBefore(option, newOption || null);
   }
   select.value = person.person_id;
+}
+
+function appendFilingOwnerOption(person, editState, sourceRole = "filing_person") {
+  const select = $("editFilingOwner");
+  if (!select || !person?.person_id) return;
+  const value = `person:${person.person_id}`;
+  let option = Array.from(select.options).find(row => row.value === value);
+  if (!option) {
+    option = document.createElement("option");
+    option.value = value;
+    option.textContent = `${person.display_name || "Unnamed person"} (${sourceRole === "payer" ? "Payer" : sourceRole === "covered_client" ? "Covered client" : "Filing person"})`;
+    select.appendChild(option);
+  }
+  select.value = value;
+  editState.filing_owner_kind = "person";
+  editState.filing_owner_record_id = person.person_id;
+  editState.filing_owner_explicit = true;
+  editState.new_filing_person = false;
+}
+
+function openFilingOwnerSearch(editState) {
+  const area = $("filingOwnerSearchArea");
+  if (!area) return;
+  area.hidden = false;
+  area.innerHTML = `
+    <div class="modal-search-wrap">
+      <label for="filingOwnerSearchInput">Search people directory</label>
+      <input id="filingOwnerSearchInput" class="modal-search" type="search" placeholder="Type a filing person name..." autocomplete="off">
+    </div>
+    <div class="modal-results" id="filingOwnerSearchResults"></div>
+  `;
+  const input = $("filingOwnerSearchInput");
+  const results = $("filingOwnerSearchResults");
+  let searchRows = [];
+  const doSearch = debounce(async (q) => {
+    if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+    try {
+      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      renderFilingOwnerSearchResults(results, searchRows, editState);
+    } catch (err) {
+      results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`;
+    }
+  }, 200);
+  input.addEventListener("input", (e) => doSearch(e.target.value));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  input.focus();
+}
+
+function renderFilingOwnerSearchResults(container, rows, editState) {
+  if (!rows.length) {
+    container.innerHTML = '<div class="modal-empty">No people found.</div>';
+    return;
+  }
+  container.innerHTML = rows.map(row => `
+    <div class="modal-result-row" data-person-id="${escapeAttr(row.person_id)}" tabindex="0" role="button">
+      <span>${escapeHtml(row.display_name || "Unnamed person")}</span>
+      ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
+    </div>
+  `).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    el.addEventListener("click", () => {
+      const person = rows.find(row => row.person_id === el.dataset.personId);
+      appendFilingOwnerOption(person, editState);
+      if ($("newFilingPersonFields")) $("newFilingPersonFields").hidden = true;
+      if ($("filingOwnerSearchArea")) $("filingOwnerSearchArea").hidden = true;
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
 }
 
 function applyDeliveryContactDetails(person) {
@@ -5063,6 +5171,39 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
   }
   const adminNotesEl = $("editAdminNotes");
   const adminNotes = adminNotesEl ? adminNotesEl.value.trim() : null;
+  if (editState.new_filing_person) {
+    const first = $("newFilingPersonFirst")?.value.trim() || "";
+    const last = $("newFilingPersonLast")?.value.trim() || "";
+    const display = $("newFilingPersonDisplay")?.value.trim() || `${first} ${last}`.trim();
+    const email = $("newFilingPersonEmail")?.value.trim() || "";
+    const phone = $("newFilingPersonPhone")?.value.trim() || "";
+    if (!first || !last) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save changes";
+      errorBox.hidden = false;
+      errorBox.textContent = "Enter first and last name for the new filing person.";
+      return;
+    }
+    try {
+      const person = await api("/api/people", {
+        method: "POST",
+        body: JSON.stringify({
+          first_name: first,
+          last_name: last,
+          display_name: display,
+          billing_email: email || null,
+          billing_phone: phone || null,
+        }),
+      });
+      appendFilingOwnerOption(person, editState);
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save changes";
+      errorBox.hidden = false;
+      errorBox.textContent = escapeHtml(err.message || "Could not create filing person.");
+      return;
+    }
+  }
   const contactChoice = $("editDeliveryContact")?.value || "";
   let deliveryContact = null;
   if (contactChoice === "new") {

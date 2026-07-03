@@ -2486,6 +2486,26 @@ def _relationship_filing_owner_options(
     ))
 
 
+def _active_person_filing_owner(conn: sqlite3.Connection, person_id: str, *, source_role: str) -> dict[str, Any] | None:
+    person_id = str(person_id or "").strip()
+    if not person_id:
+        return None
+    row = conn.execute(
+        "SELECT person_id, display_name, person_code FROM people WHERE person_id = ? AND active = 1",
+        (person_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "owner_kind": "person",
+        "owner_id": row["person_id"],
+        "person_id": row["person_id"],
+        "person_code": row["person_code"],
+        "display_name": row["display_name"],
+        "source_role": source_role,
+    }
+
+
 def _fallback_relationship_filing_owner(options: list[dict[str, Any]]) -> dict[str, Any] | None:
     for role in ("billing_organization", "payer", "covered_client"):
         for option in options:
@@ -2515,6 +2535,11 @@ def _resolve_relationship_filing_owner(
     record_id = account["default_filing_owner_record_id"] or account["default_filing_owner_person_id"]
     selected = option_map.get((kind, record_id)) if kind and record_id else None
     source = "saved" if selected else "default"
+    if not selected and kind == "person" and record_id:
+        selected = _active_person_filing_owner(conn, record_id, source_role="filing_person")
+        if selected:
+            options.append(selected)
+            source = "saved"
     if not selected:
         selected = _fallback_relationship_filing_owner(options)
     return {
@@ -2814,6 +2839,22 @@ def update_billing_relationship(
     if duplicate and duplicate["account_id"] != account_id:
         raise ValueError("This billing relationship already exists.")
 
+    old_billing_party_id = account["default_billing_party_id"]
+    old_filing_kind = account["default_filing_owner_kind"] or ("person" if account["default_filing_owner_person_id"] else None)
+    old_filing_id = account["default_filing_owner_record_id"] or account["default_filing_owner_person_id"]
+    old_filing_options = _relationship_filing_owner_options(
+        conn,
+        account_id=account_id,
+        billing_party_id=old_billing_party_id,
+    )
+    old_option_map = {(row["owner_kind"], row["owner_id"]): row for row in old_filing_options}
+    old_saved_arbitrary_person = bool(
+        old_filing_kind == "person"
+        and old_filing_id
+        and (old_filing_kind, old_filing_id) not in old_option_map
+        and _active_person_filing_owner(conn, old_filing_id, source_role="filing_person")
+    )
+
     _begin_immediate(conn)
     try:
         if payer_kind in ("client", "person"):
@@ -2873,8 +2914,18 @@ def update_billing_relationship(
         )
         option_map = {(row["owner_kind"], row["owner_id"]): row for row in filing_options}
         requested_owner = option_map.get((requested_kind, requested_id)) if requested_kind and requested_id else None
+        if (
+            not requested_owner
+            and requested_kind == "person"
+            and requested_id
+            and (explicit_filing_owner or (old_saved_arbitrary_person and requested_id == old_filing_id))
+        ):
+            requested_owner = _active_person_filing_owner(conn, requested_id, source_role="filing_person")
+            if requested_owner:
+                filing_options.append(requested_owner)
+                option_map[(requested_owner["owner_kind"], requested_owner["owner_id"])] = requested_owner
         if explicit_filing_owner and requested_kind and requested_id and not requested_owner:
-            raise ValueError("Save invoices under must be a connected payer, organization, or covered client.")
+            raise ValueError("Save invoices under must be an active person, connected payer, organization, or covered client.")
         filing_owner = requested_owner or _fallback_relationship_filing_owner(filing_options)
         filing_owner_kind = filing_owner["owner_kind"] if filing_owner else None
         filing_owner_record_id = filing_owner["owner_id"] if filing_owner else None

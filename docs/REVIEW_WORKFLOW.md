@@ -52,12 +52,14 @@ Deliberate session-specific Bill To, approved session Bill To, and finalized inv
 
 The billing relationship editor has two visibly separate sections:
 
-1. **Save invoices under** — filing owner only (payer, organization, or covered clients). No arbitrary unrelated contacts.
+1. **Save invoices under** — filing owner only (payer, organization, covered clients, or an explicitly selected active person from the people directory).
 2. **Billing delivery** — Send invoice to, with existing-person search, Add invoice contact form, preferred delivery method, and delivery email/phone/address fields.
 
 The delivery contact is separate from Bill To, payer, Participants, covered clients, and filing owner.
 
-- **Existing person search**: The "Find existing person" button searches the full active people directory via `/api/people?q=...`. Unrelated people are allowed here because this is delivery-contact selection, not payer or filing-owner selection. Selecting a person stores `delivery_contact_person_id` and does not alter payer identity, Bill To, filing owner, covered clients, or Participants.
+- **Filing owner search**: The "Find existing person" button in Save invoices under searches the full active people directory via `/api/people?q=...`. Selecting a person stores `default_filing_owner_kind='person'` and `default_filing_owner_record_id=<person_id>` only. It does not alter payer identity, Bill To, invoice delivery, covered clients, or Participants.
+- **Filing person creation**: The "Add filing person" form reuses the existing create-person duplicate safeguard, then stores the new active person as the relationship filing owner only.
+- **Existing delivery person search**: The "Find existing person" button in Billing delivery searches the full active people directory via `/api/people?q=...`. Unrelated people are allowed here because this is delivery-contact selection, not payer selection. Selecting a person stores `delivery_contact_person_id` and does not alter payer identity, Bill To, filing owner, covered clients, or Participants.
 - **New contact creation**: The "Add invoice contact" form includes first name, last name, display name, email, phone, and address fields (line 1, line 2, city, state, postal code). The existing `create_person` duplicate safeguard (case-insensitive display-name match) is reused. Save is transactional with the rest of the relationship update.
 - **Organization payer**: The delivery contact person is linked via `delivery_contact_person_id` (canonical) and `person_id` (historical). The contact does not become a covered client, participant, payer, or Bill To.
 - **Person payer**: The delivery contact person is linked via `delivery_contact_person_id`. The payer's `person_id` is preserved. The contact's delivery details (name, email, phone, address) are stored on the billing-party record.

@@ -757,6 +757,7 @@ def parse_update_billing_relationship_request(payload: Any) -> UpdateBillingRela
 
     Accepted fields: payer_kind, covered_client_ids, payer_person_id,
     organization_billing_party_id, delivery_method, billing_notes,
+    filing_owner_kind, filing_owner_record_id, filing_owner_explicit,
     billing_delivery, delivery_contact.
     """
     data = _require_object(payload)
@@ -766,6 +767,13 @@ def parse_update_billing_relationship_request(payload: Any) -> UpdateBillingRela
     _optional_str(data, "organization_billing_party_id")
     _optional_str(data, "delivery_method")
     _optional_str(data, "billing_notes")
+    _optional_str(data, "filing_owner_kind")
+    _optional_str(data, "filing_owner_record_id")
+    _optional_str(data, "default_filing_owner_kind")
+    _optional_str(data, "default_filing_owner_record_id")
+    _optional_str(data, "default_filing_owner_person_id")
+    _optional_bool(data, "filing_owner_explicit")
+    _optional_str(data, "administrative_notes")
     _optional_dict(data, "billing_delivery")
     _optional_dict(data, "delivery_contact")
     return UpdateBillingRelationshipRequest(payload=data)

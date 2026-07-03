@@ -1267,20 +1267,49 @@ class BillingRelationshipFilingOwnerTests(unittest.TestCase):
         self.assertEqual(account["default_billing_party_id"], before_party)
         self.assertEqual(get_account_record(self.conn, account_id)["filing_owner"]["selected"]["display_name"], "Fictional Sibling")
 
-    def test_unrelated_person_cannot_be_selected(self):
+    def test_arbitrary_person_can_be_selected_only_as_filing_owner(self):
         child = self._person("Fictional Child")
         outside = self._person("Unrelated Person")
         payer = self._person("Fictional Parent")
         account_id = self._relationship("person", payer, [child])
-        with self.assertRaises(ValueError):
-            update_billing_relationship(self.conn, account_id, {
-                "payer_kind": "person",
-                "payer_person_id": payer["person_id"],
-                "covered_client_ids": [child["person_id"]],
-                "filing_owner_kind": "person",
-                "filing_owner_record_id": outside["person_id"],
-                "filing_owner_explicit": True,
-            })
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "person",
+            "payer_person_id": payer["person_id"],
+            "covered_client_ids": [child["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": outside["person_id"],
+            "filing_owner_explicit": True,
+        })
+
+        account = self.conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+        party = self.conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (account["default_billing_party_id"],)).fetchone()
+        members = self.conn.execute("SELECT person_id FROM account_members WHERE account_id = ?", (account_id,)).fetchall()
+        participant_rows = self.conn.execute("SELECT person_id FROM session_participants WHERE person_id = ?", (outside["person_id"],)).fetchall()
+        record = get_account_record(self.conn, account_id)
+
+        self.assertEqual(account["default_filing_owner_kind"], "person")
+        self.assertEqual(account["default_filing_owner_record_id"], outside["person_id"])
+        self.assertEqual(record["filing_owner"]["selected"]["source_role"], "filing_person")
+        self.assertEqual(party["person_id"], payer["person_id"])
+        self.assertNotEqual(account["default_billing_party_id"], outside["person_id"])
+        self.assertNotIn(outside["person_id"], {row["person_id"] for row in members})
+        self.assertEqual(participant_rows, [])
+        self.assertNotEqual(party["delivery_contact_person_id"], outside["person_id"])
+
+    def test_duplicate_person_safeguard_applies_to_new_filing_person(self):
+        first = create_person(self.conn, {
+            "display_name": "Fictional Filing Manager",
+            "first_name": "Fictional",
+            "last_name": "Manager",
+        })
+        second = create_person(self.conn, {
+            "display_name": "Fictional Filing Manager",
+            "first_name": "Fictional",
+            "last_name": "Manager",
+        })
+        self.assertFalse(second["created"])
+        self.assertTrue(second["existing"])
+        self.assertEqual(second["person_id"], first["person_id"])
 
     def test_changing_payer_recomputes_invalid_filing_owner(self):
         child = self._person("Fictional Child")
@@ -1296,6 +1325,54 @@ class BillingRelationshipFilingOwnerTests(unittest.TestCase):
         })
         record = get_account_record(self.conn, account_id)
         self.assertEqual(record["filing_owner"]["selected"]["owner_id"], next_payer["person_id"])
+
+    def test_changing_payer_preserves_deliberate_arbitrary_filing_person(self):
+        child = self._person("Fictional Child")
+        payer = self._person("Original Payer")
+        next_payer = self._person("Next Payer")
+        filing_person = self._person("Household Manager")
+        account_id = self._relationship("person", payer, [child])
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "person",
+            "payer_person_id": payer["person_id"],
+            "covered_client_ids": [child["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": filing_person["person_id"],
+            "filing_owner_explicit": True,
+        })
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "person",
+            "payer_person_id": next_payer["person_id"],
+            "covered_client_ids": [child["person_id"]],
+        })
+        record = get_account_record(self.conn, account_id)
+        self.assertEqual(record["filing_owner"]["selected"]["owner_id"], filing_person["person_id"])
+        self.assertEqual(record["filing_owner"]["selected"]["source_role"], "filing_person")
+
+    def test_inactive_arbitrary_filing_person_falls_back_on_next_save(self):
+        child = self._person("Fictional Child")
+        payer = self._person("Fictional Parent")
+        filing_person = self._person("Former Manager")
+        account_id = self._relationship("person", payer, [child])
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "person",
+            "payer_person_id": payer["person_id"],
+            "covered_client_ids": [child["person_id"]],
+            "filing_owner_kind": "person",
+            "filing_owner_record_id": filing_person["person_id"],
+            "filing_owner_explicit": True,
+        })
+        self.conn.execute("UPDATE people SET active = 0, active_status = 'inactive' WHERE person_id = ?", (filing_person["person_id"],))
+        self.conn.commit()
+        update_billing_relationship(self.conn, account_id, {
+            "payer_kind": "person",
+            "payer_person_id": payer["person_id"],
+            "covered_client_ids": [child["person_id"]],
+        })
+        account = self.conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+        record = get_account_record(self.conn, account_id)
+        self.assertEqual(account["default_filing_owner_record_id"], payer["person_id"])
+        self.assertEqual(record["filing_owner"]["selected"]["owner_id"], payer["person_id"])
 
     def test_removing_covered_client_recomputes_invalid_filing_owner(self):
         child = self._person("Fictional Child")

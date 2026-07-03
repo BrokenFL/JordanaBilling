@@ -406,6 +406,19 @@ def _billing_party_owner(row: sqlite3.Row | dict[str, Any], *, source_role: str)
     }
 
 
+def _active_person_owner(conn: sqlite3.Connection, person_id: str, *, source_role: str) -> dict[str, Any] | None:
+    person_id = str(person_id or "").strip()
+    if not person_id:
+        return None
+    row = conn.execute(
+        "SELECT person_id, display_name, person_code FROM people WHERE person_id = ? AND active = 1",
+        (person_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return _person_owner(row, source_role=source_role)
+
+
 def _eligible_filing_owners(conn: sqlite3.Connection, invoice_id: str) -> list[dict[str, Any]]:
     invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     if not invoice:
@@ -430,6 +443,12 @@ def _eligible_filing_owners(conn: sqlite3.Connection, invoice_id: str) -> list[d
         owner = _person_owner(client, source_role="covered_client")
         owners[(owner["owner_kind"], owner["owner_id"])] = owner
     for relationship in _relationship_defaults_for_invoice(conn, dict(invoice)):
+        default_kind = relationship["default_filing_owner_kind"] or ("person" if relationship["default_filing_owner_person_id"] else None)
+        default_id = relationship["default_filing_owner_record_id"] or relationship["default_filing_owner_person_id"]
+        if default_kind == "person" and default_id:
+            owner = _active_person_owner(conn, default_id, source_role="filing_person")
+            if owner:
+                owners[(owner["owner_kind"], owner["owner_id"])] = owner
         rows = conn.execute(
             """
             SELECT p.person_id, p.display_name, p.person_code

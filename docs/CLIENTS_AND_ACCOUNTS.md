@@ -173,7 +173,7 @@ The existing account-detail sidebar remains intact for genuine account rows. It 
 - A Close button (visible in responsive sheet mode)
 - Members and relationship roles
 - Default billing party and contact information
-- **Save invoices under** — a filing owner dropdown showing connected records only (organization payer, payer person, covered clients). Organization is the preferred default when present; payer person is the fallback. Covered clients are selectable but not auto-selected merely because they are covered. Saving persists `default_filing_owner_kind` and `default_filing_owner_record_id`; reopening shows the saved value. Changing payer or covered clients recomputes stale eligibility. Unrelated people or organizations are excluded.
+- **Save invoices under** — a filing owner dropdown showing connected records first (organization payer, payer person, covered clients), plus controls to find an existing active person or add a new filing person. Organization is the preferred default when present; payer person is the fallback. Covered clients and arbitrary filing people are selectable but not auto-selected merely because they exist. Saving persists `default_filing_owner_kind` and `default_filing_owner_record_id`; reopening shows the saved value. Changing payer or covered clients recomputes stale connected eligibility but preserves a deliberate arbitrary filing-person choice while that person remains active. Unrelated organizations remain excluded.
 - Account-specific rates
 - Calendar aliases
 - Session history
