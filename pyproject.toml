@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Local-first calendar snapshot importer and review workflow for Jordana billing."
 requires-python = ">=3.11"
 dependencies = [
+  "Pillow>=10,<13",
   "reportlab>=4.2,<5",
 ]
 

@@ -37,10 +37,13 @@ for (const [input, expected] of cases) {
         self.assertNotIn("${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}", js)
         self.assertNotIn("${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}", js)
 
-    def test_pdf_preview_still_uses_existing_render_period_display(self):
+    def test_invoice_previews_use_canonical_pdf_surfaces(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
-        self.assertIn("render.billing_period_display", js)
-        self.assertIn("<strong>Billing Period:</strong>", js)
+        self.assertIn("draftPdfFrame", js)
+        self.assertIn("storedPdfFrame", js)
+        self.assertIn("/draft-pdf", js)
+        self.assertIn("/final-pdf", js)
+        self.assertNotIn("<strong>Billing Period:</strong>", js)
 
     def test_inspector_dirty_list_does_not_reference_removed_session_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -2391,6 +2394,53 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         mobile_section = css[mobile_start:]
         self.assertIn(".brand", mobile_section)
         self.assertIn("margin-bottom: 2px", mobile_section)
+
+
+class DraftInvoicePdfPreviewUiTests(unittest.TestCase):
+    """Draft invoice PDF preview stays inline until the user explicitly opens it."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = self.js.index("async function renderInvoiceEditor(")
+        end = self.js.index("function openLineEditModal(", start)
+        self.fn = self.js[start:end]
+
+    def test_draft_preview_embeds_pdf_inline(self):
+        self.assertIn("draftPdfPreviewPanel", self.fn)
+        self.assertIn("draftPdfFrame", self.fn)
+        self.assertIn("openDraftPdfPreview", self.fn)
+        self.assertIn("/draft-pdf", self.fn)
+        self.assertIn("frame.src = previewUrl", self.fn)
+
+    def test_draft_preview_button_does_not_open_new_window(self):
+        handler_start = self.fn.index('$("printPreviewBtn").onclick')
+        handler = self.fn[handler_start:]
+        self.assertNotIn("window.open", handler)
+
+
+class StoredInvoicePdfPreviewUiTests(unittest.TestCase):
+    """Finalized and void invoice previews use the stored PDF, not stale HTML."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = self.js.index("function renderInvoicePreview(")
+        end = self.js.index("function finalInvoicePdfUrl(", start)
+        self.fn = self.js[start:end]
+
+    def test_stored_invoice_preview_embeds_final_pdf_inline(self):
+        self.assertIn("storedPdfPreviewPanel", self.fn)
+        self.assertIn("storedPdfFrame", self.fn)
+        self.assertIn("openStoredPdfPreview", self.fn)
+        self.assertIn("finalInvoicePdfUrl(i)", self.fn)
+        self.assertIn("storedPdfFrame.src = pdfUrl", self.fn)
+
+    def test_stored_invoice_preview_does_not_render_legacy_html_invoice(self):
+        self.assertNotIn("invoice-preview-header", self.fn)
+        self.assertNotIn("invoice-preview-table", self.fn)
+        self.assertNotIn("invoice-preview-sender", self.fn)
+        self.assertNotIn("bill_to_lines", self.fn)
+        self.assertNotIn("sender_lines", self.fn)
+        self.assertNotIn("payment_lines", self.fn)
 
 
 if __name__ == "__main__":

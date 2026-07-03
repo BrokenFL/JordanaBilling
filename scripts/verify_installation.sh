@@ -38,6 +38,7 @@ from pathlib import Path
 
 import jordana_invoice
 import reportlab
+from PIL import Image
 
 db_path = Path(r"$DB_PATH")
 conn = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)

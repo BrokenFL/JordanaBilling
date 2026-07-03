@@ -171,7 +171,7 @@ mkdir -p "$TMP_APP/Contents/Resources/runtime"
 "$PYTHON_BIN" -m venv "$TMP_APP/Contents/Resources/runtime/venv"
 VENV_PYTHON="$TMP_APP/Contents/Resources/runtime/venv/bin/python"
 "$VENV_PYTHON" -m pip install --no-index --find-links "$WHEELHOUSE" jordana-invoice==0.1.0 >/dev/null
-"$VENV_PYTHON" -c 'import jordana_invoice, reportlab' >/dev/null
+"$VENV_PYTHON" -c 'import jordana_invoice, reportlab; from PIL import Image' >/dev/null
 replace_app_bundle
 xattr -cr "$APP_DEST" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DEST" >/dev/null 2>&1 || true

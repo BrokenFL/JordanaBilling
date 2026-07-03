@@ -3026,7 +3026,12 @@ async function renderInvoiceEditor(data) {
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Preview PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
+    <section id="draftPdfPreviewPanel" class="finalization-pdf-preview" aria-label="Draft invoice PDF preview">
+      <div id="draftPdfStatus" class="finalization-pdf-status">Loading PDF preview...</div>
+      <iframe id="draftPdfFrame" class="finalization-pdf-frame" title="Draft invoice PDF preview"></iframe>
+      <div class="finalization-pdf-actions"><a id="openDraftPdfPreview" href="#" target="_blank" rel="noopener">Open PDF in new tab</a></div>
+    </section>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Update PDF Preview</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
@@ -3070,9 +3075,30 @@ async function renderInvoiceEditor(data) {
     renderFinalizationPreview(preview, {included: false, diagnosisCode: ""});
   };
 
-  $("printPreviewBtn").onclick = () => {
-    window.open(`/api/invoices/${i.invoice_id}/draft-pdf`, "_blank");
-  };
+  function refreshDraftPdfPreview() {
+    const panel = $("draftPdfPreviewPanel");
+    const status = $("draftPdfStatus");
+    const frame = $("draftPdfFrame");
+    const link = $("openDraftPdfPreview");
+    const previewUrl = `/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf`;
+    if (!panel || !status || !frame || !link) return;
+    panel.hidden = false;
+    status.textContent = "Loading PDF preview...";
+    status.className = "finalization-pdf-status";
+    link.href = previewUrl;
+    frame.onload = () => {
+      status.textContent = "PDF preview loaded.";
+      status.className = "finalization-pdf-status";
+    };
+    frame.onerror = () => {
+      status.textContent = "Failed to load PDF preview.";
+      status.className = "finalization-pdf-status error";
+    };
+    frame.src = previewUrl;
+  }
+
+  $("printPreviewBtn").onclick = refreshDraftPdfPreview;
+  refreshDraftPdfPreview();
   // /print-preview HTML endpoint remains available as a fallback
 }
 
@@ -3498,13 +3524,6 @@ function revokeFinalizationPreviewPdfUrl() {
 
 function renderInvoicePreview(data) {
   const i = data.invoice;
-  const render = data.render_model || {};
-  const logoHtml = render.logo_data_uri
-    ? `<div class="invoice-preview-logo"><img src="${escapeAttr(render.logo_data_uri)}" alt="Jordana invoice logo"></div>`
-    : "";
-  const senderHtml = (render.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
-  const billToHtml = (render.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
-  const notesHtml = render.notes ? `<div class="invoice-notes"><b>Notes:</b> ${escapeHtml(render.notes)}</div>` : "";
   const voidHtml = i.status === "void" && i.void_reason ? `<div class="invoice-void-info"><strong>Voided:</strong> ${fmt(i.voided_at)} — ${escapeHtml(i.void_reason)}</div>` : "";
 
   const paidCents = data.current_status ? data.current_status.current_invoice_paid_cents : (i.paid_cents || 0);
@@ -3522,30 +3541,20 @@ function renderInvoicePreview(data) {
     : "";
 
   const filingDisplay = i.filing_owner_display || i.filing_owner_display_name_snapshot || (data.filing_owner?.selected?.display_name) || "";
-  const pdfButtonsHtml = i.status === "finalized"
+  const hasStoredPdf = i.status === "finalized" || i.status === "void";
+  const pdfUrl = hasStoredPdf ? finalInvoicePdfUrl(i) : "";
+  const pdfButtonsHtml = hasStoredPdf
     ? `<button id="openPdfBtn">Open PDF</button><button id="showPdfInFinderBtn">Show in Finder</button><button id="openClientFolderBtn">Open client invoice folder</button><button id="printPdfBtn">Print PDF</button>`
     : "";
-  const insCoding = render.insurance_coding;
-  const insCodingHtml = insCoding ? `<div class="insurance-coding-preview" style="margin-top:10px;font-size:9pt;line-height:1.3;">${insCoding.map(item => `<div>${escapeHtml(item.label)}: ${escapeHtml(item.value)}</div>`).join("")}</div>` : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     ${voidHtml}
     ${paymentSummaryHtml}
     <div class="relationship-summary"><strong>File invoice under</strong><div>${fmt(filingDisplay || "—")}</div></div>
-    <article class="invoice-preview">
-      <header class="invoice-preview-header">
-        <div class="invoice-preview-left">
-          ${logoHtml}
-          <div class="invoice-preview-sender">${senderHtml}</div>
-          <div class="invoice-billto"><strong>BILL TO</strong>${billToHtml}</div>
-        </div>
-        <div class="invoice-preview-title"><h3>INVOICE</h3><div><strong>Invoice Date:</strong> ${fmt(render.invoice_date_display)}</div><div><strong>Billing Period:</strong> ${fmt(render.billing_period_display)}</div><div><strong>Invoice Number:</strong> ${fmt(render.invoice_number_display)}</div></div>
-      </header>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>${(render.lines || []).map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}${buildPreviewSummaryHtml(render, data, i).rowsHtml}</tbody></table>
-      ${buildPreviewSummaryHtml(render, data, i).noteHtml}
-      <div class="invoice-payment"><div><b>${fmt(render.payment_title)}</b></div><div>${fmt(render.payment_name)}</div>${(render.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}${render.payment_zelle_line ? `<div>${fmt(render.payment_zelle_line)}</div>` : ""}</div>
-      ${insCodingHtml}
-      ${notesHtml}
-    </article>
+    <section id="storedPdfPreviewPanel" class="finalization-pdf-preview" aria-label="Stored invoice PDF preview">
+      <div id="storedPdfStatus" class="finalization-pdf-status">Loading stored PDF preview...</div>
+      <iframe id="storedPdfFrame" class="finalization-pdf-frame" title="Stored invoice PDF preview"></iframe>
+      <div class="finalization-pdf-actions"><a id="openStoredPdfPreview" href="${escapeAttr(pdfUrl)}" target="_blank" rel="noopener">Open PDF in new tab</a></div>
+    </section>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
@@ -3555,6 +3564,19 @@ function renderInvoicePreview(data) {
   if ($("showPdfInFinderBtn")) $("showPdfInFinderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"show_in_finder"})});
   if ($("openClientFolderBtn")) $("openClientFolderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"open_client_folder"})});
   if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
+  const storedPdfFrame = $("storedPdfFrame");
+  const storedPdfStatus = $("storedPdfStatus");
+  if (storedPdfFrame && storedPdfStatus && pdfUrl) {
+    storedPdfFrame.onload = () => {
+      storedPdfStatus.textContent = "Stored PDF preview loaded.";
+      storedPdfStatus.className = "finalization-pdf-status";
+    };
+    storedPdfFrame.onerror = () => {
+      storedPdfStatus.textContent = "Failed to load stored PDF preview.";
+      storedPdfStatus.className = "finalization-pdf-status error";
+    };
+    storedPdfFrame.src = pdfUrl;
+  }
 }
 
 function finalInvoicePdfUrl(invoice) {

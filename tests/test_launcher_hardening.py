@@ -268,6 +268,8 @@ class TestInstallerAuthority(unittest.TestCase):
         self.assertNotIn('$APP_SUPPORT_DIR/Reports', installer)
         self.assertIn('[[ -d "$REPORTS_DIR" && -w "$REPORTS_DIR" ]]', verifier)
         self.assertIn('[[ -d "$CLIENT_FILES_DIR" && -w "$CLIENT_FILES_DIR" ]]', verifier)
+        self.assertIn('from PIL import Image', installer)
+        self.assertIn('from PIL import Image', verifier)
 
 
 class TestPortOwnershipSafety(unittest.TestCase):

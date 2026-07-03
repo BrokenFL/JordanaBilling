@@ -75,7 +75,8 @@ class ReviewJsEscapingTests(unittest.TestCase):
         end_marker = REVIEW_JS.index("function renderRateScopeResults", start)
         section = REVIEW_JS[start:end_marker]
         self.assertIn("escapeAttr(i.status)", section)
-        self.assertIn("fmt(line.service_date_display)", section)
+        self.assertIn("escapeAttr(pdfUrl)", section)
+        self.assertIn("fmt(filingDisplay", section)
 
     def test_rate_scope_results_uses_escape_attr(self):
         start = REVIEW_JS.index("function renderRateScopeResults")

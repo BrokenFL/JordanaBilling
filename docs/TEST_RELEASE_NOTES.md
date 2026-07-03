@@ -1,30 +1,30 @@
-# Jordana Billing v0.1.0-test.6 Release Notes
+# Jordana Billing v0.1.0-test.7 Release Notes
 
 ## Release Status
 
 This private release is approved for a supervised Jordana beta using June invoices. It remains a controlled pilot/test release and is not represented as final production software.
 
-Use this exact artifact:
+Use the exact `v0.1.0-test.7` artifact attached to the private GitHub prerelease. The release manifest inside the DMG records the source commit and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.6
-- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
+- **Release label:** v0.1.0-test.7
+- **Manifest commit:** recorded in the release manifest and GitHub release assets
 - **Application version:** 0.1.0
 - **Source tree dirty:** false
 - **Builder Python:** 3.14.4
 - **Required Python family:** 3.14.x
 - **Architecture:** arm64
-- **DMG checksum verification:** passed
+- **DMG checksum verification:** verify the matching `.sha256` asset before install
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **Contains private data:** false
-- **Wheelhouse:** `jordana_invoice-0.1.0`, ReportLab 4.5.1, Pillow 12.2.0, charset-normalizer 3.4.7
+- **Wheelhouse:** `jordana_invoice-0.1.0`, ReportLab, Pillow, charset-normalizer
 
-An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. Do not use it.
+The prior verified controlled-beta release was `v0.1.0-test.6` from commit `0dec58b`. An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. Do not use it.
 
 ## Acceptance Completed
 
@@ -81,8 +81,10 @@ Filing owners and delivery contacts can be selected from the active people direc
 ### Invoices
 
 - Monthly staging by Bill To and billing month
-- Canonical draft PDF preview
+- Canonical draft PDF preview embedded directly in the Invoices workspace
+- Stored finalized/void PDF preview embedded directly in the Invoices workspace
 - Shared PDF renderer for draft and final output
+- Separate `Open PDF` / `Open PDF in new tab` actions for standalone browser PDF viewing
 - Transaction-safe numbering and immutable finalization
 - Repeated finalization returns the existing canonical PDF
 - Client/month filing folders
@@ -103,6 +105,8 @@ Filing owners and delivery contacts can be selected from the active people direc
 
 - Native setup app
 - Offline wheelhouse
+- Explicit Pillow runtime dependency for ReportLab PDF rendering
+- Installer and installed-app verification import `PIL` so PDF dependency problems fail during installation
 - Private runtime
 - Application Support storage for config and SQLite
 - Documents storage for reports and client files
