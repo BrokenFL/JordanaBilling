@@ -116,7 +116,9 @@ User-facing outputs:
 6. Verify private-file checksums and SQLite integrity.
 7. Open the DMG.
 8. Double-click `Install Jordana Billing.app`.
-9. Allow the setup app to preserve the transferred config and database.
+9. Allow the setup app to delegate to `scripts/install_release.sh` inside the
+   embedded release payload while preserving the transferred config and
+   database.
 10. Do not choose clean-start database initialization when the transferred operational database exists.
 11. Complete installation and open the installed app.
 

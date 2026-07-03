@@ -231,6 +231,7 @@ class CleanInstallTest(unittest.TestCase):
                 self.assertNotIn("AKIA", text_content[:10000], f"Possible AWS key in {file_path}")
                 self.assertNotIn("BEGIN PRIVATE KEY", text_content[:10000], f"Private key in {file_path}")
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS launcher build requires sips, iconutil, and swiftc")
     def test_13_build_launcher_force(self) -> None:
         """build_launcher.sh --force rebuilds the .app bundle."""
         result = subprocess.run(
