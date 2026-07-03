@@ -39,7 +39,6 @@ jobs:
           TMPDIR_ACCEPTANCE: ${{ runner.temp }}/acceptance
         run: |
           mkdir -p "$TMPDIR_ACCEPTANCE"
-          TMP_DB="$TMPDIR_ACCEPTANCE/acceptance"
           TMP_DB="$TMPDIR_ACCEPTANCE/ci_test.sqlite3"
           TMP_REPORT="$TMPDIR_ACCEPTANCE/acceptance_report.md"
           PYTHONPATH=app python -m jordana_invoice --db "$TMP_DB" init-db
