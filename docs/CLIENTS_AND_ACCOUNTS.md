@@ -240,6 +240,25 @@ The invoices table shows invoices addressed to billing parties belonging to this
 
 `File invoice under` is not Bill To and is not the payment owner. It is the selected permanent client folder for finalized PDFs. Organization Bill To history still shows the organization as Bill To while the filing client remains a separate display value.
 
+### Send Invoice To (Delivery Contact)
+
+The Billing Relationship editor includes a "Billing delivery" section with a "Send invoice to" selector. This is distinct from Bill To, Save invoices under, Participants, and covered clients:
+
+- **Bill To** is the payer organization or person who is responsible for payment. The invoice is addressed to this entity.
+- **Save invoices under** is the filing owner — the permanent client folder where finalized PDFs are stored.
+- **Send invoice to** is the delivery contact — the person who should receive the invoice (e.g., a billing manager at an organization, or an administrative assistant). This person may differ from the payer.
+
+The delivery contact is stored as `delivery_contact_person_id` on the `billing_parties` table, separate from `person_id` (which identifies the payer for person-linked parties). For organization payers, `person_id` stores the delivery contact historically; `delivery_contact_person_id` is the canonical field going forward.
+
+Key behaviors:
+
+- An existing person can be selected, or a new person can be created inline as the delivery contact.
+- The delivery contact is not added as a covered client, participant, payer, or filing owner.
+- The delivery contact's email, phone, and address are stored as billing delivery details on the billing party.
+- Future draft invoices inherit the delivery method from the billing party's `preferred_delivery_method`.
+- Finalized invoices remain unchanged when the delivery contact is updated.
+- The selected delivery contact persists and is shown when the relationship is reopened.
+
 No schema migration was required for any of these features, including editable Billing Setup. All data is derived from existing tables and the existing billing-parties schema.
 
 ## Round 1: Browser Prompt Removal

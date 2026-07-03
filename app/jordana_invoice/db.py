@@ -465,6 +465,7 @@ CREATE TABLE IF NOT EXISTS billing_parties (
   billing_postal_code TEXT,
   billing_phone TEXT,
   preferred_delivery_method TEXT NOT NULL DEFAULT 'unresolved',
+  delivery_contact_person_id TEXT REFERENCES people(person_id),
   administrative_notes TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -1595,6 +1596,9 @@ def _apply_migration_016(conn: sqlite3.Connection) -> None:
 MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET = "017_relationship_filing_owner_target"
 
 
+MIGRATION_018_DELIVERY_CONTACT_PERSON = "018_delivery_contact_person"
+
+
 def _apply_migration_017(conn: sqlite3.Connection) -> None:
     add_columns(conn, "client_accounts", {
         "default_filing_owner_kind": "TEXT",
@@ -1624,6 +1628,17 @@ def _apply_migration_017(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_018(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "billing_parties", {
+        "delivery_contact_person_id": "TEXT REFERENCES people(person_id)",
+    })
+    conn.execute(
+        "UPDATE billing_parties "
+        "SET delivery_contact_person_id = person_id "
+        "WHERE billing_party_type = 'organization' AND person_id IS NOT NULL"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1642,6 +1657,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_015_DUPLICATE_REPAIR_REVERSAL_STATE, _apply_migration_015),
     (MIGRATION_016_LATE_CANCELLATION_BILLING, _apply_migration_016),
     (MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET, _apply_migration_017),
+    (MIGRATION_018_DELIVERY_CONTACT_PERSON, _apply_migration_018),
 ]
 
 
@@ -1836,6 +1852,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
         {
             "administrative_notes": "TEXT",
             "preferred_delivery_method": "TEXT NOT NULL DEFAULT 'unresolved'",
+            "delivery_contact_person_id": "TEXT",
         },
     )
     add_columns(

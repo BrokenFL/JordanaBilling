@@ -2337,11 +2337,22 @@ def get_account_record(conn: sqlite3.Connection, account_id: str) -> dict[str, A
         "SELECT * FROM calendar_aliases WHERE account_id = ? ORDER BY updated_at DESC LIMIT 50",
         (account_id,),
     ).fetchall()
+    delivery_contact_person = None
+    dc_id = billing_party.get("delivery_contact_person_id") if billing_party else None
+    if dc_id:
+        dc_row = conn.execute(
+            "SELECT person_id, display_name, billing_email, billing_phone FROM people WHERE person_id = ?",
+            (dc_id,),
+        ).fetchone()
+        if dc_row:
+            delivery_contact_person = dict(dc_row)
+
     return {
         "account": account,
         "members": members,
         "billing_party": billing_party,
         "delivery_contacts": delivery_contacts,
+        "delivery_contact_person": delivery_contact_person,
         "filing_owner": filing_owner,
         "rates": [dict(row) for row in rates],
         "sessions": [dict(row) for row in sessions],
@@ -2357,10 +2368,13 @@ def relationship_delivery_contact_options(
 ) -> list[dict[str, Any]]:
     options: list[dict[str, Any]] = []
     seen: set[str] = set()
-    if billing_party and billing_party.get("person_id"):
+    saved_contact_id = (
+        billing_party.get("delivery_contact_person_id") if billing_party else None
+    ) or (billing_party.get("person_id") if billing_party and billing_party.get("billing_party_type") == "organization" else None)
+    if saved_contact_id:
         row = conn.execute(
             "SELECT person_id, display_name, billing_email, billing_phone FROM people WHERE person_id = ? AND active = 1",
-            (billing_party["person_id"],),
+            (saved_contact_id,),
         ).fetchone()
         if row:
             seen.add(row["person_id"])
@@ -2908,6 +2922,7 @@ def update_billing_relationship(
                     billing_delivery["billing_email"] = contact_person["billing_email"]
                 if not billing_delivery.get("billing_phone"):
                     billing_delivery["billing_phone"] = contact_person["billing_phone"]
+                billing_delivery["delivery_contact_person_id"] = contact_person["person_id"]
                 if payer_kind == "organization":
                     billing_delivery["person_id"] = contact_person["person_id"]
                 record_audit(
@@ -2921,7 +2936,8 @@ def update_billing_relationship(
             bp_update = {}
             for field in ("billing_email", "billing_phone", "billing_name", "billing_address_line_1",
                           "billing_address_line_2", "billing_city", "billing_state", "billing_postal_code",
-                          "preferred_delivery_method", "administrative_notes", "organization_name", "person_id"):
+                          "preferred_delivery_method", "administrative_notes", "organization_name",
+                          "person_id", "delivery_contact_person_id"):
                 if field in billing_delivery:
                     bp_update[field] = billing_delivery[field]
             if bp_update:
@@ -3179,6 +3195,13 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
         ).fetchone()
         if not person:
             raise ValueError("Referenced person does not exist or is not active.")
+    delivery_contact_person_id = data.get("delivery_contact_person_id") or None
+    if delivery_contact_person_id:
+        dc_person = conn.execute(
+            "SELECT person_id FROM people WHERE person_id = ? AND active = 1", (delivery_contact_person_id,)
+        ).fetchone()
+        if not dc_person:
+            raise ValueError("Delivery contact person does not exist or is not active.")
     org_name = _normalize_optional_text(data.get("organization_name"))
     if billing_party_type == "organization" and org_name:
         existing_org = conn.execute(
@@ -3203,9 +3226,9 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
           billing_party_id, billing_party_type, person_id, organization_name,
           billing_name, billing_email, billing_address_line_1, billing_address_line_2,
           billing_city, billing_state, billing_postal_code, billing_phone,
-          preferred_delivery_method, administrative_notes,
+          preferred_delivery_method, delivery_contact_person_id, administrative_notes,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             billing_party_id,
@@ -3221,6 +3244,7 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
             _normalize_optional_text(data.get("billing_postal_code")),
             _normalize_optional_text(data.get("billing_phone")),
             delivery_method,
+            delivery_contact_person_id,
             _normalize_optional_text(data.get("administrative_notes")),
             now,
             now,
@@ -3313,6 +3337,20 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     else:
         person_id = existing["person_id"]
 
+    # --- delivery_contact_person_id: distinct delivery contact for both person and organization payers. ---
+    if "delivery_contact_person_id" in data:
+        new_dc_id = data.get("delivery_contact_person_id") or None
+        if new_dc_id:
+            dc_person = conn.execute(
+                "SELECT person_id FROM people WHERE person_id = ? AND active = 1",
+                (new_dc_id,),
+            ).fetchone()
+            if not dc_person:
+                raise ValueError("Delivery contact person does not exist or is not active.")
+        delivery_contact_person_id = new_dc_id
+    else:
+        delivery_contact_person_id = existing["delivery_contact_person_id"] if "delivery_contact_person_id" in existing.keys() else None
+
     # --- Optional clearable fields: key-presence → clear to None, omit → preserve ---
     optional_text_fields = [
         "billing_email",
@@ -3358,6 +3396,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
             billing_postal_code = ?,
             billing_phone = ?,
             preferred_delivery_method = ?,
+            delivery_contact_person_id = ?,
             administrative_notes = ?,
             active = ?,
             updated_at = ?
@@ -3376,6 +3415,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
             updates["billing_postal_code"],
             updates["billing_phone"],
             delivery_method,
+            delivery_contact_person_id,
             updates["administrative_notes"],
             active,
             now,
@@ -3387,7 +3427,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
     changed_fields: list[str] = []
     all_fields = (
         optional_text_fields
-        + ["billing_name", "preferred_delivery_method", "billing_party_type", "person_id", "organization_name", "active"]
+        + ["billing_name", "preferred_delivery_method", "billing_party_type", "person_id", "organization_name", "active", "delivery_contact_person_id"]
     )
     new_values: dict[str, Any] = {
         "billing_name": billing_name,
@@ -3396,6 +3436,7 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
         "person_id": person_id,
         "organization_name": organization_name,
         "active": active,
+        "delivery_contact_person_id": delivery_contact_person_id,
         "billing_email": updates["billing_email"],
         "billing_phone": updates["billing_phone"],
         "billing_address_line_1": updates["billing_address_line_1"],

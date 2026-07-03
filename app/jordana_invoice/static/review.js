@@ -4548,6 +4548,7 @@ async function openAccountRecord(accountId, options = {}) {
         <label>Phone</label><span>${escapeHtml(bp.billing_phone || "—")}</span>
         <label>Delivery method</label><span>${escapeHtml(deliveryLabel)}</span>
         ${addressSummary ? `<label>Address</label><span>${escapeHtml(addressSummary)}</span>` : ""}
+        <label>Send invoice to</label><span>${escapeHtml(data.delivery_contact_person?.display_name || "—")}</span>
       </div>
       <button type="button" id="changeRecipientBtn" class="save">Change invoice recipient</button>
       <div id="recipientSearchArea" hidden></div>
@@ -4732,7 +4733,7 @@ async function openAccountRecord(accountId, options = {}) {
 
 function deliveryContactOptions(data) {
   const contacts = data.delivery_contacts || [];
-  const savedPersonId = data.billing_party?.person_id || "";
+  const savedPersonId = data.billing_party?.delivery_contact_person_id || data.billing_party?.person_id || "";
   const rows = contacts.map(contact => {
     const selected = contact.person_id === savedPersonId || contact.selected ? "selected" : "";
     const detail = contact.billing_email || contact.billing_phone ? ` (${contact.billing_email || contact.billing_phone})` : "";

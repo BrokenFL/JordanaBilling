@@ -101,7 +101,7 @@ Join table connecting people to accounts with roles such as primary, spouse, chi
 
 ## `billing_parties`
 
-The person or organization responsible for payment. The billing party is not assumed to be the session participant.
+The person or organization responsible for payment. The billing party is not assumed to be the session participant. `delivery_contact_person_id` stores a separate invoice delivery contact (the person who should receive the invoice), distinct from `person_id` (the payer for person-linked parties). For organization payers, `person_id` historically stored the delivery contact; `delivery_contact_person_id` is the canonical field going forward. `preferred_delivery_method` (email, mail, both, unresolved) is inherited by future draft invoices but never overwrites finalized invoice snapshots.
 
 ## `client_accounts`
 
