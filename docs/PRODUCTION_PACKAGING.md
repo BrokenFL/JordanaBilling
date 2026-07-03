@@ -20,29 +20,34 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.6
+### Current Test Build — v0.1.0-test.7
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
-- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
+- **Release label:** v0.1.0-test.7
+- **DMG:** `JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg`
+- **Manifest commit:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
 - **builder Python:** 3.14.4
 - **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
+- **DMG SHA-256:** `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
 - **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
-- **Stale build artifacts removed** after wheel creation
-- **DMG and checksum copied to `/Users/Shared`** and verified there
+- **Local browser smoke:** canonical draft PDF preview and stored finalized PDF preview load inline in the Invoices workspace
 
-test.6 was built from commit `0dec58b` with Python 3.14.4. The DMG was
-installed successfully on the brooketest account. Existing private
-configuration and SQLite database were preserved during upgrade. Live
-smoke testing passed for the major Billing Relationship, filing-owner,
+test.7 was built from commit `179da1f` with Python 3.14.4. It is locally
+built, checksum-verified, and privacy-scanned. Install and clean-Mac acceptance
+for this exact artifact remain pending and must be recorded in
+`docs/TEST_MAC_ACCEPTANCE.md`.
+
+The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
+DMG was installed successfully on the brooketest account. Existing private
+configuration and SQLite database were preserved during upgrade. Live smoke
+testing passed for the major Billing Relationship, filing-owner,
 delivery-contact, invoice, and data-preservation workflows.
 
 An initial test.6 artifact built from commit `6c3dbab` using Python 3.11
@@ -50,9 +55,10 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5 build remains historically accurate for the period in
-which it was the current build. test.6 supersedes test.5 as the current
-test build.
+The prior test.5 and test.6 builds remain historically accurate for the periods
+in which they were the current builds. test.7 supersedes test.6 as the current
+built test artifact, but test.6 remains the latest installed-smoke baseline
+until test.7 installation evidence is recorded.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
@@ -142,11 +148,11 @@ pass a separate release label. This does not change the Python package version,
 database schema, migrations, invoice numbering, or data compatibility:
 
 ```bash
-scripts/build_release.sh --release-label v0.1.0-test.6
+scripts/build_release.sh --release-label v0.1.0-test.7
 ```
 
-`JORDANA_RELEASE_LABEL=v0.1.0-test.6 scripts/build_release.sh` is equivalent.
-Release labels must be simple path-safe values such as `v0.1.0-test.6` or
+`JORDANA_RELEASE_LABEL=v0.1.0-test.7 scripts/build_release.sh` is equivalent.
+Release labels must be simple path-safe values such as `v0.1.0-test.7` or
 `v0.1.0-rc.1`; blank, slash-containing, traversal, or shell-unsafe labels are
 rejected.
 
@@ -162,8 +168,8 @@ artifact filename while `application_version` remains the package version from
 `pyproject.toml`:
 
 ```text
-build/release/JordanaBilling-v0.1.0-test.6-<commit>-macos-arm64.dmg
-build/release/JordanaBilling-v0.1.0-test.6-<commit>-macos-arm64.dmg.sha256
+build/release/JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg
+build/release/JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg.sha256
 ```
 
 The artifact is inspected during build for forbidden private files such as

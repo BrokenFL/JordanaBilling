@@ -4,12 +4,12 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 
 ## Verified Baseline
 
-- **Application and release baseline reviewed:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
+- **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,721 tests, 0 failures, 68 skipped on Python 3.14.4
-- **Current verified test release:** `v0.1.0-test.6`
-- **Current release artifact:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
+- **Latest recorded full-suite baseline:** 2,725 tests, 0 failures, 68 skipped on Python 3.14.4
+- **Current built test release:** `v0.1.0-test.7`
+- **Current release artifact:** `JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
 
 ## Architecture
@@ -108,29 +108,32 @@ This is not yet a final production declaration. Brooke should remain available d
 The verified controlled-beta artifact is:
 
 ```text
-JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg
 ```
 
 Recorded release facts:
 
-- Release label: `v0.1.0-test.6`
-- Manifest commit: `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
+- Release label: `v0.1.0-test.7`
+- Manifest commit: `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - Application version: `0.1.0`
 - Source tree dirty: false
 - Builder Python: 3.14.4
 - Required Python family: 3.14.x
 - Architecture: arm64
 - DMG checksum verification: passed
+- DMG SHA-256: `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
 - Private-file scan: no `.env`, SQLite, or PDF files found
 - `contains_private_data`: false
-- Existing private configuration and SQLite database were preserved during the brooketest upgrade installation
-- Live smoke testing passed for the major Billing Relationship, filing-owner, delivery-contact, invoice, and data-preservation workflows
+- Wheelhouse includes explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Local browser smoke testing passed for canonical inline draft PDF previews and stored finalized PDF previews in the Invoices workspace
+
+The prior installed-smoke baseline remains `v0.1.0-test.6` from commit `0dec58b6bf5ab35e2d48600b57fec83a477e304d`, which preserved existing private configuration and SQLite data during the brooketest upgrade installation and passed the major Billing Relationship, filing-owner, delivery-contact, invoice, and data-preservation workflows.
 
 An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. It must not be used.
 
 ## Controlled Beta Decision
 
-The verified test.6 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
+The test.7 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
 
 1. Brooke has a verified backup of the source operational database.
 2. The private `.env` and SQLite database are transferred separately through a direct or encrypted method.

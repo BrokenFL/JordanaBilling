@@ -7,19 +7,20 @@ This private release is approved for a supervised Jordana beta using June invoic
 Use the exact `v0.1.0-test.7` artifact attached to the private GitHub prerelease. The release manifest inside the DMG records the source commit and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg
 ```
 
 Release facts:
 
 - **Release label:** v0.1.0-test.7
-- **Manifest commit:** recorded in the release manifest and GitHub release assets
+- **Manifest commit:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Application version:** 0.1.0
 - **Source tree dirty:** false
 - **Builder Python:** 3.14.4
 - **Required Python family:** 3.14.x
 - **Architecture:** arm64
-- **DMG checksum verification:** verify the matching `.sha256` asset before install
+- **DMG checksum verification:** passed locally; verify the matching `.sha256` asset again after download
+- **DMG SHA-256:** `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **Contains private data:** false
 - **Wheelhouse:** `jordana_invoice-0.1.0`, ReportLab, Pillow, charset-normalizer
@@ -28,21 +29,26 @@ The prior verified controlled-beta release was `v0.1.0-test.6` from commit `0dec
 
 ## Acceptance Completed
 
-The verified artifact was installed successfully on the brooketest account.
+The test.7 artifact is locally built, checksum-verified, privacy-scanned, and
+ready for controlled installation testing. It has not yet been installed on the
+brooketest account in this acceptance record.
 
 Confirmed:
 
-1. Installation over the existing test installation passed.
-2. Existing private configuration was preserved.
-3. Existing SQLite data was preserved.
-4. Release label and manifest matched the intended build.
-5. Arbitrary existing filing-person selection passed.
-6. Inline filing-person creation passed.
-7. Filing choice persisted after close and reopen.
-8. Filing owner remained separate from payer, Bill To, Participants, covered clients, and delivery contact.
-9. Future draft inheritance passed.
-10. Finalized invoice immutability passed.
-11. Major Billing Relationship, delivery-contact, invoice, and data-preservation smoke workflows passed.
+1. Release label and manifest matched the intended build.
+2. Local checksum verification passed.
+3. Release payload private-file scan passed.
+4. Full unit suite passed.
+5. Acceptance import test passed on a temporary database without touching the operational database.
+6. Privacy and Git safety checks passed.
+7. Canonical draft PDF preview loads inline in the Invoices workspace.
+8. Stored finalized PDF preview loads inline in the Invoices workspace.
+
+Prior test.6 installed-smoke results remain the latest recorded brooketest
+installation evidence: existing private configuration and SQLite data were
+preserved, filing-owner workflows passed, future draft inheritance passed,
+finalized invoice immutability passed, and major Billing Relationship,
+delivery-contact, invoice, and data-preservation smoke workflows passed.
 
 ## Controlled Beta Conditions
 

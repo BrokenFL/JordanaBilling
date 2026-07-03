@@ -17,27 +17,32 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.6
+### Current Test Build — v0.1.0-test.7
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
-- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
+- **Release label:** v0.1.0-test.7
+- **DMG:** `JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg`
+- **Manifest commit:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
 - **builder Python:** 3.14.4
 - **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
+- **DMG SHA-256:** `f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85`
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **DMG and checksum copied to `/Users/Shared`** and verified there
+- **Local browser smoke:** canonical draft PDF preview and stored finalized PDF preview load inline in the Invoices workspace
 
-test.6 was built from commit `0dec58b` with Python 3.14.4. The DMG was
-installed successfully on the brooketest account. Existing private
-configuration and SQLite database were preserved during upgrade. Live
-smoke testing passed for the major Billing Relationship, filing-owner,
+test.7 was built from commit `179da1f` with Python 3.14.4. It is locally
+built, checksum-verified, and privacy-scanned. It has not yet been installed on
+brooketest in this acceptance record.
+
+The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
+DMG was installed successfully on the brooketest account. Existing private
+configuration and SQLite database were preserved during upgrade. Live smoke
+testing passed for the major Billing Relationship, filing-owner,
 delivery-contact, invoice, and data-preservation workflows.
 
 An initial test.6 artifact built from commit `6c3dbab` using Python 3.11
@@ -45,16 +50,28 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5 build remains historically accurate for the period in
-which it was the current build. test.6 supersedes test.5 as the current
-test build.
+The prior test.5 and test.6 builds remain historically accurate for the periods
+in which they were the current builds. test.7 supersedes test.6 as the current
+built test artifact, but test.6 remains the latest installed-smoke baseline
+until test.7 installation evidence is recorded.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
 missing-database, uninstall preservation) remains incomplete and should
 be recorded before final production handoff.
 
-### v0.1.0-test.6 Acceptance Checklist Results
+### v0.1.0-test.7 Acceptance Checklist Results
+
+1. **Build exact test.7 DMG** — passed
+2. **Verify checksum locally** — passed
+3. **Verify release manifest** — passed (v0.1.0-test.7, commit 179da1f)
+4. **Verify private-file scan** — passed
+5. **Verify inline draft and stored finalized PDF previews in local browser** — passed
+6. **Install test.7 over existing brooketest installation** — pending
+7. **Run clean-account acceptance** — pending
+8. **Publish/download/checksum the GitHub release asset before installation** — pending
+
+### Prior v0.1.0-test.6 Acceptance Checklist Results
 
 1. **Install test.6 over existing brooketest installation** — passed
 2. **Verify private configuration and DB preservation** — passed
@@ -66,7 +83,7 @@ be recorded before final production handoff.
 8. **Verify future draft inheritance** — passed
 9. **Verify finalized invoice immutability** — passed
 10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
-11. **Publish only the exact verified DMG after brooketest passes** — pending final rebuild
+11. **Publish only the exact verified DMG after brooketest passes** — superseded by test.7 release publication path
 
 ### Unresolved-Client Refresh Behavior
 
@@ -93,7 +110,7 @@ refresh. This improvement is not yet implemented.
 - The versioned release DMG and matching `.sha256` file from the private pre-release.
 - For repeated test builds with the same application version, use the explicit
   release label in the filename, for example
-  `JordanaBilling-v0.1.0-test.6-<commit>-macos-arm64.dmg`.
+  `JordanaBilling-v0.1.0-test.7-<commit>-macos-arm64.dmg`.
 - The private Apps Script URL and ingest API key available locally, not in GitHub, email, chat, screenshots, or logs.
 
 ## Steps
@@ -179,6 +196,24 @@ Operational smoke path: passed (Billing Relationship, filing-owner,
 Known limitations accepted: unresolved-client requires manual refresh after
   confirmation; full clean-Mac evidence record incomplete
 Tester: Brooke
+```
+
+```text
+Date: 2026-07-03
+Release DMG: JordanaBilling-v0.1.0-test.7-179da1fe14ac-macos-arm64.dmg
+Release commit: 179da1fe14ac1fd56ed1e6b939b34fafe7299760
+Checksum verified: passed
+SHA-256: f4eeab417425aad731570b42185810c6712b588bba7f5fe83129d44b2d93bd85
+Test Mac / macOS: not yet installed
+Installer Python: 3.14.4 builder; installed runtime not yet recorded
+Gatekeeper result: not yet recorded
+Passed steps: build, manifest check, checksum verification, private-file scan,
+  local browser smoke for inline draft PDF and stored finalized PDF previews
+Deferred steps: brooketest install, clean-account acceptance, restart,
+  duplicate launch, reinstall preservation, uninstall preservation
+Operational smoke path: local browser preview smoke passed; installed app smoke pending
+Known limitations accepted: full clean-Mac evidence record incomplete
+Tester: Brooke/Codex local release build
 ```
 
 ## Stop Conditions
