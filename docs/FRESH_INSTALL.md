@@ -190,7 +190,7 @@ reread of staged Sheet evidence. It does not delete the database, wipe approved
 sessions, invoices, payments, or billing relationships, or reset the migration
 state. A private database backup is created before the reread. This was
 confirmed during fresh test database preparation on the source checkout at
-commit 6c3dbab: the app was stopped, a SQLite backup was created and verified
+commit 0dec58b: the app was stopped, a SQLite backup was created and verified
 outside the repo, the old DB and WAL/SHM were moved outside the repo, a fresh DB
 was initialized and migrated, `integrity_check` returned `ok`, and the source
 app launched healthy. Calendar sync can now populate the fresh test database.

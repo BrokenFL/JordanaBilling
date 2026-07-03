@@ -31,6 +31,22 @@ Parser-proposed names may appear before saving, but display alone does not creat
 - Exactly one confirmed participant may create or update an approved calendar alias.
 - Multi-person titles never create one combined person or alias.
 
+### Unresolved-Client Refresh Behavior
+
+When a session has an unknown or unresolved client, the system shows safe
+fallback defaults (e.g., Standard 60 duration) until the client identity is
+confirmed. This is expected workflow behavior, not a parser defect:
+
+1. An unknown/unresolved client appears with a safe fallback.
+2. The user confirms and saves the client identity via **Save Client(s)**.
+3. After a manual refresh, the system recognizes the confirmed client.
+4. The correct session duration, time category, and related defaults are
+   then applied.
+
+A future UX improvement may automatically reparse/refresh the session
+immediately after client confirmation so the user does not need a manual
+refresh. This improvement is not yet implemented.
+
 ## Bill To
 
 Bill To is the person or organization responsible for receiving and paying the invoice. Bill To does not have to be a participant.

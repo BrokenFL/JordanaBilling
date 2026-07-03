@@ -2,28 +2,76 @@
 
 This is a private clean-Mac test release for Brooke's spare Mac. It is a pre-release and is not approved for Jordana's production Mac.
 
-## Current Pending Acceptance Build — v0.1.0-test.6
+## Current Test Build — v0.1.0-test.6
+
+This is a controlled pilot/test release, not a final production release.
 
 - **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
-- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
+- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
-- **builder Python:** 3.11.11
+- **builder Python:** 3.14.4
+- **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **contains_private_data:** false
 - **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
 - **Stale build artifacts removed** after wheel creation
 - **DMG and checksum copied to `/Users/Shared`** and verified there
 
+### Release History Correction
+
+An initial test.6 artifact was built from commit `6c3dbab` using Python 3.11
+and was rejected before installation. It was not published. A correct
+replacement was built from commit `0dec58b` using Python 3.14.4 in a clean
+temporary clone outside the Documents directory. The replacement passed
+checksum and manifest verification and installed successfully on the
+test Mac.
+
 ### Status
 
-- test.6 has been built and copied to `/Users/Shared`
-- brooketest upgrade/data-preservation installation has **not** yet been run
-- full clean-account acceptance has **not** yet been run
-- GitHub Release has **not** yet been published
-- Do not claim test.6 is accepted, production-ready, or published
+- test.6 was built from commit `0dec58b` with Python 3.14.4
+- brooketest upgrade/data-preservation installation completed successfully
+- Existing private configuration and SQLite database were preserved during upgrade
+- Live smoke testing passed for the major Billing Relationship, filing-owner,
+  delivery-contact, invoice, and data-preservation workflows
+- This is a controlled pilot/test release — not final production
+- GitHub Release publication follows the final documentation-embedded rebuild
+
+### Billing Relationship Separation
+
+The Billing Relationship editor now separates four distinct concepts:
+
+1. **Save invoices under** (filing owner) — can choose connected
+   organization/payer/covered clients, search the active people directory,
+   or create a new filing person
+2. **Send invoice to** (delivery contact) — can search the active people
+   directory or create a new delivery contact
+3. **Bill To** — the payer organization or person responsible for payment
+4. **Participants / covered clients** — the session attendees and covered
+   people
+
+Filing owner and delivery contact remain separate from payer, Bill To,
+Participants, and covered clients.
+
+### Unresolved-Client Refresh Behavior
+
+During smoke testing, some unresolved/unknown-client sessions initially
+appeared with safe fallback defaults (e.g., Standard 60) and did not yet
+show the final time classification. This is expected workflow behavior,
+not a parser defect:
+
+1. An unknown/unresolved client appears with a safe fallback.
+2. The user confirms and saves the client identity.
+3. After a manual refresh, the system recognizes the client.
+4. The correct session duration, time category, and related defaults are
+   then applied.
+
+A future UX improvement may automatically reparse/refresh the session
+immediately after client confirmation so the user does not need a manual
+refresh. This improvement is not yet implemented.
 
 ### Launcher Build Notes
 
@@ -44,25 +92,25 @@ not indicate corruption or obsolescence.
 - Future-draft inheritance
 - Finalized-invoice immutability preserved
 
-### Pending Acceptance Checklist
+### Acceptance Checklist Results
 
-1. Install test.6 over existing brooketest installation
-2. Verify private configuration and DB preservation
-3. Verify release label and manifest
-4. Test arbitrary existing filing person
-5. Test inline-created filing person
-6. Verify persistence after close/reopen
-7. Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage
-8. Verify future draft inheritance
-9. Verify finalized invoice immutability
-10. Run clean-account acceptance
-11. Publish only the exact verified DMG after brooketest passes
+1. **Install test.6 over existing brooketest installation** — passed
+2. **Verify private configuration and DB preservation** — passed
+3. **Verify release label and manifest** — passed (v0.1.0-test.6, commit 0dec58b)
+4. **Test arbitrary existing filing person** — passed
+5. **Test inline-created filing person** — passed
+6. **Verify persistence after close/reopen** — passed
+7. **Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage** — passed
+8. **Verify future draft inheritance** — passed
+9. **Verify finalized invoice immutability** — passed
+10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
+11. **Publish only the exact verified DMG after brooketest passes** — pending final rebuild
 
 ## Previous Test Build — v0.1.0-test.5
 
 The test.5 build was the prior test release. Historical references to test.5
 remain accurate for the period in which test.5 was the current build. test.6
-supersedes test.5 as the current pending acceptance build.
+supersedes test.5 as the current test build.
 
 ## General Test Release Information
 

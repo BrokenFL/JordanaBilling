@@ -20,29 +20,45 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Pending Acceptance Build — v0.1.0-test.6
+### Current Test Build — v0.1.0-test.6
+
+This is a controlled pilot/test release, not a final production release.
 
 - **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
-- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
+- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
-- **builder Python:** 3.11.11
+- **builder Python:** 3.14.4
+- **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **contains_private_data:** false
 - **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
 - **Stale build artifacts removed** after wheel creation
 - **DMG and checksum copied to `/Users/Shared`** and verified there
 
-test.6 has been built and copied to `/Users/Shared`. brooketest
-upgrade/data-preservation installation, full clean-account acceptance, and
-GitHub Release publication have **not** yet been run. Do not claim test.6 is
-accepted, production-ready, or published.
+test.6 was built from commit `0dec58b` with Python 3.14.4. The DMG was
+installed successfully on the brooketest account. Existing private
+configuration and SQLite database were preserved during upgrade. Live
+smoke testing passed for the major Billing Relationship, filing-owner,
+delivery-contact, invoice, and data-preservation workflows.
 
-The prior test.5 build remains historically accurate for the period in which it
-was the current build. test.6 supersedes test.5 as the current pending
-acceptance build.
+An initial test.6 artifact built from commit `6c3dbab` using Python 3.11
+was rejected before installation and was not published. The correct
+replacement was built from commit `0dec58b` using Python 3.14.4 in a
+clean temporary clone outside the Documents directory.
+
+The prior test.5 build remains historically accurate for the period in
+which it was the current build. test.6 supersedes test.5 as the current
+test build.
+
+The full clean-Mac acceptance evidence record (restart, duplicate launch,
+cross-user port ownership, unrelated port conflict, missing-config,
+missing-database, uninstall preservation) remains incomplete and should
+be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
+handoff.
 
 ### Launcher Build Non-Reproducibility
 

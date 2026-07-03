@@ -17,41 +17,73 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Pending Acceptance Build — v0.1.0-test.6
+### Current Test Build — v0.1.0-test.6
+
+This is a controlled pilot/test release, not a final production release.
 
 - **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
-- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
+- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
-- **builder Python:** 3.11.11
+- **builder Python:** 3.14.4
+- **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **contains_private_data:** false
 - **DMG and checksum copied to `/Users/Shared`** and verified there
 
-test.6 has been built and copied to `/Users/Shared`. brooketest
-upgrade/data-preservation installation, full clean-account acceptance, and
-GitHub Release publication have **not** yet been run. Do not claim test.6 is
-accepted, production-ready, or published.
+test.6 was built from commit `0dec58b` with Python 3.14.4. The DMG was
+installed successfully on the brooketest account. Existing private
+configuration and SQLite database were preserved during upgrade. Live
+smoke testing passed for the major Billing Relationship, filing-owner,
+delivery-contact, invoice, and data-preservation workflows.
 
-The prior test.5 build remains historically accurate for the period in which it
-was the current build. test.6 supersedes test.5 as the current pending
-acceptance build.
+An initial test.6 artifact built from commit `6c3dbab` using Python 3.11
+was rejected before installation and was not published. The correct
+replacement was built from commit `0dec58b` using Python 3.14.4 in a
+clean temporary clone outside the Documents directory.
 
-### v0.1.0-test.6 Pending Acceptance Checklist
+The prior test.5 build remains historically accurate for the period in
+which it was the current build. test.6 supersedes test.5 as the current
+test build.
 
-1. Install test.6 over existing brooketest installation
-2. Verify private configuration and DB preservation
-3. Verify release label and manifest
-4. Test arbitrary existing filing person
-5. Test inline-created filing person
-6. Verify persistence after close/reopen
-7. Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage
-8. Verify future draft inheritance
-9. Verify finalized invoice immutability
-10. Run clean-account acceptance
-11. Publish only the exact verified DMG after brooketest passes
+The full clean-Mac acceptance evidence record (restart, duplicate launch,
+cross-user port ownership, unrelated port conflict, missing-config,
+missing-database, uninstall preservation) remains incomplete and should
+be recorded before final production handoff.
+
+### v0.1.0-test.6 Acceptance Checklist Results
+
+1. **Install test.6 over existing brooketest installation** — passed
+2. **Verify private configuration and DB preservation** — passed
+3. **Verify release label and manifest** — passed (v0.1.0-test.6, commit 0dec58b)
+4. **Test arbitrary existing filing person** — passed
+5. **Test inline-created filing person** — passed
+6. **Verify persistence after close/reopen** — passed
+7. **Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage** — passed
+8. **Verify future draft inheritance** — passed
+9. **Verify finalized invoice immutability** — passed
+10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
+11. **Publish only the exact verified DMG after brooketest passes** — pending final rebuild
+
+### Unresolved-Client Refresh Behavior
+
+During smoke testing, some unresolved/unknown-client sessions initially
+appeared with safe fallback defaults (e.g., Standard 60) and did not yet
+show the final time classification. This is expected workflow behavior,
+not a parser defect:
+
+1. An unknown/unresolved client appears with a safe fallback.
+2. The user confirms and saves the client identity.
+3. After a manual refresh, the system recognizes the client.
+4. The correct session duration, time category, and related defaults are
+   then applied.
+
+A future UX improvement may automatically reparse/refresh the session
+immediately after client confirmation so the user does not need a manual
+refresh. This improvement is not yet implemented.
 
 ## Prerequisites
 
@@ -131,18 +163,22 @@ After the installation mechanics pass, verify the actual user workflow with appr
 ## Acceptance Record
 
 ```text
-Date:
-Release DMG:
-Release commit:
-Checksum verified:
-Test Mac / macOS:
-Installer Python:
-Gatekeeper result:
-Passed steps:
-Deferred steps:
-Operational smoke path:
-Known limitations accepted:
-Tester:
+Date: 2026-07-02
+Release DMG: JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg
+Release commit: 0dec58b6bf5ab35e2d48600b57fec83a477e304d
+Checksum verified: passed
+Test Mac / macOS: brooketest account, Apple Silicon
+Installer Python: 3.14.4
+Gatekeeper result: not recorded (full clean-Mac evidence pending)
+Passed steps: 1-9 (install, config/DB preservation, release label/manifest,
+  filing person tests, persistence, linkage separation, draft inheritance,
+  finalized immutability)
+Deferred steps: 10 (clean-account acceptance), 11 (publish final DMG)
+Operational smoke path: passed (Billing Relationship, filing-owner,
+  delivery-contact, invoice, data-preservation workflows)
+Known limitations accepted: unresolved-client requires manual refresh after
+  confirmation; full clean-Mac evidence record incomplete
+Tester: Brooke
 ```
 
 ## Stop Conditions

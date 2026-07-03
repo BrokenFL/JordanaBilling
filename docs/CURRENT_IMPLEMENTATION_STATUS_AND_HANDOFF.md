@@ -3,11 +3,11 @@
 This document supersedes older uploaded handoffs. Newer repository code, schema,
 migrations, tests, and explicit decisions remain authoritative.
 
-- **Latest code commit reviewed:** 6c3dbab — Allow people directory filing owners in billing relationships
-- **Latest recorded full-suite verification commit:** 6c3dbab
+- **Latest code commit reviewed:** 0dec58b — Document v0.1.0-test.6 acceptance and filing-owner feature
+- **Latest recorded full-suite verification commit:** 0dec58b
 - **Documentation reconciliation date:** 2026-07-02
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,721 passing, 11 skipped, 0 failures
+- **Latest recorded full-suite baseline:** 2,721 tests, 0 failures, 68 skipped (Python 3.14.4)
 
 ## Architecture
 
@@ -113,10 +113,10 @@ sessions → invoice preview/finalization → payment tracking.
 
 ## Test Status
 
-Latest recorded full suite at commit 6c3dbab:
+Latest recorded full suite at commit 0dec58b:
 
 ```text
-2,721 tests, 0 failures, 11 skipped
+2,721 tests, 0 failures, 68 skipped (Python 3.14.4)
 ```
 
 This baseline includes focused tests for Bill To delivery resolution, stale-draft
@@ -133,18 +133,32 @@ scripts/privacy_check.sh
 
 ## Current Release Build
 
+This is a controlled pilot/test release, not a final production release.
+
 - **Release label:** v0.1.0-test.6
-- **DMG:** `JordanaBilling-v0.1.0-test.6-6c3dbab028ac-macos-arm64.dmg`
-- **Manifest commit:** `6c3dbab028acb4b44184b720d5160927d6d3d6c6`
+- **DMG:** `JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg`
+- **Manifest commit:** `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
 - **application_version:** 0.1.0
 - **source_tree_dirty:** false
-- **builder Python:** 3.11.11
+- **builder Python:** 3.14.4
+- **requires_python:** 3.14.x
 - **architecture:** arm64
 - **DMG checksum verification:** passed
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **Wheelhouse includes:** `jordana_invoice-0.1.0`, `reportlab 4.5.1`, `pillow 12.2.0`, `charset-normalizer 3.4.7`
 - **Stale build artifacts removed** after wheel creation
 - **DMG and checksum copied to `/Users/Shared`** and verified there
+- **contains_private_data:** false
+
+### Release History Correction
+
+An initial test.6 artifact was built from commit `6c3dbab` using Python 3.11
+and was rejected before installation. It was not published. The incorrect
+artifact used the wrong Python version and was superseded by a correct
+replacement built from commit `0dec58b` using Python 3.14.4 in a clean
+temporary clone outside the Documents directory. The replacement passed
+checksum and manifest verification and installed successfully on the
+test Mac. The rejected artifact was never published or distributed.
 
 ### Launcher Build Notes
 
@@ -175,36 +189,57 @@ On the source checkout, a fresh test database was prepared:
 - calendar sync may now populate the fresh test database
 - Rebuild Calendar from Data Sheet is not a database wipe
 
-### Pending Acceptance
+### Acceptance Status
 
-- test.6 has been built and copied to `/Users/Shared`
-- brooketest upgrade/data-preservation installation has **not** yet been run
-- full clean-account acceptance has **not** yet been run
-- GitHub Release has **not** yet been published
-- Do not claim test.6 is accepted, production-ready, or published
+- test.6 was built from commit `0dec58b` with Python 3.14.4 and copied to `/Users/Shared`
+- brooketest upgrade/data-preservation installation completed successfully
+- Existing private configuration and SQLite database were preserved during upgrade
+- Live smoke testing passed for the major Billing Relationship, filing-owner,
+  delivery-contact, invoice, and data-preservation workflows
+- This is a controlled pilot/test release — not final production
+- GitHub Release publication follows the final documentation-embedded rebuild
 
 ## Installer Acceptance Status
 
 The one-click installer has been manually demonstrated successfully on a test
-Mac. The full acceptance record is still incomplete. Before production handoff,
-record the release filename and commit, checksum, Mac and macOS version, Python
-version, Gatekeeper behavior, restart, duplicate launch, port-conflict tests,
-reinstall preservation, and the operational smoke path in
-`docs/TEST_MAC_ACCEPTANCE.md`.
+Mac. The test.6 DMG was installed on the brooketest account, preserving existing
+private configuration and SQLite database. Live smoke testing passed for the
+major Billing Relationship, filing-owner, delivery-contact, invoice, and
+data-preservation workflows. The full clean-Mac acceptance evidence record
+(restart, duplicate launch, cross-user port ownership, unrelated port conflict,
+missing-config, missing-database, uninstall preservation) remains incomplete
+and should be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
+handoff.
 
-### Pending Acceptance Checklist for v0.1.0-test.6
+### v0.1.0-test.6 Acceptance Results
 
-1. Install test.6 over existing brooketest installation
-2. Verify private configuration and DB preservation
-3. Verify release label and manifest
-4. Test arbitrary existing filing person
-5. Test inline-created filing person
-6. Verify persistence after close/reopen
-7. Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage
-8. Verify future draft inheritance
-9. Verify finalized invoice immutability
-10. Run clean-account acceptance
-11. Publish only the exact verified DMG after brooketest passes
+1. **Install test.6 over existing brooketest installation** — passed
+2. **Verify private configuration and DB preservation** — passed
+3. **Verify release label and manifest** — passed (v0.1.0-test.6, commit 0dec58b)
+4. **Test arbitrary existing filing person** — passed
+5. **Test inline-created filing person** — passed
+6. **Verify persistence after close/reopen** — passed
+7. **Verify no accidental payer/Bill To/Participant/covered-client/delivery-contact linkage** — passed
+8. **Verify future draft inheritance** — passed
+9. **Verify finalized invoice immutability** — passed
+10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
+11. **Publish only the exact verified DMG after brooketest passes** — pending final rebuild
+
+### Unresolved-Client Refresh Behavior
+
+During smoke testing, some unresolved/unknown-client sessions initially appeared
+with safe fallback defaults (e.g., Standard 60) and did not yet show the final
+time classification. This is expected workflow behavior, not a parser defect:
+
+1. An unknown/unresolved client appears with a safe fallback.
+2. The user confirms and saves the client identity.
+3. After a manual refresh, the system recognizes the client.
+4. The correct session duration, time category, and related defaults are then
+   applied.
+
+A future UX improvement may automatically reparse/refresh the session
+immediately after client confirmation so the user does not need a manual
+refresh. This improvement is not yet implemented.
 
 ## Privacy Rules
 
@@ -231,14 +266,15 @@ specific invoice; they must never be inferred or committed.
 
 ## Immediate Next Steps
 
-1. Complete the v0.1.0-test.6 pending acceptance checklist above.
+1. Complete the full clean-Mac acceptance evidence record (restart, duplicate
+   launch, port-conflict, missing-config, missing-database, uninstall
+   preservation) in `docs/TEST_MAC_ACCEPTANCE.md`.
 2. Fix finalization transaction ownership and add rollback coverage.
 3. Make installer replacement rollback-safe and manifest-version driven.
-4. Finish and record the clean-Mac acceptance checklist.
-5. Run Jordana's complete smoke path: launch, sync, review, approve, preview,
-   finalize, open canonical PDF, record payment, restart, and reopen records.
-6. Confirm rate exceptions and Bill To defaults with Jordana.
-7. Treat historical backfill, dashboard, credits, reconciliation, and
+4. Implement automatic reparse/refresh after client confirmation (UX
+   improvement — currently requires manual refresh).
+5. Confirm rate exceptions and Bill To defaults with Jordana.
+6. Treat historical backfill, dashboard, credits, reconciliation, and
    month-close as later enhancements rather than blockers to the core handoff.
 
 ### Completed in this round
