@@ -4561,20 +4561,43 @@ async function openAccountRecord(accountId, options = {}) {
       <div id="coveredSearchArea" hidden></div>
     </div>
 
+    <div class="editor-section" id="editorFilingSection">
+      <h4>Save invoices under</h4>
+      <div class="field-grid">
+        <label class="field wide">Save invoices under
+          <select id="editFilingOwner">
+            ${filingOptions}
+          </select>
+          <span class="help">Controls where invoice files are organized. It does not change who receives or pays the invoice. Choices are limited to the payer, organization, or covered clients.</span>
+        </label>
+      </div>
+    </div>
+
     <div class="editor-section" id="editorDeliverySection">
       <h4>Billing delivery</h4>
       <div class="field-grid">
         <label class="field wide">Send invoice to
           <select id="editDeliveryContact">
             ${deliveryContactOptions(data)}
-            <option value="new">Add new delivery contact...</option>
           </select>
+          <span class="help">Controls who receives the invoice. This does not add the person as a covered client, participant, payer, Bill To, or filing owner.</span>
         </label>
+        <div class="inline-actions wide">
+          <button type="button" id="searchDeliveryContactBtn" class="save">Find existing person</button>
+          <button type="button" id="addDeliveryContactBtn" class="save">Add invoice contact</button>
+        </div>
+        <div class="wide" id="deliveryContactSearchArea" hidden></div>
         <div class="field-grid wide" id="newDeliveryContactFields" hidden>
           <label class="field">First name<input id="newDeliveryContactFirst" autocomplete="off"></label>
           <label class="field">Last name<input id="newDeliveryContactLast" autocomplete="off"></label>
+          <label class="field">Display name<input id="newDeliveryContactDisplay" autocomplete="off"></label>
           <label class="field">Email<input id="newDeliveryContactEmail" type="email" autocomplete="off"></label>
           <label class="field">Phone<input id="newDeliveryContactPhone" type="tel" autocomplete="off"></label>
+          <label class="field">Address line 1<input id="newDeliveryContactAddr1" autocomplete="off"></label>
+          <label class="field">Address line 2<input id="newDeliveryContactAddr2" autocomplete="off"></label>
+          <label class="field">City<input id="newDeliveryContactCity" autocomplete="off"></label>
+          <label class="field">State<input id="newDeliveryContactState" autocomplete="off"></label>
+          <label class="field">Postal code<input id="newDeliveryContactPostal" autocomplete="off"></label>
         </div>
         <label class="field">Billing name<input id="editBillingName" value="${escapeHtml(bp.billing_name || "")}"></label>
         <label class="field">Billing email<input id="editBillingEmail" type="email" value="${escapeHtml(bp.billing_email || "")}"></label>
@@ -4592,12 +4615,6 @@ async function openAccountRecord(accountId, options = {}) {
             <option value="mail" ${bp.preferred_delivery_method === "mail" ? "selected" : ""}>Mail</option>
             <option value="both" ${bp.preferred_delivery_method === "both" ? "selected" : ""}>Both</option>
           </select>
-        </label>
-        <label class="field wide">Save invoices under
-          <select id="editFilingOwner">
-            ${filingOptions}
-          </select>
-          <span class="help">Controls where invoice files are organized. It does not change who receives or pays the invoice.</span>
         </label>
         <label class="field wide">Administrative notes<input id="editAdminNotes" value="${escapeHtml(data.account.administrative_notes || "")}"></label>
       </div>
@@ -4704,10 +4721,23 @@ async function openAccountRecord(accountId, options = {}) {
     });
   }
 
-  const deliveryInputs = ["editDeliveryContact", "newDeliveryContactFirst", "newDeliveryContactLast", "newDeliveryContactEmail", "newDeliveryContactPhone", "editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
+  const deliveryInputs = ["editDeliveryContact", "newDeliveryContactFirst", "newDeliveryContactLast", "newDeliveryContactDisplay", "newDeliveryContactEmail", "newDeliveryContactPhone", "newDeliveryContactAddr1", "newDeliveryContactAddr2", "newDeliveryContactCity", "newDeliveryContactState", "newDeliveryContactPostal", "editBillingName", "editBillingEmail", "editBillingPhone", "editBillingContactName", "editAddr1", "editAddr2", "editCity", "editState", "editPostal", "editDeliveryMethod", "editAdminNotes"];
   deliveryInputs.forEach(id => {
     const el = $(id);
     if (el) el.addEventListener("change", markEditorDirty);
+  });
+  $("searchDeliveryContactBtn")?.addEventListener("click", () => {
+    if ($("newDeliveryContactFields")) $("newDeliveryContactFields").hidden = true;
+    openDeliveryContactSearch(data);
+    markEditorDirty();
+  });
+  $("addDeliveryContactBtn")?.addEventListener("click", () => {
+    const fields = $("newDeliveryContactFields");
+    if (fields) fields.hidden = false;
+    if ($("deliveryContactSearchArea")) $("deliveryContactSearchArea").hidden = true;
+    if ($("editDeliveryContact")) $("editDeliveryContact").value = "new";
+    $("newDeliveryContactFirst")?.focus();
+    markEditorDirty();
   });
   if ($("editDeliveryContact")) {
     $("editDeliveryContact").addEventListener("change", () => {
@@ -4733,16 +4763,92 @@ async function openAccountRecord(accountId, options = {}) {
 
 function deliveryContactOptions(data) {
   const contacts = data.delivery_contacts || [];
-  const savedPersonId = data.billing_party?.delivery_contact_person_id || data.billing_party?.person_id || "";
+  const savedPersonId = data.billing_party?.delivery_contact_person_id || "";
+  const hasSaved = contacts.some(contact => contact.person_id === savedPersonId || contact.selected);
   const rows = contacts.map(contact => {
     const selected = contact.person_id === savedPersonId || contact.selected ? "selected" : "";
     const detail = contact.billing_email || contact.billing_phone ? ` (${contact.billing_email || contact.billing_phone})` : "";
     return `<option value="${escapeAttr(contact.person_id)}" ${selected}>${fmt(contact.display_name || "Unnamed contact")}${escapeHtml(detail)}</option>`;
   });
-  if (!rows.length) {
-    rows.push(`<option value="">Use billing recipient details</option>`);
-  }
+  rows.unshift(`<option value="" ${hasSaved ? "" : "selected"}>Use billing recipient details</option>`);
+  rows.push(`<option value="new">Add new invoice contact...</option>`);
   return rows.join("");
+}
+
+function appendDeliveryContactOption(person) {
+  const select = $("editDeliveryContact");
+  if (!select || !person?.person_id) return;
+  let option = Array.from(select.options).find(row => row.value === person.person_id);
+  if (!option) {
+    option = document.createElement("option");
+    option.value = person.person_id;
+    const detail = person.billing_email || person.billing_phone ? ` (${person.billing_email || person.billing_phone})` : "";
+    option.textContent = `${person.display_name || "Unnamed contact"}${detail}`;
+    const newOption = Array.from(select.options).find(row => row.value === "new");
+    select.insertBefore(option, newOption || null);
+  }
+  select.value = person.person_id;
+}
+
+function applyDeliveryContactDetails(person) {
+  if (!person) return;
+  if ($("editBillingName")) $("editBillingName").value = person.display_name || $("editBillingName").value || "";
+  if ($("editBillingEmail")) $("editBillingEmail").value = person.billing_email || "";
+  if ($("editBillingPhone")) $("editBillingPhone").value = person.billing_phone || "";
+}
+
+function openDeliveryContactSearch(data) {
+  const area = $("deliveryContactSearchArea");
+  if (!area) return;
+  area.hidden = false;
+  area.innerHTML = `
+    <div class="modal-search-wrap">
+      <label for="deliveryContactSearchInput">Search people directory</label>
+      <input id="deliveryContactSearchInput" class="modal-search" type="search" placeholder="Type a contact name..." autocomplete="off">
+    </div>
+    <div class="modal-results" id="deliveryContactSearchResults"></div>
+  `;
+  const input = $("deliveryContactSearchInput");
+  const results = $("deliveryContactSearchResults");
+  let searchRows = [];
+  const doSearch = debounce(async (q) => {
+    if (!q.trim()) { searchRows = []; results.innerHTML = ""; return; }
+    try {
+      searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
+      renderDeliveryContactSearchResults(results, searchRows, data);
+    } catch (err) {
+      results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`;
+    }
+  }, 200);
+  input.addEventListener("input", (e) => doSearch(e.target.value));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.target.value); } });
+  input.focus();
+}
+
+function renderDeliveryContactSearchResults(container, rows, data) {
+  if (!rows.length) {
+    container.innerHTML = '<div class="modal-empty">No people found.</div>';
+    return;
+  }
+  container.innerHTML = rows.map(row => `
+    <div class="modal-result-row" data-person-id="${escapeAttr(row.person_id)}" tabindex="0" role="button">
+      <span>${escapeHtml(row.display_name || "Unnamed contact")}</span>
+      ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
+    </div>
+  `).join("");
+  container.querySelectorAll(".modal-result-row").forEach(el => {
+    el.addEventListener("click", () => {
+      const person = rows.find(row => row.person_id === el.dataset.personId);
+      appendDeliveryContactOption(person);
+      applyDeliveryContactDetails(person);
+      if (data?.delivery_contacts && person && !data.delivery_contacts.some(row => row.person_id === person.person_id)) {
+        data.delivery_contacts.push({ ...person, selected: false, source: "people_directory_search" });
+      }
+      if ($("newDeliveryContactFields")) $("newDeliveryContactFields").hidden = true;
+      if ($("deliveryContactSearchArea")) $("deliveryContactSearchArea").hidden = true;
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
+  });
 }
 
 function openRecipientSearch(accountId, data, editState, returnContext) {
@@ -4962,8 +5068,14 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
   if (contactChoice === "new") {
     const first = $("newDeliveryContactFirst")?.value.trim() || "";
     const last = $("newDeliveryContactLast")?.value.trim() || "";
+    const display = $("newDeliveryContactDisplay")?.value.trim() || `${first} ${last}`.trim();
     const email = $("newDeliveryContactEmail")?.value.trim() || "";
     const phone = $("newDeliveryContactPhone")?.value.trim() || "";
+    const addr1 = $("newDeliveryContactAddr1")?.value.trim() || "";
+    const addr2 = $("newDeliveryContactAddr2")?.value.trim() || "";
+    const city = $("newDeliveryContactCity")?.value.trim() || "";
+    const stateValue = $("newDeliveryContactState")?.value.trim() || "";
+    const postal = $("newDeliveryContactPostal")?.value.trim() || "";
     if (!first || !last) {
       saveBtn.disabled = false;
       saveBtn.textContent = "Save changes";
@@ -4975,14 +5087,19 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
       person: {
         first_name: first,
         last_name: last,
-        display_name: `${first} ${last}`.trim(),
+        display_name: display,
         billing_email: email || null,
         billing_phone: phone || null,
       }
     };
-    billingDelivery.billing_name = `${first} ${last}`.trim();
+    billingDelivery.billing_name = display;
     if (email) billingDelivery.billing_email = email;
     if (phone) billingDelivery.billing_phone = phone;
+    if (addr1) billingDelivery.billing_address_line_1 = addr1;
+    if (addr2) billingDelivery.billing_address_line_2 = addr2;
+    if (city) billingDelivery.billing_city = city;
+    if (stateValue) billingDelivery.billing_state = stateValue;
+    if (postal) billingDelivery.billing_postal_code = postal;
   } else if (contactChoice) {
     deliveryContact = { person_id: contactChoice };
   }

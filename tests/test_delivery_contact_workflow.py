@@ -17,6 +17,7 @@ Covers:
 14. Delivery method/email/address persist.
 15. Invalid or deleted contact is handled safely.
 16. UI prevents duplicate submit and refreshes after save.
+17. Delivery contact options include unrelated people-directory records.
 """
 import re
 import tempfile
@@ -160,6 +161,26 @@ class DeliveryContactTests(unittest.TestCase):
         })
         bp = result["billing_party"]
         self.assertEqual(bp["delivery_contact_person_id"], manager["person_id"])
+
+    def test_delivery_contact_options_include_unrelated_people_directory_records(self):
+        org = self._make_org_payer()
+        covered = self._make_covered_client()
+        rel = self._make_org_relationship(org, covered)
+        manager = create_person(self.conn, {
+            "first_name": "Jordan",
+            "last_name": "Manager",
+            "display_name": "Jordan Business Manager",
+            "billing_email": "jordan@biz.test",
+        })
+
+        record = get_account_record(self.conn, rel["account_id"])
+
+        contact_options = {
+            row["person_id"]: row for row in record["delivery_contacts"]
+        }
+        self.assertIn(manager["person_id"], contact_options)
+        self.assertEqual(contact_options[manager["person_id"]]["source"], "people_directory")
+        self.assertNotIn(manager["person_id"], {row["person_id"] for row in record["members"]})
 
     # 2. New invoice contact can be created for organization payer.
     def test_new_invoice_contact_created_for_org(self):

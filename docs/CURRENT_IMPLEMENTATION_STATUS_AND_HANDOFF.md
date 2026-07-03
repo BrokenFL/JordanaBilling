@@ -202,14 +202,21 @@ specific invoice; they must never be inferred or committed.
   `default_relationship_for_participants` to auto-assign account/billing-party
   only when the session has neither and is not approved.
 - Invoice delivery contact can be created or selected from the billing
-  relationship editor. For organization payers, the delivery contact person is
-  durably linked via `billing_parties.person_id` and does not become a covered
-  client, participant, or Bill To. For person payers, the selected contact's
-  delivery details (name, email, phone) are copied onto the billing-party
-  record as a deliberate contact-detail override; the payer's `person_id` is
-  preserved. This is a detail override, not a separate delivery-recipient link;
-  changing contacts overwrites the prior contact's details on the billing
-  party. No schema migration was required.
+  relationship editor. The editor has two visibly separate sections: "Save
+  invoices under" (filing owner only — payer, organization, or covered
+  clients) and "Billing delivery" (Send invoice to). The delivery section
+  includes a "Find existing person" search that queries the full active
+  people directory via `/api/people?q=...` (unrelated people are allowed
+  here), and an "Add invoice contact" form with first name, last name,
+  display name, email, phone, and address fields. The existing
+  `create_person` duplicate safeguard is reused. The delivery contact is
+  linked via `delivery_contact_person_id` (canonical for both organization
+  and person payers) and does not become a covered client, participant,
+  payer, or Bill To. For organization payers, `person_id` stores the
+  delivery contact historically. Delivery method, email, phone, and
+  address persist on the billing party. Finalized invoices remain
+  immutable; changing the delivery contact affects future/unresolved
+  drafts only. No schema migration was required.
 - Waived late cancellation with $0.00 rate now persists end-to-end. Root cause:
   `centString` and `firstPresent` used truthiness checks that treated `0` as
   falsy, causing the saved zero to disappear on reload; `unresolved_from_values`

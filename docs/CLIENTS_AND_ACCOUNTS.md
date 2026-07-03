@@ -252,9 +252,11 @@ The delivery contact is stored as `delivery_contact_person_id` on the `billing_p
 
 Key behaviors:
 
-- An existing person can be selected, or a new person can be created inline as the delivery contact.
+- An existing person can be selected via the "Find existing person" search, which queries the full active people directory (`/api/people?q=...`). Unrelated people are allowed here because this is delivery-contact selection, not payer or filing-owner selection.
+- A new person can be created inline via the "Add invoice contact" form, which includes first name, last name, display name, email, phone, and address fields (line 1, line 2, city, state, postal code). The existing `create_person` duplicate safeguard (case-insensitive display-name match) is reused.
 - The delivery contact is not added as a covered client, participant, payer, or filing owner.
 - The delivery contact's email, phone, and address are stored as billing delivery details on the billing party.
+- `delivery_contact_person_id` is the canonical delivery-recipient link for both organization and person payers.
 - Future draft invoices inherit the delivery method from the billing party's `preferred_delivery_method`.
 - Finalized invoices remain unchanged when the delivery contact is updated.
 - The selected delivery contact persists and is shown when the relationship is reopened.

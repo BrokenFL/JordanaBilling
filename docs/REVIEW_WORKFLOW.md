@@ -50,10 +50,20 @@ Deliberate session-specific Bill To, approved session Bill To, and finalized inv
 
 ### Invoice Delivery Contact
 
-The billing relationship editor can create or select an invoice delivery contact.
+The billing relationship editor has two visibly separate sections:
 
-- **Organization payer**: The delivery contact person is durably linked via `billing_parties.person_id`. The contact does not become a covered client, participant, payer, or Bill To.
-- **Person payer**: The selected contact's delivery details (name, email, phone) are copied onto the billing-party record as a **deliberate contact-detail override**. The payer's `person_id` is preserved. This is not a separate delivery-recipient link — changing contacts overwrites the prior contact's details on the billing party. The duplicate-person creation safeguard still applies when creating a new contact.
+1. **Save invoices under** — filing owner only (payer, organization, or covered clients). No arbitrary unrelated contacts.
+2. **Billing delivery** — Send invoice to, with existing-person search, Add invoice contact form, preferred delivery method, and delivery email/phone/address fields.
+
+The delivery contact is separate from Bill To, payer, Participants, covered clients, and filing owner.
+
+- **Existing person search**: The "Find existing person" button searches the full active people directory via `/api/people?q=...`. Unrelated people are allowed here because this is delivery-contact selection, not payer or filing-owner selection. Selecting a person stores `delivery_contact_person_id` and does not alter payer identity, Bill To, filing owner, covered clients, or Participants.
+- **New contact creation**: The "Add invoice contact" form includes first name, last name, display name, email, phone, and address fields (line 1, line 2, city, state, postal code). The existing `create_person` duplicate safeguard (case-insensitive display-name match) is reused. Save is transactional with the rest of the relationship update.
+- **Organization payer**: The delivery contact person is linked via `delivery_contact_person_id` (canonical) and `person_id` (historical). The contact does not become a covered client, participant, payer, or Bill To.
+- **Person payer**: The delivery contact person is linked via `delivery_contact_person_id`. The payer's `person_id` is preserved. The contact's delivery details (name, email, phone, address) are stored on the billing-party record.
+- Delivery method, email, phone, and address persist on the billing party and are shown when the relationship is reopened.
+- Future draft invoices inherit the delivery contact and delivery method from the billing party.
+- Finalized invoices remain immutable; changing the relationship delivery contact affects future/unresolved drafts only.
 
 ## Session Details
 

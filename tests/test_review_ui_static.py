@@ -267,8 +267,37 @@ for (const [input, expected] of cases) {
         editor = js[start:end]
 
         self.assertIn("Send invoice to", editor)
+        self.assertIn("Find existing person", editor)
+        self.assertIn("Add invoice contact", editor)
         self.assertIn("newDeliveryContactFields", editor)
+        self.assertIn("newDeliveryContactDisplay", editor)
+        self.assertIn("newDeliveryContactAddr1", editor)
         self.assertIn("delivery_contact: deliveryContact", js)
+
+    def test_billing_relationship_editor_separates_filing_from_delivery(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openAccountRecord")
+        end = js.index("function openRecipientSearch", start)
+        editor = js[start:end]
+
+        self.assertIn('id="editorFilingSection"', editor)
+        self.assertIn('id="editorDeliverySection"', editor)
+        self.assertLess(editor.index('id="editorFilingSection"'), editor.index('id="editorDeliverySection"'))
+        filing = editor[
+            editor.index('id="editorFilingSection"'):editor.index('id="editorDeliverySection"')
+        ]
+        delivery = editor[
+            editor.index('id="editorDeliverySection"'):editor.index('<div class="record-actions">', editor.index('id="editorDeliverySection"'))
+        ]
+        self.assertIn("Save invoices under", filing)
+        self.assertNotIn("Send invoice to", filing)
+        self.assertIn("Send invoice to", delivery)
+
+    def test_billing_delivery_searches_people_directory(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("function openDeliveryContactSearch", js)
+        self.assertIn("function renderDeliveryContactSearchResults", js)
+        self.assertIn("/api/people?q=", js)
 
     def test_late_cancellation_zero_rate_uses_explicit_zero_helpers(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

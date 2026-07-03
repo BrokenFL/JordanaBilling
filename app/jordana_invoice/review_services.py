@@ -2392,6 +2392,20 @@ def relationship_delivery_contact_options(
             "selected": False,
             "source": "covered_client",
         })
+    directory_rows = conn.execute(
+        """
+        SELECT person_id, display_name, billing_email, billing_phone
+        FROM people
+        WHERE active = 1
+        ORDER BY COALESCE(NULLIF(last_name, ''), display_name), first_name, display_name
+        LIMIT 250
+        """
+    ).fetchall()
+    for row in directory_rows:
+        if row["person_id"] in seen:
+            continue
+        seen.add(row["person_id"])
+        options.append({**dict(row), "selected": False, "source": "people_directory"})
     return options
 
 
