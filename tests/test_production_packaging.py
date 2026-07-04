@@ -129,7 +129,7 @@ class ProductionPackagingContractTest(unittest.TestCase):
     def test_release_uses_unique_package_version_for_next_beta(self) -> None:
         installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
         pyproject = (PROJECT_DIR / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('version = "0.1.0.post9"', pyproject)
+        self.assertIn('version = "0.1.0.post10"', pyproject)
         self.assertNotIn("jordana-invoice==0.1.0", installer)
         self.assertIn("PACKAGE_VERSION", installer)
 
@@ -332,17 +332,17 @@ class InstallerRollbackSafetyTest(unittest.TestCase):
         (payload_app / "Contents" / "Resources").mkdir(parents=True)
         (payload_app / "Contents" / "marker.txt").write_text("new", encoding="utf-8")
         (self.release / "wheelhouse").mkdir(parents=True)
-        (self.release / "wheelhouse" / "jordana_invoice-0.1.0.post9-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+        (self.release / "wheelhouse" / "jordana_invoice-0.1.0.post10-py3-none-any.whl").write_text("wheel", encoding="utf-8")
         (self.release / "release_manifest.json").write_text(
             json.dumps(
                 {
                     "runtime": {"requires_python": "3.14.x"},
                     "package": {
                         "name": "jordana-invoice",
-                        "version": "0.1.0.post9",
-                        "wheel": "wheelhouse/jordana_invoice-0.1.0.post9-py3-none-any.whl",
+                        "version": "0.1.0.post10",
+                        "wheel": "wheelhouse/jordana_invoice-0.1.0.post10-py3-none-any.whl",
                     },
-                    "build_id": "v0.1.0-test.9-testbuild",
+                    "build_id": "v0.1.0-test.10-testbuild",
                     "git_commit": "test",
                     "checksums": {},
                 }
@@ -377,7 +377,7 @@ cp -R "$1" "$2"
             self.bin / "python3",
             """#!/usr/bin/env bash
 if [[ "${1:-}" == "-" && "${3:-}" == "__installer_manifest__" ]]; then
-  printf '0.1.0.post9\twheelhouse/jordana_invoice-0.1.0.post9-py3-none-any.whl\tv0.1.0-test.9-testbuild\ttest\tv0.1.0-test.9\n'
+  printf '0.1.0.post10\twheelhouse/jordana_invoice-0.1.0.post10-py3-none-any.whl\tv0.1.0-test.10-testbuild\ttest\tv0.1.0-test.10\n'
   exit 0
 fi
 if [[ "${1:-}" == "-" ]]; then exit 0; fi
