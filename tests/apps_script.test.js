@@ -162,4 +162,47 @@ const pageCursor = script.syncNextCursor_(
 assert.strictEqual(pageCursor.ingested_at, sharedTimestamp);
 assert.strictEqual(pageCursor.snapshot_key, "cursor-key");
 
+const localeSensitiveRows = [
+  {
+    ingested_at: sharedTimestamp,
+    snapshot_key: "prefix|2026-06-01",
+  },
+  {
+    ingested_at: sharedTimestamp,
+    snapshot_key: "prefix:2026-06-02",
+  },
+  {
+    ingested_at: sharedTimestamp,
+    snapshot_key: "prefix|2026-06-03",
+  },
+];
+const localeSensitiveFirstPage = script.syncRows_(
+  localeSensitiveRows,
+  "1970-01-01T00:00:00.000Z",
+  ""
+).slice(0, 2);
+const localeSensitiveCursor = script.syncNextCursor_(
+  localeSensitiveFirstPage,
+  { ingested_at: "1970-01-01T00:00:00.000Z", snapshot_key: "" }
+);
+const localeSensitiveSecondPage = script.syncRows_(
+  localeSensitiveRows,
+  localeSensitiveCursor.ingested_at,
+  localeSensitiveCursor.snapshot_key
+);
+assert.deepStrictEqual(
+  localeSensitiveFirstPage
+    .concat(localeSensitiveSecondPage)
+    .map((syncRow) => syncRow.snapshot_key),
+  ["prefix:2026-06-02", "prefix|2026-06-01", "prefix|2026-06-03"]
+);
+assert.strictEqual(
+  new Set(
+    localeSensitiveFirstPage
+      .concat(localeSensitiveSecondPage)
+      .map((syncRow) => syncRow.snapshot_key)
+  ).size,
+  localeSensitiveRows.length
+);
+
 console.log("Apps Script helper tests passed");

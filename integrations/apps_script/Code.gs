@@ -274,10 +274,7 @@ function syncRows_(rawRows, afterIngestedAt, afterSnapshotKey) {
   };
   return rawRows
     .filter((row) => isRowAfterCursor_(row, cursor))
-    .sort((a, b) => {
-      const byTime = String(a.ingested_at || "").localeCompare(String(b.ingested_at || ""));
-      return byTime || String(a.snapshot_key || "").localeCompare(String(b.snapshot_key || ""));
-    });
+    .sort(compareSyncRows_);
 }
 
 function isRowAfterCursor_(row, cursor) {
@@ -287,6 +284,24 @@ function isRowAfterCursor_(row, cursor) {
     ingestedAt > cursor.ingested_at ||
     (ingestedAt === cursor.ingested_at && snapshotKey > cursor.snapshot_key)
   );
+}
+
+function compareSyncRows_(a, b) {
+  const byTime = compareStrings_(String(a.ingested_at || ""), String(b.ingested_at || ""));
+  if (byTime !== 0) {
+    return byTime;
+  }
+  return compareStrings_(String(a.snapshot_key || ""), String(b.snapshot_key || ""));
+}
+
+function compareStrings_(a, b) {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
 }
 
 function rawRow_(payload, event, index, ingestedAt) {
@@ -520,5 +535,6 @@ if (typeof module !== "undefined") {
     syncNextCursor_,
     syncRows_,
     isRowAfterCursor_,
+    compareSyncRows_,
   };
 }
