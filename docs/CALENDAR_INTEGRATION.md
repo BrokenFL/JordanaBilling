@@ -87,6 +87,31 @@ Repeated normal captures, repeated June backfills, and overlap between normal an
 
 Future events may be imported as proposed, reviewable sessions. They must not be treated as approved, finalized, paid, or invoice-ready merely because they were captured. A future homepage Upcoming Sessions section should query unapproved/proposed sessions by `session_date`/`start_at` and avoid invoice readiness state.
 
+## Raw Snapshot Replay Recovery
+
+If `Raw_Event_Snapshots` or local `raw_calendar_snapshots` contains calendar
+evidence that did not become a candidate/session, use the local replay command.
+It does not fetch new Sheet rows and never duplicates raw evidence.
+
+Dry-run first:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --dry-run
+```
+
+Apply only after the summary is reviewed:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --apply --confirm-apply APPLY_CALENDAR_RECONCILE
+```
+
+Apply mode creates and verifies a SQLite backup before derived writes. The
+replay groups existing raw snapshots by calendar event identity, chooses the
+newest captured/ingested version for pending records, creates missing
+candidates/sessions, and excludes pending sessions whose latest evidence is
+personal/admin/non-client. Approved sessions are not silently rewritten; later
+source changes create review warnings instead.
+
 ## Rollback
 
 If deployment fails:

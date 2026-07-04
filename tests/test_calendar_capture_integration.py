@@ -177,7 +177,17 @@ class CalendarCaptureImportTests(unittest.TestCase):
         self.assertEqual(updated["service_mode"], "office")
         self.assertEqual(updated["time_category"], "evening")
         self.assertEqual(updated["suggested_rate_cents"], 12345)
-        self.assertEqual(updated["raw_calendar_title"], "Bonnie Smith | 30 | FaceTime")
+        self.assertEqual(updated["raw_calendar_title"], "Bonnie Smith | 60 | Phone")
+        warning = self.conn.execute(
+            """
+            SELECT review_status, old_value, new_value
+            FROM review_items
+            WHERE review_status = 'source_change_warning'
+            """
+        ).fetchone()
+        self.assertIsNotNone(warning)
+        self.assertEqual(warning["old_value"], "Bonnie Smith | 60 | Phone")
+        self.assertEqual(warning["new_value"], "Bonnie Smith | 30 | FaceTime")
 
     def test_future_event_imports_as_reviewable_unapproved_session(self):
         import_rows(

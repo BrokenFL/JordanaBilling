@@ -243,6 +243,16 @@ Ambiguous but recognizable calendar titles (e.g. `Leah Grossman 630 38`, `Sage B
 
 Duplicate repair supports a sanitized dry-run, explicit apply, verified backup, idempotent application, and guarded reversal. Approved, invoiced, paid, audited, and raw-evidence records are protected. Reversal is refused after later edits make it unsafe.
 
+Raw snapshot replay recovery supports the separate `calendar-reconcile`
+command. Dry-run reports the candidate/session changes that would be derived
+from already-preserved raw evidence without durable writes. Apply mode requires
+`--confirm-apply APPLY_CALENDAR_RECONCILE`, creates a verified SQLite backup,
+replays every existing raw snapshot without duplicating evidence, refreshes
+pending records to the newest event version, and excludes pending sessions whose
+latest evidence is no longer a client session. Approved sessions remain frozen;
+later source changes create review warnings instead of changing approved
+session values.
+
 ## Review Queue And Sessions
 
 The Review Queue offers Needs Review, Approved, and Excluded filters. Needs Review excludes approved and excluded records.

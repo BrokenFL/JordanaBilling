@@ -21,7 +21,7 @@ from .google_sync import (
     sync_calendar_automatically,
     sync_with_process_lock,
 )
-from .importer import import_csv
+from .importer import import_csv, replay_existing_raw_snapshots
 from .duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
 from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
@@ -179,6 +179,30 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm-reversal",
         default="",
         help="Must be exactly REVERSE_DUPLICATE_REPAIR when --reverse is used.",
+    )
+
+    reconcile_parser = subparsers.add_parser(
+        "calendar-reconcile",
+        help=(
+            "Replay preserved raw calendar snapshots through the review model "
+            "without inserting duplicate raw evidence."
+        ),
+    )
+    reconcile_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Analyze only and perform no durable writes. This is the default.",
+    )
+    reconcile_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply replay recovery. Requires --confirm-apply.",
+    )
+    reconcile_parser.add_argument(
+        "--confirm-apply",
+        default="",
+        help="Must be exactly APPLY_CALENDAR_RECONCILE when --apply is used.",
     )
 
     serve_parser = subparsers.add_parser(
@@ -342,6 +366,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         conn.commit()
         print(review_id)
+        return 0
+
+    if args.command == "calendar-reconcile":
+        if args.apply and args.confirm_apply != "APPLY_CALENDAR_RECONCILE":
+            print(
+                "REFUSED: --apply requires "
+                "--confirm-apply APPLY_CALENDAR_RECONCILE",
+                file=__import__('sys').stderr,
+            )
+            return 1
+        migrate_database(args.db)
+        conn = connect(args.db)
+        try:
+            result = replay_existing_raw_snapshots(conn, apply=args.apply)
+        finally:
+            conn.close()
+        print(json.dumps(result.as_dict(), sort_keys=True))
         return 0
 
     if args.command == "normalize-existing":

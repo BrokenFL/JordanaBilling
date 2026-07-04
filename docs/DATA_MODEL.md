@@ -29,6 +29,12 @@ keys, database paths, run IDs, or cursor internals.
 
 One row per CSV import or remote sync import. Tracks source path, import time, row count, completed run count, and status.
 
+`calendar-reconcile --apply` also writes an `import_runs` row with source name
+`raw_snapshot_replay`. That run points to no new raw source path because it
+reuses already-preserved `raw_calendar_snapshots` and only rebuilds derived
+candidate/session state. `--dry-run` creates the same plan inside a savepoint
+and rolls it back.
+
 ## `raw_calendar_snapshots`
 
 Immutable preserved calendar evidence. Stores every imported raw row and normalized raw JSON.
@@ -52,6 +58,11 @@ Important fields:
 Collapsed event candidates built from raw snapshots. Stores parser output, classification, confidence, and review fields.
 
 Phase 2 fields include confidence label, unresolved fields, review reasons, candidate people, service mode, rate group, evening/weekend category, and reconciliation status.
+
+Existing raw snapshots can be replayed into this table when recovery is needed.
+Replay never edits raw evidence. It may create missing candidates, update
+pending candidates to the newest event version, and keep approved candidate
+status protected while still surfacing source-change warnings.
 
 ## `candidate_identity_aliases`
 

@@ -10,7 +10,13 @@ from typing import Iterable
 
 from .calendar_preferences import CalendarDisposition, classify_calendar
 from .capture_windows import completed_run_windows
-from .db import OperationalImportAuthorization, assert_csv_import_safe
+from .db import (
+    OperationalImportAuthorization,
+    _create_backup,
+    _get_db_path_from_conn,
+    _verify_backup,
+    assert_csv_import_safe,
+)
 from .parser import ParseResult, parse_event
 from .rates import suggest_rate
 from .review import review_status_for_parse, unresolved_fields_for_session
@@ -56,6 +62,47 @@ class CandidateIdentityResolution:
     candidate_id: str | None = None
     reason: str = "new_candidate"
     ambiguous: bool = False
+
+
+@dataclass(frozen=True)
+class RawSnapshotReplayResult:
+    raw_snapshots_seen: int
+    candidates_before: int
+    candidates_after: int
+    sessions_before: int
+    sessions_after: int
+    review_items_before: int
+    review_items_after: int
+    excluded_pending_sessions: int
+    approved_sessions_protected: int
+    dry_run: bool
+    import_run_id: str | None = None
+    backup_path: str | None = None
+
+    @property
+    def candidates_created(self) -> int:
+        return max(self.candidates_after - self.candidates_before, 0)
+
+    @property
+    def sessions_created(self) -> int:
+        return max(self.sessions_after - self.sessions_before, 0)
+
+    @property
+    def review_items_changed(self) -> int:
+        return abs(self.review_items_after - self.review_items_before)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "raw_snapshots_seen": self.raw_snapshots_seen,
+            "candidates_created": self.candidates_created,
+            "sessions_created": self.sessions_created,
+            "review_items_changed": self.review_items_changed,
+            "excluded_pending_sessions": self.excluded_pending_sessions,
+            "approved_sessions_protected": self.approved_sessions_protected,
+            "dry_run": self.dry_run,
+            "import_run_id": self.import_run_id,
+            "backup_path": self.backup_path,
+        }
 
 
 def import_csv(
@@ -124,6 +171,119 @@ def import_rows(
     if commit:
         conn.commit()
     return import_run_id
+
+
+def replay_existing_raw_snapshots(
+    conn: sqlite3.Connection,
+    *,
+    apply: bool = False,
+    backup_operational: bool = True,
+) -> RawSnapshotReplayResult:
+    """Replay preserved raw evidence through candidate/session collapse.
+
+    Raw snapshots are never inserted, updated, or deleted here. Dry-run uses a
+    savepoint and rolls back every derived write after collecting the exact
+    reconciliation summary.
+    """
+    if apply and backup_operational:
+        db_path = _get_db_path_from_conn(conn)
+        backup_path: str | None = None
+        if db_path is not None and db_path.exists():
+            created_backup = _create_backup(db_path)
+            _verify_backup(created_backup)
+            backup_path = str(created_backup)
+    else:
+        backup_path = None
+
+    if apply:
+        result = _replay_existing_raw_snapshots_inner(conn, dry_run=False, backup_path=backup_path)
+        conn.commit()
+        return result
+
+    conn.execute("SAVEPOINT raw_snapshot_replay_dry_run")
+    try:
+        result = _replay_existing_raw_snapshots_inner(conn, dry_run=True, backup_path=None)
+    finally:
+        conn.execute("ROLLBACK TO raw_snapshot_replay_dry_run")
+        conn.execute("RELEASE raw_snapshot_replay_dry_run")
+    return result
+
+
+def _replay_existing_raw_snapshots_inner(
+    conn: sqlite3.Connection,
+    *,
+    dry_run: bool,
+    backup_path: str | None,
+) -> RawSnapshotReplayResult:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM raw_calendar_snapshots
+        ORDER BY start_at, captured_at, ingested_at, source_row_number
+        """
+    ).fetchall()
+    before = _replay_counts(conn)
+    import_run_id = new_id()
+    now = now_iso()
+    conn.execute(
+        """
+        INSERT INTO import_runs (
+          id, source_name, source_path, imported_at, source_row_count,
+          completed_run_count, status, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            import_run_id,
+            "raw_snapshot_replay",
+            None,
+            now,
+            len(rows),
+            count_completed_runs([dict(row) for row in rows]),
+            "dry_run" if dry_run else "imported",
+            "Existing raw calendar snapshots replayed without duplicating raw evidence.",
+        ),
+    )
+    excluded_before = _audit_action_count(conn, "session", "excluded_from_latest_calendar_snapshot")
+    protected_before = _audit_action_count(conn, "session", "approved_session_protected_from_calendar_replay")
+    if rows:
+        collapse_raw_snapshot_rows(conn, import_run_id, rows)
+    after = _replay_counts(conn)
+    excluded_after = _audit_action_count(conn, "session", "excluded_from_latest_calendar_snapshot")
+    protected_after = _audit_action_count(conn, "session", "approved_session_protected_from_calendar_replay")
+    return RawSnapshotReplayResult(
+        raw_snapshots_seen=len(rows),
+        candidates_before=before["calendar_event_candidates"],
+        candidates_after=after["calendar_event_candidates"],
+        sessions_before=before["sessions"],
+        sessions_after=after["sessions"],
+        review_items_before=before["review_items"],
+        review_items_after=after["review_items"],
+        excluded_pending_sessions=max(excluded_after - excluded_before, 0),
+        approved_sessions_protected=max(protected_after - protected_before, 0),
+        dry_run=dry_run,
+        import_run_id=None if dry_run else import_run_id,
+        backup_path=backup_path,
+    )
+
+
+def _replay_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    return {
+        table: int(conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"])
+        for table in ("calendar_event_candidates", "sessions", "review_items")
+    }
+
+
+def _audit_action_count(conn: sqlite3.Connection, entity_type: str, action: str) -> int:
+    return int(
+        conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM audit_log
+            WHERE entity_type = ? AND action = ?
+            """,
+            (entity_type, action),
+        ).fetchone()["c"]
+    )
 
 
 def read_csv_rows(path: Path) -> Iterable[dict[str, object]]:
@@ -240,7 +400,14 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
         """,
         (import_run_id,),
     ).fetchall()
+    collapse_raw_snapshot_rows(conn, import_run_id, rows)
 
+
+def collapse_raw_snapshot_rows(
+    conn: sqlite3.Connection,
+    import_run_id: str,
+    rows: list[sqlite3.Row],
+) -> None:
     same_batch_structural_keys: dict[str, set[str]] = defaultdict(set)
     for row in rows:
         if text(row["calendar_event_id"]) or text(row["event_fingerprint"]):
@@ -317,6 +484,8 @@ def collapse_candidates(conn: sqlite3.Connection, import_run_id: str) -> None:
             resolution if isinstance(resolution, CandidateIdentityResolution) else None,
         )
         inserted_session = maybe_insert_session(conn, candidate_id, latest, parse_result)
+        if parse_result.classification != "client_session":
+            maybe_exclude_pending_session(conn, candidate_id, latest, parse_result)
         if not inserted_session:
             maybe_insert_review_item(conn, candidate_id, None, parse_result)
 
@@ -1086,6 +1255,25 @@ def maybe_insert_session(
     ).fetchone()
     billing_treatment = initial_billing_treatment(result)
     if existing:
+        if existing["review_status"] == "approved":
+            maybe_create_source_change_warning(
+                conn,
+                candidate_id,
+                existing["id"],
+                text(existing["raw_calendar_title"]),
+                text(latest["event_title"]),
+            )
+            audit(
+                conn,
+                "session",
+                existing["id"],
+                "approved_session_protected_from_calendar_replay",
+                {
+                    "source_raw_snapshot_id": latest["id"],
+                    "calendar_event_title": latest["event_title"],
+                },
+            )
+            return True
         conn.execute(
             """
             UPDATE sessions
@@ -1095,22 +1283,21 @@ def maybe_insert_session(
                 end_at = ?,
                 calendar_duration_minutes = ?,
                 parsed_duration_minutes = ?,
-                duration_minutes = CASE WHEN review_status = 'approved' THEN duration_minutes ELSE ? END,
-                service_mode = CASE WHEN review_status = 'approved' THEN service_mode ELSE ? END,
-                rate_group = CASE WHEN review_status = 'approved' THEN rate_group ELSE ? END,
-                time_category = CASE WHEN review_status = 'approved' THEN time_category ELSE ? END,
+                duration_minutes = ?,
+                service_mode = ?,
+                rate_group = ?,
+                time_category = ?,
                 is_evening = ?,
                 is_weekend = ?,
-                suggested_rate_cents = CASE WHEN review_status = 'approved' THEN suggested_rate_cents ELSE ? END,
-                rate_rule_id = CASE WHEN review_status = 'approved' THEN rate_rule_id ELSE ? END,
-                rate_source = CASE WHEN review_status = 'approved' THEN rate_source ELSE ? END,
-                rate_needs_review = CASE WHEN review_status = 'approved' THEN rate_needs_review ELSE ? END,
+                suggested_rate_cents = ?,
+                rate_rule_id = ?,
+                rate_source = ?,
+                rate_needs_review = ?,
                 source_raw_snapshot_id = ?,
                 raw_calendar_title = ?,
-                review_status = CASE WHEN review_status = 'approved' THEN review_status ELSE ? END,
+                review_status = ?,
                 appointment_status = ?,
                 billing_treatment = CASE
-                  WHEN review_status = 'approved' THEN billing_treatment
                   WHEN ? IN ('cancelled', 'no_show') THEN ?
                   WHEN billing_treatment != 'unresolved' THEN billing_treatment
                   ELSE ?
@@ -1122,12 +1309,12 @@ def maybe_insert_session(
                 calendar_disposition = ?,
                 calendar_is_preferred_work = ?,
                 hidden_from_review = ?,
-                billing_session_type = CASE WHEN review_status = 'approved' THEN billing_session_type ELSE ? END,
-                appointment_method = CASE WHEN review_status = 'approved' THEN appointment_method ELSE ? END,
-                duration_choice = CASE WHEN review_status = 'approved' THEN duration_choice ELSE ? END,
-                custom_duration_minutes = CASE WHEN review_status = 'approved' THEN custom_duration_minutes ELSE ? END,
+                billing_session_type = ?,
+                appointment_method = ?,
+                duration_choice = ?,
+                custom_duration_minutes = ?,
                 house_call_suggested = ?,
-                billing_type_source = CASE WHEN review_status = 'approved' THEN billing_type_source ELSE ? END,
+                billing_type_source = ?,
                 location_text = ?,
                 updated_at = ?
             WHERE id = ?
@@ -1174,18 +1361,9 @@ def maybe_insert_session(
                 existing["id"],
             ),
         )
-        if existing["review_status"] != "approved":
-            conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
-            insert_session_participants(conn, existing["id"], result)
+        conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
+        insert_session_participants(conn, existing["id"], result)
         maybe_insert_review_item(conn, candidate_id, existing["id"], result, unresolved_fields, review_status)
-        if existing["review_status"] == "approved":
-            maybe_create_source_change_warning(
-                conn,
-                candidate_id,
-                existing["id"],
-                text(existing["raw_calendar_title"]),
-                text(latest["event_title"]),
-            )
         audit(conn, "session", existing["id"], "updated_from_calendar_snapshot", result.as_dict())
         return True
 
@@ -1255,6 +1433,88 @@ def maybe_insert_session(
     insert_session_participants(conn, session_id, result)
     maybe_insert_review_item(conn, candidate_id, session_id, result, unresolved_fields, review_status)
     audit(conn, "session", session_id, "proposed_from_calendar", result.as_dict())
+    return True
+
+
+def maybe_exclude_pending_session(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    latest: sqlite3.Row,
+    result: ParseResult,
+) -> bool:
+    existing = conn.execute(
+        """
+        SELECT *
+        FROM sessions
+        WHERE candidate_id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    if not existing:
+        return False
+    if existing["review_status"] == "approved":
+        audit(
+            conn,
+            "session",
+            existing["id"],
+            "approved_session_protected_from_calendar_replay",
+            {
+                "source_raw_snapshot_id": latest["id"],
+                "latest_classification": result.classification,
+            },
+        )
+        return False
+    now = now_iso()
+    reason = (
+        "Latest calendar evidence is not an eligible client session; "
+        "pending operational session excluded from billing surfaces."
+    )
+    conn.execute(
+        """
+        UPDATE sessions
+        SET review_status = 'excluded',
+            billable_status = 'excluded',
+            source_raw_snapshot_id = ?,
+            raw_calendar_title = ?,
+            calendar_name = ?,
+            calendar_disposition = COALESCE(
+              (SELECT calendar_disposition FROM calendar_event_candidates WHERE id = ?),
+              calendar_disposition
+            ),
+            hidden_from_review = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            latest["id"],
+            latest["event_title"],
+            latest["calendar_name"],
+            candidate_id,
+            1,
+            now,
+            existing["id"],
+        ),
+    )
+    conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
+    maybe_insert_review_item(
+        conn,
+        candidate_id,
+        existing["id"],
+        result,
+        result.unresolved_fields or ["classification"],
+        "excluded",
+    )
+    audit(
+        conn,
+        "session",
+        existing["id"],
+        "excluded_from_latest_calendar_snapshot",
+        {
+            "reason": reason,
+            "source_raw_snapshot_id": latest["id"],
+            "latest_classification": result.classification,
+        },
+    )
     return True
 
 

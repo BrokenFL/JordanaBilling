@@ -5,7 +5,7 @@ from pathlib import Path
 
 from jordana_invoice.db import connect, migrate_database
 from jordana_invoice.duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
-from jordana_invoice.importer import import_rows
+from jordana_invoice.importer import import_rows, replay_existing_raw_snapshots
 from jordana_invoice.util import now_iso, stable_hash
 
 
@@ -277,6 +277,172 @@ class CandidateIdentityTests(unittest.TestCase):
         self.assertEqual(preserved["approved_rate_cents"], 25000)
         self.assertEqual(preserved["rate_cents_snapshot"], 25000)
 
+    def test_replay_dry_run_recovers_orphan_raw_rows_without_mutation(self):
+        import_rows(self.conn, [raw_row("orphan-raw", event_id="event-orphan", fingerprint="")], "test")
+        self._delete_derived_calendar_rows()
+        before = snapshot_counts(self.conn)
+
+        result = replay_existing_raw_snapshots(self.conn, apply=False)
+
+        self.assertEqual(snapshot_counts(self.conn), before)
+        self.assertEqual(result.raw_snapshots_seen, 1)
+        self.assertEqual(result.candidates_created, 1)
+        self.assertEqual(result.sessions_created, 1)
+        self.assertTrue(result.dry_run)
+        self.assertIsNone(result.import_run_id)
+
+    def test_replay_apply_recovers_orphan_raw_rows_without_duplicating_raw_evidence(self):
+        import_rows(self.conn, [raw_row("orphan-apply", event_id="event-orphan-apply", fingerprint="")], "test")
+        self._delete_derived_calendar_rows()
+
+        result = replay_existing_raw_snapshots(self.conn, apply=True)
+
+        self.assertFalse(result.dry_run)
+        self.assertIsNotNone(result.import_run_id)
+        self.assertIsNotNone(result.backup_path)
+        self.assertTrue(Path(result.backup_path).exists())
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 1)
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+
+    def test_edited_event_refreshes_pending_session_to_newest_snapshot(self):
+        import_rows(
+            self.conn,
+            [raw_row("edit-old", event_id="event-edit", fingerprint="", title="Robin Rivers | 60 | Office")],
+            "test",
+        )
+
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "edit-new",
+                    event_id="event-edit",
+                    fingerprint="",
+                    title="Casey North | 60 | Office",
+                    ingested_at="2026-06-29T12:08:00.000Z",
+                )
+            ],
+            "test",
+        )
+
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+        session = self.conn.execute("SELECT id, raw_calendar_title FROM sessions").fetchone()
+        self.assertEqual(session["raw_calendar_title"], "Casey North | 60 | Office")
+        participants = [
+            row["participant_name"]
+            for row in self.conn.execute(
+                "SELECT participant_name FROM session_participants WHERE session_id = ?",
+                (session["id"],),
+            ).fetchall()
+        ]
+        self.assertEqual(participants, ["Casey North"])
+
+    def test_edited_event_does_not_rewrite_approved_session(self):
+        import_rows(
+            self.conn,
+            [raw_row("approved-old", event_id="event-approved-edit", fingerprint="", title="Robin Rivers | 60 | Office")],
+            "test",
+        )
+        session = self.conn.execute("SELECT id FROM sessions").fetchone()
+        self.conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'approved',
+                duration_minutes = 90,
+                approved_rate_cents = 25000,
+                rate_cents_snapshot = 25000
+            WHERE id = ?
+            """,
+            (session["id"],),
+        )
+        self.conn.commit()
+
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "approved-new",
+                    event_id="event-approved-edit",
+                    fingerprint="",
+                    title="Casey North | 60 | Office",
+                    ingested_at="2026-06-29T12:09:00.000Z",
+                )
+            ],
+            "test",
+        )
+
+        preserved = self.conn.execute(
+            """
+            SELECT raw_calendar_title, duration_minutes, approved_rate_cents,
+                   rate_cents_snapshot, review_status
+            FROM sessions
+            """
+        ).fetchone()
+        self.assertEqual(preserved["raw_calendar_title"], "Robin Rivers | 60 | Office")
+        self.assertEqual(preserved["duration_minutes"], 90)
+        self.assertEqual(preserved["approved_rate_cents"], 25000)
+        self.assertEqual(preserved["rate_cents_snapshot"], 25000)
+        self.assertEqual(preserved["review_status"], "approved")
+        warning = self.conn.execute(
+            """
+            SELECT review_status, old_value, new_value
+            FROM review_items
+            WHERE review_status = 'source_change_warning'
+            """
+        ).fetchone()
+        self.assertIsNotNone(warning)
+        self.assertEqual(warning["old_value"], "Robin Rivers | 60 | Office")
+        self.assertEqual(warning["new_value"], "Casey North | 60 | Office")
+
+    def test_latest_non_client_revision_excludes_pending_session(self):
+        import_rows(
+            self.conn,
+            [raw_row("client-first", event_id="event-non-client", fingerprint="", title="Robin Rivers | 60 | Office")],
+            "test",
+        )
+        session_id = self.conn.execute("SELECT id FROM sessions").fetchone()["id"]
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "personal-latest",
+                    event_id="event-non-client",
+                    fingerprint="",
+                    title="Mani pedi 4",
+                    ingested_at="2026-06-29T12:10:00.000Z",
+                )
+            ],
+            "test",
+        )
+
+        session = self.conn.execute(
+            "SELECT review_status, billable_status FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        self.assertEqual(session["review_status"], "excluded")
+        self.assertEqual(session["billable_status"], "excluded")
+        self.assertEqual(
+            count_where(self.conn, "session_participants", "session_id = ?", (session_id,)),
+            0,
+        )
+
+    def _delete_derived_calendar_rows(self):
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        for table in (
+            "session_participants",
+            "sessions",
+            "review_queue",
+            "review_items",
+            "candidate_identity_aliases",
+            "calendar_event_candidates",
+            "audit_log",
+        ):
+            self.conn.execute(f"DELETE FROM {table}")
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
 
 class DuplicateRepairTests(unittest.TestCase):
     def setUp(self):
@@ -534,6 +700,10 @@ class DuplicateRepairTests(unittest.TestCase):
 
 def count(conn, table):
     return conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+
+
+def count_where(conn, table, clause, params):
+    return conn.execute(f"SELECT COUNT(*) AS c FROM {table} WHERE {clause}", params).fetchone()["c"]
 
 
 def snapshot_counts(conn):

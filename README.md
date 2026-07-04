@@ -206,6 +206,26 @@ does not edit Apple Calendar. The Advanced `Rebuild Calendar Data from Sheet`
 action is for recovery only; it creates a private SQLite backup and rereads all
 staged Sheet evidence idempotently.
 
+For raw-row recovery where the Sheet evidence is already preserved in SQLite but
+some derived candidates or sessions are missing, run a dry-run reconciliation
+first:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --dry-run
+```
+
+Apply only after reviewing the dry-run summary:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --apply --confirm-apply APPLY_CALENDAR_RECONCILE
+```
+
+This replays existing `raw_calendar_snapshots` without inserting duplicate raw
+evidence, creates a verified SQLite backup before applying, refreshes only
+pending/unreviewed operational records from the newest event version, excludes
+pending records whose newest evidence is non-client, and protects approved
+sessions from silent rewrites.
+
 The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
 
 The `Rate Card` sidebar screen supports global rates plus one-client, clients-together, and billing-relationship exceptions. Replace and End actions preserve rate-rule history, immediately refresh unapproved session suggestions, and never rewrite approved sessions or finalized invoices.
