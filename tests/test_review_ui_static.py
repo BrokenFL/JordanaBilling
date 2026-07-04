@@ -1068,6 +1068,26 @@ for (const [input, expected] of cases) {
         self.assertIn('$("pageTitle").textContent = "Reports"', js)
         self.assertIn('document.title = "Jordana Billing - Reports"', js)
 
+    def test_in_app_quit_button_uses_tokenized_endpoint_and_status(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="quitAppBtn" class="nav-quit">Quit</button>', html)
+        self.assertIn('id="quitStatus"', html)
+        self.assertIn('document.getElementById("quitAppBtn").onclick = () => quitApplication();', js)
+        self.assertIn('api("/api/app/quit", { method: "POST", body: "{}" })', js)
+        self.assertIn("state.quitting", js)
+        self.assertIn("sanitizeUiErrorMessage", js[js.index("async function quitApplication"):js.index("async function loadBuildInfo")])
+        self.assertNotIn("alert(", js[js.index("async function quitApplication"):js.index("async function loadBuildInfo")])
+
+    def test_build_info_label_loads_from_server(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="buildInfoLabel"', html)
+        self.assertIn('api("/api/build-info")', js)
+        self.assertIn("loadBuildInfo();", js)
+
     def test_reconciliation_page_is_reachable_and_month_scoped(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
         js = Path("app/jordana_invoice/static/review.js").read_text()

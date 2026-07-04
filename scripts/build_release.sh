@@ -34,6 +34,20 @@ import tomllib
 print(tomllib.loads(open("pyproject.toml", "rb").read().decode())["project"]["version"])
 PY
 )"
+BUNDLE_VERSION_INFO="$("$BUILD_PYTHON" - "$VERSION" <<'PY'
+import re
+import sys
+
+version = sys.argv[1]
+match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:\.post(\d+))?", version)
+if not match:
+    raise SystemExit(f"Unsupported release version for bundle metadata: {version}")
+short_version = match.group(1)
+build_version = match.group(2) or "1"
+print(f"{short_version}\t{build_version}")
+PY
+)"
+IFS=$'\t' read -r BUNDLE_SHORT_VERSION BUNDLE_BUILD_VERSION <<< "$BUNDLE_VERSION_INFO"
 COMMIT="$(git rev-parse --short=12 HEAD)"
 FULL_COMMIT="$(git rev-parse HEAD)"
 SOURCE_TREE_DIRTY=false
@@ -47,8 +61,11 @@ RELEASE_DIR="$BUILD_ROOT/$RELEASE_NAME"
 DMG_PATH="$BUILD_ROOT/$RELEASE_NAME.dmg"
 DMG_ROOT="$BUILD_ROOT/$RELEASE_NAME-dmg"
 SETUP_APP="$BUILD_ROOT/Install Jordana Billing.app"
+LAUNCHER_APP="$BUILD_ROOT/Jordana Billing.app"
 PAYLOAD_DIR="$SETUP_APP/Contents/Resources/ReleasePayload"
 WHEELHOUSE="$RELEASE_DIR/wheelhouse"
+BUILD_SRC="$BUILD_ROOT/$RELEASE_NAME-source"
+BUILD_ID="${RELEASE_LABEL:-v$VERSION}-${COMMIT}"
 
 clean_and_sign_app() {
   local app_path="$1"
@@ -58,6 +75,10 @@ clean_and_sign_app() {
   rm -rf "$app_path/Contents/_CodeSignature"
   dot_clean -m "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.quarantine "$app_path" 2>/dev/null || true
   codesign --force --deep --sign - --timestamp=none "$app_path" >/dev/null 2>&1 || true
   xattr -cr "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
@@ -67,13 +88,30 @@ clean_and_sign_app() {
   codesign --verify --deep --strict "$app_path"
 }
 
-rm -rf "$RELEASE_DIR" "$DMG_ROOT" "$DMG_PATH" "$DMG_PATH.sha256"
+prepare_setup_app() {
+  local app_path="$1"
+  xattr -cr "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
+  xattr -c "$app_path" 2>/dev/null || true
+  rm -rf "$app_path/Contents/_CodeSignature"
+  dot_clean -m "$app_path" 2>/dev/null || true
+  xattr -cr "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
+  xattr -dr com.apple.quarantine "$app_path" 2>/dev/null || true
+  xattr -c "$app_path" 2>/dev/null || true
+}
+
+rm -rf "$RELEASE_DIR" "$DMG_ROOT" "$DMG_PATH" "$DMG_PATH.sha256" "$BUILD_SRC" "$LAUNCHER_APP"
 rm -rf "$PROJECT_DIR/build/lib" "$PROJECT_DIR/build/bdist."* "$PROJECT_DIR/build/temp."*
 mkdir -p "$WHEELHOUSE" "$RELEASE_DIR/scripts" "$RELEASE_DIR/docs" "$RELEASE_DIR/config"
 
-"$PROJECT_DIR/scripts/build_launcher.sh" --force >/dev/null
-"$PROJECT_DIR/scripts/build_setup_wizard.sh" "$SETUP_APP" >/dev/null
-ditto --norsrc "$PROJECT_DIR/Jordana Billing.app" "$RELEASE_DIR/Jordana Billing.app"
+JORDANA_LAUNCHER_APP_DIR="$LAUNCHER_APP" JORDANA_BUNDLE_SHORT_VERSION="$BUNDLE_SHORT_VERSION" JORDANA_BUNDLE_BUILD_VERSION="$BUNDLE_BUILD_VERSION" "$PROJECT_DIR/scripts/build_launcher.sh" --force >/dev/null
+JORDANA_BUNDLE_SHORT_VERSION="$BUNDLE_SHORT_VERSION" JORDANA_BUNDLE_BUILD_VERSION="$BUNDLE_BUILD_VERSION" "$PROJECT_DIR/scripts/build_setup_wizard.sh" "$SETUP_APP" >/dev/null
+ditto --norsrc "$LAUNCHER_APP" "$RELEASE_DIR/Jordana Billing.app"
 cp "$PROJECT_DIR/scripts/install_release.sh" "$RELEASE_DIR/scripts/install_release.sh"
 cp "$PROJECT_DIR/scripts/create_private_config.sh" "$RELEASE_DIR/scripts/create_private_config.sh"
 cp "$PROJECT_DIR/scripts/launch_installed_app.sh" "$RELEASE_DIR/scripts/launch_installed_app.sh"
@@ -88,9 +126,57 @@ cp "$PROJECT_DIR/docs/TEST_RELEASE_NOTES.md" "$RELEASE_DIR/docs/TEST_RELEASE_NOT
 chmod +x "$RELEASE_DIR/scripts/"*.sh
 
 "$BUILD_PYTHON" -m pip wheel --wheel-dir "$WHEELHOUSE" -r "$PROJECT_DIR/requirements-production.lock"
-"$BUILD_PYTHON" -m pip wheel --no-deps --wheel-dir "$WHEELHOUSE" "$PROJECT_DIR"
+mkdir -p "$BUILD_SRC"
+git archive HEAD | tar -x -C "$BUILD_SRC"
+"$BUILD_PYTHON" - "$BUILD_SRC/app/jordana_invoice/build_info.py" "$VERSION" "$FULL_COMMIT" "$RELEASE_LABEL" "$BUILD_ID" <<'PY'
+import sys
+from pathlib import Path
 
-"$BUILD_PYTHON" - "$RELEASE_DIR" "$VERSION" "$FULL_COMMIT" "$RELEASE_LABEL" "$SOURCE_TREE_DIRTY" <<'PY'
+path = Path(sys.argv[1])
+version = sys.argv[2]
+commit = sys.argv[3]
+release_label = sys.argv[4]
+build_id = sys.argv[5]
+path.write_text(
+    "from __future__ import annotations\n\n"
+    "from importlib import metadata\n\n\n"
+    'APPLICATION_NAME = "Jordana Billing"\n'
+    f'GIT_COMMIT = "{commit}"\n'
+    f'BUILD_ID = "{build_id}"\n'
+    f'RELEASE_LABEL = "{release_label}"\n\n\n'
+    "def package_version() -> str:\n"
+    "    try:\n"
+    '        return metadata.version("jordana-invoice")\n'
+    "    except metadata.PackageNotFoundError:\n"
+    f'        return "{version}"\n\n\n'
+    "def current_build_info() -> dict[str, str]:\n"
+    "    return {\n"
+    '        "application": APPLICATION_NAME,\n'
+    '        "package": "jordana-invoice",\n'
+    '        "version": package_version(),\n'
+    '        "git_commit": GIT_COMMIT,\n'
+    '        "build_id": BUILD_ID,\n'
+    '        "release_label": RELEASE_LABEL,\n'
+    "    }\n",
+    encoding="utf-8",
+)
+PY
+"$BUILD_PYTHON" -m pip wheel --no-deps --wheel-dir "$WHEELHOUSE" "$BUILD_SRC"
+APP_WHEEL_REL="$("$BUILD_PYTHON" - "$WHEELHOUSE" "$VERSION" <<'PY'
+import sys
+from pathlib import Path
+
+wheelhouse = Path(sys.argv[1])
+version = sys.argv[2]
+matches = sorted(wheelhouse.glob(f"jordana_invoice-{version}-*.whl"))
+if len(matches) != 1:
+    raise SystemExit(f"Expected exactly one jordana_invoice wheel for {version}, found {len(matches)}")
+print(f"wheelhouse/{matches[0].name}")
+PY
+)"
+clean_and_sign_app "$RELEASE_DIR/Jordana Billing.app"
+
+"$BUILD_PYTHON" - "$RELEASE_DIR" "$VERSION" "$FULL_COMMIT" "$RELEASE_LABEL" "$SOURCE_TREE_DIRTY" "$BUILD_ID" "$APP_WHEEL_REL" <<'PY'
 import hashlib
 import json
 import os
@@ -104,6 +190,8 @@ version = sys.argv[2]
 commit = sys.argv[3]
 release_label = sys.argv[4]
 source_tree_dirty = sys.argv[5] == "true"
+build_id = sys.argv[6]
+app_wheel_rel = sys.argv[7]
 checksums = {}
 for path in sorted(p for p in release.rglob("*") if p.is_file()):
     rel = path.relative_to(release).as_posix()
@@ -114,6 +202,7 @@ manifest = {
     "application": "Jordana Billing",
     "version": version,
     "application_version": version,
+    "build_id": build_id,
     "git_commit": commit,
     "source_tree_dirty": source_tree_dirty,
     "build_timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -123,6 +212,11 @@ manifest = {
         "strategy": "offline private virtualenv created during one-time install",
         "requires_python": f"{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}.x",
         "builder_python": platform.python_version(),
+    },
+    "package": {
+        "name": "jordana-invoice",
+        "version": version,
+        "wheel": app_wheel_rel,
     },
     "artifact": {
         "type": "dmg",
@@ -137,6 +231,7 @@ with (release / "SHA256SUMS").open("w", encoding="utf-8") as fh:
     for rel, digest in checksums.items():
         fh.write(f"{digest}  {rel}\n")
 PY
+rm -rf "$BUILD_SRC"
 
 python3 - "$RELEASE_DIR" <<'PY'
 import sys
@@ -155,10 +250,9 @@ PY
 mkdir -p "$DMG_ROOT"
 rm -rf "$PAYLOAD_DIR"
 mv "$RELEASE_DIR" "$PAYLOAD_DIR"
-clean_and_sign_app "$PAYLOAD_DIR/Jordana Billing.app"
-clean_and_sign_app "$SETUP_APP"
+prepare_setup_app "$SETUP_APP"
 ditto --norsrc "$SETUP_APP" "$DMG_ROOT/Install Jordana Billing.app"
-clean_and_sign_app "$DMG_ROOT/Install Jordana Billing.app"
+prepare_setup_app "$DMG_ROOT/Install Jordana Billing.app"
 cat > "$DMG_ROOT/README.txt" <<EOF
 Jordana Billing test release
 

@@ -231,6 +231,20 @@ pending/unreviewed operational records from the newest event version, excludes
 pending records whose newest evidence is non-client, and protects approved
 sessions from silent rewrites.
 
+For June 2026 recovery after installing the current test release:
+
+1. Open `Jordana Billing`.
+2. Click `Reconciliation`.
+3. Select `June 2026`.
+4. Click `Dry Run` and review all six buckets.
+5. Click `Apply Safe Recovery` only after reviewing the dry-run output.
+6. Confirm the page shows `Safe Recovery Summary` and a verified backup path.
+7. Recovered missing sessions appear in `Review Queue` as pending review items and in `Sessions` when the date filter includes June, such as `All dates` or `Previous month`.
+8. Resolve and approve recovered sessions before generating client reports or staging invoices for them.
+
+Unresolved recovered rows and excluded/non-client rows stay out of Client
+Sessions reports, Session Log, Client Summary, and invoice staging.
+
 The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
 Its review-status filter intentionally contains only `All` and `Needs Classification`.
 

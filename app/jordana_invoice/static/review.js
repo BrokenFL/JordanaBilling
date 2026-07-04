@@ -101,7 +101,8 @@ const state = {
     reviewedMonth: "",
     running: false,
     applying: false
-  }
+  },
+  quitting: false
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
@@ -1652,10 +1653,45 @@ document.getElementById("settingsNav").onclick = (event) => {
   location.hash = "settings";
   showSettings();
 };
+document.getElementById("quitAppBtn").onclick = () => quitApplication();
 document.getElementById("reviewNav").onclick = () => {
   location.hash = "";
   showReviewWorkbench();
 };
+
+function showQuitStatus(message, isError = false) {
+  const node = $("quitStatus");
+  if (!node) return;
+  node.textContent = message;
+  node.classList.toggle("error", Boolean(isError));
+  node.hidden = false;
+}
+
+async function quitApplication() {
+  if (state.quitting) return;
+  state.quitting = true;
+  const button = $("quitAppBtn");
+  if (button) button.disabled = true;
+  showQuitStatus("Quitting Jordana Billing...");
+  try {
+    const result = await api("/api/app/quit", { method: "POST", body: "{}" });
+    showQuitStatus(result.message || "Jordana Billing is shutting down.");
+  } catch (error) {
+    state.quitting = false;
+    if (button) button.disabled = false;
+    showQuitStatus(sanitizeUiErrorMessage(error.message, "Could not quit Jordana Billing."), true);
+  }
+}
+
+async function loadBuildInfo() {
+  try {
+    const info = await api("/api/build-info");
+    const label = info.release_label || info.version || info.build_id || "";
+    if ($("buildInfoLabel")) $("buildInfoLabel").textContent = label ? `Build ${label}` : "Build unavailable";
+  } catch {
+    if ($("buildInfoLabel")) $("buildInfoLabel").textContent = "Build unavailable";
+  }
+}
 
 function hideViews() {
   closeResponsiveSheet();
@@ -6341,6 +6377,7 @@ document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
   "insuranceSwInput"
 ].forEach(id => $(id).addEventListener("input", renderBusinessProfileReadiness));
 
+loadBuildInfo();
 loadList();
 if (location.hash === "#calendar-import") showCalendarImport();
 if (location.hash === "#rate-card") showRateCard();

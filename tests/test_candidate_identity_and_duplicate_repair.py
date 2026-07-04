@@ -4,9 +4,12 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
+from jordana_invoice.csv_reports import build_session_rows
 from jordana_invoice.db import connect, migrate_database
 from jordana_invoice.duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
 from jordana_invoice.importer import calendar_reconciliation_report, import_rows, replay_existing_raw_snapshots
+from jordana_invoice.invoice_services import eligible_sessions, stage_approved_sessions_to_monthly_drafts
+from jordana_invoice.review_services import list_review_candidates, list_sessions_ledger
 from jordana_invoice.util import now_iso, stable_hash
 
 
@@ -493,6 +496,232 @@ class CandidateIdentityTests(unittest.TestCase):
             0,
         )
 
+    def test_june_reconciliation_recovery_surfaces_review_and_sessions_without_billing_leakage(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "june-missing",
+                    event_id="event-june-missing",
+                    fingerprint="",
+                    title="Mira Lane | 60 | Office",
+                    start="2026-06-10T09:00:00-04:00",
+                    end="2026-06-10T10:00:00-04:00",
+                    ingested_at="2026-06-29T12:01:00.000Z",
+                )
+            ],
+            "test",
+        )
+        missing_candidate_id = self.conn.execute(
+            """
+            SELECT c.id
+            FROM calendar_event_candidates c
+            JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
+            WHERE r.snapshot_key = 'june-missing'
+            """
+        ).fetchone()["id"]
+        self._delete_derived_for_candidate(missing_candidate_id)
+
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "june-edit-old",
+                    event_id="event-june-edit",
+                    fingerprint="",
+                    title="Robin Rivers | 60 | Office",
+                    start="2026-06-11T10:00:00-04:00",
+                    end="2026-06-11T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:02:00.000Z",
+                ),
+                raw_row(
+                    "june-edit-new",
+                    event_id="event-june-edit",
+                    fingerprint="",
+                    title="Casey North | 60 | Office",
+                    start="2026-06-11T10:00:00-04:00",
+                    end="2026-06-11T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:03:00.000Z",
+                ),
+                raw_row(
+                    "june-nonclient-old",
+                    event_id="event-june-nonclient",
+                    fingerprint="",
+                    title="Robin Rivers | 60 | Office",
+                    start="2026-06-12T10:00:00-04:00",
+                    end="2026-06-12T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:04:00.000Z",
+                ),
+                raw_row(
+                    "june-approved-old",
+                    event_id="event-june-approved",
+                    fingerprint="",
+                    title="Robin Rivers | 60 | Office",
+                    start="2026-06-13T10:00:00-04:00",
+                    end="2026-06-13T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:06:00.000Z",
+                ),
+            ],
+            "test",
+        )
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "june-nonclient-new",
+                    event_id="event-june-nonclient",
+                    fingerprint="",
+                    title="Mani pedi 4",
+                    start="2026-06-12T10:00:00-04:00",
+                    end="2026-06-12T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:05:00.000Z",
+                )
+            ],
+            "test",
+        )
+        approved_session_id = self.conn.execute(
+            "SELECT id FROM sessions WHERE start_at = '2026-06-13T10:00:00-04:00'"
+        ).fetchone()["id"]
+        self.conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'approved',
+                duration_minutes = 90,
+                approved_rate_cents = 25000,
+                rate_cents_snapshot = 25000
+            WHERE id = ?
+            """,
+            (approved_session_id,),
+        )
+        self.conn.commit()
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "june-approved-new",
+                    event_id="event-june-approved",
+                    fingerprint="",
+                    title="Casey North | 60 | Office",
+                    start="2026-06-13T10:00:00-04:00",
+                    end="2026-06-13T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:07:00.000Z",
+                ),
+                raw_row(
+                    "june-dup-a",
+                    event_id="event-june-dup-a",
+                    fingerprint="fp-june-dup-a",
+                    title="Taylor Reed | 60 | Office",
+                    start="2026-06-14T10:00:00-04:00",
+                    end="2026-06-14T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:08:00.000Z",
+                ),
+                raw_row(
+                    "june-dup-b",
+                    event_id="event-june-dup-b",
+                    fingerprint="fp-june-dup-b",
+                    title="Taylor Reed | 60 | Office",
+                    start="2026-06-14T10:00:00-04:00",
+                    end="2026-06-14T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:09:00.000Z",
+                ),
+            ],
+            "test",
+        )
+        excluded_session_id = self.conn.execute(
+            "SELECT id FROM sessions WHERE start_at = '2026-06-12T10:00:00-04:00'"
+        ).fetchone()["id"]
+        self._attach_invoice_line(excluded_session_id)
+        extra_session_id = self.conn.execute(
+            "SELECT id FROM sessions WHERE start_at = '2026-06-14T10:00:00-04:00' ORDER BY id LIMIT 1"
+        ).fetchone()["id"]
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute(
+            "UPDATE sessions SET source_raw_snapshot_id = 'missing-raw-snapshot-id' WHERE id = ?",
+            (extra_session_id,),
+        )
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+        dry_run = calendar_reconciliation_report(self.conn, month="2026-06", apply=False)
+
+        self.assertEqual(dry_run["mode"], "dry_run")
+        self.assertEqual(dry_run["summary"]["sessions_created"], 1)
+        self.assertTrue(dry_run["buckets"]["missing_sessions"])
+        self.assertTrue(dry_run["buckets"]["extra_sessions"])
+        self.assertTrue(dry_run["buckets"]["possible_duplicates"])
+        self.assertTrue(dry_run["buckets"]["newer_edited_event_versions"])
+        self.assertTrue(dry_run["buckets"]["excluded_non_client_items_affecting_billing"])
+        self.assertTrue(dry_run["buckets"]["approved_records_require_manual_review"])
+
+        applied = calendar_reconciliation_report(self.conn, month="2026-06", apply=True)
+
+        self.assertEqual(applied["mode"], "apply")
+        self.assertTrue(Path(applied["summary"]["backup_path"]).exists())
+        recovered = self.conn.execute(
+            """
+            SELECT id, candidate_id, raw_calendar_title, review_status
+            FROM sessions
+            WHERE raw_calendar_title = 'Mira Lane | 60 | Office'
+            """
+        ).fetchone()
+        self.assertIsNotNone(recovered)
+        review_ids = {
+            item["session_id"]
+            for item in list_review_candidates(self.conn, limit=200)["items"]
+            if item.get("session_id")
+        }
+        self.assertIn(recovered["id"], review_ids)
+        ledger_ids = {
+            item["session_id"]
+            for item in list_sessions_ledger(self.conn, date_range="all", limit=200)["items"]
+            if item.get("session_id")
+        }
+        self.assertIn(recovered["id"], ledger_ids)
+
+        refreshed = self.conn.execute(
+            "SELECT raw_calendar_title FROM sessions WHERE start_at = '2026-06-11T10:00:00-04:00'"
+        ).fetchone()
+        self.assertEqual(refreshed["raw_calendar_title"], "Casey North | 60 | Office")
+
+        excluded = self.conn.execute(
+            "SELECT raw_calendar_title, review_status, billable_status FROM sessions WHERE id = ?",
+            (excluded_session_id,),
+        ).fetchone()
+        self.assertEqual(excluded["raw_calendar_title"], "Mani pedi 4")
+        self.assertEqual(excluded["review_status"], "excluded")
+        self.assertEqual(excluded["billable_status"], "excluded")
+
+        approved = self.conn.execute(
+            """
+            SELECT raw_calendar_title, duration_minutes, approved_rate_cents, rate_cents_snapshot, review_status
+            FROM sessions
+            WHERE id = ?
+            """,
+            (approved_session_id,),
+        ).fetchone()
+        self.assertEqual(approved["raw_calendar_title"], "Robin Rivers | 60 | Office")
+        self.assertEqual(approved["duration_minutes"], 90)
+        self.assertEqual(approved["approved_rate_cents"], 25000)
+        self.assertEqual(approved["rate_cents_snapshot"], 25000)
+        self.assertEqual(approved["review_status"], "approved")
+
+        client_report_titles = {
+            row["raw_calendar_title"]
+            for row in build_session_rows(self.conn, 2026)
+        }
+        self.assertNotIn("Mira Lane | 60 | Office", client_report_titles)
+        self.assertNotIn("Mani pedi 4", client_report_titles)
+
+        eligibility = eligible_sessions(self.conn, period_start="2026-06-01", period_end="2026-06-30")
+        recovered_eligibility = next(item for item in eligibility if item["id"] == recovered["id"])
+        excluded_eligibility = next(item for item in eligibility if item["id"] == excluded_session_id)
+        self.assertFalse(recovered_eligibility["eligible"])
+        self.assertIn("Session is not approved", recovered_eligibility["ineligibility_reasons"])
+        self.assertFalse(excluded_eligibility["eligible"])
+        self.assertIn("Session is excluded or nonbillable", excluded_eligibility["ineligibility_reasons"])
+        staged = stage_approved_sessions_to_monthly_drafts(self.conn)
+        self.assertEqual(staged["sessions_staged"], 0)
+
     def _delete_derived_calendar_rows(self):
         self.conn.execute("PRAGMA foreign_keys = OFF")
         for table in (
@@ -506,6 +735,63 @@ class CandidateIdentityTests(unittest.TestCase):
         ):
             self.conn.execute(f"DELETE FROM {table}")
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def _delete_derived_for_candidate(self, candidate_id):
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        session_ids = [
+            row["id"]
+            for row in self.conn.execute(
+                "SELECT id FROM sessions WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchall()
+        ]
+        for session_id in session_ids:
+            self.conn.execute("DELETE FROM session_participants WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM review_items WHERE session_id = ?", (session_id,))
+        self.conn.execute("DELETE FROM sessions WHERE candidate_id = ?", (candidate_id,))
+        self.conn.execute("DELETE FROM review_queue WHERE candidate_id = ?", (candidate_id,))
+        self.conn.execute("DELETE FROM review_items WHERE candidate_id = ?", (candidate_id,))
+        self.conn.execute("DELETE FROM candidate_identity_aliases WHERE candidate_id = ?", (candidate_id,))
+        self.conn.execute("DELETE FROM calendar_event_candidates WHERE id = ?", (candidate_id,))
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.commit()
+
+    def _attach_invoice_line(self, session_id):
+        now = now_iso()
+        self.conn.execute(
+            """
+            INSERT INTO billing_parties (
+              billing_party_id, billing_party_type, billing_name,
+              preferred_delivery_method, created_at, updated_at
+            ) VALUES ('party-june-demo', 'person', 'Demo Payer', 'email', ?, ?)
+            """,
+            (now, now),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO invoices (
+              invoice_id, invoice_number, status, bill_to_party_id,
+              billing_period_start, billing_period_end, invoice_date,
+              total_cents, created_at, updated_at
+            ) VALUES ('invoice-june-demo', '2026-0002', 'draft', 'party-june-demo',
+              '2026-06-01', '2026-06-30', '2026-06-30', 15000, ?, ?)
+            """,
+            (now, now),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO invoice_line_items (
+              invoice_line_item_id, invoice_id, source_session_id,
+              service_date, participants_snapshot, service_name_snapshot,
+              description_snapshot, quantity, unit_amount_cents,
+              line_amount_cents, created_at, updated_at
+            ) VALUES ('line-june-demo', 'invoice-june-demo', ?, '2026-06-12',
+              'Demo Client', 'Psychotherapy Session',
+              'Psychotherapy Session', 1, 15000, 15000, ?, ?)
+            """,
+            (session_id, now, now),
+        )
         self.conn.commit()
 
 

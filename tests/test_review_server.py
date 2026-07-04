@@ -1,11 +1,34 @@
 import io
 import json
+import threading
+import time
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from jordana_invoice.review_server import MAX_REQUEST_BODY_BYTES, make_handler
+
+
+class _FakeServer:
+    def __init__(self, *, fail: bool = False):
+        self.fail = fail
+        self.shutdown_calls = 0
+        self.shutdown_event = threading.Event()
+
+    def shutdown(self):
+        self.shutdown_calls += 1
+        self.shutdown_event.set()
+        if self.fail:
+            raise RuntimeError("shutdown failed")
+
+
+class _FakeSyncRuntime:
+    def __init__(self):
+        self.stop_calls = 0
+
+    def stop(self):
+        self.stop_calls += 1
 
 
 class ReviewServerSyncConnectionTests(unittest.TestCase):
@@ -74,6 +97,88 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["rows_imported"], 2)
         self.assertEqual(captured["payload"]["duplicate_snapshots_skipped"], 1)
         self.assertEqual(captured["payload"]["review_items_changed"], 3)
+
+
+class ReviewServerQuitTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.temp.name) / "server.sqlite3")
+        self.sync_runtime = _FakeSyncRuntime()
+        self.handler_cls = make_handler(self.db_path, sync_runtime=self.sync_runtime)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path="/api/app/quit", body=b"{}"):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        handler.headers = {
+            "Content-Length": str(len(body)),
+            "Content-Type": "application/json",
+            self.handler_cls.write_token_header: self.handler_cls.write_token,
+        }
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {}
+
+        def mock_send_json(payload, status=200):
+            captured["payload"] = payload
+            captured["status"] = status
+
+        handler.send_json = mock_send_json
+        handler.finish = lambda: None
+        return handler, captured
+
+    def test_quit_endpoint_stops_sync_and_requests_server_shutdown(self):
+        handler, captured = self._handler()
+        server = _FakeServer()
+        handler.server = server
+
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertTrue(captured["payload"]["shutting_down"])
+        self.assertTrue(server.shutdown_event.wait(2))
+        self.assertEqual(server.shutdown_calls, 1)
+        self.assertEqual(self.sync_runtime.stop_calls, 1)
+
+    def test_repeated_quit_is_idempotent(self):
+        first, first_capture = self._handler()
+        server = _FakeServer()
+        first.server = server
+        first.do_POST()
+        self.assertTrue(server.shutdown_event.wait(2))
+
+        second, second_capture = self._handler()
+        second.server = server
+        second.do_POST()
+
+        self.assertEqual(first_capture["status"], 200)
+        self.assertEqual(second_capture["status"], 200)
+        self.assertTrue(second_capture["payload"]["already_started"])
+        time.sleep(0.05)
+        self.assertEqual(server.shutdown_calls, 1)
+
+    def test_shutdown_unavailable_returns_sanitized_failure(self):
+        handler, captured = self._handler()
+
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 503)
+        self.assertEqual(
+            captured["payload"],
+            {"ok": False, "error": "Application shutdown is not available in this process."},
+        )
+
+    def test_health_and_build_info_report_build_identity(self):
+        handler, captured = self._handler("/api/build-info")
+        handler.do_GET()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertTrue(captured["payload"]["ok"])
+        self.assertIn("build_id", captured["payload"])
+        self.assertIn("git_commit", captured["payload"])
 
 class ReviewServerSanitizationTests(unittest.TestCase):
     def setUp(self):

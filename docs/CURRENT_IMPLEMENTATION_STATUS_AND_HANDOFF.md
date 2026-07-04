@@ -8,10 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,729 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current built test release:** `v0.1.0-test.8`
-- **Current release artifact:** `JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg`
+- **Current test release target:** `v0.1.0-test.9`
+- **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
+- **Current package/application version:** `0.1.0.post9`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.7` was never published and is superseded by test.8
+- **Prior test release:** `v0.1.0-test.8` is superseded by test.9 for installation and update testing
 
 ## Architecture
 
@@ -104,46 +105,45 @@ This is not yet a final production declaration. Brooke should remain available d
 - Automatic rollback of the app bundle when final installation verification fails
 - Private Application Support data remains outside app-bundle replacement and rollback
 
-## Verified Release
+## Release Target
 
-The verified controlled-beta artifact is:
+The current controlled-beta release target is:
 
 ```text
-JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
 ```
 
-Recorded release facts:
+Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
+`release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.8`
-- Manifest commit: `d97d6babc2278bd1e19fbc36319d65acce24fbb4`
-- Application version: `0.1.0`
+- Release label: `v0.1.0-test.9`
+- Python package/application version: `0.1.0.post9`
+- Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
 - Required Python family: 3.14.x
 - Architecture: arm64
-- DMG checksum verification: passed
-- DMG SHA-256: `8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b`
-- `hdiutil verify`: passed
-- Private-file scan: no `.env`, SQLite, or PDF files found
+- DMG checksum verification: required before publication
+- `hdiutil verify`: required before publication
+- Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes explicit `Pillow` runtime support required by ReportLab PDF rendering
-- Local browser smoke testing passed for canonical inline draft PDF previews and stored finalized PDF previews in the Invoices workspace
-- Unit tests: 2,729 passed, 68 skipped
-- Temporary-DB acceptance test: passed (operational database untouched)
-- `scripts/privacy_check.sh`: passed
-- `scripts/git_safety_check.sh`: passed
-- `git diff --check`: passed
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post9` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Local browser smoke testing passed for June Reconciliation and in-app Quit on a sanitized temporary database
+- Focused tests pass for Quit, installer/update behavior, build identity, report filtering, and June reconciliation
 
-### Bug Fixes In test.8
+### Bug Fixes In test.9
 
-1. **Needs Classification ledger filter corrected** — the `needs_classification` review-status filter now correctly queries unclassified candidates (`s.id IS NULL` with `c.review_status = 'needs_classification'`) instead of matching against session review status.
-2. **Future appointments excluded from actionable dashboard/review counts** — dashboard status counts and the review queue now apply a time filter (`datetime(COALESCE(end_at, start_at)) <= datetime('now')`) so future appointments do not inflate actionable counts.
-3. **Missing Needs Classification / Send to Review filter option added** — the review status filter dropdown in the review UI now includes a "Needs classification / Send to Review" option.
-4. **Review overlay scroll resets to top** — opening the review overlay or selecting a candidate now resets scroll position to the top of the modal content.
+1. **In-app Quit** — visible sidebar Quit safely stops sync work and the local server.
+2. **Installer stale-runtime hardening** — installation reads and force-reinstalls the exact app wheel from the manifest, verifies payload and installed file checksums, imports installed build info, launches the app, and confirms the running server build ID.
+3. **Rollback-safe updates** — an already-running Jordana Billing server is coordinated before replacement, unrelated port owners are refused, and the prior app/runtime is restored if verification fails.
+4. **June reconciliation workflow** — dry-run/apply is verified for missing sessions, extra sessions, possible duplicates, edited event versions, excluded/non-client billing issues, and approved-session warnings. Missing recovered rows appear in Review and Sessions while unresolved/excluded rows stay out of client reports and invoice staging.
+5. **Report filtering** — client-facing session exports exclude unresolved and excluded rows; All Appointments remains the complete audit ledger.
 
 ### Prior Test Releases
 
-`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.8 as the current built and distributable controlled-beta release.
+`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that stale installed runtime code could remain when multiple releases shared package version `0.1.0`. test.9 supersedes test.8 for installation and update testing.
+
+`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.9 as the current controlled-beta release target.
 
 The prior installed-smoke baseline remains `v0.1.0-test.6` from commit `0dec58b6bf5ab35e2d48600b57fec83a477e304d`, which preserved existing private configuration and SQLite data during the brooketest upgrade installation and passed the major Billing Relationship, filing-owner, delivery-contact, invoice, and data-preservation workflows.
 
@@ -151,7 +151,7 @@ An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rej
 
 ## Controlled Beta Decision
 
-The test.8 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
+The test.9 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
 
 1. Brooke has a verified backup of the source operational database.
 2. The private `.env` and SQLite database are transferred separately through a direct or encrypted method.
@@ -198,10 +198,9 @@ The application prepares and files invoices but does not send or track delivery 
 
 1. Complete and record the full clean-Mac acceptance evidence: restart, duplicate launch, cross-user port ownership, unrelated port conflict, missing config, missing database, reinstall preservation, uninstall preservation, and rollback behavior.
 2. Add the specific regression test proving a failed finalization rolls back a delivery-method auto-sync performed inside the same transaction.
-3. Change `scripts/install_release.sh` to read the expected package version from `release_manifest.json` instead of hardcoding `jordana-invoice==0.1.0`.
-4. Confirm the repository's sanitized GitHub Actions workflow is enabled and recording successful status checks on current pushes.
-5. Implement automatic candidate reparse/refresh after client confirmation.
-6. Reconcile any future documentation immediately after application or release changes.
+3. Confirm the repository's sanitized GitHub Actions workflow is enabled and recording successful status checks on current pushes.
+4. Implement automatic candidate reparse/refresh after client confirmation.
+5. Reconcile any future documentation immediately after application or release changes.
 
 ### Later Enhancements, Not June-Beta Blockers
 

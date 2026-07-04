@@ -888,6 +888,23 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 ---
 
+## 14. Application Lifecycle
+
+### POST /api/app/quit
+
+- **Handler**: inline in `do_POST`
+- **Service**: local server shutdown scheduler
+- **Accepted fields**: none required
+- **Success status**: 200
+- **Success response**: `{ ok: true, shutting_down: true, already_started, message }`
+- **Failure status**: 503 when shutdown is unavailable
+- **DB tables**: none directly mutated
+- **Idempotent**: yes; repeated requests return success with `already_started: true`
+- **Safety**: write-token protected, stops the sync runtime before server shutdown, and does not delete or replace local files
+- **Existing tests**: `test_review_server.py`, `test_review_ui_static.py`
+
+---
+
 ## Summary of Write Endpoints
 
 | # | Method | Path | Service | Category |
@@ -951,8 +968,9 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 | 57 | POST | /api/reports/generate | write_reports | Reports |
 | 58 | POST | /api/calendar-reconcile/dry-run | calendar_reconciliation_report | Calendar Reconciliation |
 | 59 | POST | /api/calendar-reconcile/apply | calendar_reconciliation_report | Calendar Reconciliation |
+| 60 | POST | /api/app/quit | server shutdown scheduler | Application Lifecycle |
 
-**Total write endpoints: 59** (including read-only POSTs that use POST for complex body acceptance)
+**Total write endpoints: 60** (including read-only POSTs that use POST for complex body acceptance)
 
 ---
 

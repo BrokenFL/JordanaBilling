@@ -185,6 +185,14 @@ class GenerateReportCsvTests(unittest.TestCase):
             ],
             "test",
         )
+        self.conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'ready_for_approval'
+            WHERE review_status NOT IN ('approved', 'excluded')
+            """
+        )
+        self.conn.commit()
 
     def _parse_csv(self, csv_text: str) -> list[dict[str, str]]:
         reader = csv.DictReader(io.StringIO(csv_text))
@@ -559,6 +567,8 @@ class WriteReportsUnchangedTests(unittest.TestCase):
             ],
             "test",
         )
+        self.conn.execute("UPDATE sessions SET review_status = 'ready_for_approval'")
+        self.conn.commit()
         reports_dir = self.root / "Reports"
         with patch("jordana_invoice.csv_reports.current_eastern_year", return_value=2027):
             paths = write_reports(self.conn, reports_dir=reports_dir)

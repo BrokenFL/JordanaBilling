@@ -17,43 +17,45 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.8
+### Current Test Build — v0.1.0-test.9
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.8
-- **DMG:** `JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg`
-- **Manifest commit:** `d97d6babc2278bd1e19fbc36319d65acce24fbb4`
-- **application_version:** 0.1.0
+- **Release label:** v0.1.0-test.9
+- **Python package/application version:** 0.1.0.post9
+- **DMG:** recorded in the GitHub release and `release_manifest.json`
+- **Manifest commit:** recorded in `release_manifest.json`
+- **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **source_tree_dirty:** false
 - **builder Python:** 3.14.4
 - **requires_python:** 3.14.x
 - **architecture:** arm64
-- **DMG checksum verification:** passed
-- **DMG SHA-256:** `8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b`
-- **hdiutil verify:** passed
+- **DMG checksum verification:** required before publication
+- **DMG SHA-256:** recorded in the published `.sha256` asset
+- **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Local browser smoke:** canonical draft PDF preview and stored finalized PDF preview load inline in the Invoices workspace
-- **Unit tests:** 2,729 passed, 68 skipped
-- **Temporary-DB acceptance test:** passed (operational database untouched)
-- **Privacy and Git safety checks:** passed
+- **Local browser smoke:** required for Reconciliation and Quit before publication
+- **Unit tests:** required before publication
+- **Temporary-DB acceptance test:** required before publication (operational database untouched)
+- **Privacy and Git safety checks:** required before publication
 
-test.8 was built from commit `d97d6ba` with Python 3.14.4. It is locally
-built, checksum-verified, and privacy-scanned. It has not yet been installed on
-brooketest in this acceptance record.
+test.9 supersedes test.8 for installation and update testing because it uses a
+unique package version and verifies the exact installed runtime plus running
+server build ID before reporting success.
 
-### Bug Fixes In test.8
+### Bug Fixes In test.9
 
-1. **Needs Classification ledger filter corrected** — the `needs_classification` review-status filter now correctly queries unclassified candidates instead of matching against session review status.
-2. **Future appointments excluded from actionable dashboard/review counts** — dashboard status counts and the review queue now apply a time filter so future appointments do not inflate actionable counts.
-3. **Missing Needs Classification / Send to Review filter option added** — the review status filter dropdown in the review UI now includes a "Needs classification / Send to Review" option.
-4. **Review overlay scroll resets to top** — opening the review overlay or selecting a candidate now resets scroll position to the top of the modal content.
+1. **In-app Quit** — visible sidebar Quit stops the sync runtime and local server without orphaning the process.
+2. **Exact runtime installation** — the installer reads the package version and exact app wheel from the release manifest, force-reinstalls it from the shipped wheelhouse, and verifies installed package build info.
+3. **Running build-ID proof** — installation launches the installed app and confirms `/api/build-info` reports the expected build ID before success.
+4. **Rollback-safe update** — the prior installed app/runtime is restored automatically when verification fails.
+5. **June reconciliation workflow** — June dry-run/apply has focused service and browser verification on a sanitized temporary database.
 
 ### Prior Test Builds
 
 `v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
-never published. It is superseded by test.8 as the current built and
+never published. It is superseded by test.9 as the current built and
 distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
@@ -67,26 +69,26 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5, test.6, and test.7 builds remain historically accurate for the
-periods in which they were the current builds. test.8 supersedes test.7 as the
-current built test artifact, but test.6 remains the latest installed-smoke
-baseline until test.8 installation evidence is recorded.
+The prior test.5, test.6, test.7, and test.8 builds remain historically
+accurate for the periods in which they were the current builds. test.9
+supersedes test.8 for installation and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
 missing-database, uninstall preservation) remains incomplete and should
 be recorded before final production handoff.
 
-### v0.1.0-test.8 Acceptance Checklist Results
+### v0.1.0-test.9 Acceptance Checklist Results
 
-1. **Build exact test.8 DMG** — passed
-2. **Verify checksum locally** — passed
-3. **Verify release manifest** — passed (v0.1.0-test.8, commit d97d6ba)
-4. **Verify private-file scan** — passed
-5. **Verify inline draft and stored finalized PDF previews in local browser** — passed
-6. **Install test.8 over existing brooketest installation** — pending
-7. **Run clean-account acceptance** — pending
-8. **Publish/download/checksum the GitHub release asset before installation** — pending
+1. **Build exact test.9 DMG** — required before publication
+2. **Verify checksum locally** — required before publication
+3. **Verify release manifest, exact wheel, package version, commit, and build ID** — required before publication
+4. **Verify private-file scan** — required before publication
+5. **Verify Reconciliation and Quit in local browser on a temporary database** — passed locally before build
+6. **Install test.9 over an older installed build and prove stale-runtime replacement** — required before publication
+7. **Verify installed server reports expected build ID** — required before publication
+8. **Run clean-account acceptance** — pending
+9. **Publish/download/checksum the GitHub release asset before installation** — pending
 
 ### Prior v0.1.0-test.6 Acceptance Checklist Results
 
@@ -100,7 +102,7 @@ be recorded before final production handoff.
 8. **Verify future draft inheritance** — passed
 9. **Verify finalized invoice immutability** — passed
 10. **Run clean-account acceptance** — deferred (full clean-Mac evidence record incomplete)
-11. **Publish only the exact verified DMG after brooketest passes** — superseded by test.8 release publication path
+11. **Publish only the exact verified DMG after brooketest passes** — superseded by test.9 release publication path
 
 ### Unresolved-Client Refresh Behavior
 
@@ -127,7 +129,7 @@ refresh. This improvement is not yet implemented.
 - The versioned release DMG and matching `.sha256` file from the private pre-release.
 - For repeated test builds with the same application version, use the explicit
   release label in the filename, for example
-  `JordanaBilling-v0.1.0-test.8-<commit>-macos-arm64.dmg`.
+  `JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg`.
 - The private Apps Script URL and ingest API key available locally, not in GitHub, email, chat, screenshots, or logs.
 
 ## Steps
@@ -231,7 +233,7 @@ Deferred steps: brooketest install, clean-account acceptance, restart,
 Operational smoke path: local browser preview smoke passed; installed app smoke pending
 Known limitations accepted: full clean-Mac evidence record incomplete
 Tester: Brooke/Codex local release build
-Note: test.7 was never published and is superseded by test.8
+Note: test.7 was never published and is superseded by test.9
 ```
 
 ```text

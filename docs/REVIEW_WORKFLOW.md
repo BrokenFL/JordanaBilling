@@ -255,6 +255,16 @@ latest evidence is no longer a client session. Approved sessions remain frozen;
 later source changes create review warnings instead of changing approved
 session values.
 
+For the June 2026 recovery after installation, Jordana should open
+`Reconciliation`, select `June 2026`, run `Dry Run`, review every bucket, then
+click `Apply Safe Recovery` only if the summary is understood. Apply mode shows
+`Safe Recovery Summary` plus a verified backup path. Missing recovered sessions
+then appear in `Review Queue` as pending review rows and in `Sessions` when the
+date filter includes June, for example `All dates` or `Previous month`.
+Unresolved recovered rows and excluded/non-client rows do not appear in Client
+Sessions reports, Session Log, Client Summary, or invoice staging until Jordana
+resolves and approves them.
+
 ## Review Queue And Sessions
 
 The Review Queue inspector bottom bar offers only `Approve` and `Exclude`.

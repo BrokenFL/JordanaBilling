@@ -119,6 +119,29 @@ candidates/sessions, and excludes pending sessions whose latest evidence is
 personal/admin/non-client. Approved sessions are not silently rewritten; later
 source changes create review warnings instead.
 
+### June 2026 Recovery Instructions For Jordana
+
+After installing the current test release:
+
+1. Open `Jordana Billing`.
+2. Click `Reconciliation` in the left sidebar.
+3. In `Month`, choose `June 2026`.
+4. Click `Dry Run`.
+5. Review all six sections: `Missing Sessions`, `Extra Sessions`, `Possible Duplicates`, `Newer Edited Event Versions`, `Excluded or Non-Client Items Affecting Billing`, and `Approved Records Requiring Manual Review`.
+6. If the dry-run output looks reasonable, click `Apply Safe Recovery`.
+7. Confirm the page changes to `Safe Recovery Summary` and shows `Verified backup: ...`.
+8. Open `Review Queue`. Missing recovered June client sessions appear there as pending review items, usually under Needs Review, with their parsed participant/title and a `Review` button.
+9. Open `Sessions`, set the date filter to `All dates` or `Previous month`, and use the ledger to confirm recovered sessions are present as unresolved/pending rows.
+10. Resolve and approve recovered sessions manually before expecting them to appear in Client Sessions reports or invoice staging.
+
+Expected behavior:
+
+- Missing raw June rows become pending Review and Sessions rows.
+- Pending edited/replaced events use the newest captured source version.
+- Excluded or non-client latest evidence is marked excluded and does not enter billing.
+- Approved sessions are not silently changed; source changes create review warnings.
+- Reports and invoice staging exclude unresolved or excluded rows until Jordana resolves and approves them.
+
 ## Rollback
 
 If deployment fails:

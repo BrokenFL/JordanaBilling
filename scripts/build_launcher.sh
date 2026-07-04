@@ -12,12 +12,14 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 APP_NAME="Jordana Billing"
-APP_DIR="$PROJECT_DIR/${APP_NAME}.app"
+APP_DIR="${JORDANA_LAUNCHER_APP_DIR:-$PROJECT_DIR/${APP_NAME}.app}"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICNS_PATH="$PROJECT_DIR/packaging/macos/AppIcon.icns"
 LAUNCHER_SOURCE="$PROJECT_DIR/packaging/macos/NativeLauncher.swift"
+BUNDLE_SHORT_VERSION="${JORDANA_BUNDLE_SHORT_VERSION:-1.1}"
+BUNDLE_BUILD_VERSION="${JORDANA_BUNDLE_BUILD_VERSION:-2}"
 
 if [[ -d "$APP_DIR" && "${1:-}" != "--force" ]]; then
   echo "Jordana Billing.app already exists. Use --force to rebuild."
@@ -29,7 +31,7 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -41,9 +43,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key>
   <string>com.jordana.billing.launcher</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>${BUNDLE_BUILD_VERSION}</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.1</string>
+  <string>${BUNDLE_SHORT_VERSION}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleExecutable</key>

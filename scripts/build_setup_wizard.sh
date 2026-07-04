@@ -12,13 +12,15 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 SOURCE="$PROJECT_DIR/packaging/macos/SetupWizard.swift"
 ICNS_PATH="$PROJECT_DIR/packaging/macos/AppIcon.icns"
+BUNDLE_SHORT_VERSION="${JORDANA_BUNDLE_SHORT_VERSION:-0.1.0}"
+BUNDLE_BUILD_VERSION="${JORDANA_BUNDLE_BUILD_VERSION:-1}"
 
 "$PROJECT_DIR/scripts/build_app_icon.sh" >/dev/null
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -30,9 +32,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key>
   <string>com.jordana.billing.installer</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>${BUNDLE_BUILD_VERSION}</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${BUNDLE_SHORT_VERSION}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleExecutable</key>

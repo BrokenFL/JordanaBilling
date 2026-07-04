@@ -41,7 +41,9 @@ class ProductionPackagingContractTest(unittest.TestCase):
         installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
         self.assertIn("--no-index", installer)
         self.assertIn("--find-links", installer)
-        self.assertIn("jordana-invoice==0.1.0", installer)
+        self.assertIn("--force-reinstall", installer)
+        self.assertIn('"$APP_WHEEL"', installer)
+        self.assertIn("__installer_manifest__", installer)
         self.assertIn("release requires Python", installer)
         self.assertIn("create_private_config.sh", installer)
         self.assertNotIn("pip install -e", installer)
@@ -59,6 +61,9 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("build_setup_wizard.sh", builder)
         self.assertIn("Install Jordana Billing.app", builder)
         self.assertIn("ReleasePayload", builder)
+        self.assertIn("git archive HEAD", builder)
+        self.assertIn("BUILD_ID", builder)
+        self.assertIn("prepare_setup_app", builder)
         self.assertIn('SETUP_APP="$BUILD_ROOT/Install Jordana Billing.app"', builder)
         self.assertIn('PAYLOAD_DIR="$SETUP_APP/Contents/Resources/ReleasePayload"', builder)
         self.assertIn("hdiutil create", builder)
@@ -69,15 +74,34 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("Private artifact path found", builder)
         self.assertIn('rm -rf "$PROJECT_DIR/build/lib"', builder)
 
-    def test_release_builder_supports_optional_release_label_without_package_version_change(self) -> None:
+    def test_release_builder_supports_optional_release_label_and_build_identity(self) -> None:
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
         self.assertIn('RELEASE_LABEL="${JORDANA_RELEASE_LABEL:-}"', builder)
         self.assertIn("--release-label", builder)
         self.assertIn('ARTIFACT_VERSION="${RELEASE_LABEL:-$VERSION}"', builder)
         self.assertIn('RELEASE_NAME="JordanaBilling-${ARTIFACT_VERSION}-${COMMIT}-macos-arm64"', builder)
         self.assertIn('"application_version": version', builder)
+        self.assertIn('"build_id": build_id', builder)
+        self.assertIn('"package": {', builder)
+        self.assertIn('"wheel": app_wheel_rel', builder)
         self.assertIn('manifest["release_label"] = release_label', builder)
         self.assertIn('"source_tree_dirty": source_tree_dirty', builder)
+        self.assertIn("BUNDLE_SHORT_VERSION", builder)
+        self.assertIn("BUNDLE_BUILD_VERSION", builder)
+        self.assertIn("JORDANA_BUNDLE_SHORT_VERSION", builder)
+        self.assertIn("JORDANA_BUNDLE_BUILD_VERSION", builder)
+        self.assertIn('LAUNCHER_APP="$BUILD_ROOT/Jordana Billing.app"', builder)
+        self.assertIn("JORDANA_LAUNCHER_APP_DIR", builder)
+
+    def test_native_bundle_builders_accept_release_version_metadata(self) -> None:
+        launcher = (PROJECT_DIR / "scripts" / "build_launcher.sh").read_text(encoding="utf-8")
+        setup = (PROJECT_DIR / "scripts" / "build_setup_wizard.sh").read_text(encoding="utf-8")
+        self.assertIn("JORDANA_LAUNCHER_APP_DIR", launcher)
+        for text in (launcher, setup):
+            self.assertIn("JORDANA_BUNDLE_SHORT_VERSION", text)
+            self.assertIn("JORDANA_BUNDLE_BUILD_VERSION", text)
+            self.assertIn("<string>${BUNDLE_SHORT_VERSION}</string>", text)
+            self.assertIn("<string>${BUNDLE_BUILD_VERSION}</string>", text)
 
     def test_release_builder_rejects_unsafe_release_labels(self) -> None:
         script = PROJECT_DIR / "scripts" / "build_release.sh"
@@ -102,17 +126,44 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("Missing value for --release-label", result.stderr)
 
-    def test_release_builder_keeps_wheel_version_pinned_to_application_version(self) -> None:
+    def test_release_uses_unique_package_version_for_next_beta(self) -> None:
         installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
         pyproject = (PROJECT_DIR / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('version = "0.1.0"', pyproject)
-        self.assertIn("jordana-invoice==0.1.0", installer)
+        self.assertIn('version = "0.1.0.post9"', pyproject)
+        self.assertNotIn("jordana-invoice==0.1.0", installer)
+        self.assertIn("PACKAGE_VERSION", installer)
+
+    def test_installer_verifies_manifest_and_running_build_before_success(self) -> None:
+        installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
+        self.assertIn("verify_release_payload_checksums", installer)
+        self.assertIn("verify_installed_app_manifest", installer)
+        self.assertIn("verify_installed_package_identity", installer)
+        self.assertIn("verify_running_server_build_id", installer)
+        self.assertIn("/api/build-info", installer)
+        self.assertIn("EXPECTED_BUILD_ID", installer)
+        self.assertIn('bash "$RELEASE_DIR/scripts/verify_installation.sh"', installer)
+        self.assertIn('bash "$APP_DEST/Contents/Resources/launch_installed_app.sh"', installer)
+        self.assertNotIn('codesign --force --deep --sign - "$APP_DEST"', installer)
+        self.assertLess(
+            installer.index('VENV_PYTHON="$APP_DEST/Contents/Resources/runtime/venv/bin/python"'),
+            installer.index("verify_running_server_build_id ||"),
+        )
+        self.assertLess(installer.index("verify_running_server_build_id"), installer.index('echo "Jordana Billing release installed successfully."'))
+
+    def test_installer_coordinates_with_running_app_without_unknown_kill(self) -> None:
+        installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
+        self.assertIn("stop_existing_app_for_install", installer)
+        self.assertIn("pid_looks_like_jordana", installer)
+        self.assertIn("No process was stopped", installer)
+        self.assertIn("Port $PORT is in use by another application", installer)
 
     def test_release_builder_keeps_launcher_and_rollback_payload_contracts(self) -> None:
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
         self.assertIn('"$PROJECT_DIR/scripts/build_launcher.sh" --force', builder)
         self.assertIn('cp "$PROJECT_DIR/scripts/install_release.sh"', builder)
         self.assertIn("clean_and_sign_app", builder)
+        self.assertLess(builder.index('clean_and_sign_app "$RELEASE_DIR/Jordana Billing.app"'), builder.index('"checksums": checksums'))
+        self.assertLess(builder.index('"checksums": checksums'), builder.index('prepare_setup_app "$SETUP_APP"'))
 
     def test_installed_launcher_resource_is_committed_without_private_data(self) -> None:
         resource = PROJECT_DIR / "Jordana Billing.app" / "Contents" / "Resources" / "launch_installed_app.sh"
@@ -281,8 +332,21 @@ class InstallerRollbackSafetyTest(unittest.TestCase):
         (payload_app / "Contents" / "Resources").mkdir(parents=True)
         (payload_app / "Contents" / "marker.txt").write_text("new", encoding="utf-8")
         (self.release / "wheelhouse").mkdir(parents=True)
+        (self.release / "wheelhouse" / "jordana_invoice-0.1.0.post9-py3-none-any.whl").write_text("wheel", encoding="utf-8")
         (self.release / "release_manifest.json").write_text(
-            json.dumps({"runtime": {"requires_python": "3.14.x"}}),
+            json.dumps(
+                {
+                    "runtime": {"requires_python": "3.14.x"},
+                    "package": {
+                        "name": "jordana-invoice",
+                        "version": "0.1.0.post9",
+                        "wheel": "wheelhouse/jordana_invoice-0.1.0.post9-py3-none-any.whl",
+                    },
+                    "build_id": "v0.1.0-test.9-testbuild",
+                    "git_commit": "test",
+                    "checksums": {},
+                }
+            ),
             encoding="utf-8",
         )
         scripts = self.release / "scripts"
@@ -312,6 +376,10 @@ cp -R "$1" "$2"
         self._write_executable(
             self.bin / "python3",
             """#!/usr/bin/env bash
+if [[ "${1:-}" == "-" && "${3:-}" == "__installer_manifest__" ]]; then
+  printf '0.1.0.post9\twheelhouse/jordana_invoice-0.1.0.post9-py3-none-any.whl\tv0.1.0-test.9-testbuild\ttest\tv0.1.0-test.9\n'
+  exit 0
+fi
 if [[ "${1:-}" == "-" ]]; then exit 0; fi
 if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
   mkdir -p "$3/bin"
@@ -361,7 +429,7 @@ exit 0
             }
         )
         return subprocess.run(
-            ["bash", str(self.release / "scripts" / "install_release.sh")],
+            ["bash", str(self.release / "scripts" / "install_release.sh"), "--skip-launch-verify"],
             capture_output=True,
             text=True,
             env=env,

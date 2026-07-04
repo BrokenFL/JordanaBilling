@@ -12,27 +12,34 @@ Read first:
 
 ## Current Handoff Decision
 
-The verified release may be used for a supervised Jordana beta. It is not represented as final production software.
+The `v0.1.0-test.9` release may be used for a supervised Jordana beta after
+Brooke verifies the published GitHub artifact, checksum, installer runtime
+identity, and upgrade-over-old-build test. It is not represented as final
+production software.
 
 Use this exact artifact:
 
 ```text
-JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
 ```
 
-Verified release facts:
+Release facts to verify before installing:
 
-- Manifest commit: `0dec58b6bf5ab35e2d48600b57fec83a477e304d`
-- Application version: 0.1.0
+- Manifest commit: matches the GitHub release and `release_manifest.json`
+- Python package/application version: 0.1.0.post9
+- Build ID: matches `release_manifest.json` and the installed `/api/build-info`
 - Builder Python: 3.14.4
 - Required Python family: 3.14.x
 - Architecture: Apple Silicon arm64
 - Checksum verification: passed
 - Private-file scan: passed
-- Existing config/database preservation during brooketest upgrade: passed
-- Major billing workflow smoke testing: passed
+- Installer exact-wheel/runtime verification: passed
+- Upgrade over an older installed build: passed
+- Existing config/database preservation during upgrade: passed
 
-Do not use the rejected Python 3.11 test.6 artifact from commit `6c3dbab`.
+Do not use the rejected Python 3.11 test.6 artifact from commit `6c3dbab`, the
+superseded test.7 artifact, or the test.8 artifact for installation/update
+testing.
 
 ## Before Leaving Brooke's Mac
 
@@ -125,7 +132,7 @@ User-facing outputs:
 Checksum pattern:
 
 ```bash
-shasum -a 256 -c JordanaBilling-v0.1.0-test.6-0dec58b6bf5a-macos-arm64.dmg.sha256
+shasum -a 256 -c JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg.sha256
 ```
 
 Expected result: the command reports `OK`.
@@ -146,7 +153,11 @@ The installer must:
 
 - preserve existing private config
 - preserve the operational database
+- stop or coordinate with an already-running Jordana Billing process before replacement
 - stage the replacement app before changing the installed app
+- install the exact wheel recorded in the release manifest
+- force-replace the installed runtime even when an older release used the same base package version
+- verify installed package build info and running server build ID
 - move the prior app to `Jordana Billing.app.previous`
 - verify the replacement before deleting the prior app
 - restore the prior app automatically when replacement verification fails

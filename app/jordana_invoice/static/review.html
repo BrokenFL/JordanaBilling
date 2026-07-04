@@ -23,10 +23,10 @@
           <a href="/reports" id="reportsNav">Reports</a>
           <a href="/payments" id="paymentsNav">Payments</a>
           <a href="#" id="settingsNav">Settings</a>
-          <a>Help</a>
+          <button type="button" id="quitAppBtn" class="nav-quit">Quit</button>
         </nav>
         <div class="db-status"><span></span>Database<br />Connected</div>
-        <small>v0.3.0</small>
+        <small id="buildInfoLabel">Build unavailable</small>
       </aside>
 
       <main class="workspace">
@@ -577,6 +577,7 @@
             </div>
           </form>
         </section>
+        <div id="quitStatus" class="quit-status" hidden role="status"></div>
       </main>
     </div>
     <script src="/static/js/api.js"></script>

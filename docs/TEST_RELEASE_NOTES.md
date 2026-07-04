@@ -1,65 +1,62 @@
-# Jordana Billing v0.1.0-test.8 Release Notes
+# Jordana Billing v0.1.0-test.9 Release Notes
 
 ## Release Status
 
 This private release is approved for a supervised Jordana beta using June invoices. It remains a controlled pilot/test release and is not represented as final production software.
 
-Use the exact `v0.1.0-test.8` artifact. The release manifest inside the DMG records the source commit and checksum facts.
+Use the exact `v0.1.0-test.9` artifact published on GitHub. The release manifest inside the DMG records the source commit, build ID, exact wheel path, and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.8-d97d6babc227-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.8
-- **Manifest commit:** `d97d6babc2278bd1e19fbc36319d65acce24fbb4`
-- **Application version:** 0.1.0
+- **Release label:** v0.1.0-test.9
+- **Python package/application version:** 0.1.0.post9
+- **Manifest commit:** recorded in `release_manifest.json`
+- **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
 - **Builder Python:** 3.14.4
 - **Required Python family:** 3.14.x
 - **Architecture:** arm64
-- **DMG checksum verification:** passed locally; verify the matching `.sha256` asset again after download
-- **DMG SHA-256:** `8cf5176bd5aba1aef79c798f4fe01955d358f988237c33efeaaa782842cb266b`
-- **hdiutil verify:** passed
+- **DMG checksum verification:** required before publication; verify the matching `.sha256` asset again after download
+- **DMG SHA-256:** recorded in the published `.sha256` asset
+- **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **Contains private data:** false
-- **Wheelhouse:** `jordana_invoice-0.1.0`, ReportLab, Pillow, charset-normalizer
-- **Unit tests:** 2,729 passed, 68 skipped
-- **Temporary-DB acceptance test:** passed (operational database untouched)
-- **Privacy and Git safety checks:** passed
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post9` app wheel plus pinned production dependencies
+- **Unit tests:** required before publication
+- **Temporary-DB acceptance test:** required before publication (operational database untouched)
+- **Privacy and Git safety checks:** required before publication
 
 ## Superseded Prior Release
 
-`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.8 as the current built and distributable controlled-beta release.
+`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that an older installed Python runtime could survive because the prior installer requested the shared package version `0.1.0`. test.9 supersedes test.8 for installation and update testing.
+
+`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.9 as the current built and distributable controlled-beta release.
 
 The prior verified controlled-beta release was `v0.1.0-test.6` from commit `0dec58b`. An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. Do not use it.
 
-## Bug Fixes In test.8
+## Bug Fixes In test.9
 
-1. **Needs Classification ledger filter corrected** — the `needs_classification` review-status filter now correctly queries unclassified candidates (`s.id IS NULL` with `c.review_status = 'needs_classification'`) instead of matching against session review status.
-2. **Future appointments excluded from actionable dashboard/review counts** — dashboard status counts and the review queue now apply a time filter (`datetime(COALESCE(end_at, start_at)) <= datetime('now')`) so future appointments do not inflate actionable counts.
-3. **Missing Needs Classification / Send to Review filter option added** — the review status filter dropdown in the review UI now includes a "Needs classification / Send to Review" option.
-4. **Review overlay scroll resets to top** — opening the review overlay or selecting a candidate now resets scroll position to the top of the modal content.
+1. **In-app Quit** — the sidebar includes a visible Quit action. It stops the sync runtime and local server safely and treats repeated quit requests as idempotent.
+2. **Installer stale-runtime hardening** — the installer reads the exact package version and wheel path from `release_manifest.json`, force-reinstalls that wheel from the shipped wheelhouse, verifies payload and installed files against manifest checksums, verifies installed package build info, launches the app, and confirms the running server reports the expected build ID.
+3. **Rollback-safe updates** — the installer coordinates with an already-running Jordana Billing process, refuses unrelated port owners, and restores the previous installed app/runtime if verification fails.
+4. **June reconciliation workflow** — the in-app June 2026 dry-run/apply path is verified end to end on a sanitized temporary database. Missing sessions recover into Review and Sessions, pending edits refresh to the newest source version, excluded/non-client rows stay out of billing, and approved sessions are protected from silent rewrites.
+5. **Report filtering** — client-facing session exports exclude unresolved and excluded rows while All Appointments remains the complete audit ledger.
 
 ## Acceptance Completed
 
-The test.8 artifact is locally built, checksum-verified, privacy-scanned, and
-ready for controlled installation testing. It has not yet been installed on the
-brooketest account in this acceptance record.
+The test.9 artifact must be locally built, checksum-verified, privacy-scanned,
+installed over an older build, and then published only after the running server
+reports the expected build ID.
 
 Confirmed:
 
-1. Release label and manifest matched the intended build.
-2. Local checksum verification passed.
-3. `hdiutil verify` passed.
-4. Release payload private-file scan passed.
-5. Full unit suite passed (2,729 tests, 68 skipped).
-6. Acceptance import test passed on a temporary database without touching the operational database.
-7. Privacy and Git safety checks passed.
-8. `git diff --check` passed.
-9. Canonical draft PDF preview loads inline in the Invoices workspace.
-10. Stored finalized PDF preview loads inline in the Invoices workspace.
+1. Focused Quit, installer, build-identity, report-filtering, and June reconciliation tests pass.
+2. Browser verification confirms Reconciliation dry-run/apply and Quit on a temporary database.
+3. Full unit suite, acceptance import, privacy checks, Git safety checks, package verification, and upgrade-over-old-build verification are required before publication.
 
 Prior test.6 installed-smoke results remain the latest recorded brooketest
 installation evidence: existing private configuration and SQLite data were

@@ -115,10 +115,20 @@ SIMPLE_COLUMNS = [
     "Payment Status",
 ]
 
+REPORT_EXCLUDED_REVIEW_STATUSES = (
+    "excluded",
+    "needs_review",
+    "needs_classification",
+    "needs_person_match",
+    "needs_rate",
+    "needs_billing_treatment",
+)
+
 
 def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, object]]:
+    placeholders = ", ".join("?" for _ in REPORT_EXCLUDED_REVIEW_STATUSES)
     rows = conn.execute(
-        """
+        f"""
         SELECT
           s.id,
           s.session_date,
@@ -155,9 +165,12 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
         LEFT JOIN client_accounts a ON a.account_id = s.account_id
         LEFT JOIN billing_parties b ON b.billing_party_id = s.billing_party_id
         WHERE substr(s.start_at, 1, 4) = ?
+          AND COALESCE(c.classification, '') = 'client_session'
+          AND COALESCE(s.review_status, '') NOT IN ({placeholders})
+          AND COALESCE(s.billable_status, '') NOT IN ('excluded', 'nonbillable')
         ORDER BY s.start_at, s.proposed_client_name, c.title
         """,
-        (str(year),),
+        (str(year), *REPORT_EXCLUDED_REVIEW_STATUSES),
     ).fetchall()
 
     output: list[dict[str, object]] = []

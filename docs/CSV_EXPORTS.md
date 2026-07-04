@@ -21,6 +21,13 @@ Current file:
 Reports/Jordana_Client_Sessions_<YEAR>.csv
 ```
 
+This client-facing export includes review-complete client sessions only. It
+excludes unresolved review rows such as `needs_person_match`, `needs_rate`,
+`needs_billing_treatment`, `needs_classification`, and excluded/non-client
+sessions. Pending recovered calendar rows remain visible in Review and
+Sessions, but they do not enter Client Sessions, Client Summary, Session Log,
+invoice staging, or billing until Jordana resolves and approves them.
+
 Columns:
 
 - `session_date`
@@ -93,6 +100,10 @@ Columns:
 fields, never from raw calendar titles or notes. Invoice and payment statuses
 are derived from SQLite invoice line items, invoices, posted payments, and
 active payment allocations.
+
+The Session Log uses the same review-complete client-session input set as the
+Client Sessions export. Use All Appointments for a complete audit ledger of
+unresolved, excluded, personal/admin, and candidate-only calendar evidence.
 
 ## All Appointments Export
 

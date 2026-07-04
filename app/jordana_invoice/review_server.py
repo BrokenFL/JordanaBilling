@@ -5,12 +5,14 @@ import hmac
 import json
 import mimetypes
 import secrets
+import signal
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .build_info import current_build_info
 from .db import DatabaseBusyError, MigrationError, connect, migrate_database
 from .google_sync import (
     default_transport,
@@ -456,6 +458,39 @@ def make_handler(
     sync_runtime: CalendarSyncRuntime | None = None,
 ):
     launch_write_token = write_token or secrets.token_urlsafe(32)
+    shutdown_lock = threading.Lock()
+    shutdown_started = False
+
+    def schedule_shutdown(handler: BaseHTTPRequestHandler) -> tuple[bool, bool, str]:
+        nonlocal shutdown_started
+        server = getattr(handler, "server", None)
+        if server is None or not hasattr(server, "shutdown"):
+            return False, False, "Application shutdown is not available in this process."
+        with shutdown_lock:
+            if shutdown_started:
+                return True, True, "Shutdown is already in progress."
+            shutdown_started = True
+
+        def shutdown_worker() -> None:
+            try:
+                if sync_runtime is not None:
+                    sync_runtime.stop()
+                server.shutdown()
+            except Exception as error:  # pragma: no cover - surfaced through server state for diagnostics.
+                setattr(server, "jordana_shutdown_error", str(error))
+
+        thread = threading.Thread(
+            target=shutdown_worker,
+            name="jordana-app-shutdown",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except Exception:
+            with shutdown_lock:
+                shutdown_started = False
+            return False, False, "Application shutdown could not be started."
+        return True, False, "Jordana Billing is shutting down."
 
     class ReviewHandler(BaseHTTPRequestHandler):
         write_token = launch_write_token
@@ -583,7 +618,10 @@ def make_handler(
                     self.send_static(parsed.path.removeprefix("/static/"))
                     return
                 if parsed.path == "/api/health":
-                    self.send_json({"ok": True, "status": "healthy"})
+                    self.send_json({"ok": True, "status": "healthy", **current_build_info()})
+                    return
+                if parsed.path == "/api/build-info":
+                    self.send_json({"ok": True, **current_build_info()})
                     return
                 if parsed.path == "/api/status":
                     self.send_json(dashboard_status(self.conn()))
@@ -883,6 +921,20 @@ def make_handler(
             if parsed is None:
                 return
             try:
+                if parsed.path == "/api/app/quit":
+                    ok, already_started, message = schedule_shutdown(self)
+                    if not ok:
+                        self.send_json({"ok": False, "error": message}, status=503)
+                        return
+                    self.send_json(
+                        {
+                            "ok": True,
+                            "shutting_down": True,
+                            "already_started": already_started,
+                            "message": message,
+                        }
+                    )
+                    return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/print-preview"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
                     inv_data = get_invoice(self.conn(), invoice_id)
@@ -1618,11 +1670,23 @@ def serve(database_path: str, host: str = "127.0.0.1", port: int = 8765) -> None
         raise SystemExit(1)
     sync_runtime = CalendarSyncRuntime(database_path, transport=REVIEW_SYNC_TRANSPORT)
     server = ThreadingHTTPServer((host, port), make_handler(database_path, sync_runtime=sync_runtime))
+    previous_handlers: dict[int, object] = {}
+
+    def request_process_shutdown(_signum, _frame) -> None:
+        threading.Thread(target=server.shutdown, name="jordana-signal-shutdown", daemon=True).start()
+
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, request_process_shutdown)
     print(f"Review UI running at http://{host}:{port}/review")
     sync_runtime.start()
     try:
         server.serve_forever()
     finally:
+        if threading.current_thread() is threading.main_thread():
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
         sync_runtime.stop()
         server.server_close()
 
