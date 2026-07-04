@@ -289,6 +289,11 @@ class TestRound3BBackend(unittest.TestCase):
         ).fetchall()
         self.assertEqual(len(audit), 1)
 
+    def test_remove_account_member_rejects_last_covered_client(self):
+        result, payer, _ = self._make_relationship("Alice")
+        with self.assertRaisesRegex(ValueError, "At least one covered client"):
+            remove_account_member(self.conn, result["account_id"], payer["person_id"])
+
     def test_remove_account_member_nonexistent_raises(self):
         result, _, _ = self._make_relationship("Alice")
         with self.assertRaises(ValueError):
@@ -387,6 +392,8 @@ class TestRound3BEditorJS(unittest.TestCase):
 
     def test_editor_has_covered_client_remove_buttons(self):
         self.assertIn("covered-client-remove", self.editor)
+        self.assertIn("removeCoveredClientImmediate", self.editor)
+        self.assertIn("addCoveredClientImmediate", self.editor)
 
     def test_editor_calls_update_billing_relationship_endpoint(self):
         self.assertIn("update-billing-relationship", self.editor)

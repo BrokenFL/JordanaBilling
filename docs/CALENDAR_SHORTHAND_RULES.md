@@ -2,6 +2,13 @@
 
 Calendar data is treated as evidence. The parser proposes interpretations but never silently approves uncertain billing facts.
 
+Title-derived, non-client-specific rules run before client identification.
+Duration, weekend/evening category, session type, cancellation/no-show markers,
+exclusion indicators, appointment method, and other title-based rules are
+preserved even when no client has been matched yet. Client matching is a later
+step and must not be required before these safe parsing facts are available for
+review.
+
 ## Supported Patterns
 
 The parser supports both legacy shorthand and the future pipe-delimited format.

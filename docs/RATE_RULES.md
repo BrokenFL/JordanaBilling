@@ -88,7 +88,13 @@ Custom rate rules can store `custom_service_description` and optional `custom_se
 
 Replace ends the old active rule on the day before the new `effective_from` date and creates a new same-scope rule. End sets `effective_through` without deleting history. Both actions immediately recalculate unapproved session suggestions and refresh the local reports. If no active rule still matches, stale rule-derived suggestions are cleared and the session returns to `needs_rate`.
 
-Client records reuse this same `rate_rules` system for person-specific overrides. A client override is just a `person_id`-scoped active rule with the same matching dimensions and precedence as any other person-specific exception. If no client-specific rule matches, the standard Rate Card still applies.
+Client records reuse this same `rate_rules` system for person-specific
+overrides. A client override is just a `person_id`-scoped active rule with the
+same matching dimensions and precedence as any other person-specific exception.
+The Client record only creates future-effective rules and uses the existing
+priority order; it does not rewrite approved sessions, finalized invoices, or
+historical charged rates. If no client-specific rule matches, the standard Rate
+Card still applies.
 
 Creating a rule with the same scope, dimensions, and effective date as an existing active rule is blocked to prevent duplicate active rules. Validation errors and API failures are surfaced in the UI instead of failing silently.
 

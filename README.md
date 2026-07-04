@@ -4,7 +4,7 @@ Local-first calendar evidence importer, billing review workflow, invoice system,
 
 The current implementation imports Apple Calendar snapshot rows through Google Sheets, preserves the raw evidence, collapses duplicate event versions, proposes classifications, parses Jordana's shorthand, and keeps ambiguous records reviewable. Approved sessions can be staged into draft invoices, finalized with immutable snapshots and local PDFs, voided and reissued, and tracked through payments, allocations, corrections, receipts, prior balances, filing ownership, and optional invoice-specific insurance coding.
 
-This is not a general multi-user billing platform. It is implemented and tested locally, with clean-Mac acceptance and final production handoff still tracked separately. Invoice delivery by email/mail, credits/refunds/write-offs, automated multi-invoice allocation, reconciliation, month-close, and a polished dashboard remain known limitations.
+This is not a general multi-user billing platform. It is implemented and tested locally, with clean-Mac acceptance and final production handoff still tracked separately. Invoice delivery by email/mail, credits/refunds/write-offs, automated multi-invoice allocation, payment reconciliation, month-close, and a polished dashboard remain known limitations.
 
 ## Current Scope
 
@@ -207,17 +207,22 @@ action is for recovery only; it creates a private SQLite backup and rereads all
 staged Sheet evidence idempotently.
 
 For raw-row recovery where the Sheet evidence is already preserved in SQLite but
-some derived candidates or sessions are missing, run a dry-run reconciliation
-first:
+some derived candidates or sessions are missing, use the in-app
+`Reconciliation` screen. Choose a month, run `Dry Run`, review missing sessions,
+extra sessions, possible duplicates, edited event versions, excluded/non-client
+billing issues, and approved records requiring manual review, then use
+`Apply Safe Recovery` only when the dry-run output is understood.
+
+The same recovery path is also available from the CLI. Run dry-run first:
 
 ```bash
-PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --dry-run
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --dry-run --month 2026-06
 ```
 
 Apply only after reviewing the dry-run summary:
 
 ```bash
-PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --apply --confirm-apply APPLY_CALENDAR_RECONCILE
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --apply --month 2026-06 --confirm-apply APPLY_CALENDAR_RECONCILE
 ```
 
 This replays existing `raw_calendar_snapshots` without inserting duplicate raw
@@ -227,6 +232,7 @@ pending records whose newest evidence is non-client, and protects approved
 sessions from silent rewrites.
 
 The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
+Its review-status filter intentionally contains only `All` and `Needs Classification`.
 
 The `Rate Card` sidebar screen supports global rates plus one-client, clients-together, and billing-relationship exceptions. Replace and End actions preserve rate-rule history, immediately refresh unapproved session suggestions, and never rewrite approved sessions or finalized invoices.
 

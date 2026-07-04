@@ -204,6 +204,11 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Must be exactly APPLY_CALENDAR_RECONCILE when --apply is used.",
     )
+    reconcile_parser.add_argument(
+        "--month",
+        default="",
+        help="Optional YYYY-MM month to reconcile.",
+    )
 
     serve_parser = subparsers.add_parser(
         "serve-review",
@@ -379,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         migrate_database(args.db)
         conn = connect(args.db)
         try:
-            result = replay_existing_raw_snapshots(conn, apply=args.apply)
+            result = replay_existing_raw_snapshots(conn, apply=args.apply, month=args.month or None)
         finally:
             conn.close()
         print(json.dumps(result.as_dict(), sort_keys=True))

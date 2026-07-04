@@ -505,13 +505,14 @@ class TestRound1CorrectionJsStatic(unittest.TestCase):
         end = self.js.index("\n}\n", start)
         func_body = self.js[start:end]
         self.assertIn("selectedIds.has(pid)", func_body)
-        self.assertIn("editState.covered_client_ids.filter", func_body)
+        self.assertIn("removeCoveredClientImmediate", func_body)
 
     def test_covered_search_uses_selected_ids(self):
         start = self.js.index("function openCoveredSearch")
         end = self.js.index("function renderEditorCoveredResults")
         func_body = self.js[start:end]
         self.assertIn("editState.covered_client_ids", func_body)
+        self.assertIn("accountId", func_body)
 
     def test_covered_search_does_not_use_close_billing_modal(self):
         """openCoveredSearch should not call closeBillingModal."""

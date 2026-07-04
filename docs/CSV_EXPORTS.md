@@ -138,7 +138,8 @@ exports must never be committed.
 
 ## On-demand download API
 
-The localhost review server provides two endpoints for report access without writing to disk:
+The localhost review server provides metadata/download endpoints plus an
+explicit generate action:
 
 ### `GET /api/reports`
 
@@ -167,3 +168,10 @@ Returns the generated CSV as an attachment with:
 - `Content-Disposition: attachment; filename="Jordana_..."`
 
 The filename follows the existing naming convention. The API does not serve files from `Reports/` or accept user-provided filenames. On-demand generation does not write to disk.
+
+### `POST /api/reports/generate`
+
+The Reports screen `Generate Reports` button calls the same `write_reports()`
+path used by the CLI/report writer. It accepts an optional JSON `year` and
+refreshes the local configured reports directory. It does not create a separate
+reporting workflow.

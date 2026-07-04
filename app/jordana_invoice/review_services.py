@@ -3773,6 +3773,12 @@ def remove_account_member(
     ).fetchone()
     if not existing:
         raise ValueError("This client is not a member of this billing relationship.")
+    remaining = conn.execute(
+        "SELECT COUNT(*) AS count FROM account_members WHERE account_id = ? AND person_id != ?",
+        (account_id, person_id),
+    ).fetchone()
+    if int(remaining["count"] if remaining else 0) < 1:
+        raise ValueError("At least one covered client is required for an active relationship.")
     conn.execute(
         "DELETE FROM account_members WHERE account_member_id = ?",
         (existing["account_member_id"],),

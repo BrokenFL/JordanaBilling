@@ -4,7 +4,8 @@ import os
 import re
 import subprocess
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -242,6 +243,7 @@ _VALID_SORT_FIELDS = {
     "total_cents": "i.total_cents",
     "created_at": "i.created_at",
     "bill_to_name": "bp.billing_name",
+    "billing_month": "i.billing_month",
 }
 
 
@@ -802,6 +804,22 @@ def list_invoice_records(
         enriched = [r for r in enriched if r["payment_status"] == payment_status]
 
     total = len(enriched)
+    draft_month_map: dict[str, dict[str, Any]] = {}
+    for record in enriched:
+        if record.get("status") != "draft":
+            continue
+        month = str(record.get("billing_month") or "").strip() or "Unassigned"
+        entry = draft_month_map.setdefault(
+            month,
+            {"billing_month": month, "draft_count": 0, "total_cents": 0},
+        )
+        entry["draft_count"] += 1
+        entry["total_cents"] += int(record.get("total_cents") or 0)
+    draft_month_totals = sorted(
+        draft_month_map.values(),
+        key=lambda item: item["billing_month"],
+        reverse=True,
+    )
 
     # Paginate
     if limit > 0:
@@ -814,6 +832,7 @@ def list_invoice_records(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "draft_month_totals": draft_month_totals,
     }
 
 
@@ -1844,7 +1863,99 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
         ),
         "preview_revision": invoice["revision"],
         "readiness": readiness,
+        "duplicate_warnings": duplicate_billing_warnings(conn, invoice_id),
     }
+
+
+def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT li.invoice_line_item_id, li.service_date, li.participants_snapshot,
+               li.duration_minutes, li.line_amount_cents, li.source_session_id,
+               s.start_at, s.end_at
+        FROM invoice_line_items li
+        LEFT JOIN sessions s ON s.id = li.source_session_id
+        WHERE li.invoice_id = ?
+        ORDER BY li.service_date, s.start_at, li.sort_order
+        """,
+        (invoice_id,),
+    ).fetchall()
+    warnings: list[dict[str, Any]] = []
+    for left, right in combinations([dict(row) for row in rows], 2):
+        if left.get("service_date") != right.get("service_date"):
+            continue
+        same_start = bool(left.get("start_at") and right.get("start_at") and left["start_at"] == right["start_at"])
+        overlapping = _line_times_overlap(left, right)
+        matching = _substantially_matching_lines(left, right)
+        if not (same_start or overlapping or matching):
+            continue
+        reason_parts = []
+        if same_start:
+            reason_parts.append("same start time")
+        elif overlapping:
+            reason_parts.append("overlapping time")
+        if matching:
+            reason_parts.append("matching participants, duration, and amount")
+        warnings.append({
+            "date": left.get("service_date") or "",
+            "reason": ", ".join(reason_parts) or "possible duplicate billing",
+            "sessions": [_duplicate_warning_line(left), _duplicate_warning_line(right)],
+        })
+    return warnings
+
+
+def _duplicate_warning_line(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "invoice_line_item_id": row.get("invoice_line_item_id"),
+        "source_session_id": row.get("source_session_id"),
+        "date": row.get("service_date") or "",
+        "time": _time_label(row.get("start_at"), row.get("end_at")),
+        "participants": row.get("participants_snapshot") or "",
+        "duration_minutes": row.get("duration_minutes"),
+        "amount_cents": row.get("line_amount_cents") or 0,
+    }
+
+
+def _substantially_matching_lines(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return (
+        _normalized_participants(left.get("participants_snapshot")) == _normalized_participants(right.get("participants_snapshot"))
+        and int(left.get("duration_minutes") or 0) == int(right.get("duration_minutes") or 0)
+        and int(left.get("line_amount_cents") or 0) == int(right.get("line_amount_cents") or 0)
+    )
+
+
+def _normalized_participants(value: Any) -> str:
+    return " ".join(str(value or "").lower().replace("&", ",").replace(";", ",").split())
+
+
+def _line_times_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_start = _parse_line_datetime(left.get("start_at"))
+    right_start = _parse_line_datetime(right.get("start_at"))
+    if not left_start or not right_start:
+        return False
+    left_end = _parse_line_datetime(left.get("end_at")) or (left_start + timedelta(minutes=int(left.get("duration_minutes") or 0)))
+    right_end = _parse_line_datetime(right.get("end_at")) or (right_start + timedelta(minutes=int(right.get("duration_minutes") or 0)))
+    return left_start < right_end and right_start < left_end
+
+
+def _parse_line_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _time_label(start_at: Any, end_at: Any) -> str:
+    start = str(start_at or "")
+    end = str(end_at or "")
+    start_label = start.split("T", 1)[1][:5] if "T" in start else ""
+    end_label = end.split("T", 1)[1][:5] if "T" in end else ""
+    if start_label and end_label:
+        return f"{start_label}-{end_label}"
+    return start_label or end_label
 
 
 def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None, insurance_coding_included: bool = False, insurance_diagnosis_code: str = "") -> dict[str, Any]:

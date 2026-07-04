@@ -105,6 +105,18 @@ class RawSnapshotReplayResult:
         }
 
 
+def _validate_reconciliation_month(month: str | None) -> str | None:
+    raw = text(month)
+    if not raw:
+        return None
+    if len(raw) != 7 or raw[4] != "-" or not raw[:4].isdigit() or not raw[5:].isdigit():
+        raise ValueError("Month must use YYYY-MM format.")
+    month_number = int(raw[5:])
+    if month_number < 1 or month_number > 12:
+        raise ValueError("Month must use YYYY-MM format.")
+    return raw
+
+
 def import_csv(
     conn: sqlite3.Connection,
     csv_path: str | Path,
@@ -178,6 +190,7 @@ def replay_existing_raw_snapshots(
     *,
     apply: bool = False,
     backup_operational: bool = True,
+    month: str | None = None,
 ) -> RawSnapshotReplayResult:
     """Replay preserved raw evidence through candidate/session collapse.
 
@@ -185,6 +198,8 @@ def replay_existing_raw_snapshots(
     savepoint and rolls back every derived write after collecting the exact
     reconciliation summary.
     """
+    month = _validate_reconciliation_month(month)
+
     if apply and backup_operational:
         db_path = _get_db_path_from_conn(conn)
         backup_path: str | None = None
@@ -196,17 +211,46 @@ def replay_existing_raw_snapshots(
         backup_path = None
 
     if apply:
-        result = _replay_existing_raw_snapshots_inner(conn, dry_run=False, backup_path=backup_path)
+        result = _replay_existing_raw_snapshots_inner(conn, dry_run=False, backup_path=backup_path, month=month)
         conn.commit()
         return result
 
     conn.execute("SAVEPOINT raw_snapshot_replay_dry_run")
     try:
-        result = _replay_existing_raw_snapshots_inner(conn, dry_run=True, backup_path=None)
+        result = _replay_existing_raw_snapshots_inner(conn, dry_run=True, backup_path=None, month=month)
     finally:
         conn.execute("ROLLBACK TO raw_snapshot_replay_dry_run")
         conn.execute("RELEASE raw_snapshot_replay_dry_run")
     return result
+
+
+def calendar_reconciliation_report(
+    conn: sqlite3.Connection,
+    *,
+    month: str | None = None,
+    apply: bool = False,
+) -> dict[str, object]:
+    month = _validate_reconciliation_month(month)
+    result = replay_existing_raw_snapshots(conn, apply=apply, month=month)
+    return {
+        "ok": True,
+        "month": month,
+        "mode": "apply" if apply else "dry_run",
+        "summary": result.as_dict(),
+        "buckets": calendar_reconciliation_buckets(conn, month=month),
+    }
+
+
+def calendar_reconciliation_buckets(conn: sqlite3.Connection, *, month: str | None = None) -> dict[str, list[dict[str, object]]]:
+    month = _validate_reconciliation_month(month)
+    return {
+        "missing_sessions": _missing_reconciliation_rows(conn, month),
+        "extra_sessions": _extra_reconciliation_sessions(conn, month),
+        "possible_duplicates": _possible_duplicate_sessions(conn, month),
+        "newer_edited_event_versions": _edited_event_versions(conn, month),
+        "excluded_non_client_items_affecting_billing": _excluded_items_affecting_billing(conn, month),
+        "approved_records_require_manual_review": _approved_records_requiring_manual_review(conn, month),
+    }
 
 
 def _replay_existing_raw_snapshots_inner(
@@ -214,14 +258,26 @@ def _replay_existing_raw_snapshots_inner(
     *,
     dry_run: bool,
     backup_path: str | None,
+    month: str | None,
 ) -> RawSnapshotReplayResult:
-    rows = conn.execute(
-        """
-        SELECT *
-        FROM raw_calendar_snapshots
-        ORDER BY start_at, captured_at, ingested_at, source_row_number
-        """
-    ).fetchall()
+    if month:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM raw_calendar_snapshots
+            WHERE substr(start_at, 1, 7) = ?
+            ORDER BY start_at, captured_at, ingested_at, source_row_number
+            """,
+            (month,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM raw_calendar_snapshots
+            ORDER BY start_at, captured_at, ingested_at, source_row_number
+            """
+        ).fetchall()
     before = _replay_counts(conn)
     import_run_id = new_id()
     now = now_iso()
@@ -264,6 +320,186 @@ def _replay_existing_raw_snapshots_inner(
         import_run_id=None if dry_run else import_run_id,
         backup_path=backup_path,
     )
+
+
+def _month_clause(alias: str, month: str | None, column: str = "start_at") -> tuple[str, tuple[str, ...]]:
+    if not month:
+        return "", ()
+    return f" AND substr({alias}.{column}, 1, 7) = ?", (month,)
+
+
+def _snapshot_summary(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    return {
+        "raw_snapshot_id": row["id"],
+        "calendar_event_id": text(row["calendar_event_id"]),
+        "title": text(row["event_title"]),
+        "start_at": text(row["start_at"]),
+        "end_at": text(row["end_at"]),
+        "calendar_name": text(row["calendar_name"]),
+    }
+
+
+def _session_summary(row: sqlite3.Row | dict[str, object]) -> dict[str, object]:
+    return {
+        "session_id": row["id"],
+        "candidate_id": row["candidate_id"],
+        "title": text(row["raw_calendar_title"]),
+        "date": text(row["session_date"]),
+        "start_at": text(row["start_at"]),
+        "end_at": text(row["end_at"]),
+        "participants": text(row["participants"]),
+        "review_status": text(row["review_status"]),
+        "billing_treatment": text(row["billing_treatment"]),
+        "billable_status": text(row["billable_status"]),
+    }
+
+
+def _missing_reconciliation_rows(conn: sqlite3.Connection, month: str | None) -> list[dict[str, object]]:
+    where, params = _month_clause("r", month)
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM raw_calendar_snapshots r
+        WHERE 1 = 1 {where}
+        ORDER BY r.start_at, r.captured_at, r.ingested_at
+        LIMIT 250
+        """,
+        params,
+    ).fetchall()
+    missing: list[dict[str, object]] = []
+    for row in rows:
+        key = candidate_key(row)
+        found = conn.execute(
+            "SELECT 1 FROM calendar_event_candidates WHERE candidate_key = ? LIMIT 1",
+            (key,),
+        ).fetchone()
+        if not found:
+            missing.append(_snapshot_summary(row))
+    return missing[:50]
+
+
+def _extra_reconciliation_sessions(conn: sqlite3.Connection, month: str | None) -> list[dict[str, object]]:
+    where, params = _month_clause("s", month)
+    return [
+        _session_summary(row)
+        for row in conn.execute(
+            f"""
+            SELECT s.*, COALESCE(group_concat(NULLIF(sp.participant_name, ''), ', '), '') AS participants
+            FROM sessions s
+            LEFT JOIN raw_calendar_snapshots r ON r.id = s.source_raw_snapshot_id
+            LEFT JOIN session_participants sp ON sp.session_id = s.id
+            WHERE r.id IS NULL {where}
+            GROUP BY s.id
+            ORDER BY s.start_at
+            LIMIT 50
+            """,
+            params,
+        ).fetchall()
+    ]
+
+
+def _possible_duplicate_sessions(conn: sqlite3.Connection, month: str | None) -> list[dict[str, object]]:
+    where, params = _month_clause("s", month)
+    rows = conn.execute(
+        f"""
+        SELECT s.*, COALESCE(group_concat(NULLIF(sp.participant_name, ''), ', '), '') AS participants
+        FROM sessions s
+        LEFT JOIN session_participants sp ON sp.session_id = s.id
+        WHERE s.review_status != 'excluded' {where}
+        GROUP BY s.id
+        ORDER BY s.session_date, s.start_at
+        LIMIT 500
+        """,
+        params,
+    ).fetchall()
+    groups: dict[tuple[str, str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        groups[(text(row["session_date"]), text(row["start_at"]), text(row["billing_party_id"]))].append(_session_summary(row))
+    return [
+        {"date": date, "start_at": start_at, "billing_party_id": bill_to, "sessions": sessions}
+        for (date, start_at, bill_to), sessions in groups.items()
+        if date and start_at and len(sessions) > 1
+    ][:50]
+
+
+def _edited_event_versions(conn: sqlite3.Connection, month: str | None) -> list[dict[str, object]]:
+    where, params = _month_clause("r", month)
+    rows = conn.execute(
+        f"""
+        SELECT calendar_event_id,
+               COUNT(*) AS snapshot_count,
+               COUNT(DISTINCT COALESCE(event_title, '') || '|' || COALESCE(start_at, '') || '|' || COALESCE(end_at, '')) AS version_count,
+               MIN(start_at) AS first_start_at,
+               MAX(start_at) AS latest_start_at,
+               MAX(captured_at) AS latest_captured_at
+        FROM raw_calendar_snapshots r
+        WHERE calendar_event_id IS NOT NULL AND calendar_event_id != '' {where}
+        GROUP BY calendar_event_id
+        HAVING snapshot_count > 1 AND version_count > 1
+        ORDER BY latest_captured_at DESC
+        LIMIT 50
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _excluded_items_affecting_billing(conn: sqlite3.Connection, month: str | None) -> list[dict[str, object]]:
+    where, params = _month_clause("s", month)
+    return [
+        {
+            **_session_summary(row),
+            "invoice_id": row["invoice_id"],
+            "invoice_status": row["invoice_status"],
+        }
+        for row in conn.execute(
+            f"""
+            SELECT s.*, COALESCE(group_concat(NULLIF(sp.participant_name, ''), ', '), '') AS participants,
+                   li.invoice_id, i.status AS invoice_status
+            FROM sessions s
+            JOIN invoice_line_items li ON li.source_session_id = s.id
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            LEFT JOIN session_participants sp ON sp.session_id = s.id
+            WHERE (
+                s.review_status = 'excluded'
+                OR s.billable_status IN ('excluded', 'nonbillable')
+                OR s.billing_treatment != 'billable'
+              ) {where}
+            GROUP BY s.id, li.invoice_id
+            ORDER BY s.start_at
+            LIMIT 50
+            """,
+            params,
+        ).fetchall()
+    ]
+
+
+def _approved_records_requiring_manual_review(conn: sqlite3.Connection, month: str | None) -> list[dict[str, object]]:
+    where, params = _month_clause("s", month)
+    return [
+        {
+            **_session_summary(row),
+            "old_value": text(row["old_value"]),
+            "new_value": text(row["new_value"]),
+            "reason": text(row["reason"]),
+        }
+        for row in conn.execute(
+            f"""
+            SELECT s.*, COALESCE(group_concat(NULLIF(sp.participant_name, ''), ', '), '') AS participants,
+                   ri.old_value, ri.new_value, ri.reason
+            FROM review_items ri
+            JOIN sessions s ON s.id = ri.session_id
+            LEFT JOIN session_participants sp ON sp.session_id = s.id
+            WHERE s.review_status = 'approved'
+              AND ri.review_status IN ('source_change_warning', 'needs_review')
+              {where}
+            GROUP BY ri.review_item_id
+            ORDER BY s.start_at
+            LIMIT 50
+            """,
+            params,
+        ).fetchall()
+    ]
 
 
 def _replay_counts(conn: sqlite3.Connection) -> dict[str, int]:

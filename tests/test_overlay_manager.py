@@ -355,14 +355,15 @@ class ApprovalLifecycleTests(unittest.TestCase):
         self.assertIn("if (approve && approvalState.submitting) return;", self.save_fn)
 
     def test_success_closes_overlay(self):
-        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
+        self.assertIn("completeReviewOverlayAction();", self.save_fn)
+        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.js)
 
     def test_success_clears_candidate_state(self):
         self.assertIn("approvalState.candidateId = null", self.save_fn)
 
     def test_success_with_warning_still_closes(self):
         self.assertIn("staging.status === \"warning\"", self.save_fn)
-        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
+        self.assertIn("completeReviewOverlayAction();", self.save_fn)
 
     def test_success_with_warning_shows_warning_separately(self):
         self.assertIn("showReviewWarning(warningMsg)", self.save_fn)
@@ -389,7 +390,7 @@ class ApprovalLifecycleTests(unittest.TestCase):
 
     def test_action_cannot_be_resubmitted_after_success(self):
         success_idx = self.save_fn.index("approvalState.submitting = false;")
-        close_idx = self.save_fn.index("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });")
+        close_idx = self.save_fn.index("completeReviewOverlayAction();")
         self.assertLess(close_idx, success_idx)
 
 

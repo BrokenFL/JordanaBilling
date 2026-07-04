@@ -243,11 +243,13 @@ Ambiguous but recognizable calendar titles (e.g. `Leah Grossman 630 38`, `Sage B
 
 Duplicate repair supports a sanitized dry-run, explicit apply, verified backup, idempotent application, and guarded reversal. Approved, invoiced, paid, audited, and raw-evidence records are protected. Reversal is refused after later edits make it unsafe.
 
-Raw snapshot replay recovery supports the separate `calendar-reconcile`
-command. Dry-run reports the candidate/session changes that would be derived
-from already-preserved raw evidence without durable writes. Apply mode requires
-`--confirm-apply APPLY_CALENDAR_RECONCILE`, creates a verified SQLite backup,
-replays every existing raw snapshot without duplicating evidence, refreshes
+Raw snapshot replay recovery is available in the app from the `Reconciliation`
+screen and in the CLI through `calendar-reconcile`. The app requires a month
+selection and a dry-run review before `Apply Safe Recovery` is enabled. Dry-run
+reports missing sessions, extra sessions, possible duplicates, newer edited
+event versions, excluded/non-client items affecting billing, and approved
+records that require manual review. Apply mode creates and verifies a SQLite
+backup, replays preserved raw snapshots without duplicating evidence, refreshes
 pending records to the newest event version, and excludes pending sessions whose
 latest evidence is no longer a client session. Approved sessions remain frozen;
 later source changes create review warnings instead of changing approved
@@ -255,9 +257,18 @@ session values.
 
 ## Review Queue And Sessions
 
+The Review Queue inspector bottom bar offers only `Approve` and `Exclude`.
+Both actions disable while pending, close the overlay on success, clear the
+selected record, refresh the queue, and show a small confirmation. Exclude means
+the record is not a client session and must not appear in billing, invoices, or
+Client Sessions reports.
+
 The Review Queue offers Needs Review, Approved, and Excluded filters. Needs Review excludes approved and excluded records.
 
-The Sessions workspace is a read-only ledger. Eligible candidate-only records may be sent to review, and excluded sessions may be returned to review. Approved or invoiced records are not silently reopened.
+The Sessions workspace is a read-only ledger. Its review-status filter is
+intentionally limited to `All` and `Needs Classification`. Eligible
+candidate-only records may be sent to review, and excluded sessions may be
+returned to review. Approved or invoiced records are not silently reopened.
 
 ## Safety
 

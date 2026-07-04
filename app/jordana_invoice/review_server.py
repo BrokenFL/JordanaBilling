@@ -123,7 +123,9 @@ from .csv_reports import (
     default_report_year,
     generate_report_csv,
     report_filename,
+    write_reports,
 )
+from .importer import calendar_reconciliation_report
 from .service_catalog import list_services, set_service_active
 from .request_validation import (
     RequestValidationError,
@@ -1055,6 +1057,29 @@ def make_handler(
                 if parsed.path == "/api/rate-rules/preview":
                     req = parse_preview_rate_request(data)
                     self.send_json(preview_rate_suggestion(self.conn(), req.to_payload()))
+                    return
+                if parsed.path == "/api/reports/generate":
+                    paths = write_reports(self.conn(), year=data.get("year"))
+                    self.send_json({
+                        "ok": True,
+                        "files": [str(path) for path in paths],
+                    })
+                    return
+                if parsed.path == "/api/calendar-reconcile/dry-run":
+                    self.send_json(calendar_reconciliation_report(
+                        self.conn(),
+                        month=data.get("month") or None,
+                        apply=False,
+                    ))
+                    return
+                if parsed.path == "/api/calendar-reconcile/apply":
+                    if data.get("confirm_apply") != "APPLY_CALENDAR_RECONCILE":
+                        raise ValueError("Safe recovery requires dry-run confirmation.")
+                    self.send_json(calendar_reconciliation_report(
+                        self.conn(),
+                        month=data.get("month") or None,
+                        apply=True,
+                    ))
                     return
                 if parsed.path.startswith("/api/rate-rules/"):
                     parts = parsed.path.strip("/").split("/")

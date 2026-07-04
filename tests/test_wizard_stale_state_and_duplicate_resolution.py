@@ -113,9 +113,10 @@ class DuplicateResolutionTests(unittest.TestCase):
         self.dup_end = self.js.index("async function sendToReview", self.dup_start)
         self.dup_fn = self.js[self.dup_start:self.dup_end]
 
-    def test_button_text_is_confirm_duplicate_and_next(self):
-        """1. Button text is 'Confirm Duplicate & Next'."""
-        self.assertIn("Confirm Duplicate & Next", self.js)
+    def test_duplicate_footer_button_removed(self):
+        """1. Duplicate resolution is no longer exposed as a footer action."""
+        self.assertNotIn("Confirm Duplicate & Next", self.js)
+        self.assertNotIn('id="duplicateBtn"', self.js)
 
     def test_button_disables_while_pending(self):
         """2. Button disables while pending."""
@@ -175,9 +176,10 @@ class DuplicateResolutionTests(unittest.TestCase):
         """The duplicateState flag is declared at module level."""
         self.assertIn("const duplicateState = { submitting: false, candidateId: null };", self.js)
 
-    def test_button_wired_to_confirmDuplicateAndNext(self):
-        """The duplicate button is wired to confirmDuplicateAndNext."""
-        self.assertIn('$("duplicateBtn").onclick = confirmDuplicateAndNext', self.js)
+    def test_duplicate_resolution_function_remains_guarded(self):
+        """The legacy duplicate resolver stays guarded for non-footer callers."""
+        self.assertIn("async function confirmDuplicateAndNext", self.js)
+        self.assertIn("if (duplicateState.submitting) return;", self.dup_fn)
 
     def _catch_block(self):
         catch_idx = self.dup_fn.index("} catch (error) {")

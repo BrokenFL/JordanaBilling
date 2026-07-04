@@ -235,6 +235,7 @@ def parse_event(row: dict[str, object]) -> ParseResult:
     computed_duration = calendar_duration or compute_duration_minutes(start_at, end_at)
     time_info = derive_time_category(start_at)
     occurrence_status = infer_appointment_status(start_at, end_at)
+    title_metadata = derive_title_metadata(title, row, start_at, computed_duration, time_info)
 
     if not title:
         return finalize_result(
@@ -252,7 +253,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
 
     if "?" in title:
         return finalize_result(
-            ParseResult(
+            apply_title_metadata(
+                ParseResult(
                 classification="unresolved",
                 confidence=0.25,
                 explanation="Question mark in title signals uncertainty.",
@@ -263,6 +265,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 duration_source="calendar" if computed_duration else "default",
                 appointment_status=occurrence_status,
                 **time_info,
+                ),
+                title_metadata,
             )
         )
 
@@ -525,7 +529,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
 
     if starts_with_admin(lower) or contains_any(lower, ADMIN_KEYWORDS):
         return finalize_result(
-            ParseResult(
+            apply_title_metadata(
+                ParseResult(
                 classification="administrative",
                 confidence=0.7 if starts_with_admin(lower) else 0.58,
                 explanation="Title matches likely administrative work language.",
@@ -537,12 +542,15 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 possible_referenced_person=extract_admin_person(title),
                 appointment_status=occurrence_status,
                 **time_info,
+                ),
+                title_metadata,
             )
         )
 
     if contains_any(lower, PERSONAL_KEYWORDS):
         return finalize_result(
-            ParseResult(
+            apply_title_metadata(
+                ParseResult(
                 classification="personal",
                 confidence=0.65,
                 explanation="Title matches likely personal exclusion language.",
@@ -553,20 +561,22 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 calendar_duration_minutes=computed_duration,
                 appointment_status=occurrence_status,
                 **time_info,
+                ),
+                title_metadata,
             )
         )
 
     if contains_any(lower, LATE_CANCELLATION_KEYWORDS):
-        return finalize_result(status_result("late_cancellation", start_at, computed_duration, time_info))
+        return finalize_result(status_result("late_cancellation", start_at, computed_duration, time_info, title_metadata))
 
     if contains_any(lower, CANCELLED_KEYWORDS):
-        return finalize_result(status_result("cancelled", start_at, computed_duration, time_info))
+        return finalize_result(status_result("cancelled", start_at, computed_duration, time_info, title_metadata))
 
     if contains_any(lower, NO_SHOW_KEYWORDS):
-        return finalize_result(status_result("no_show", start_at, computed_duration, time_info))
+        return finalize_result(status_result("no_show", start_at, computed_duration, time_info, title_metadata))
 
     if contains_any(lower, NONBILLABLE_KEYWORDS):
-        return finalize_result(status_result("nonbillable", start_at, computed_duration, time_info))
+        return finalize_result(status_result("nonbillable", start_at, computed_duration, time_info, title_metadata))
 
     name_guess, trailing_text = extract_name_guess(title)
     if name_guess:
@@ -577,7 +587,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
         if for_reference:
             explanation_parts.append(f"Title references \"{for_reference}\" after 'for'.")
         return finalize_result(
-            ParseResult(
+            apply_title_metadata(
+                ParseResult(
                 classification="unresolved",
                 confidence=0.3,
                 explanation=" ".join(explanation_parts),
@@ -592,11 +603,14 @@ def parse_event(row: dict[str, object]) -> ParseResult:
                 possible_referenced_person=for_reference,
                 unresolved_trailing_text=trailing_text,
                 **time_info,
+                ),
+                title_metadata,
             )
         )
 
     return finalize_result(
-        ParseResult(
+        apply_title_metadata(
+            ParseResult(
             classification="unresolved",
             confidence=0.2,
             explanation="No recognized shorthand, exclusion, or status pattern.",
@@ -608,6 +622,8 @@ def parse_event(row: dict[str, object]) -> ParseResult:
             appointment_status=occurrence_status,
             possible_referenced_person=for_reference,
             **time_info,
+            ),
+            title_metadata,
         )
     )
 
@@ -663,6 +679,7 @@ def status_result(
     start_at: str,
     computed_duration: int | None,
     time_info: dict[str, object],
+    title_metadata: dict[str, object] | None = None,
 ) -> ParseResult:
     explanations = {
         "cancelled": "Title contains cancellation or reschedule language.",
@@ -676,7 +693,7 @@ def status_result(
         "no_show": ["billing_disposition"],
         "nonbillable": ["nonbillable_reason"],
     }
-    return ParseResult(
+    return apply_title_metadata(ParseResult(
         classification=classification,
         confidence=0.74,
         explanation=explanations[classification],
@@ -695,7 +712,88 @@ def status_result(
             else "unresolved"
         ),
         **time_info,
+    ), title_metadata)
+
+
+def derive_title_metadata(
+    title: str,
+    row: dict[str, object],
+    start_at: str,
+    computed_duration: int | None,
+    time_info: dict[str, object],
+) -> dict[str, object]:
+    parse_title, _ = strip_for_reference(title)
+    status_title, _ = strip_title_appointment_status(parse_title)
+    parsed = (
+        parse_standard_title(status_title)
+        or parse_shorthand(status_title)
+        or parse_standard_title(parse_title)
+        or parse_shorthand(parse_title)
     )
+    explicit_duration = None
+    service_mode = "unknown"
+    if parsed:
+        explicit_duration = parsed[2]
+        service_mode = parsed[3]
+    else:
+        cleaned_title, service_mode = strip_service_mode(parse_title)
+        explicit_duration = extract_title_duration(cleaned_title)
+
+    proposed_duration, duration_source = choose_duration(explicit_duration, computed_duration)
+    location_text = text(row.get("location"))
+    billing_type, billing_source, house_call_suggested = derive_billing_session_type(
+        service_mode=service_mode,
+        is_weekend=bool(time_info["is_weekend"]),
+        is_evening=bool(time_info["is_evening"]),
+        house_call_explicit=(service_mode == "house_call"),
+        location_text=location_text,
+    )
+    duration_choice, custom_duration = derive_duration_choice(proposed_duration)
+    return {
+        "proposed_duration_minutes": proposed_duration,
+        "proposed_end_at": add_minutes(start_at, proposed_duration),
+        "duration_source": duration_source,
+        "explicit_duration_minutes": explicit_duration,
+        "calendar_duration_minutes": computed_duration,
+        "service_mode": service_mode,
+        "rate_group": RATE_GROUP_BY_SERVICE_MODE.get(service_mode) or None,
+        "billing_session_type": billing_type,
+        "appointment_method": derive_appointment_method(service_mode),
+        "duration_choice": duration_choice,
+        "custom_duration_minutes": custom_duration,
+        "house_call_suggested": house_call_suggested,
+        "billing_type_source": billing_source,
+        "location_text": location_text or None,
+        "late_evening_warning": check_late_evening(start_at),
+    }
+
+
+def apply_title_metadata(result: ParseResult, metadata: dict[str, object] | None) -> ParseResult:
+    if not metadata:
+        return result
+    result.proposed_duration_minutes = int(metadata["proposed_duration_minutes"] or 60)
+    result.proposed_end_at = metadata.get("proposed_end_at") or result.proposed_end_at
+    result.duration_source = str(metadata.get("duration_source") or result.duration_source)
+    result.explicit_duration_minutes = metadata.get("explicit_duration_minutes") or result.explicit_duration_minutes
+    result.calendar_duration_minutes = metadata.get("calendar_duration_minutes") or result.calendar_duration_minutes
+    result.service_mode = str(metadata.get("service_mode") or result.service_mode)
+    result.rate_group = metadata.get("rate_group") or result.rate_group
+    result.billing_session_type = str(metadata.get("billing_session_type") or result.billing_session_type)
+    result.appointment_method = str(metadata.get("appointment_method") or result.appointment_method)
+    result.duration_choice = str(metadata.get("duration_choice") or result.duration_choice)
+    result.custom_duration_minutes = metadata.get("custom_duration_minutes") or result.custom_duration_minutes
+    result.house_call_suggested = bool(metadata.get("house_call_suggested"))
+    result.billing_type_source = str(metadata.get("billing_type_source") or result.billing_type_source)
+    result.location_text = metadata.get("location_text") or result.location_text
+    result.late_evening_warning = bool(metadata.get("late_evening_warning"))
+
+    if result.house_call_suggested:
+        result.fields_requiring_review.append("house_call_confirmation")
+    if result.late_evening_warning:
+        result.fields_requiring_review.append("late_evening_time")
+    if result.duration_choice == "custom":
+        result.fields_requiring_review.append("custom_duration")
+    return result
 
 
 def parse_standard_title(title: str) -> tuple[str, str | None, int | None, str, bool, str | None, str | None] | None:
@@ -783,6 +881,14 @@ def strip_service_mode(title: str) -> tuple[str, str]:
             stripped = pattern.sub(" ", title)
             return normalize_title(stripped), SERVICE_MODE_ALIASES[alias]
     return title, "unknown"
+
+
+def extract_title_duration(title: str) -> int | None:
+    for token in re.split(r"[\s|/\\,;:-]+", title):
+        cleaned = token.strip("()[]{}")
+        if is_duration_token(cleaned):
+            return int(cleaned)
+    return None
 
 
 def normalize_service_mode(value: str) -> str:

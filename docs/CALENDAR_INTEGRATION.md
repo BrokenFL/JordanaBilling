@@ -90,19 +90,26 @@ Future events may be imported as proposed, reviewable sessions. They must not be
 ## Raw Snapshot Replay Recovery
 
 If `Raw_Event_Snapshots` or local `raw_calendar_snapshots` contains calendar
-evidence that did not become a candidate/session, use the local replay command.
-It does not fetch new Sheet rows and never duplicates raw evidence.
+evidence that did not become a candidate/session, use the in-app
+`Reconciliation` screen first. Select a month and run `Dry Run`; the app shows
+missing sessions, extra sessions, possible duplicates, newer edited event
+versions, excluded/non-client items still affecting billing, and approved
+records that require manual review. `Apply Safe Recovery` remains disabled until
+a dry-run has completed for the selected month.
+
+The same local replay service is available from the CLI. It does not fetch new
+Sheet rows and never duplicates raw evidence.
 
 Dry-run first:
 
 ```bash
-PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --dry-run
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --dry-run --month 2026-06
 ```
 
 Apply only after the summary is reviewed:
 
 ```bash
-PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --apply --confirm-apply APPLY_CALENDAR_RECONCILE
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-reconcile --apply --month 2026-06 --confirm-apply APPLY_CALENDAR_RECONCILE
 ```
 
 Apply mode creates and verifies a SQLite backup before derived writes. The

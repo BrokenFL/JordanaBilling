@@ -608,7 +608,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **DB tables**: none mutated; read-only readiness/preview response
 - **Idempotent**: yes
 - **Existing tests**: `test_invoice_lifecycle.py`, `test_invoice_readiness.py`, `test_payment_and_finalization.py`, `test_write_endpoint_contracts.py`
-- **Note**: Review & Finalize uses this endpoint for readiness/revision only. The visual approval preview is the side-effect-free canonical PDF from `POST /api/invoices/{id}/draft-pdf`.
+- **Note**: Review & Finalize uses this endpoint for readiness/revision and warning metadata. The visual approval preview is the side-effect-free canonical PDF from `POST /api/invoices/{id}/draft-pdf`. The response may include warning-only `duplicate_warnings`; those warnings never mutate, merge, delete, exclude, or approve sessions.
 
 ### POST /api/invoices/{id}/finalize
 
@@ -848,6 +848,44 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Error status codes**: 400 (invalid year)
 - **Existing tests**: `test_report_api.py`
 
+### POST /api/reports/generate
+
+- **Handler**: inline in `do_POST`
+- **Service**: `write_reports(conn, year=data.get("year"))`
+- **Accepted fields**: optional `year`
+- **Success status**: 200
+- **Success response**: `{ ok: true, files: [...] }`
+- **DB tables**: none mutated; writes local report CSV files to the configured reports directory
+- **Idempotent**: yes
+- **Existing tests**: `test_review_ui_static.py`
+
+---
+
+## 13. Calendar Reconciliation
+
+### POST /api/calendar-reconcile/dry-run
+
+- **Handler**: inline in `do_POST`
+- **Service**: `calendar_reconciliation_report(conn, month=data.get("month"), apply=False)`
+- **Accepted fields**: optional `month` (`YYYY-MM`)
+- **Success status**: 200
+- **Success response**: `{ ok, month, mode, summary, buckets }`
+- **DB tables**: no durable mutation; dry-run uses the replay savepoint and rolls back derived writes
+- **Idempotent**: yes
+- **Existing tests**: `test_candidate_identity_and_duplicate_repair.py`, `test_review_ui_static.py`
+
+### POST /api/calendar-reconcile/apply
+
+- **Handler**: inline in `do_POST`
+- **Service**: `calendar_reconciliation_report(conn, month=data.get("month"), apply=True)`
+- **Accepted fields**: optional `month` (`YYYY-MM`), required `confirm_apply = "APPLY_CALENDAR_RECONCILE"`
+- **Success status**: 200
+- **Success response**: `{ ok, month, mode, summary, buckets }`; `summary.backup_path` is populated when SQLite is file-backed
+- **DB tables**: derived candidate/session/review tables through existing raw snapshot replay; raw snapshots are not duplicated or modified
+- **Idempotent**: yes
+- **Safety**: creates and verifies a SQLite backup before apply, refreshes only pending/unreviewed records, protects approved sessions, and never changes finalized invoices or payments
+- **Existing tests**: `test_candidate_identity_and_duplicate_repair.py`, `test_review_ui_static.py`
+
 ---
 
 ## Summary of Write Endpoints
@@ -910,8 +948,11 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 | 54 | POST | /api/sync/run | sync_calendar_automatically | Sync |
 | 55 | POST | /api/sync/rebuild | rebuild_calendar_data_from_sheet | Sync |
 | 56 | POST | /api/service-catalog/{id}/{activate\|deactivate} | set_service_active | Service Catalog |
+| 57 | POST | /api/reports/generate | write_reports | Reports |
+| 58 | POST | /api/calendar-reconcile/dry-run | calendar_reconciliation_report | Calendar Reconciliation |
+| 59 | POST | /api/calendar-reconcile/apply | calendar_reconciliation_report | Calendar Reconciliation |
 
-**Total write endpoints: 56** (including 3 read-only POSTs that use POST for complex body acceptance)
+**Total write endpoints: 59** (including read-only POSTs that use POST for complex body acceptance)
 
 ---
 

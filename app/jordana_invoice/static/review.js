@@ -2,6 +2,7 @@ const { api, sanitizeUiErrorMessage, getWriteToken } = window.JordanaAPI;
 const { create: createOverlay } = window.JordanaOverlay;
 
 const approvalState = { submitting: false, candidateId: null };
+const excludeState = { submitting: false, candidateId: null };
 const duplicateState = { submitting: false, candidateId: null };
 const restoreState = { submitting: false, candidateId: null };
 const billingWizardState = { submitting: false };
@@ -86,10 +87,20 @@ const state = {
     status: "",
     paymentStatus: "",
     billToPartyId: "",
+    billingMonth: "",
     dateFilter: "",
     dateFrom: "",
     dateTo: "",
+    sortBy: "invoice_date",
+    sortDir: "desc",
+    draftMonthTotals: [],
     loaded: false
+  },
+  reconciliation: {
+    dryRunResult: null,
+    reviewedMonth: "",
+    running: false,
+    applying: false
   }
 };
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
@@ -592,14 +603,10 @@ function renderInspector(data) {
     </section>
 
     <div class="actions">
-      <button id="prevSessionBtn">Previous</button>
       ${isSession && readiness.all_ready && !isFutureAppointment(s) ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
       ${isSession && readiness.all_ready && isFutureAppointment(s) ? '<button class="approve" id="approveBtn" disabled>Approve Session</button><div class="readonly-note" id="futureAppointmentNote">' + escapeHtml(futureAppointmentMessage(s)) + '</div>' : ""}
-      ${!isSession ? '<button class="approve" id="sendToReviewBtn">Send to Review</button>' : ""}
-      <button id="saveNextBtn" class="save">Save and next</button>
-      <button id="personalBtn">Mark Personal/Admin</button>
-      <button id="duplicateBtn">Confirm Duplicate & Next</button>
       <button class="danger" id="excludeBtn">Exclude</button>
+      <div class="reports-error" id="reviewActionError" role="alert" hidden></div>
     </div>
   `;
   wireInspector();
@@ -617,12 +624,7 @@ function wireInspector() {
   if ($("changeSessionBtn")) $("changeSessionBtn").onclick = () => { state.editSteps.session = true; markDirty("session"); renderInspector(state.detail); };
   if ($("saveSessionBtn")) $("saveSessionBtn").onclick = saveSessionSection;
   if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipEditor;
-  if ($("personalBtn")) $("personalBtn").onclick = () => mark("personal");
-  if ($("duplicateBtn")) $("duplicateBtn").onclick = confirmDuplicateAndNext;
-  if ($("excludeBtn")) $("excludeBtn").onclick = () => mark("nonbillable");
-  if ($("sendToReviewBtn")) $("sendToReviewBtn").onclick = sendToReview;
-  if ($("prevSessionBtn")) $("prevSessionBtn").onclick = goToPreviousSession;
-  if ($("saveNextBtn")) $("saveNextBtn").onclick = saveAndNext;
+  if ($("excludeBtn")) $("excludeBtn").onclick = excludeSelectedCandidate;
   [
     "billingTypeInput",
     "durationChoiceInput",
@@ -1138,7 +1140,8 @@ async function save(approve) {
   if (approve) {
     approvalState.submitting = true;
     approvalState.candidateId = state.selected;
-    if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn"]);
+    clearReviewActionError();
+    if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn"]);
   }
   await resolveTypedSelections();
   try {
@@ -1153,10 +1156,7 @@ async function save(approve) {
     await loadList();
     if (approve) {
       const staging = updated.invoice_staging;
-      closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });
-      const firstReviewBtn = document.querySelector("#candidateRows .review-btn");
-      if (firstReviewBtn) firstReviewBtn.focus();
-      else $("searchBox")?.focus();
+      completeReviewOverlayAction();
       
       let successMsg = "Session approved.";
       let warningMsg = null;
@@ -1199,11 +1199,7 @@ async function save(approve) {
       approvalState.candidateId = null;
       if (reviewOverlayCtrl) reviewOverlayCtrl.endPending();
       const msg = error.message || "";
-      if (msg.startsWith("Cannot approve")) {
-        alert(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
-      } else {
-        alert(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
-      }
+      showReviewActionError(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
     } else {
       alert(error.message);
     }
@@ -1295,9 +1291,55 @@ async function resolveTypedSelections() {
   }
 }
 
-async function mark(classification) {
-  await api(`/api/review/candidates/${state.selected}/mark`, { method: "POST", body: JSON.stringify({ classification, reason: classification }) });
-  await loadList();
+function clearReviewActionError() {
+  const box = $("reviewActionError");
+  if (!box) return;
+  box.textContent = "";
+  box.hidden = true;
+}
+
+function showReviewActionError(message) {
+  const box = $("reviewActionError");
+  if (!box) {
+    alert(message);
+    return;
+  }
+  box.textContent = message;
+  box.hidden = false;
+}
+
+function completeReviewOverlayAction() {
+  closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });
+  const firstReviewBtn = document.querySelector("#candidateRows .review-btn");
+  if (firstReviewBtn) firstReviewBtn.focus();
+  else $("searchBox")?.focus();
+}
+
+async function excludeSelectedCandidate() {
+  if (excludeState.submitting) return;
+  const candidateId = state.selected;
+  if (!candidateId) return;
+  excludeState.submitting = true;
+  excludeState.candidateId = candidateId;
+  clearReviewActionError();
+  if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn"]);
+  try {
+    await api(`/api/review/candidates/${candidateId}/mark`, {
+      method: "POST",
+      body: JSON.stringify({ classification: "nonbillable", reason: "excluded_not_client_session" })
+    });
+    state.dirty.clear();
+    await loadList();
+    completeReviewOverlayAction();
+    showReviewSuccess("Excluded from billing.");
+    excludeState.submitting = false;
+    excludeState.candidateId = null;
+  } catch (error) {
+    excludeState.submitting = false;
+    excludeState.candidateId = null;
+    if (reviewOverlayCtrl) reviewOverlayCtrl.endPending();
+    showReviewActionError(sanitizeUiErrorMessage(error.message, "Could not exclude this item. Please try again."));
+  }
 }
 
 async function confirmDuplicateAndNext() {
@@ -1550,6 +1592,11 @@ function startRange(s) {
   const end = s.end_at ? formatter.format(new Date(s.end_at)) : "";
   return start && end ? `${start} - ${end}` : start || end;
 }
+function defaultFutureEffectiveDate() {
+  const day = new Date();
+  day.setDate(day.getDate() + 1);
+  return day.toISOString().slice(0, 10);
+}
 function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
 
 ["searchBox","statusFilter","serviceFilter","calendarFilter"].forEach(id => { const el = $(id); if (el) el.addEventListener("input", () => { state.offset = 0; loadList(); }); });
@@ -1559,6 +1606,11 @@ document.getElementById("calendarImportNav").onclick = (event) => {
   event.preventDefault();
   location.hash = "calendar-import";
   showCalendarImport();
+};
+document.getElementById("reconciliationNav").onclick = (event) => {
+  event.preventDefault();
+  location.hash = "reconciliation";
+  showReconciliation();
 };
 document.getElementById("rateCardNav").onclick = (event) => {
   event.preventDefault();
@@ -1607,8 +1659,8 @@ document.getElementById("reviewNav").onclick = () => {
 
 function hideViews() {
   closeResponsiveSheet();
-  ["reviewWorkbench","calendarImportView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","calendarImportNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","reconciliationView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","reconciliationNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 function showRateCard() {
@@ -1679,6 +1731,8 @@ function closeReviewOverlay({ clearCandidate = false, skipDirtyCheck = false } =
     state.account = null;
     state.billingParty = null;
     state.editSteps = { clients: false, session: false };
+    const content = $("reviewOverlayContent");
+    if (content) content.innerHTML = "";
   }
   reviewOverlayCtrl.close({ restoreFocus: true });
   return true;
@@ -2165,6 +2219,181 @@ async function showReports() {
   await loadReports();
 }
 
+function defaultReconciliationMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+async function showReconciliation() {
+  hideViews();
+  $("reconciliationView").hidden = false;
+  $("reconciliationNav").classList.add("active");
+  $("pageTitle").textContent = "Reconciliation";
+  $("pageSubtitle").textContent = "Recover eligible raw calendar rows safely";
+  document.title = "Jordana Billing - Reconciliation";
+  if (!$("reconciliationMonth").value) $("reconciliationMonth").value = defaultReconciliationMonth();
+  wireReconciliationControls();
+}
+
+function wireReconciliationControls() {
+  const dryRunBtn = $("reconciliationDryRunBtn");
+  const applyBtn = $("reconciliationApplyBtn");
+  const monthInput = $("reconciliationMonth");
+  if (!dryRunBtn || !applyBtn || !monthInput) return;
+  dryRunBtn.onclick = runCalendarReconciliationDryRun;
+  applyBtn.onclick = applyCalendarReconciliationRecovery;
+  monthInput.onchange = () => {
+    state.reconciliation.dryRunResult = null;
+    state.reconciliation.reviewedMonth = "";
+    applyBtn.disabled = true;
+    setReconciliationMessage("");
+  };
+}
+
+function setReconciliationMessage(message, type = "") {
+  const node = $("reconciliationMessage");
+  if (!node) return;
+  node.textContent = message || "";
+  node.className = `settings-message ${type || ""}`;
+}
+
+function setReconciliationError(message) {
+  const node = $("reconciliationError");
+  if (!node) return;
+  node.textContent = message || "";
+  node.hidden = !message;
+}
+
+function setReconciliationPending(isPending) {
+  const dryRunBtn = $("reconciliationDryRunBtn");
+  const applyBtn = $("reconciliationApplyBtn");
+  if (dryRunBtn) {
+    dryRunBtn.disabled = isPending;
+    dryRunBtn.textContent = isPending ? "Running..." : "Dry Run";
+  }
+  if (applyBtn) {
+    applyBtn.disabled = isPending || !state.reconciliation.dryRunResult;
+    applyBtn.textContent = isPending ? "Working..." : "Apply Safe Recovery";
+  }
+}
+
+async function runCalendarReconciliationDryRun() {
+  if (state.reconciliation.running || state.reconciliation.applying) return;
+  const month = $("reconciliationMonth").value || "";
+  state.reconciliation.running = true;
+  state.reconciliation.dryRunResult = null;
+  setReconciliationPending(true);
+  setReconciliationError("");
+  setReconciliationMessage("");
+  try {
+    const result = await api("/api/calendar-reconcile/dry-run", {
+      method: "POST",
+      body: JSON.stringify({ month }),
+    });
+    state.reconciliation.dryRunResult = result;
+    state.reconciliation.reviewedMonth = month;
+    renderReconciliationResult(result, { applied: false });
+    setReconciliationMessage("Dry run complete. Review the results before applying safe recovery.", "success");
+  } catch (err) {
+    setReconciliationError(sanitizeUiErrorMessage(err.message, "Unable to run reconciliation. Please try again."));
+  } finally {
+    state.reconciliation.running = false;
+    setReconciliationPending(false);
+  }
+}
+
+async function applyCalendarReconciliationRecovery() {
+  if (state.reconciliation.applying || state.reconciliation.running) return;
+  if (!state.reconciliation.dryRunResult) return;
+  const month = $("reconciliationMonth").value || "";
+  if (month !== state.reconciliation.reviewedMonth) {
+    setReconciliationError("Run a new dry run for the selected month before applying recovery.");
+    $("reconciliationApplyBtn").disabled = true;
+    return;
+  }
+  state.reconciliation.applying = true;
+  setReconciliationPending(true);
+  setReconciliationError("");
+  setReconciliationMessage("");
+  try {
+    const result = await api("/api/calendar-reconcile/apply", {
+      method: "POST",
+      body: JSON.stringify({ month, confirm_apply: "APPLY_CALENDAR_RECONCILE" }),
+    });
+    state.reconciliation.dryRunResult = null;
+    state.reconciliation.reviewedMonth = "";
+    renderReconciliationResult(result, { applied: true });
+    setReconciliationMessage("Safe recovery applied. Backup verified before changes.", "success");
+    await loadList();
+  } catch (err) {
+    setReconciliationError(sanitizeUiErrorMessage(err.message, "Unable to apply safe recovery. Please try again."));
+  } finally {
+    state.reconciliation.applying = false;
+    setReconciliationPending(false);
+  }
+}
+
+function renderReconciliationResult(result, { applied = false } = {}) {
+  const target = $("reconciliationResults");
+  if (!target) return;
+  const summary = result.summary || {};
+  const buckets = result.buckets || {};
+  const backupHtml = summary.backup_path
+    ? `<div class="reconciliation-backup">Verified backup: ${fmt(summary.backup_path)}</div>`
+    : "";
+  const cards = [
+    ["Raw snapshots reviewed", summary.raw_snapshots_seen],
+    ["Candidates inserted", summary.candidates_created],
+    ["Sessions inserted", summary.sessions_created],
+    ["Review items changed", summary.review_items_changed],
+    ["Pending exclusions", summary.excluded_pending_sessions],
+    ["Approved protected", summary.approved_sessions_protected],
+  ].map(([label, value]) => `
+    <div class="summary-card"><div class="summary-card-label">${escapeHtml(label)}</div><div class="summary-card-value">${fmt(value || 0)}</div></div>
+  `).join("");
+  target.innerHTML = `
+    <div class="section-title-row"><h3>${applied ? "Safe Recovery Summary" : "Dry Run Summary"}</h3><span class="status-pill">${fmt(result.month || "All months")}</span></div>
+    <div class="summary-cards reconciliation-summary-cards">${cards}</div>
+    ${backupHtml}
+    ${renderReconciliationBucket("Missing Sessions", buckets.missing_sessions, renderSnapshotBucketRow)}
+    ${renderReconciliationBucket("Extra Sessions", buckets.extra_sessions, renderSessionBucketRow)}
+    ${renderReconciliationBucket("Possible Duplicates", buckets.possible_duplicates, renderDuplicateBucketRow)}
+    ${renderReconciliationBucket("Newer Edited Event Versions", buckets.newer_edited_event_versions, renderEditedEventBucketRow)}
+    ${renderReconciliationBucket("Excluded or Non-Client Items Affecting Billing", buckets.excluded_non_client_items_affecting_billing, renderSessionBucketRow)}
+    ${renderReconciliationBucket("Approved Records Requiring Manual Review", buckets.approved_records_require_manual_review, renderApprovedReviewBucketRow)}
+  `;
+}
+
+function renderReconciliationBucket(title, rows, renderRow) {
+  const items = Array.isArray(rows) ? rows : [];
+  return `
+    <section class="reconciliation-bucket">
+      <div class="section-title-row"><h3>${escapeHtml(title)}</h3><span class="status-pill">${items.length}</span></div>
+      ${items.length ? `<div class="reconciliation-bucket-list">${items.map(renderRow).join("")}</div>` : `<div class="readonly-note">No items found.</div>`}
+    </section>
+  `;
+}
+
+function renderSnapshotBucketRow(row) {
+  return `<div class="reconciliation-row"><strong>${fmt(row.start_at)}</strong><span>${fmt(row.title)}</span><small>${fmt(row.calendar_name)} ${fmt(row.calendar_event_id)}</small></div>`;
+}
+
+function renderSessionBucketRow(row) {
+  return `<div class="reconciliation-row"><strong>${fmt(row.start_at || row.date)}</strong><span>${fmt(row.participants || row.title || "Unresolved participants")}</span><small>${fmt(row.review_status)} · ${fmt(row.billing_treatment)} · ${fmt(row.billable_status)}</small></div>`;
+}
+
+function renderDuplicateBucketRow(row) {
+  const sessions = (row.sessions || []).map(renderSessionBucketRow).join("");
+  return `<div class="reconciliation-row grouped"><strong>${fmt(row.date)} ${fmt(row.start_at)}</strong><div>${sessions}</div></div>`;
+}
+
+function renderEditedEventBucketRow(row) {
+  return `<div class="reconciliation-row"><strong>${fmt(row.calendar_event_id)}</strong><span>${fmt(row.snapshot_count)} snapshots, ${fmt(row.version_count)} versions</span><small>${fmt(row.first_start_at)} → ${fmt(row.latest_start_at)}</small></div>`;
+}
+
+function renderApprovedReviewBucketRow(row) {
+  return `<div class="reconciliation-row"><strong>${fmt(row.start_at || row.date)}</strong><span>${fmt(row.participants || row.title || "Approved session")}</span><small>${fmt(row.reason || "Calendar source changed; manual review required.")}</small></div>`;
+}
+
 async function showPayments() {
   hideViews();
   $("paymentsView").hidden = false;
@@ -2552,7 +2781,13 @@ async function loadReports() {
   const grid = $("reportCardGrid");
   const errBox = $("reportsError");
   const yearSelect = $("reportsYearSelect");
+  const generateBtn = $("generateReportsBtn");
+  const message = $("reportsRefreshMessage");
   errBox.hidden = true;
+  if (message) {
+    message.textContent = "";
+    message.className = "settings-message";
+  }
   grid.innerHTML = "";
   let data;
   try {
@@ -2585,6 +2820,36 @@ async function loadReports() {
       window.location.href = `/api/reports/download?type=${type}&year=${year}`;
     };
   });
+  if (generateBtn) {
+    generateBtn.onclick = async () => {
+      if (generateBtn.disabled) return;
+      generateBtn.disabled = true;
+      generateBtn.textContent = "Generating...";
+      errBox.hidden = true;
+      if (message) {
+        message.textContent = "";
+        message.className = "settings-message";
+      }
+      try {
+        const year = Number(yearSelect.value || defaultYear);
+        const result = await api("/api/reports/generate", {
+          method: "POST",
+          body: JSON.stringify({ year })
+        });
+        if (message) {
+          const count = Array.isArray(result.files) ? result.files.length : 0;
+          message.textContent = count ? `Reports refreshed (${count} files).` : "Reports refreshed.";
+          message.className = "settings-message success";
+        }
+      } catch (err) {
+        errBox.textContent = sanitizeUiErrorMessage(err.message, "Unable to generate reports. Please try again.");
+        errBox.hidden = false;
+      } finally {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "Generate Reports";
+      }
+    };
+  }
 }
 
 function renderSyncStatus(status) {
@@ -2868,7 +3133,10 @@ function _buildInvoiceQueryParams() {
   if (lib.status) params.set("status", lib.status);
   if (lib.search) params.set("search", lib.search);
   if (lib.billToPartyId) params.set("bill_to_party_id", lib.billToPartyId);
+  if (lib.billingMonth) params.set("billing_month", lib.billingMonth);
   if (lib.paymentStatus) params.set("payment_status", lib.paymentStatus);
+  params.set("sort_by", lib.sortBy || "invoice_date");
+  params.set("sort_dir", lib.sortDir || "desc");
   const dateRange = _invoiceDateRangeParams();
   if (dateRange.invoice_date_from) params.set("invoice_date_from", dateRange.invoice_date_from);
   if (dateRange.invoice_date_to) params.set("invoice_date_to", dateRange.invoice_date_to);
@@ -2892,14 +3160,20 @@ async function loadInvoices() {
   lib.status = $("invoiceStatusFilter").value || "";
   lib.paymentStatus = $("invoicePaymentStatusFilter").value || "";
   lib.billToPartyId = $("invoiceBillToFilter").value || "";
+  lib.billingMonth = $("invoiceDraftMonthFilter") ? $("invoiceDraftMonthFilter").value || "" : "";
   lib.dateFilter = $("invoiceDateFilter").value || "";
   lib.dateFrom = $("invoiceDateFrom") ? $("invoiceDateFrom").value : "";
   lib.dateTo = $("invoiceDateTo") ? $("invoiceDateTo").value : "";
   lib.search = $("invoiceSearch") ? $("invoiceSearch").value.trim() : "";
+  const sortValue = $("invoiceSortFilter") ? $("invoiceSortFilter").value : "invoice_date:desc";
+  const [sortBy, sortDir] = sortValue.split(":");
+  lib.sortBy = sortBy || "invoice_date";
+  lib.sortDir = sortDir || "desc";
   const qs = _buildInvoiceQueryParams();
   const result = await api(`/api/invoices?${qs}`);
   lib.items = result.items || [];
   lib.total = result.total || 0;
+  lib.draftMonthTotals = result.draft_month_totals || [];
   lib.loaded = true;
   renderInvoiceLibrary();
   await loadFinancialSummary();
@@ -2932,11 +3206,38 @@ function renderInvoiceLibrary() {
   document.querySelectorAll("#invoiceRows tr[data-invoice]").forEach(row => {
     row.onclick = () => openInvoice(row.dataset.invoice);
   });
+  renderDraftMonthTotals();
   const start = lib.offset + 1;
   const end = Math.min(lib.offset + lib.limit, lib.total);
   $("invoiceResultCount").textContent = lib.total === 0 ? "No results" : `Showing ${start}–${end} of ${lib.total}`;
   $("invoicePrevPage").disabled = lib.offset === 0;
   $("invoiceNextPage").disabled = lib.offset + lib.limit >= lib.total;
+}
+
+function renderDraftMonthTotals() {
+  const node = $("draftMonthTotals");
+  if (!node) return;
+  const totals = state.invoiceLibrary.draftMonthTotals || [];
+  if (!totals.length) {
+    node.innerHTML = "";
+    return;
+  }
+  node.innerHTML = `
+    <div class="draft-month-summary-title">Draft totals by billing month</div>
+    <div class="draft-month-summary-grid">
+      ${totals.map(row => `<div class="draft-month-summary-item">
+        <span>${escapeHtml(formatBillingMonth(row.billing_month))}</span>
+        <strong>${money(centString(row.total_cents || 0))}</strong>
+        <small>${Number(row.draft_count || 0)} draft${Number(row.draft_count || 0) === 1 ? "" : "s"}</small>
+      </div>`).join("")}
+    </div>`;
+}
+
+function formatBillingMonth(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(raw)) return raw || "Unassigned";
+  const [year, month] = raw.split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
 async function startInvoiceBuilder() {
@@ -3390,6 +3691,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const readinessHtml = ready
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
     : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
+  const duplicateWarningsHtml = renderDuplicateBillingWarnings(preview.duplicate_warnings || []);
   const profile = preview.business_profile || {};
   const insState = insuranceState || {included: false, diagnosisCode: ""};
   const insuranceChecked = insState.included ? "checked" : "";
@@ -3400,6 +3702,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
     <div class="help">Review the PDF below carefully. It uses the same invoice renderer as finalization. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
     ${readinessHtml}
+    ${duplicateWarningsHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
     <div class="relationship-summary ${filingName ? "success" : ""}"><strong>File invoice under</strong><div>${fmt(filingName || "Selection required")}</div></div>
     <div class="insurance-coding-section" style="margin:12px 0;padding:10px;border:1px solid #D9E2EC;border-radius:4px;">
@@ -3528,6 +3831,37 @@ function renderFinalizationPreview(preview, insuranceState) {
   refreshFinalizationPdfPreview();
 }
 
+function renderDuplicateBillingWarnings(warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) return "";
+  const warningBlocks = warnings.map(warning => {
+    const rows = (warning.sessions || []).map(session => `
+      <tr>
+        <td>${fmt(session.date)}</td>
+        <td>${fmt(session.time || "Time unresolved")}</td>
+        <td>${fmt(session.participants || "Participants unresolved")}</td>
+        <td>${fmt(session.duration_minutes)}</td>
+        <td>${money(centString(session.amount_cents))}</td>
+      </tr>
+    `).join("");
+    return `
+      <div class="duplicate-warning-group">
+        <div><strong>${fmt(warning.date)}</strong> ${fmt(warning.reason)}</div>
+        <table class="review-table compact-table duplicate-warning-table">
+          <thead><tr><th>Date</th><th>Time</th><th>Participants</th><th>Minutes</th><th>Amount</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }).join("");
+  return `
+    <div class="settings-readiness duplicate-warning" role="status">
+      <strong>Possible duplicate billing.</strong>
+      <div>Review these included sessions before finalizing. Nothing has been changed.</div>
+      ${warningBlocks}
+    </div>
+  `;
+}
+
 function revokeFinalizationPreviewPdfUrl() {
   finalizationPreviewPdfUrl = null;
 }
@@ -3608,6 +3942,12 @@ $("newInvoiceBtn").onclick = startInvoiceBuilder;
 $("invoiceStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoicePaymentStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoiceBillToFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
+$("invoiceDraftMonthFilter").onchange = () => {
+  state.invoiceLibrary.offset = 0;
+  if ($("invoiceDraftMonthFilter").value && !$("invoiceStatusFilter").value) $("invoiceStatusFilter").value = "draft";
+  loadInvoices();
+};
+$("invoiceSortFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoiceDateFilter").onchange = () => {
   state.invoiceLibrary.offset = 0;
   const custom = $("invoiceDateFilter").value === "custom";
@@ -4751,15 +5091,13 @@ async function openAccountRecord(accountId, options = {}) {
   }
 
   $("changeRecipientBtn").onclick = () => { markEditorDirty(); openRecipientSearch(accountId, data, editState, returnContext); };
-  $("addCoveredBtn").onclick = () => { markEditorDirty(); openCoveredSearch(accountId, data, editState, returnContext); };
+  $("addCoveredBtn").onclick = () => { openCoveredSearch(accountId, data, editState, returnContext); };
   $("saveBillingRelationshipBtn").onclick = () => saveBillingRelationship(accountId, editState, returnContext);
 
   document.querySelectorAll(".covered-client-remove").forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const pid = btn.dataset.personId;
-      editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
-      btn.closest(".covered-client-row").remove();
-      markEditorDirty();
+      await removeCoveredClientImmediate(accountId, pid, editState, returnContext, btn);
     };
   });
 
@@ -5109,7 +5447,7 @@ function openCoveredSearch(accountId, data, editState, returnContext) {
     try {
       searchRows = await api(`/api/people?q=${encodeURIComponent(q)}`);
       const selectedIds = new Set(editState.covered_client_ids);
-      renderEditorCoveredResults(results, searchRows, selectedIds, editState);
+      renderEditorCoveredResults(results, searchRows, selectedIds, editState, accountId, returnContext);
     } catch (err) { results.innerHTML = `<div class="modal-empty">${escapeHtml(err.message || "Search failed.")}</div>`; }
   }, 200);
   input.addEventListener("input", (e) => doSearch(e.target.value));
@@ -5117,7 +5455,7 @@ function openCoveredSearch(accountId, data, editState, returnContext) {
   input.focus();
 }
 
-function renderEditorCoveredResults(container, rows, selectedIds, editState) {
+function renderEditorCoveredResults(container, rows, selectedIds, editState, accountId, returnContext) {
   if (!rows.length) { container.innerHTML = '<div class="modal-empty">No clients found.</div>'; return; }
   container.innerHTML = rows.map(row => {
     const isSelected = selectedIds.has(row.person_id);
@@ -5129,37 +5467,74 @@ function renderEditorCoveredResults(container, rows, selectedIds, editState) {
   container.querySelectorAll(".modal-result-row").forEach(el => {
     const pid = el.dataset.personId;
     if (selectedIds.has(pid)) {
-      el.addEventListener("click", () => {
-        editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
-        const row = el.closest(".covered-client-row") || document.querySelector(`.covered-client-row[data-person-id="${pid}"]`);
-        if (row) row.remove();
-        const newSelected = new Set(editState.covered_client_ids);
-        renderEditorCoveredResults(container, rows, newSelected, editState);
+      el.addEventListener("click", async () => {
+        await removeCoveredClientImmediate(accountId, pid, editState, returnContext, el);
       });
     } else {
-      el.addEventListener("click", () => {
-        if (!editState.covered_client_ids.includes(pid)) {
-          editState.covered_client_ids.push(pid);
-          const person = rows.find(r => r.person_id === pid);
-          const list = document.querySelector(".covered-clients-list");
-          if (list && person) {
-            const div = document.createElement("div");
-            div.className = "covered-client-row";
-            div.dataset.personId = pid;
-            div.innerHTML = `<span class="covered-client-name">${escapeHtml(person.display_name)}</span>${person.person_code ? `<span class="help">${escapeHtml(person.person_code)}</span>` : ""}<button type="button" class="covered-client-remove" data-person-id="${escapeHtml(pid)}" aria-label="Remove ${escapeHtml(person.display_name)}">&times;</button>`;
-            list.appendChild(div);
-            div.querySelector(".covered-client-remove").onclick = () => {
-              editState.covered_client_ids = editState.covered_client_ids.filter(id => id !== pid);
-              div.remove();
-            };
-          }
-        }
-        const newSelected = new Set(editState.covered_client_ids);
-        renderEditorCoveredResults(container, rows, newSelected, editState);
+      el.addEventListener("click", async () => {
+        await addCoveredClientImmediate(accountId, pid, returnContext, el);
       });
     }
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
   });
+}
+
+async function addCoveredClientImmediate(accountId, personId, returnContext, trigger) {
+  if (!accountId || !personId) return;
+  const errorBox = $("editorErrorBox");
+  if (errorBox) errorBox.hidden = true;
+  if (trigger) trigger.setAttribute("aria-disabled", "true");
+  try {
+    await api("/api/account-members", {
+      method: "POST",
+      body: JSON.stringify({
+        account_id: accountId,
+        person_id: personId,
+        relationship_role: "family_member",
+        is_primary: false,
+      })
+    });
+    await openAccountRecord(accountId, { returnContext });
+    await loadClients();
+    showReviewSuccess("Covered client added.");
+  } catch (err) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = sanitizeUiErrorMessage(err.message, "Could not add covered client.");
+    }
+  } finally {
+    if (trigger) trigger.removeAttribute("aria-disabled");
+  }
+}
+
+async function removeCoveredClientImmediate(accountId, personId, editState, returnContext, trigger) {
+  if (!accountId || !personId) return;
+  const errorBox = $("editorErrorBox");
+  if (errorBox) errorBox.hidden = true;
+  if ((editState.covered_client_ids || []).length <= 1) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = "At least one covered client is required for an active relationship.";
+    }
+    return;
+  }
+  if (trigger) trigger.setAttribute("aria-disabled", "true");
+  try {
+    await api(`/api/accounts/${accountId}/remove-member`, {
+      method: "POST",
+      body: JSON.stringify({ person_id: personId })
+    });
+    await openAccountRecord(accountId, { returnContext });
+    await loadClients();
+    showReviewSuccess("Covered client removed.");
+  } catch (err) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = sanitizeUiErrorMessage(err.message, "Could not remove covered client.");
+    }
+  } finally {
+    if (trigger) trigger.removeAttribute("aria-disabled");
+  }
 }
 
 async function saveBillingRelationship(accountId, editState, returnContext) {
@@ -5387,6 +5762,7 @@ async function openPersonRecord(personId, options = {}) {
   const peopleBilledFor = data.people_billed_for || [];
   const invoices = data.invoices || [];
   const personName = fmt(data.person.display_name);
+  const futureRateDate = defaultFutureEffectiveDate();
 
   const deliveryLabels = { email: "Email", mail: "Mail", both: "Email and mail", unresolved: "Unresolved" };
   const activeSetups = billingSetup.filter(b => b.active);
@@ -5561,21 +5937,23 @@ async function openPersonRecord(personId, options = {}) {
       </section>
 
       <section class="client-section">
-        <h3>Rate Preferences</h3>
+        <h3>Client Rate</h3>
+        <div class="readonly-note">Client-specific rates apply through the existing Rate Card priority rules and only affect unapproved future sessions.</div>
         <h4>Individual Rate Overrides</h4>
         <div class="compact-list">${(data.active_rate_exceptions || []).map(r => `<div class="compact-list-item"><span>${personRateOverrideLine(r)}</span></div>`).join("") || "<span class='readonly-note'>Uses standard Rate Card. No client-specific override.</span>"}</div>
         <h4>Joint-Session Overrides</h4>
         <div class="compact-list">${(data.joint_rate_exceptions || []).map(r => `<div class="compact-list-item"><span>${personRateOverrideLine(r)} • With ${fmt(r.participant_names)}</span></div>`).join("") || "<span class='readonly-note'>No joint-session overrides.</span>"}</div>
-        <details>
-          <summary>Add Custom Rate</summary>
+        <details open>
+          <summary>Set Future Default Rate</summary>
           <div class="field-grid">
             <label class="field">Session type<select id="personRateSessionType">${billingTypeOptions("psychotherapy")}</select></label>
             <label class="field">Duration<select id="personRateDuration"><option value="30">30 minutes</option><option value="60" selected>60 minutes</option><option value="90">90 minutes</option><option value="120">120 minutes</option></select></label>
             <label class="field">Time category<select id="personRateTimeCategory">${optionSet(["standard","evening","weekend"], "standard")}</select></label>
             <label class="field">Amount<input id="personRateAmount" placeholder="350.00"></label>
-            <label class="field">Effective date<input id="personRateEffectiveFrom" type="date"></label>
+            <label class="field">Starts on<input id="personRateEffectiveFrom" type="date" value="${escapeAttr(futureRateDate)}" min="${escapeAttr(futureRateDate)}"></label>
           </div>
-          <div class="record-actions"><button id="savePersonRateRule" class="save">Save Client Rate Override</button></div>
+          <div id="personRateMessage" class="billing-setup-message"></div>
+          <div class="record-actions"><button id="savePersonRateRule" class="save">Save Future Client Rate</button></div>
         </details>
       </section>
 
@@ -5628,19 +6006,41 @@ async function openPersonRecord(personId, options = {}) {
     await loadPeople();
   };
   if ($("savePersonRateRule")) $("savePersonRateRule").onclick = async () => {
-    await api("/api/rate-rules", {
-      method: "POST",
-      body: JSON.stringify({
-        applies_to: "person",
-        person_id: personId,
-        billing_session_type: $("personRateSessionType").value,
-        duration_minutes: $("personRateDuration").value,
-        time_category: $("personRateTimeCategory").value,
-        amount: $("personRateAmount").value,
-        effective_from: $("personRateEffectiveFrom").value
-      })
-    });
-    await openPersonRecord(personId, { showAllSessions });
+    const btn = $("savePersonRateRule");
+    const message = $("personRateMessage");
+    if (btn.disabled) return;
+    btn.disabled = true;
+    if (message) {
+      message.textContent = "";
+      message.className = "billing-setup-message";
+    }
+    try {
+      await api("/api/rate-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          applies_to: "person",
+          person_id: personId,
+          billing_session_type: $("personRateSessionType").value,
+          duration_choice: $("personRateDuration").value,
+          appointment_status: "scheduled",
+          time_category: $("personRateTimeCategory").value,
+          amount: $("personRateAmount").value,
+          effective_from: $("personRateEffectiveFrom").value || defaultFutureEffectiveDate()
+        })
+      });
+      if (message) {
+        message.textContent = "Future client rate saved.";
+        message.className = "billing-setup-message success";
+      }
+      await openPersonRecord(personId, { showAllSessions });
+    } catch (err) {
+      if (message) {
+        message.textContent = sanitizeUiErrorMessage(err.message, "Could not save future client rate.");
+        message.className = "billing-setup-message error";
+      }
+    } finally {
+      btn.disabled = false;
+    }
   };
   if ($("savePersonAlias")) $("savePersonAlias").onclick = async () => {
     const rawAlias = $("personAliasInput").value.trim();

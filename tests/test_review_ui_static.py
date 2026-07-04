@@ -371,10 +371,15 @@ for (const [input, expected] of cases) {
         self.assertIn("Billing Setup", person_record)
         self.assertIn("Billing Relationships", person_record)
         self.assertIn("Sessions", person_record)
-        self.assertIn("Rate Preferences", person_record)
+        self.assertIn("Client Rate", person_record)
+        self.assertIn("only affect unapproved future sessions", person_record)
         self.assertIn("Individual Rate Overrides", person_record)
         self.assertIn("Joint-Session Overrides", person_record)
         self.assertIn("Uses standard Rate Card. No client-specific override.", person_record)
+        self.assertIn("Set Future Default Rate", person_record)
+        self.assertIn("defaultFutureEffectiveDate", person_record)
+        self.assertIn('applies_to: "person"', person_record)
+        self.assertIn('appointment_status: "scheduled"', person_record)
         self.assertIn("<details>", person_record)
         self.assertIn("<summary>Advanced</summary>", person_record)
         self.assertIn("Known Calendar Names", person_record)
@@ -745,13 +750,15 @@ for (const [input, expected] of cases) {
 
         self.assertIn('$("reviewOverlayContent")', js)
 
-    def test_review_js_has_save_and_next_button(self):
+    def test_review_overlay_footer_has_only_approve_and_exclude_actions(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
-        self.assertIn('id="saveNextBtn"', js)
-        self.assertIn('id="prevSessionBtn"', js)
-        self.assertIn("Save and next", js)
-        self.assertIn("Previous", js)
+        self.assertIn('id="approveBtn"', js)
+        self.assertIn('id="excludeBtn"', js)
+        self.assertNotIn('id="saveNextBtn"', js)
+        self.assertNotIn('id="prevSessionBtn"', js)
+        self.assertNotIn('id="duplicateBtn"', js)
+        self.assertNotIn('id="personalBtn"', js)
 
     def test_unresolved_client_and_payer_lock_later_steps(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -943,7 +950,10 @@ for (const [input, expected] of cases) {
         self.assertIn('Rolling 30 days', html)
         self.assertIn('Previous month', html)
         self.assertIn('id="sessionsReviewStatusFilter"', html)
-        self.assertIn('Needs classification / Send to Review', html)
+        self.assertIn('>All</option>', html)
+        self.assertIn('Needs Classification', html)
+        self.assertNotIn('Needs review</option>', html)
+        self.assertNotIn('Ready to approve', html)
         self.assertIn('id="sessionsPaymentStatusFilter"', html)
         self.assertIn('id="sessionsRows"', html)
         self.assertIn('id="sessionsPrevPage"', html)
@@ -963,14 +973,12 @@ for (const [input, expected] of cases) {
         self.assertIn("node.scrollTop = 0;", js)
         self.assertIn("resetReviewOverlayScroll();", js)
 
-    def test_send_to_review_button_for_candidate_only_records(self):
+    def test_review_overlay_does_not_show_send_to_review_footer_action(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
-        self.assertIn('id="sendToReviewBtn"', js)
-        self.assertIn("Send to Review", js)
+        self.assertNotIn('id="sendToReviewBtn"', js)
         self.assertIn("sendToReview", js)
         self.assertIn("/send-to-review", js)
-        self.assertIn("!isSession", js)
 
     def test_sessions_table_has_send_to_review_for_unclassified_candidate_only_rows(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -1014,6 +1022,8 @@ for (const [input, expected] of cases) {
         self.assertIn("r.display_name", js)
         self.assertIn("r.description", js)
         self.assertIn("Download CSV", js)
+        self.assertIn("generateReportsBtn", html)
+        self.assertIn("/api/reports/generate", js)
 
     def test_year_selector_uses_default_year(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -1057,6 +1067,56 @@ for (const [input, expected] of cases) {
         js = Path("app/jordana_invoice/static/review.js").read_text()
         self.assertIn('$("pageTitle").textContent = "Reports"', js)
         self.assertIn('document.title = "Jordana Billing - Reports"', js)
+
+    def test_reconciliation_page_is_reachable_and_month_scoped(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('id="reconciliationNav">Reconciliation</a>', html)
+        self.assertIn('id="reconciliationView" hidden', html)
+        self.assertIn('id="reconciliationMonth" type="month"', html)
+        self.assertIn('id="reconciliationDryRunBtn"', html)
+        self.assertIn('id="reconciliationApplyBtn" class="approve" disabled', html)
+        self.assertIn('document.getElementById("reconciliationNav").onclick', js)
+        self.assertIn('location.hash = "reconciliation";', js)
+        self.assertIn('"reconciliationView"', js)
+        self.assertIn('"reconciliationNav"', js)
+
+    def test_reconciliation_ui_uses_existing_reconcile_endpoints_and_requires_dry_run(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('/api/calendar-reconcile/dry-run', js)
+        self.assertIn('/api/calendar-reconcile/apply', js)
+        self.assertIn('confirm_apply: "APPLY_CALENDAR_RECONCILE"', js)
+        self.assertIn('state.reconciliation.dryRunResult = result;', js)
+        self.assertIn('if (!state.reconciliation.dryRunResult) return;', js)
+        self.assertIn('if (month !== state.reconciliation.reviewedMonth)', js)
+        self.assertIn('backup_path', js)
+
+    def test_reconciliation_prevents_double_submission_and_sanitizes_errors(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function runCalendarReconciliationDryRun()")
+        end = js.index("function renderReconciliationResult", start)
+        block = js[start:end]
+
+        self.assertIn("state.reconciliation.running", block)
+        self.assertIn("state.reconciliation.applying", block)
+        self.assertIn("setReconciliationPending(true)", block)
+        self.assertIn("sanitizeUiErrorMessage", block)
+        self.assertNotIn("alert(", block)
+
+    def test_reconciliation_results_show_required_buckets(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function renderReconciliationResult")
+        end = js.index("async function showPayments", start)
+        block = js[start:end]
+
+        self.assertIn("Missing Sessions", block)
+        self.assertIn("Extra Sessions", block)
+        self.assertIn("Possible Duplicates", block)
+        self.assertIn("Newer Edited Event Versions", block)
+        self.assertIn("Excluded or Non-Client Items Affecting Billing", block)
+        self.assertIn("Approved Records Requiring Manual Review", block)
 
     def _clients_html(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
@@ -1824,6 +1884,9 @@ class ReviewApprovalTests(unittest.TestCase):
         start = self.js.index("async function save(approve)")
         end = self.js.index("function collectSessionDraftValues", start)
         self.save_fn = self.js[start:end]
+        helper_start = self.js.index("function completeReviewOverlayAction")
+        helper_end = self.js.index("async function excludeSelectedCandidate", helper_start)
+        self.complete_fn = self.js[helper_start:helper_end]
 
     def test_approval_has_single_submit_guard(self):
         self.assertIn("approvalState", self.js)
@@ -1831,18 +1894,19 @@ class ReviewApprovalTests(unittest.TestCase):
 
     def test_approval_disables_button_during_request(self):
         self.assertIn("approvalState.submitting = true;", self.save_fn)
-        self.assertIn('reviewOverlayCtrl.beginPending(["approveBtn"]);', self.save_fn)
+        self.assertIn('reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn"]);', self.save_fn)
 
     def test_approval_closes_overlay_on_success(self):
-        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
+        self.assertIn("completeReviewOverlayAction();", self.save_fn)
+        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.complete_fn)
 
     def test_approval_clears_candidate_state_on_success(self):
-        self.assertIn("clearCandidate: true", self.save_fn)
+        self.assertIn("clearCandidate: true", self.complete_fn)
 
     def test_approval_restores_focus_on_success(self):
-        self.assertIn('document.querySelector("#candidateRows .review-btn")', self.save_fn)
-        self.assertIn("firstReviewBtn.focus()", self.save_fn)
-        self.assertIn('$("searchBox")?.focus()', self.save_fn)
+        self.assertIn('document.querySelector("#candidateRows .review-btn")', self.complete_fn)
+        self.assertIn("firstReviewBtn.focus()", self.complete_fn)
+        self.assertIn('$("searchBox")?.focus()', self.complete_fn)
 
     def test_approval_shows_success_banner(self):
         self.assertIn("showReviewSuccess", self.save_fn)
@@ -1859,9 +1923,9 @@ class ReviewApprovalTests(unittest.TestCase):
         self.assertIn("reviewOverlayCtrl.endPending()", self.save_fn)
 
     def test_approval_sanitizes_error_messages(self):
-        self.assertIn('msg.startsWith("Cannot approve")', self.save_fn)
         self.assertIn("sanitizeUiErrorMessage(msg", self.save_fn)
         self.assertIn("Could not approve session. Please check required fields and try again.", self.save_fn)
+        self.assertIn("showReviewActionError", self.save_fn)
 
     def test_session_save_failure_clears_saved_state(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -1884,7 +1948,8 @@ class ReviewApprovalTests(unittest.TestCase):
 
     def test_approval_success_closes_overlay_and_clears_candidate(self):
         """On success, overlay closes and candidate is cleared."""
-        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.save_fn)
+        self.assertIn("completeReviewOverlayAction();", self.save_fn)
+        self.assertIn("closeReviewOverlay({ clearCandidate: true, skipDirtyCheck: true });", self.complete_fn)
 
     def test_approval_success_prevents_resubmission(self):
         """Submit guard prevents double-submission during request."""
@@ -2102,6 +2167,13 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
     def test_preview_hides_delivery_method(self):
         self.assertNotIn("Delivery method", self.fn)
         self.assertNotIn("deliveryLabel", self.fn)
+
+    def test_preview_shows_duplicate_billing_warning_area(self):
+        self.assertIn("duplicate_warnings", self.fn)
+        self.assertIn("renderDuplicateBillingWarnings", self.fn)
+        self.assertIn("Possible duplicate billing.", self.fn)
+        self.assertIn("Nothing has been changed.", self.fn)
+        self.assertIn("duplicate-warning", self.css)
 
     def test_preview_does_not_render_old_html_invoice_visual(self):
         self.assertNotIn("invoice-preview-header", self.fn)

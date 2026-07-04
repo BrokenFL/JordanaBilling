@@ -394,12 +394,19 @@ Query parameters (all optional):
 - `invoice_date_from` / `invoice_date_to` — invoice date range (ISO date `YYYY-MM-DD`)
 - `billing_month` — filter by `YYYY-MM` billing month
 - `service_period_from` / `service_period_to` — billing period start/end range
-- `sort_by` — `invoice_date` (default), `invoice_number`, `total_cents`, `created_at`, or `bill_to_name`
+- `sort_by` — `invoice_date` (default), `billing_month`, `invoice_number`, `total_cents`, `created_at`, or `bill_to_name`
 - `sort_dir` — `desc` (default) or `asc`
 - `limit` — page size (default 50)
 - `offset` — pagination offset (default 0)
 
-**Response**: a paginated dict `{ items, total, limit, offset }`. Each item includes all invoice columns plus `current_bill_to_name`, `line_count`, `participants_display` (deduplicated), `paid_cents`, `balance_cents`, and `payment_status`.
+**Response**: a paginated dict `{ items, total, limit, offset, draft_month_totals }`. Each item includes all invoice columns plus `current_bill_to_name`, `line_count`, `participants_display` (deduplicated), `paid_cents`, `balance_cents`, and `payment_status`. `draft_month_totals` groups draft counts and total cents by billing month for the currently filtered invoice list.
+
+Before finalizing a draft, the preview response includes warning-only
+`duplicate_warnings` when included lines for the same Bill To look like possible
+duplicate billing: same date plus same/overlapping start time, or substantially
+matching participants, duration, and amount. The warning displays date, time,
+participants, duration, and amount. It never deletes, merges, excludes, or
+changes approved sessions.
 
 ### Print Preview (Draft Only, HTML)
 

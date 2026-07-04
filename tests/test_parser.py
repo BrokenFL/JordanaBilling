@@ -70,6 +70,39 @@ class ParserTests(unittest.TestCase):
         self.assertIn("participants", result.fields_requiring_review)
         self.assertIn("relationship_role", result.fields_requiring_review)
 
+    def test_unresolved_title_applies_duration_and_session_type_before_client_match(self):
+        result = parse_event(event("Mystery Client 90 House"))
+        self.assertEqual(result.classification, "unresolved")
+        self.assertEqual(result.proposed_client_name, "Mystery Client")
+        self.assertEqual(result.proposed_duration_minutes, 90)
+        self.assertEqual(result.duration_source, "title")
+        self.assertEqual(result.duration_choice, "90")
+        self.assertEqual(result.billing_session_type, "psychotherapy_house_call")
+        self.assertEqual(result.appointment_method, "office")
+
+    def test_unresolved_title_applies_weekend_and_evening_categories(self):
+        result = parse_event(
+            event(
+                "Mystery Client 60 Office",
+                "2026-06-20T20:00:00-04:00",
+                "2026-06-20T21:00:00-04:00",
+            )
+        )
+        self.assertEqual(result.classification, "unresolved")
+        self.assertTrue(result.is_weekend)
+        self.assertTrue(result.is_evening)
+        self.assertEqual(result.time_category, "weekend")
+        self.assertEqual(result.billing_session_type, "psychotherapy_weekend")
+
+    def test_status_title_applies_title_rules_without_client_match(self):
+        result = parse_event(event("Mystery Client 90 Office late cancel"))
+        self.assertEqual(result.classification, "late_cancellation")
+        self.assertEqual(result.appointment_status, "late_cancellation")
+        self.assertEqual(result.proposed_duration_minutes, 90)
+        self.assertEqual(result.duration_source, "title")
+        self.assertEqual(result.duration_choice, "90")
+        self.assertEqual(result.billing_session_type, "psychotherapy")
+
 
 if __name__ == "__main__":
     unittest.main()

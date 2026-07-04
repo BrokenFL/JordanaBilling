@@ -1,11 +1,12 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from jordana_invoice.db import connect, migrate_database
 from jordana_invoice.duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
-from jordana_invoice.importer import import_rows, replay_existing_raw_snapshots
+from jordana_invoice.importer import calendar_reconciliation_report, import_rows, replay_existing_raw_snapshots
 from jordana_invoice.util import now_iso, stable_hash
 
 
@@ -304,6 +305,70 @@ class CandidateIdentityTests(unittest.TestCase):
         self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 1)
         self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
         self.assertEqual(count(self.conn, "sessions"), 1)
+
+    def test_calendar_reconciliation_dry_run_reports_month_without_mutation(self):
+        import_rows(self.conn, [raw_row("orphan-month", event_id="event-orphan-month", fingerprint="")], "test")
+        self._delete_derived_calendar_rows()
+        before = snapshot_counts(self.conn)
+
+        report = calendar_reconciliation_report(self.conn, month="2026-06", apply=False)
+
+        self.assertEqual(snapshot_counts(self.conn), before)
+        self.assertEqual(report["mode"], "dry_run")
+        self.assertEqual(report["month"], "2026-06")
+        self.assertEqual(report["summary"]["sessions_created"], 1)
+        self.assertEqual(len(report["buckets"]["missing_sessions"]), 1)
+
+    def test_calendar_reconciliation_apply_reports_verified_backup_and_recovers(self):
+        import_rows(self.conn, [raw_row("orphan-report-apply", event_id="event-orphan-report-apply", fingerprint="")], "test")
+        self._delete_derived_calendar_rows()
+
+        report = calendar_reconciliation_report(self.conn, month="2026-06", apply=True)
+
+        self.assertEqual(report["mode"], "apply")
+        self.assertIsNotNone(report["summary"]["backup_path"])
+        self.assertTrue(Path(report["summary"]["backup_path"]).exists())
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+
+    def test_calendar_reconciliation_apply_stops_when_backup_verification_fails(self):
+        import_rows(self.conn, [raw_row("backup-fail", event_id="event-backup-fail", fingerprint="")], "test")
+        self._delete_derived_calendar_rows()
+
+        with patch("jordana_invoice.importer._verify_backup", side_effect=RuntimeError("backup failed")):
+            with self.assertRaises(RuntimeError):
+                calendar_reconciliation_report(self.conn, month="2026-06", apply=True)
+
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 1)
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 0)
+        self.assertEqual(count(self.conn, "sessions"), 0)
+
+    def test_calendar_reconciliation_dry_run_protects_approved_sessions(self):
+        import_rows(
+            self.conn,
+            [raw_row("approved-reconcile-old", event_id="event-approved-reconcile", fingerprint="", title="Robin Rivers | 60 | Office")],
+            "test",
+        )
+        session = self.conn.execute("SELECT id FROM sessions").fetchone()
+        self.conn.execute(
+            "UPDATE sessions SET review_status = 'approved', duration_minutes = 90 WHERE id = ?",
+            (session["id"],),
+        )
+        self.conn.commit()
+        import_rows(
+            self.conn,
+            [raw_row("approved-reconcile-new", event_id="event-approved-reconcile", fingerprint="", title="Casey North | 60 | Office", ingested_at="2026-06-29T12:10:00.000Z")],
+            "test",
+        )
+
+        report = calendar_reconciliation_report(self.conn, month="2026-06", apply=False)
+
+        self.assertGreaterEqual(report["summary"]["approved_sessions_protected"], 1)
+        self.assertTrue(report["buckets"]["approved_records_require_manual_review"])
+        preserved = self.conn.execute("SELECT review_status, raw_calendar_title, duration_minutes FROM sessions").fetchone()
+        self.assertEqual(preserved["review_status"], "approved")
+        self.assertEqual(preserved["raw_calendar_title"], "Robin Rivers | 60 | Office")
+        self.assertEqual(preserved["duration_minutes"], 90)
 
     def test_edited_event_refreshes_pending_session_to_newest_snapshot(self):
         import_rows(

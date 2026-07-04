@@ -313,24 +313,26 @@ When an equivalent active relationship exists, the backend returns a 409 respons
 
 The backend enforces this through `find_equivalent_account` and `create_account_or_return_existing` in `review_services.py`. Repeated Create clicks for the same client produce only one account.
 
-### Add Client
+### Add or Remove Covered Clients
 
-The former "Add Member" browser prompt has been replaced with an in-page client selector modal. The button label changed from "Add Member" to "Add Client".
+The account detail panel shows the current payer and covered clients. `Add
+Client` opens the existing in-page selector and persists the selected covered
+client immediately through `/api/account-members`; Jordana does not need to
+reselect or recreate the payer relationship. Remove buttons persist immediately
+through `/api/accounts/{id}/remove-member` where allowed. The UI and backend
+both refuse removal of the last covered client for an active relationship.
 
-The modal:
+The selector:
 - Searches existing clients through the `/api/people` API
 - Shows explicit selectable result rows
 - Existing members are visually marked "Already included" and are not clickable
-- The Add button remains disabled until a non-duplicate client is selected
-- Shows the selected client before saving
 - If a duplicate request reaches the backend, displays "This client is already included in this billing relationship." inline (no `alert()`)
-- The modal remains open after a duplicate validation error so the user can try again
 - Never silently chooses the first fuzzy match
-- Refreshes the relationship record after a successful add
+- Refreshes the relationship record after a successful add or remove
 
 ### Backend Change
 
-`add_account_member` now checks for existing membership before inserting. If the person is already a member of the account, it raises `ValueError("This client is already included in this billing relationship.")` instead of silently succeeding via `INSERT OR IGNORE`. The API endpoint returns this as a 400 error with a clear message.
+`add_account_member` checks for existing membership before inserting. If the person is already a member of the account, it raises `ValueError("This client is already included in this billing relationship.")` instead of silently succeeding via `INSERT OR IGNORE`. `remove_account_member` refuses to remove the final covered client. The API endpoints return these as 400 errors with clear messages.
 
 `ensure_account_member` (used by `save_interpretation`) remains idempotent and unchanged.
 

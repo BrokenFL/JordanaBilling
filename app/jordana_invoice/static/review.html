@@ -14,6 +14,7 @@
         <nav>
           <a class="active" href="/review" id="reviewNav">Review Queue <span id="navNeeds" class="count">0</span></a>
           <a href="#" id="calendarImportNav">Calendar Import</a>
+          <a href="#" id="reconciliationNav">Reconciliation</a>
           <a href="#" id="clientsNav">Billing Relationships</a>
           <a href="#" id="peopleNav">Clients</a>
           <a href="#" id="rateCardNav">Rate Card</a>
@@ -254,6 +255,25 @@
           </div>
         </section>
 
+        <section class="settings-view" id="reconciliationView" hidden>
+          <div class="crm-header">
+            <div><h2>Reconciliation</h2><p>Recover eligible raw calendar rows through the existing calendar-reconcile workflow.</p></div>
+          </div>
+          <section class="settings-card reconciliation-card">
+            <div class="crm-tools reconciliation-toolbar">
+              <label class="field inline-field">Month<input id="reconciliationMonth" type="month" /></label>
+              <button id="reconciliationDryRunBtn" class="save">Dry Run</button>
+              <button id="reconciliationApplyBtn" class="approve" disabled>Apply Safe Recovery</button>
+            </div>
+            <div class="help">Safe recovery may create missing pending review items and refresh pending records. Approved sessions, finalized invoices, payments, and raw snapshots are not silently changed.</div>
+            <div id="reconciliationMessage" class="settings-message" role="status"></div>
+            <div id="reconciliationError" class="reports-error" hidden></div>
+          </section>
+          <section class="settings-card reconciliation-results" id="reconciliationResults">
+            <div class="empty-state">Run a dry run to review missing sessions, duplicates, edited versions, exclusions, and protected approved records.</div>
+          </section>
+        </section>
+
         <section class="crm-view" id="clientsView" hidden>
           <div class="crm-header">
             <div><h2>Billing Relationships</h2><p>Who receives invoices and who they pay for, including shared billing groups.</p></div>
@@ -297,13 +317,8 @@
                 <option value="all">All dates</option>
               </select>
               <select id="sessionsReviewStatusFilter">
-                <option value="">All review statuses</option>
-                <option value="needs_classification">Needs classification / Send to Review</option>
-                <option value="needs_review">Needs review</option>
-                <option value="needs_rate">Needs rate</option>
-                <option value="ready_for_approval">Ready to approve</option>
-                <option value="approved">Approved</option>
-                <option value="excluded">Excluded</option>
+                <option value="">All</option>
+                <option value="needs_classification">Needs Classification</option>
               </select>
               <select id="sessionsPaymentStatusFilter">
                 <option value="">All payment statuses</option>
@@ -329,6 +344,14 @@
               <select id="invoiceStatusFilter"><option value="">All statuses</option><option value="draft">Drafts</option><option value="finalized">Finalized</option><option value="void">Void</option></select>
               <select id="invoicePaymentStatusFilter"><option value="">All payment statuses</option><option value="unpaid">Unpaid</option><option value="partially_paid">Partially Paid</option><option value="paid">Paid</option><option value="void">Void</option></select>
               <select id="invoiceBillToFilter"><option value="">All Bill To</option></select>
+              <label class="field inline-field">Billing month<input id="invoiceDraftMonthFilter" type="month" /></label>
+              <select id="invoiceSortFilter">
+                <option value="invoice_date:desc">Newest invoice date</option>
+                <option value="billing_month:desc">Billing month newest</option>
+                <option value="billing_month:asc">Billing month oldest</option>
+                <option value="bill_to_name:asc">Bill To A-Z</option>
+                <option value="bill_to_name:desc">Bill To Z-A</option>
+              </select>
               <select id="invoiceDateFilter">
                 <option value="">All dates</option>
                 <option value="this_month">This month</option>
@@ -352,6 +375,7 @@
             <label class="field">From<input id="invoiceDateFrom" type="date"></label>
             <label class="field">To<input id="invoiceDateTo" type="date"></label>
           </div>
+          <div id="draftMonthTotals" class="draft-month-summary" aria-live="polite"></div>
           <div class="invoice-layout">
             <section>
               <table class="review-table invoice-list-table">
@@ -418,7 +442,9 @@
             <label class="field">Year
               <select id="reportsYearSelect"></select>
             </label>
+            <button id="generateReportsBtn" class="save">Generate Reports</button>
           </div>
+          <div id="reportsRefreshMessage" class="settings-message" role="status"></div>
           <div class="reports-error" id="reportsError" hidden></div>
           <div class="report-card-grid" id="reportCardGrid"></div>
           <div class="reports-privacy-note">

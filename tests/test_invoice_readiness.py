@@ -72,12 +72,61 @@ class InvoiceReadinessTests(unittest.TestCase):
         })
         return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
 
+    def _move_session(self, session_id, start_at, end_at):
+        self.conn.execute(
+            "UPDATE sessions SET start_at = ?, end_at = ?, session_date = ? WHERE id = ?",
+            (start_at, end_at, start_at[:10], session_id),
+        )
+        self.conn.commit()
+        return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+
     def _draft(self, sessions):
         return create_invoice_draft(self.conn, {
             "bill_to_party_id": self.party["billing_party_id"],
             "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
             "invoice_date": "2026-05-31", "session_ids": [s["id"] for s in sessions],
         })
+
+    def test_preview_finalization_warns_about_same_time_possible_duplicate(self):
+        first = self._move_session(
+            self._approved_session("dup-a")["id"],
+            "2026-05-20T10:00:00-04:00",
+            "2026-05-20T11:00:00-04:00",
+        )
+        second = self._move_session(
+            self._approved_session("dup-b")["id"],
+            "2026-05-20T10:00:00-04:00",
+            "2026-05-20T11:00:00-04:00",
+        )
+        draft = self._draft([first, second])
+
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+
+        warnings = preview["duplicate_warnings"]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("same start time", warnings[0]["reason"])
+        self.assertEqual(warnings[0]["date"], "2026-05-20")
+        self.assertEqual(warnings[0]["sessions"][0]["time"], "10:00-11:00")
+        self.assertEqual(warnings[0]["sessions"][0]["participants"], "Dana Ready")
+        self.assertEqual(warnings[0]["sessions"][0]["duration_minutes"], 60)
+        self.assertEqual(warnings[0]["sessions"][0]["amount_cents"], 15000)
+
+    def test_preview_finalization_allows_clear_same_day_different_time_sessions(self):
+        first = self._move_session(
+            self._approved_session("clear-a")["id"],
+            "2026-05-21T09:00:00-04:00",
+            "2026-05-21T10:00:00-04:00",
+        )
+        second = self._move_session(
+            self._approved_session("clear-b", amount="175.00")["id"],
+            "2026-05-21T14:00:00-04:00",
+            "2026-05-21T15:00:00-04:00",
+        )
+        draft = self._draft([first, second])
+
+        preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+
+        self.assertEqual(preview["duplicate_warnings"], [])
 
     # 1. Valid invoice can preview and finalize
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
