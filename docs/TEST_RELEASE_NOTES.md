@@ -1,19 +1,19 @@
-# Jordana Billing v0.1.0-test.9 Release Notes
+# Jordana Billing v0.1.0-test.10 Release Notes
 
 ## Release Status
 
 This private release is approved for a supervised Jordana beta using June invoices. It remains a controlled pilot/test release and is not represented as final production software.
 
-Use the exact `v0.1.0-test.9` artifact published on GitHub. The release manifest inside the DMG records the source commit, build ID, exact wheel path, and checksum facts.
+Use the exact `v0.1.0-test.10` artifact published on GitHub. The release manifest inside the DMG records the source commit, build ID, exact wheel path, and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.10-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.9
-- **Python package/application version:** 0.1.0.post9
+- **Release label:** v0.1.0-test.10
+- **Python package/application version:** 0.1.0.post10
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -25,20 +25,27 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post9` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post10` app wheel plus pinned production dependencies
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-## Superseded Prior Release
+## Superseded Prior Releases
 
-`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that an older installed Python runtime could survive because the prior installer requested the shared package version `0.1.0`. test.9 supersedes test.8 for installation and update testing.
+`v0.1.0-test.9` was built in two local attempts from commits `4f0e993f248e` and `ba815ec81459`. Both local DMGs were stale — they did not match the intended final repository state and were never published to GitHub. test.10 supersedes both stale test.9 artifacts.
 
-`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.9 as the current built and distributable controlled-beta release.
+`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that an older installed Python runtime could survive because the prior installer requested the shared package version `0.1.0`. test.9 and test.10 supersede test.8 for installation and update testing.
+
+`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.10 as the current built and distributable controlled-beta release.
 
 The prior verified controlled-beta release was `v0.1.0-test.6` from commit `0dec58b`. An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. Do not use it.
 
-## Bug Fixes In test.9
+## Bug Fixes In test.10
+
+1. **Composite cursor ordering fix** — sync cursor comparison now correctly handles rows with equal `ingested_at` values by using `snapshot_key` as a tiebreaker, preventing skipped rows during incremental sync.
+2. **Flaky test fix** — `test_07_health_endpoint` in `test_clean_install.py` now includes a kill fallback when the server process does not terminate within the timeout.
+
+## Bug Fixes Inherited from test.9
 
 1. **In-app Quit** — the sidebar includes a visible Quit action. It stops the sync runtime and local server safely and treats repeated quit requests as idempotent.
 2. **Installer stale-runtime hardening** — the installer reads the exact package version and wheel path from `release_manifest.json`, force-reinstalls that wheel from the shipped wheelhouse, verifies payload and installed files against manifest checksums, verifies installed package build info, launches the app, and confirms the running server reports the expected build ID.
@@ -48,15 +55,18 @@ The prior verified controlled-beta release was `v0.1.0-test.6` from commit `0dec
 
 ## Acceptance Completed
 
-The test.9 artifact must be locally built, checksum-verified, privacy-scanned,
-installed over an older build, and then published only after the running server
-reports the expected build ID.
+The test.10 artifact was locally built, checksum-verified, privacy-scanned,
+installed over an older build (test.8), and verified with the running server
+reporting the expected build ID.
 
 Confirmed:
 
-1. Focused Quit, installer, build-identity, report-filtering, and June reconciliation tests pass.
-2. Browser verification confirms Reconciliation dry-run/apply and Quit on a temporary database.
-3. Full unit suite, acceptance import, privacy checks, Git safety checks, package verification, and upgrade-over-old-build verification are required before publication.
+1. Focused Quit, installer, build-identity, sync/cursor, and packaging tests pass.
+2. Full unit suite (2759 tests, 0 failures, 11 skipped) passes.
+3. Acceptance import, privacy checks, Git safety checks, package verification, and upgrade-over-old-build verification all pass.
+4. In-app Quit verified: server shuts down cleanly with no orphaned process.
+5. Apps Script Version 18 composite cursor compatibility verified (unit tests and Apps Script helper tests pass).
+6. Installed server reports build ID `v0.1.0-test.10-c6bf2a5551ba`.
 
 Prior test.6 installed-smoke results remain the latest recorded brooketest
 installation evidence: existing private configuration and SQLite data were

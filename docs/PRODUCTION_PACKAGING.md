@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.9
+### Current Test Build — v0.1.0-test.10
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.9
-- **Python package/application version:** 0.1.0.post9
+- **Release label:** v0.1.0-test.10
+- **Python package/application version:** 0.1.0.post10
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -42,13 +42,18 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.9 is the first test build after the stale-runtime installer incident. It
+test.10 is the current test build after the stale-runtime installer incident. It
 uses a unique Python package version and embeds a build ID derived from the
 release label plus Git commit. The installer verifies the payload, installed
 files, installed package identity, and running server build ID before reporting
-success.
+success. test.10 also includes a composite cursor ordering fix for sync.
 
-### Bug Fixes In test.9
+### Bug Fixes In test.10
+
+1. **Composite cursor ordering fix** — sync cursor comparison now correctly handles rows with equal `ingested_at` values by using `snapshot_key` as a tiebreaker.
+2. **Flaky test fix** — `test_07_health_endpoint` now includes a kill fallback on timeout.
+
+### Bug Fixes Inherited from test.9
 
 1. **In-app Quit** — the sidebar includes a visible Quit action. The token-protected endpoint stops sync work, shuts down the local server, and is idempotent for repeated requests.
 2. **Installer stale-runtime hardening** — installation reads the exact wheel path and package version from `release_manifest.json`, uses `pip --force-reinstall` from the shipped wheelhouse, verifies payload and installed files against manifest checksums, imports the installed package build info, launches the installed app, and confirms `/api/build-info` reports the expected build ID.
@@ -61,11 +66,11 @@ success.
 `v0.1.0-test.8` was built from commit `d97d6ba` with Python 3.14.4. Its DMG
 payload was correct, but a supervised installation exposed that an older
 private runtime could remain installed because the prior installer requested
-the shared package version `0.1.0`. test.9 supersedes test.8 for installation
+the shared package version `0.1.0`. test.9 and test.10 supersede test.8 for installation
 and update testing.
 
 `v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
-never published. It is superseded by test.9 as the current built and
+never published. It is superseded by test.10 as the current built and
 distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
@@ -80,8 +85,8 @@ replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, and test.8 builds remain historically
-accurate for the periods in which they were the current builds. test.9
-supersedes test.8 for installation and stale-runtime verification.
+accurate for the periods in which they were the current builds. test.10
+supersedes test.9 and test.8 for installation and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
@@ -171,10 +176,10 @@ version as well as a release label. Do not ship multiple beta installers with
 the same package version.
 
 ```bash
-scripts/build_release.sh --release-label v0.1.0-test.9
+scripts/build_release.sh --release-label v0.1.0-test.10
 ```
 
-`JORDANA_RELEASE_LABEL=v0.1.0-test.9 scripts/build_release.sh` is equivalent.
+`JORDANA_RELEASE_LABEL=v0.1.0-test.10 scripts/build_release.sh` is equivalent.
 Release labels must be simple path-safe values such as `v0.1.0-test.8` or
 `v0.1.0-rc.1`; blank, slash-containing, traversal, or shell-unsafe labels are
 rejected.
@@ -191,8 +196,8 @@ artifact filename while `application_version` remains the package version from
 `pyproject.toml`:
 
 ```text
-build/release/JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
-build/release/JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg.sha256
+build/release/JordanaBilling-v0.1.0-test.10-<commit>-macos-arm64.dmg
+build/release/JordanaBilling-v0.1.0-test.10-<commit>-macos-arm64.dmg.sha256
 ```
 
 The artifact is inspected during build for forbidden private files such as

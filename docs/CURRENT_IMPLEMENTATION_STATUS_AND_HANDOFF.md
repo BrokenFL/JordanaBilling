@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,729 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.9`
+- **Current test release target:** `v0.1.0-test.10`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post9`
+- **Current package/application version:** `0.1.0.post10`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.8` is superseded by test.9 for installation and update testing
+- **Prior test release:** `v0.1.0-test.8` is superseded by test.10 for installation and update testing
 
 ## Architecture
 
@@ -110,14 +110,14 @@ This is not yet a final production declaration. Brooke should remain available d
 The current controlled-beta release target is:
 
 ```text
-JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.10-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.9`
-- Python package/application version: `0.1.0.post9`
+- Release label: `v0.1.0-test.10`
+- Python package/application version: `0.1.0.post10`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -127,11 +127,16 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post9` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post10` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing passed for June Reconciliation and in-app Quit on a sanitized temporary database
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, and June reconciliation
 
-### Bug Fixes In test.9
+### Bug Fixes In test.10
+
+1. **Composite cursor ordering fix** — sync cursor comparison now correctly handles rows with equal `ingested_at` values by using `snapshot_key` as a tiebreaker.
+2. **Flaky test fix** — `test_07_health_endpoint` now includes a kill fallback on timeout.
+
+### Bug Fixes Inherited from test.9
 
 1. **In-app Quit** — visible sidebar Quit safely stops sync work and the local server.
 2. **Installer stale-runtime hardening** — installation reads and force-reinstalls the exact app wheel from the manifest, verifies payload and installed file checksums, imports installed build info, launches the app, and confirms the running server build ID.
@@ -141,9 +146,9 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 
 ### Prior Test Releases
 
-`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that stale installed runtime code could remain when multiple releases shared package version `0.1.0`. test.9 supersedes test.8 for installation and update testing.
+`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that stale installed runtime code could remain when multiple releases shared package version `0.1.0`. test.10 supersedes test.8 for installation and update testing.
 
-`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.9 as the current controlled-beta release target.
+`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.10 as the current controlled-beta release target.
 
 The prior installed-smoke baseline remains `v0.1.0-test.6` from commit `0dec58b6bf5ab35e2d48600b57fec83a477e304d`, which preserved existing private configuration and SQLite data during the brooketest upgrade installation and passed the major Billing Relationship, filing-owner, delivery-contact, invoice, and data-preservation workflows.
 
@@ -151,7 +156,7 @@ An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rej
 
 ## Controlled Beta Decision
 
-The test.9 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
+The test.10 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
 
 1. Brooke has a verified backup of the source operational database.
 2. The private `.env` and SQLite database are transferred separately through a direct or encrypted method.
