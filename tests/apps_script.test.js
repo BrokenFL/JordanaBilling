@@ -96,4 +96,70 @@ assert.deepStrictEqual(
   ["older-row", "another-row-same-time", "partial-run-row"]
 );
 
+const sharedTimestamp = "2026-06-22T02:03:00.000Z";
+const sharedTimestampRows = Array.from({ length: 625 }, (_, index) => ({
+  ingested_at: sharedTimestamp,
+  snapshot_key: `same-time-${String(index).padStart(4, "0")}`,
+  run_id: "shared-timestamp-run",
+}));
+let cursor = script.syncCursorFromPayload_({
+  after_ingested_at: "1970-01-01T00:00:00.000Z",
+});
+const fetchedKeys = [];
+while (true) {
+  const remainingRows = script.syncRows_(
+    sharedTimestampRows,
+    cursor.ingested_at,
+    cursor.snapshot_key
+  );
+  const page = remainingRows.slice(0, 500);
+  fetchedKeys.push(...page.map((syncRow) => syncRow.snapshot_key));
+  cursor = script.syncNextCursor_(page, cursor);
+  if (remainingRows.length <= page.length) {
+    break;
+  }
+}
+assert.strictEqual(fetchedKeys.length, sharedTimestampRows.length);
+assert.strictEqual(new Set(fetchedKeys).size, sharedTimestampRows.length);
+assert.deepStrictEqual(
+  fetchedKeys,
+  sharedTimestampRows.map((syncRow) => syncRow.snapshot_key)
+);
+assert.strictEqual(cursor.ingested_at, sharedTimestamp);
+assert.strictEqual(cursor.snapshot_key, "same-time-0624");
+
+const legacyTimestampOnlyRows = script.syncRows_(
+  [
+    {
+      ingested_at: sharedTimestamp,
+      snapshot_key: "same-time-a",
+    },
+    {
+      ingested_at: sharedTimestamp,
+      snapshot_key: "same-time-b",
+    },
+    {
+      ingested_at: "2026-06-22T02:04:00.000Z",
+      snapshot_key: "later-row",
+    },
+  ],
+  sharedTimestamp
+);
+assert.deepStrictEqual(
+  legacyTimestampOnlyRows.map((syncRow) => syncRow.snapshot_key),
+  ["same-time-a", "same-time-b", "later-row"]
+);
+
+const pageCursor = script.syncNextCursor_(
+  [
+    {
+      ingested_at: sharedTimestamp,
+      snapshot_key: "cursor-key",
+    },
+  ],
+  { ingested_at: "1970-01-01T00:00:00.000Z", snapshot_key: "" }
+);
+assert.strictEqual(pageCursor.ingested_at, sharedTimestamp);
+assert.strictEqual(pageCursor.snapshot_key, "cursor-key");
+
 console.log("Apps Script helper tests passed");

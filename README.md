@@ -133,7 +133,9 @@ PYTHONPATH=app .venv/bin/python -m jordana_invoice sync --full
 `sync --full` asks for all available raw staged rows but still does not duplicate
 snapshots because `snapshot_key` is unique locally. Successful syncs store a
 durable cursor only after fetched rows, normalization, review updates, and
-report writes all succeed.
+report writes all succeed. The Apps Script sync endpoint paginates with the
+composite cursor `(ingested_at, snapshot_key)` so a large batch of Sheet rows
+sharing the same ingestion timestamp is not skipped at a page boundary.
 
 When the local review app launches, it opens normally and then starts the same
 intelligent sync in the background. A first installation therefore performs a

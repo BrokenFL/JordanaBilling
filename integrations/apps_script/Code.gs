@@ -3,6 +3,8 @@ const RUN_LOG_SHEET_NAME = "Run_Log";
 const INGEST_API_KEY_PROPERTY = "INGEST_API_KEY";
 const SPREADSHEET_ID_PROPERTY = "JORDANA_SPREADSHEET_ID";
 const DEFAULT_SYNC_LIMIT = 500;
+const EMPTY_SYNC_CURSOR = "1970-01-01T00:00:00.000Z";
+const EMPTY_SNAPSHOT_KEY = "";
 const BACKFILL_CAPTURE_WINDOW = "backfill_2026_06_01_through_2026_06_14";
 const BACKFILL_CAPTURE_WINDOW_ALIASES = ["june_2026_backfill"];
 const NOOP_CAPTURE_WINDOWS = ["june_2026_backfill_noop"];
@@ -228,12 +230,12 @@ function handleAggregateRunComplete_(sheet, payload, runId) {
 
 function handleSyncRequest_(payload) {
   const limit = Math.max(1, Math.min(numberValue_(payload.limit) || DEFAULT_SYNC_LIMIT, 1000));
-  const after = String(payload.after_ingested_at || "1970-01-01T00:00:00.000Z");
+  const cursor = syncCursorFromPayload_(payload);
   const spreadsheet = spreadsheet_();
   const rawSheet = ensureSheet_(spreadsheet, RAW_SHEET_NAME, RAW_HEADERS);
-  const rows = syncRows_(sheetObjects_(rawSheet, RAW_HEADERS), after);
+  const rows = syncRows_(sheetObjects_(rawSheet, RAW_HEADERS), cursor.ingested_at, cursor.snapshot_key);
   const page = rows.slice(0, limit);
-  const nextCursor = page.length ? String(page[page.length - 1].ingested_at || after) : after;
+  const nextCursor = syncNextCursor_(page, cursor);
   return {
     ok: true,
     record_type: "sync_response",
@@ -244,13 +246,47 @@ function handleSyncRequest_(payload) {
   };
 }
 
-function syncRows_(rawRows, after) {
+function syncCursorFromPayload_(payload) {
+  return {
+    ingested_at: String((payload && payload.after_ingested_at) || EMPTY_SYNC_CURSOR),
+    snapshot_key: String((payload && payload.after_snapshot_key) || EMPTY_SNAPSHOT_KEY),
+  };
+}
+
+function syncNextCursor_(page, fallbackCursor) {
+  if (!page.length) {
+    return {
+      ingested_at: String(fallbackCursor.ingested_at || EMPTY_SYNC_CURSOR),
+      snapshot_key: String(fallbackCursor.snapshot_key || EMPTY_SNAPSHOT_KEY),
+    };
+  }
+  const row = page[page.length - 1];
+  return {
+    ingested_at: String(row.ingested_at || EMPTY_SYNC_CURSOR),
+    snapshot_key: String(row.snapshot_key || EMPTY_SNAPSHOT_KEY),
+  };
+}
+
+function syncRows_(rawRows, afterIngestedAt, afterSnapshotKey) {
+  const cursor = {
+    ingested_at: String(afterIngestedAt || EMPTY_SYNC_CURSOR),
+    snapshot_key: String(afterSnapshotKey || EMPTY_SNAPSHOT_KEY),
+  };
   return rawRows
-    .filter((row) => String(row.ingested_at || "") > after)
+    .filter((row) => isRowAfterCursor_(row, cursor))
     .sort((a, b) => {
       const byTime = String(a.ingested_at || "").localeCompare(String(b.ingested_at || ""));
       return byTime || String(a.snapshot_key || "").localeCompare(String(b.snapshot_key || ""));
     });
+}
+
+function isRowAfterCursor_(row, cursor) {
+  const ingestedAt = String(row.ingested_at || "");
+  const snapshotKey = String(row.snapshot_key || "");
+  return (
+    ingestedAt > cursor.ingested_at ||
+    (ingestedAt === cursor.ingested_at && snapshotKey > cursor.snapshot_key)
+  );
 }
 
 function rawRow_(payload, event, index, ingestedAt) {
@@ -480,6 +516,9 @@ if (typeof module !== "undefined") {
     handleAggregateRunComplete_,
     runStatus_,
     rawRow_,
+    syncCursorFromPayload_,
+    syncNextCursor_,
     syncRows_,
+    isRowAfterCursor_,
   };
 }

@@ -55,6 +55,22 @@ It reads deployment-specific values from Script Properties:
 
 The API key must not be hardcoded in Apps Script source. The spreadsheet ID should point to the existing production spreadsheet; do not create a replacement spreadsheet.
 
+The sync endpoint returns `Raw_Event_Snapshots` in `(ingested_at, snapshot_key)`
+order. Pagination must use both `after_ingested_at` and `after_snapshot_key`:
+a row is included when its `ingested_at` is greater than the cursor timestamp,
+or when its `ingested_at` equals the cursor timestamp and its `snapshot_key` is
+greater than the cursor snapshot key. This prevents a 500-row page boundary
+from skipping the rest of a large batch that shares one ingestion timestamp.
+Timestamp-only cursors remain accepted for older stored sync state; duplicate
+same-timestamp rows are harmless because local SQLite keeps `snapshot_key`
+unique.
+
+To redeploy the same Web App URL after editing `Code.gs`, open the existing
+Apps Script project, choose **Deploy > Manage deployments**, edit the current
+Web App deployment, select **New version**, and deploy. Do not create a new
+deployment, replace Script Properties, rotate the ingest key, or change the
+spreadsheet ID unless that is the explicit maintenance task.
+
 ## Local Configuration
 
 The ignored root `.env` remains the administrative recovery record. It stores the active sync values and the pending rotation values needed to update the same integration later.
@@ -68,6 +84,40 @@ scripts/configure_apps_script.py
 ```
 
 `validate_calendar_integration_config.py` prints only whether required values are present. `generate_calendar_shortcut_specs.py` writes live, secret-bearing Shortcut payload specs to ignored `data/private/shortcut-build/`. `configure_apps_script.py` reports the exact missing local admin values or manual deployment steps without printing secrets.
+
+After redeploying Apps Script, verify sync against a copied or temporary
+database before touching operational data:
+
+```bash
+tmpdir="$(mktemp -d)"
+tmpdb="$tmpdir/jordana-sync-verify.sqlite3"
+tmpenv="$tmpdir/.env"
+cp .env "$tmpenv"
+python3 - "$tmpenv" "$tmpdb" "$tmpdir/Reports" <<'PY'
+from pathlib import Path
+import sys
+
+env_path = Path(sys.argv[1])
+db_path = sys.argv[2]
+reports_dir = sys.argv[3]
+lines = []
+for line in env_path.read_text(encoding="utf-8").splitlines():
+    if line.startswith("JORDANA_DATABASE_PATH=") or line.startswith("JORDANA_REPORTS_DIR="):
+        continue
+    lines.append(line)
+lines.append(f"JORDANA_DATABASE_PATH={db_path}")
+lines.append(f"JORDANA_REPORTS_DIR={reports_dir}")
+env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+PYTHONPATH=app python3 -m jordana_invoice --db "$tmpdb" init-db
+PYTHONPATH=app python3 -m jordana_invoice sync --full --env "$tmpenv"
+sqlite3 "$tmpdb" "SELECT COUNT(*) AS rows, COUNT(DISTINCT snapshot_key) AS distinct_snapshot_keys FROM raw_calendar_snapshots;"
+```
+
+The two counts must match, and the row count should match the
+`Raw_Event_Snapshots` data rows in the Google Sheet, excluding the header. Once
+that copied-database check is good, a normal app launch or `sync` run can update
+the installed SQLite database without duplicating existing snapshots.
 
 ## Shortcut Status
 
