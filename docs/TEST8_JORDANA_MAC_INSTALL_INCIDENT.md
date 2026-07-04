@@ -126,12 +126,27 @@ Create an automated or scripted acceptance scenario with these conditions:
 
 This regression must run against a temporary or sanitized database, never the operational SQLite database.
 
+## Beta UX Follow-Up: Explicit Quit Control
+
+During the Jordana beta, closing the browser window did not make it clear whether the local Jordana Billing server had actually stopped. The app was not obvious in the normal app-switching or Dock workflow, which forced Terminal use to stop the process before maintenance.
+
+Before the next release:
+
+1. Add a visible **Quit Jordana Billing** control inside the application UI.
+2. Add a normal macOS **Jordana Billing → Quit Jordana Billing** menu item with the standard `Command-Q` shortcut when the native launcher is active.
+3. The quit action must stop only the current user's verified Jordana Billing server process, close the launcher cleanly, and never kill an unrelated process using port `8765`.
+4. Closing a browser tab or window must not be described as quitting the app unless the server is actually stopped.
+5. Add a clean shutdown acceptance test confirming the port is released, the database remains intact, and relaunch works normally.
+
+Until that control is implemented, supervised support may stop the verified Jordana Billing process from Terminal before maintenance or manual report regeneration.
+
 ## Current Classification
 
 - test.8 release artifact: verified and usable for the current controlled installation.
 - Jordana's current repaired installation: operational.
 - Database/config preservation: passed during this supervised update.
 - GUI same-version update reliability: unresolved packaging defect and a blocker for claiming final production-grade unattended updates.
+- Missing explicit quit control: confirmed beta UX issue.
 - Full clean-Mac and restart acceptance evidence: still incomplete.
 
 ## Privacy
