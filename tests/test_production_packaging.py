@@ -289,10 +289,31 @@ class NativeSetupWizardContractTest(unittest.TestCase):
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
         self.assertIn('ditto --norsrc "$SETUP_APP" "$DMG_ROOT/Install Jordana Billing.app"', builder)
         self.assertIn('mv "$RELEASE_DIR" "$PAYLOAD_DIR"', builder)
+        self.assertIn('sign_and_notarize_release.sh', builder)
         self.assertIn("clean_and_sign_app", builder)
         self.assertIn("codesign --verify --deep --strict", builder)
         self.assertIn("The release payload is embedded inside the installer app.", builder)
         self.assertNotIn('PAYLOAD_DIR="$DMG_ROOT/ReleasePayload"', builder)
+
+    def test_signing_notarization_script_requires_local_credentials(self) -> None:
+        script = PROJECT_DIR / "scripts" / "sign_and_notarize_release.sh"
+        source = script.read_text(encoding="utf-8")
+        self.assertIn("JORDANA_CODESIGN_IDENTITY", source)
+        self.assertIn("JORDANA_NOTARYTOOL_PROFILE", source)
+        self.assertIn("xcrun notarytool submit", source)
+        self.assertIn("xcrun stapler staple", source)
+        self.assertIn("codesign --verify --deep --strict --verbose=2", source)
+        self.assertIn("spctl --assess", source)
+        self.assertIn("hdiutil verify", source)
+        self.assertNotIn("APPLE_ID", source)
+        self.assertNotIn("APP_SPECIFIC_PASSWORD", source)
+        result = subprocess.run(
+            ["bash", str(script), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("JORDANA_NOTARYTOOL_PROFILE", result.stdout)
 
     def test_checksum_generation_rejects_absolute_paths(self) -> None:
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")
@@ -640,6 +661,7 @@ class ReleaseArtifactBuildSmokeTest(unittest.TestCase):
             "scripts/create_private_config.sh",
             "scripts/install_release.sh",
             "scripts/launch_installed_app.sh",
+            "scripts/sign_and_notarize_release.sh",
             "scripts/update_release.sh",
             "scripts/verify_installation.sh",
         ]:

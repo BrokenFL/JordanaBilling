@@ -192,6 +192,41 @@ For paid at session:
 
 After success, stale state clears, the overlay closes, the item refreshes or is removed, focus is restored, and confirmation appears. On genuine failure, the overlay remains open and controls re-enable.
 
+## Return To Review For Approved Sessions
+
+Approved sessions remain protected from casual edits. When an approved session
+was approved with the wrong Participants, Bill To, Billing Relationship,
+duration, session type, rate, payment status, or other review value, the
+approved-session history views expose a guarded **Return to Review** action.
+The visible button label is **Edit Session** because the user intent is to fix
+that appointment; internally it uses the same return-to-review transition.
+
+This is not a destructive unapprove shortcut. For an eligible unfinalized,
+unsettled session, it records a system audit entry and moves only the selected
+session back to `needs_review` without requiring a typed correction reason. The
+current Participants, Bill To, Billing Relationship, duration, session type,
+time category, approved rate, and payment status remain stored as the starting
+point for correction. Jordana must review and approve the session again before
+it can be billed.
+
+Eligibility is intentionally narrow:
+
+- A finalized invoice containing the session blocks Edit Session / Return to Review.
+- A posted payment transaction tied directly to the session blocks it.
+- Any payment allocation tied to the session blocks it.
+- Any payment allocation tied to an invoice containing the session blocks it.
+- Any finalized receipt tied to the session or related payment blocks it.
+- A payment-status label alone does not block it. For example, a stored
+  `paid_at_session` selection with no actual payment, allocation, or receipt can
+  still be returned for correction.
+
+If the session exists only on a draft invoice, Edit Session / Return to Review removes that
+session's draft line, recalculates that draft, and increments the draft
+revision as part of the same transaction. Finalized invoices, payment history,
+receipt history, other sessions, and unrelated Billing Relationships are not
+changed. If any eligibility check fails, no partial state changes are made and
+the UI reports the specific protected-history reason in sanitized language.
+
 ## Duplicate Resolution
 
 The preferred action is **Confirm Duplicate & Next**.
@@ -209,6 +244,12 @@ Billing Relationships is payer-centered:
 The payer is not automatically covered. Session participants remain selectable but are not silently preselected. Changing payer clears stale covered-client selections. Selected-client chips are the source of truth.
 
 Saving persists transactionally to SQLite. Approved sessions are never silently rewritten. Deactivation preserves history; permanent deletion is not implemented.
+
+Closing, saving, deleting, archiving, or updating nested Clients and Billing
+Relationships editors preserves the active main tab. Normal in-app actions
+return to Clients or Billing Relationships rather than defaulting to Review;
+Review opens only when Jordana explicitly chooses Review or uses a review-return
+link.
 
 ### Responsive Panels
 

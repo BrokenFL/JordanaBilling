@@ -420,14 +420,14 @@ def parse_save_session_draft_request(payload: Any) -> SaveSectionRequest:
     """Parse and validate a save-session-draft request payload.
 
     Accepted fields: approved_duration_minutes, duration_minutes, duration_choice,
-    custom_duration_minutes, billing_session_type, custom_service_description,
-    custom_service_code, approved_rate, suggested_rate, rate_scope,
+    custom_duration_minutes, billing_session_type, time_category,
+    custom_service_description, custom_service_code, approved_rate, suggested_rate, rate_scope,
     rate_override_reason, payment_status, billing_treatment, billable_status,
     amount_received, payment_date, payment_method, reference_number,
     administrative_note.
 
-    Time category is not independently editable here; the service derives it
-    from the authoritative calendar date and start time.
+    Time category may be supplied when the reviewer manually switches to an
+    evening/weekend billing session type for rate matching.
     """
     data = _require_object(payload)
 
@@ -436,6 +436,7 @@ def parse_save_session_draft_request(payload: Any) -> SaveSectionRequest:
     _optional_str(data, "duration_choice")
     _optional_int_not_bool(data, "custom_duration_minutes")
     _optional_str(data, "billing_session_type")
+    _optional_str(data, "time_category")
     _optional_str(data, "custom_service_description")
     _optional_str(data, "custom_service_code")
     _optional_str_or_int(data, "approved_rate")

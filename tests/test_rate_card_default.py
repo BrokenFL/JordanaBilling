@@ -141,6 +141,79 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertEqual(detail["session"]["rate_source"], "default")
         self.assertIsNone(detail["session"]["approved_rate_cents"])
 
+    def test_manual_weekend_session_type_uses_person_weekend_exception(self):
+        candidate_id = self.import_one("snap-person-weekend", "Fred 630 60")
+        fred = create_person(self.conn, "Fred Smith")
+        save_relationship_section(
+            self.conn,
+            candidate_id,
+            {"participants": [{"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True}]},
+        )
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "410",
+                "duration_choice": "60",
+                "billing_session_type": "psychotherapy_weekend",
+                "time_category": "weekend",
+                "applies_to": "person",
+                "person_id": fred["person_id"],
+                "effective_from": "2026-01-01",
+            },
+        )
+
+        detail = save_session_draft(
+            self.conn,
+            candidate_id,
+            {
+                "approved_duration_minutes": 60,
+                "billing_session_type": "psychotherapy_weekend",
+                "time_category": "weekend",
+                "approved_rate": "",
+                "payment_status": "unpaid",
+            },
+        )
+
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 41000)
+        self.assertEqual(detail["session"]["rate_source"], "person_exception")
+
+    def test_manual_evening_session_type_uses_joint_evening_exception(self):
+        candidate_id = self.import_one("snap-joint-evening", "Fred Bobsey 630 60")
+        fred = create_person(self.conn, "Fred Smith")
+        bobsey = create_person(self.conn, "Bobsey Smith")
+        participants = [
+            {"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True},
+            {"person_id": bobsey["person_id"], "display_name": "Bobsey Smith"},
+        ]
+        save_relationship_section(self.conn, candidate_id, {"participants": participants})
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "475",
+                "duration_choice": "60",
+                "billing_session_type": "psychotherapy_evening",
+                "time_category": "evening",
+                "applies_to": "participants",
+                "participant_person_ids": [fred["person_id"], bobsey["person_id"]],
+                "effective_from": "2026-01-01",
+            },
+        )
+
+        detail = save_session_draft(
+            self.conn,
+            candidate_id,
+            {
+                "approved_duration_minutes": 60,
+                "billing_session_type": "psychotherapy_evening",
+                "time_category": "evening",
+                "approved_rate": "",
+                "payment_status": "unpaid",
+            },
+        )
+
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 47500)
+        self.assertEqual(detail["session"]["rate_source"], "participant_combination_exception")
+
     def test_cancelled_session_requires_exact_cancelled_rule(self):
         candidate_id = self.import_one("snap-cancelled", "Fred 630 60 cancelled")
         self._create_default_rule()

@@ -467,6 +467,14 @@ class TestParseSaveSessionDraftRequest(unittest.TestCase):
         with self.assertRaises(RequestValidationError):
             parse_save_session_draft_request({"payment_status": 123})
 
+    def test_accepts_manual_time_category_for_rate_matching(self):
+        req = parse_save_session_draft_request({
+            "billing_session_type": "psychotherapy_weekend",
+            "time_category": "weekend",
+            "approved_duration_minutes": 60,
+        })
+        self.assertEqual(req.to_payload()["time_category"], "weekend")
+
     def test_wrong_field_type_billing_treatment(self):
         with self.assertRaises(RequestValidationError):
             parse_save_session_draft_request({"billing_treatment": []})
@@ -856,7 +864,10 @@ class TestWriteTokenBeforeValidation(RequestValidationTestBase):
         )
         handler.do_POST()
         self.assertEqual(captured["status"], 403)
-        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        self.assertEqual(
+            captured["payload"],
+            {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."},
+        )
 
     def test_incorrect_token_returns_403_before_validation(self):
         cid = self._import_candidate("wt-2", "Avery Stone 60", "2026-05-15T10:00:00-04:00")

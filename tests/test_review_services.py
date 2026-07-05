@@ -21,14 +21,18 @@ from jordana_invoice.review_services import (
     create_rate_rule_from_payload,
     get_person_record,
     get_review_candidate,
+    list_billing_relationship_records,
     list_review_candidates,
     recalc_unapproved_session_rates,
     refresh_candidate_suggestions,
+    return_approved_session_to_review,
     save_person_alias,
     save_billing_section,
     save_relationship_section,
     save_interpretation,
     save_session_draft,
+    setup_billing_relationship,
+    update_billing_relationship,
 )
 
 
@@ -120,6 +124,295 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(count(self.conn, "session_participants"), 2)
         self.assertGreaterEqual(count(self.conn, "calendar_aliases"), 1)
         self.assertGreater(count(self.conn, "audit_log"), 0)
+
+    def test_approved_session_rejects_relationship_and_bill_to_edits(self):
+        fred = create_person(self.conn, "Fred Smith")
+        payer = create_billing_party(
+            self.conn,
+            {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]},
+        )
+        approved = approve_candidate(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "unpaid",
+            },
+        )
+        self.assertEqual(approved["session"]["review_status"], "approved")
+
+        with self.assertRaisesRegex(ValueError, "Approved sessions cannot change Billing Relationship"):
+            save_relationship_section(
+                self.conn,
+                self.candidate_id,
+                {"participants": [{"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True}]},
+            )
+        with self.assertRaisesRegex(ValueError, "Approved sessions cannot change Bill To"):
+            save_billing_section(self.conn, self.candidate_id, {"billing_party_id": payer["billing_party_id"]})
+
+    def _approved_return_fixture(self, *, payment_status="unpaid"):
+        fred = create_person(self.conn, "Fred Smith")
+        payer = create_billing_party(
+            self.conn,
+            {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]},
+        )
+        approved = approve_candidate(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "unpaid",
+            },
+        )
+        if payment_status != "unpaid":
+            self.conn.execute(
+                "UPDATE sessions SET payment_status = ? WHERE id = ?",
+                (payment_status, approved["session"]["id"]),
+            )
+            self.conn.commit()
+            approved = get_review_candidate(self.conn, self.candidate_id)
+        return fred, payer, approved
+
+    def test_return_approved_session_to_review_without_reason_preserves_values_and_audits(self):
+        _, payer, approved = self._approved_return_fixture()
+        session_id = approved["session"]["id"]
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session_id],
+        })
+        self.assertEqual(draft["invoice"]["total_cents"], 15000)
+        draft_revision_before = draft["invoice"]["revision"]
+
+        result = return_approved_session_to_review(
+            self.conn,
+            self.candidate_id,
+        )
+
+        self.assertTrue(result["returned_to_review"])
+        self.assertEqual(result["session"]["review_status"], "needs_review")
+        self.assertEqual(result["session"]["billing_party_id"], payer["billing_party_id"])
+        self.assertEqual(result["session"]["approved_rate_cents"], 15000)
+        self.assertEqual(result["session"]["approved_duration_minutes"], 60)
+        self.assertEqual(result["session"]["payment_status"], "unpaid")
+        self.assertEqual(len(result["participants"]), 1)
+        self.assertIsNone(self.conn.execute(
+            "SELECT 1 FROM invoice_line_items WHERE source_session_id = ?",
+            (session_id,),
+        ).fetchone())
+        refreshed_draft = self.conn.execute(
+            "SELECT total_cents, revision FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(refreshed_draft["total_cents"], 0)
+        self.assertEqual(refreshed_draft["revision"], draft_revision_before + 1)
+        audit = self.conn.execute(
+            "SELECT details FROM audit_log WHERE entity_type = 'session' AND entity_id = ? AND action = 'returned_to_review'",
+            (session_id,),
+        ).fetchone()
+        self.assertIsNotNone(audit)
+        self.assertIn("System correction: approved unfinalized session opened for editing.", audit["details"])
+        self.assertIn('"reason_required":false', audit["details"])
+        queue = list_review_candidates(self.conn)
+        self.assertTrue(any(row["candidate_id"] == self.candidate_id for row in queue["items"]))
+
+    def test_return_approved_session_still_records_typed_reason_when_supplied(self):
+        _, _, approved = self._approved_return_fixture()
+
+        return_approved_session_to_review(
+            self.conn,
+            self.candidate_id,
+            reason="Correct Bill To before billing",
+        )
+
+        audit = self.conn.execute(
+            "SELECT details FROM audit_log WHERE entity_type = 'session' AND entity_id = ? AND action = 'returned_to_review'",
+            (approved["session"]["id"],),
+        ).fetchone()
+        self.assertIsNotNone(audit)
+        self.assertIn("Correct Bill To before billing", audit["details"])
+
+    def test_return_approved_session_removes_only_selected_draft_line(self):
+        fred, payer, approved = self._approved_return_fixture()
+        first_session_id = approved["session"]["id"]
+        import_rows(
+            self.conn,
+            [raw_row("snap-return-draft-other", title="Fred 7", start="2026-06-18T19:00:00-04:00")],
+            "test",
+        )
+        other_candidate = [
+            row["candidate_id"]
+            for row in list_review_candidates(self.conn)["items"]
+            if row["candidate_id"] != self.candidate_id
+        ][0]
+        second = approve_candidate(
+            self.conn,
+            other_candidate,
+            {
+                "participants": [{"person_id": fred["person_id"], "display_name": "Fred Smith", "is_primary": True}],
+                "billing_party_id": payer["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "175.00",
+                "payment_status": "unpaid",
+            },
+        )
+        second_session_id = second["session"]["id"]
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [first_session_id, second_session_id],
+        })
+
+        return_approved_session_to_review(self.conn, self.candidate_id, reason="Correct first session")
+
+        remaining_lines = self.conn.execute(
+            "SELECT source_session_id, line_amount_cents FROM invoice_line_items WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchall()
+        self.assertEqual([(row["source_session_id"], row["line_amount_cents"]) for row in remaining_lines], [(second_session_id, 17500)])
+        refreshed_draft = self.conn.execute(
+            "SELECT total_cents FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(refreshed_draft["total_cents"], 17500)
+        other = self.conn.execute("SELECT review_status FROM sessions WHERE id = ?", (second_session_id,)).fetchone()
+        self.assertEqual(other["review_status"], "approved")
+
+    def test_return_approved_session_requires_reapproval_and_leaves_other_sessions(self):
+        _, _, approved = self._approved_return_fixture()
+        import_rows(self.conn, [raw_row("snap-return-other", title="Fred 7", start="2026-06-18T19:00:00-04:00")], "test")
+        other_candidate = [row for row in list_review_candidates(self.conn)["items"] if row["candidate_id"] != self.candidate_id][0]["candidate_id"]
+        fred2 = create_person(self.conn, "Frederick Other")
+        payer2 = create_billing_party(self.conn, {"billing_name": "Frederick Other", "billing_party_type": "person", "person_id": fred2["person_id"]})
+        approve_candidate(self.conn, other_candidate, {
+            "participants": [{"person_id": fred2["person_id"], "display_name": "Frederick Other", "is_primary": True}],
+            "billing_party_id": payer2["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": "175.00",
+            "payment_status": "unpaid",
+        })
+
+        return_approved_session_to_review(self.conn, self.candidate_id, reason="Correct participant")
+
+        first = self.conn.execute("SELECT review_status FROM sessions WHERE id = ?", (approved["session"]["id"],)).fetchone()
+        other = self.conn.execute("SELECT review_status FROM sessions WHERE candidate_id = ?", (other_candidate,)).fetchone()
+        self.assertEqual(first["review_status"], "needs_review")
+        self.assertEqual(other["review_status"], "approved")
+
+    def test_return_approved_session_blocks_finalized_invoice(self):
+        _, payer, approved = self._approved_return_fixture()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [approved["session"]["id"]],
+        })
+        self.conn.execute("UPDATE invoices SET status = 'finalized' WHERE invoice_id = ?", (draft["invoice"]["invoice_id"],))
+        self.conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "finalized invoice"):
+            return_approved_session_to_review(self.conn, self.candidate_id, reason="Correct Bill To")
+
+    def test_return_approved_session_blocks_actual_payment_transaction(self):
+        _, payer, approved = self._approved_return_fixture()
+        self.conn.execute(
+            """INSERT INTO payments (
+              payment_id, billing_party_id, amount_cents, received_at, method, status,
+              source_type, source_session_id, created_at, updated_at
+            ) VALUES ('pay-direct', ?, 15000, '2026-06-18', 'check', 'posted',
+              'paid_at_session_backfill', ?, '2026-06-18T12:00:00Z', '2026-06-18T12:00:00Z')""",
+            (payer["billing_party_id"], approved["session"]["id"]),
+        )
+        self.conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "actual payment transaction"):
+            return_approved_session_to_review(self.conn, self.candidate_id, reason="Correct rate")
+
+    def test_return_approved_session_blocks_payment_allocation_and_no_partial_change(self):
+        _, payer, approved = self._approved_return_fixture()
+        session_id = approved["session"]["id"]
+        self.conn.execute(
+            """INSERT INTO payments (
+              payment_id, billing_party_id, amount_cents, received_at, method, status,
+              source_type, created_at, updated_at
+            ) VALUES ('pay-alloc', ?, 15000, '2026-06-18', 'check', 'posted',
+              'manual', '2026-06-18T12:00:00Z', '2026-06-18T12:00:00Z')""",
+            (payer["billing_party_id"],),
+        )
+        self.conn.execute(
+            """INSERT INTO payment_allocations (
+              allocation_id, payment_id, session_id, amount_cents, status, created_at, updated_at
+            ) VALUES ('alloc-1', 'pay-alloc', ?, 15000, 'active', '2026-06-18T12:00:00Z', '2026-06-18T12:00:00Z')""",
+            (session_id,),
+        )
+        self.conn.commit()
+
+        before_audit = count(self.conn, "audit_log")
+        with self.assertRaisesRegex(ValueError, "payment allocation"):
+            return_approved_session_to_review(self.conn, self.candidate_id, reason="Correct rate")
+        session = self.conn.execute("SELECT review_status FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        self.assertEqual(session["review_status"], "approved")
+        self.assertEqual(count(self.conn, "audit_log"), before_audit)
+
+    def test_return_approved_session_blocks_receipt(self):
+        _, payer, approved = self._approved_return_fixture()
+        session_id = approved["session"]["id"]
+        self.conn.execute(
+            """INSERT INTO payments (
+              payment_id, billing_party_id, amount_cents, received_at, method, status,
+              source_type, source_session_id, created_at, updated_at
+            ) VALUES ('pay-receipt', ?, 15000, '2026-06-18', 'check', 'posted',
+              'paid_at_session_backfill', ?, '2026-06-18T12:00:00Z', '2026-06-18T12:00:00Z')""",
+            (payer["billing_party_id"], session_id),
+        )
+        self.conn.execute(
+            """INSERT INTO payment_receipts (
+              receipt_id, payment_id, receipt_number, status, payment_received_at,
+              amount_cents, snapshot_json, pdf_path, pdf_sha256, created_at, updated_at
+            ) VALUES ('receipt-1', 'pay-receipt', 'R-1', 'finalized', '2026-06-18',
+              15000, '{}', '/tmp/demo-receipt.pdf', 'abc123',
+              '2026-06-18T12:00:00Z', '2026-06-18T12:00:00Z')"""
+        )
+        self.conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "receipt"):
+            return_approved_session_to_review(self.conn, self.candidate_id, reason="Correct rate")
+
+    def test_payment_status_label_alone_does_not_block_return(self):
+        _, _, approved = self._approved_return_fixture(payment_status="paid_at_session")
+
+        result = return_approved_session_to_review(
+            self.conn,
+            self.candidate_id,
+            reason="Payment status was selected before actual payment recording",
+        )
+
+        self.assertEqual(result["session"]["review_status"], "needs_review")
+        self.assertEqual(result["session"]["payment_status"], "paid_at_session")
+        payments = self.conn.execute(
+            "SELECT 1 FROM payments WHERE source_session_id = ?",
+            (approved["session"]["id"],),
+        ).fetchall()
+        self.assertEqual(payments, [])
 
     def test_approval_fails_when_required_fields_missing(self):
         with self.assertRaises(ValueError):
@@ -976,6 +1269,155 @@ class PersonRecordBillingEnrichmentTests(unittest.TestCase):
         self.assertEqual(people_billed_for[0]["participant_person_id"], fred["person_id"])
         self.assertEqual(people_billed_for[0]["participant_display_name"], "Fred Smith")
         self.assertEqual(people_billed_for[0]["session_count"], 1)
+
+    def test_relationship_summaries_include_account_id_from_client_and_payer_sides(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        relationship = setup_billing_relationship(
+            self.conn,
+            {
+                "payer_kind": "person",
+                "payer_person_id": bobsey["person_id"],
+                "covered_client_ids": [fred["person_id"]],
+            },
+        )
+        self._approve_session([fred["person_id"]], relationship["billing_party_id"])
+
+        client_record = get_person_record(self.conn, fred["person_id"])
+        payer_record = get_person_record(self.conn, bobsey["person_id"])
+
+        self.assertEqual(client_record["payers_for_client"][0]["account_id"], relationship["account_id"])
+        self.assertEqual(client_record["payers_for_client"][0]["account_name"], relationship["account_name"])
+        self.assertEqual(payer_record["people_billed_for"][0]["account_id"], relationship["account_id"])
+        self.assertEqual(payer_record["people_billed_for"][0]["account_name"], relationship["account_name"])
+
+    def test_update_relationship_can_change_third_party_client_to_self_pay_without_duplicate_account(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        relationship = setup_billing_relationship(
+            self.conn,
+            {
+                "payer_kind": "person",
+                "payer_person_id": bobsey["person_id"],
+                "covered_client_ids": [fred["person_id"]],
+            },
+        )
+        before_account_count = self.conn.execute("SELECT COUNT(*) FROM client_accounts").fetchone()[0]
+
+        updated = update_billing_relationship(
+            self.conn,
+            relationship["account_id"],
+            {
+                "payer_kind": "client",
+                "payer_person_id": fred["person_id"],
+                "covered_client_ids": [fred["person_id"]],
+                "billing_delivery": {"billing_name": "Fred Smith"},
+            },
+        )
+
+        self.assertEqual(updated["account"]["account_id"], relationship["account_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM client_accounts").fetchone()[0], before_account_count)
+        account = self.conn.execute(
+            """
+            SELECT ca.default_billing_party_id, bp.person_id
+            FROM client_accounts ca
+            JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+            WHERE ca.account_id = ?
+            """,
+            (relationship["account_id"],),
+        ).fetchone()
+        self.assertEqual(account["person_id"], fred["person_id"])
+        members = self.conn.execute(
+            "SELECT person_id FROM account_members WHERE account_id = ? ORDER BY person_id",
+            (relationship["account_id"],),
+        ).fetchall()
+        self.assertEqual([row["person_id"] for row in members], [fred["person_id"]])
+        client_record = get_person_record(self.conn, fred["person_id"])
+        self.assertEqual(client_record["accounts"][0]["account_id"], relationship["account_id"])
+        directory_records = list_billing_relationship_records(self.conn)
+        self.assertTrue(any(row.get("account_id") == relationship["account_id"] for row in directory_records))
+
+    def test_implicit_self_pay_can_be_initialized_as_canonical_relationship_once(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        payer = create_billing_party(
+            self.conn,
+            {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": fred["person_id"]},
+        )
+        self._approve_session([fred["person_id"]], payer["billing_party_id"])
+
+        before_records = list_billing_relationship_records(self.conn)
+        self_pay = [row for row in before_records if row["record_type"] == "self_pay" and row["payer_person_id"] == fred["person_id"]][0]
+        self.assertIsNone(self_pay["account_id"])
+        approved_before = get_review_candidate(self.conn, self.candidate_id)
+
+        relationship = setup_billing_relationship(
+            self.conn,
+            {
+                "payer_kind": "client",
+                "payer_person_id": fred["person_id"],
+                "covered_client_ids": [fred["person_id"]],
+            },
+        )
+        duplicate = setup_billing_relationship(
+            self.conn,
+            {
+                "payer_kind": "client",
+                "payer_person_id": fred["person_id"],
+                "covered_client_ids": [fred["person_id"]],
+            },
+        )
+
+        self.assertEqual(duplicate["account_id"], relationship["account_id"])
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM client_accounts").fetchone()[0], 1)
+        after_records = list_billing_relationship_records(self.conn)
+        self.assertTrue(any(row.get("account_id") == relationship["account_id"] for row in after_records))
+        approved_after = get_review_candidate(self.conn, self.candidate_id)
+        self.assertEqual(approved_after["session"]["review_status"], "approved")
+        self.assertEqual(approved_after["session"]["billing_party_id"], approved_before["session"]["billing_party_id"])
+        self.assertEqual(approved_after["session"]["approved_rate_cents"], approved_before["session"]["approved_rate_cents"])
+
+    def test_update_relationship_add_remove_and_change_payer_persist_on_same_account(self):
+        fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})
+        bobsey = create_person(self.conn, {"first_name": "Bobsey", "last_name": "Smith", "display_name": "Bobsey Smith"})
+        sage = create_person(self.conn, {"first_name": "Sage", "last_name": "Smith", "display_name": "Sage Smith"})
+        diana = create_person(self.conn, {"first_name": "Diana", "last_name": "Smith", "display_name": "Diana Smith"})
+        relationship = setup_billing_relationship(
+            self.conn,
+            {
+                "payer_kind": "person",
+                "payer_person_id": bobsey["person_id"],
+                "covered_client_ids": [fred["person_id"]],
+            },
+        )
+
+        update_billing_relationship(
+            self.conn,
+            relationship["account_id"],
+            {
+                "payer_kind": "person",
+                "payer_person_id": diana["person_id"],
+                "covered_client_ids": [sage["person_id"]],
+                "billing_delivery": {"billing_name": "Diana Smith"},
+            },
+        )
+
+        account = self.conn.execute(
+            """
+            SELECT ca.default_billing_party_id, bp.person_id
+            FROM client_accounts ca
+            JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
+            WHERE ca.account_id = ?
+            """,
+            (relationship["account_id"],),
+        ).fetchone()
+        self.assertEqual(account["person_id"], diana["person_id"])
+        members = self.conn.execute(
+            "SELECT person_id FROM account_members WHERE account_id = ? ORDER BY person_id",
+            (relationship["account_id"],),
+        ).fetchall()
+        self.assertEqual([row["person_id"] for row in members], [sage["person_id"]])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM client_accounts").fetchone()[0], 1)
 
     def test_payer_pays_for_self_and_other(self):
         fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Smith", "display_name": "Fred Smith"})

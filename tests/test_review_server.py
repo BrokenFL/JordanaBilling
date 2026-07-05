@@ -500,7 +500,7 @@ class ReviewServerWriteTokenTests(unittest.TestCase):
         handler.do_POST()
 
         self.assertEqual(captured["status"], 403)
-        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."})
         mock_create_person.assert_not_called()
 
     @patch("jordana_invoice.review_server.create_person")
@@ -514,7 +514,7 @@ class ReviewServerWriteTokenTests(unittest.TestCase):
         handler.do_POST()
 
         self.assertEqual(captured["status"], 403)
-        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."})
         mock_create_person.assert_not_called()
 
     def test_get_requests_do_not_require_write_token(self):
@@ -542,7 +542,7 @@ class ReviewServerWriteTokenTests(unittest.TestCase):
         handler.do_PATCH()
 
         self.assertEqual(captured["status"], 403)
-        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."})
         mock_create_person.assert_not_called()
 
     @patch("jordana_invoice.review_server.create_person")

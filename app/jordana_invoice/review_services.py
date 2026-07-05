@@ -1232,6 +1232,10 @@ def save_person_section(conn: sqlite3.Connection, candidate_id: str, payload: di
 def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
     session = session_for_candidate(conn, candidate_id)
+    if session["review_status"] == "approved":
+        raise ValueError(
+            "Approved sessions cannot change Billing Relationship here. Use the correction or void/reissue workflow."
+        )
     now = now_iso()
     account_id = payload.get("account_id") or None
     participants = payload.get("participants", [])
@@ -1283,6 +1287,10 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
 def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
     session = session_for_candidate(conn, candidate_id)
+    if session["review_status"] == "approved":
+        raise ValueError(
+            "Approved sessions cannot change Bill To here. Use the correction or void/reissue workflow."
+        )
     billing_party_id = payload.get("billing_party_id")
     if payload.get("bill_to_person_id"):
         billing_party_id = billing_party_for_person(conn, payload["bill_to_person_id"])
@@ -1520,6 +1528,196 @@ def restore_candidate(
     if warning:
         result["warning"] = warning
     return result
+
+
+def return_approved_session_to_review(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    *,
+    reason: str = "",
+    action_source: str = "review_ui",
+) -> dict[str, Any]:
+    """Move an eligible approved session back to review without losing values."""
+    init_db(conn)
+    clean_reason = text(reason)
+    audit_reason = clean_reason or "System correction: approved unfinalized session opened for editing."
+    session = conn.execute("SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
+    if not session:
+        raise ValueError("No session found for this candidate.")
+    if session["review_status"] != "approved":
+        raise ValueError("Only approved sessions can be returned to Review with this action.")
+
+    blockers = approved_session_return_blockers(conn, session["id"])
+    if blockers:
+        raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
+
+    now = now_iso()
+    prior_status = session["review_status"]
+    draft_invoice_ids = [
+        row["invoice_id"]
+        for row in conn.execute(
+            """
+            SELECT DISTINCT i.invoice_id
+            FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = ?
+              AND i.status = 'draft'
+            """,
+            (session["id"],),
+        ).fetchall()
+    ]
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            DELETE FROM invoice_line_items
+            WHERE source_session_id = ?
+              AND invoice_id IN (SELECT invoice_id FROM invoices WHERE status = 'draft')
+            """,
+            (session["id"],),
+        )
+        for invoice_id in draft_invoice_ids:
+            _recalculate_draft_invoice_totals(conn, invoice_id)
+            conn.execute(
+                "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                (now, invoice_id),
+            )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'needs_review',
+                billable_status = 'proposed',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, session["id"]),
+        )
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'client_session',
+                review_status = 'needs_review',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, candidate_id),
+        )
+        add_review_item(
+            conn,
+            candidate_id,
+            session["id"],
+            "needs_review",
+            [],
+            [audit_reason],
+        )
+        record_audit(
+            conn,
+            "session",
+            session["id"],
+            "returned_to_review",
+            {
+                "candidate_id": candidate_id,
+                "prior_status": prior_status,
+                "new_status": "needs_review",
+                "reason": audit_reason,
+                "reason_required": False,
+                "action_source": text(action_source) or "review_ui",
+                "draft_invoice_ids": draft_invoice_ids,
+            },
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    report_warning = refresh_reports_after_commit(conn)
+    result = get_review_candidate(conn, candidate_id)
+    result["returned_to_review"] = True
+    result["draft_invoice_ids_removed"] = draft_invoice_ids
+    if report_warning:
+        result["report_warning"] = report_warning
+    return result
+
+
+def approved_session_return_blockers(conn: sqlite3.Connection, session_id: str) -> list[str]:
+    blockers: list[str] = []
+    if conn.execute(
+        """
+        SELECT 1
+        FROM invoice_line_items li
+        JOIN invoices i ON i.invoice_id = li.invoice_id
+        WHERE li.source_session_id = ?
+          AND i.status = 'finalized'
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone():
+        blockers.append("the session is part of a finalized invoice")
+    if conn.execute(
+        """
+        SELECT 1
+        FROM payments
+        WHERE source_session_id = ?
+          AND status = 'posted'
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone():
+        blockers.append("an actual payment transaction is tied to the session")
+    if conn.execute(
+        "SELECT 1 FROM payment_allocations WHERE session_id = ? LIMIT 1",
+        (session_id,),
+    ).fetchone():
+        blockers.append("a payment allocation is tied to the session")
+    if conn.execute(
+        """
+        SELECT 1
+        FROM invoice_line_items target
+        JOIN payment_allocations pa ON pa.invoice_line_item_id IN (
+            SELECT invoice_line_item_id
+            FROM invoice_line_items sibling
+            WHERE sibling.invoice_id = target.invoice_id
+        )
+        WHERE target.source_session_id = ?
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone():
+        blockers.append("a payment allocation is tied to an invoice containing the session")
+    if conn.execute(
+        """
+        SELECT 1
+        FROM payment_receipts pr
+        JOIN payments p ON p.payment_id = pr.payment_id
+        LEFT JOIN payment_allocations pa ON pa.payment_id = p.payment_id
+        LEFT JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+        WHERE p.source_session_id = ?
+           OR pa.session_id = ?
+           OR li.source_session_id = ?
+        LIMIT 1
+        """,
+        (session_id, session_id, session_id),
+    ).fetchone():
+        blockers.append("a receipt is tied to the session or related payment")
+    return blockers
+
+
+def _recalculate_draft_invoice_totals(conn: sqlite3.Connection, invoice_id: str) -> None:
+    row = conn.execute(
+        "SELECT adjustment_cents FROM invoices WHERE invoice_id = ? AND status = 'draft'",
+        (invoice_id,),
+    ).fetchone()
+    if not row:
+        return
+    subtotal = conn.execute(
+        "SELECT COALESCE(SUM(line_amount_cents), 0) FROM invoice_line_items WHERE invoice_id = ?",
+        (invoice_id,),
+    ).fetchone()[0]
+    adjustment = int(row["adjustment_cents"] or 0)
+    conn.execute(
+        "UPDATE invoices SET subtotal_cents = ?, total_cents = ?, updated_at = ? WHERE invoice_id = ?",
+        (subtotal, subtotal + adjustment, now_iso(), invoice_id),
+    )
 
 
 def _ensure_review_session_for_candidate(
@@ -1784,13 +1982,22 @@ def _payers_for_client(conn: sqlite3.Connection, person_id: str) -> list[dict[st
           bp.person_id AS payer_person_id,
           p.display_name AS payer_display_name,
           bp.active AS billing_party_active,
+          MIN(ca.account_id) AS account_id,
+          MIN(ca.account_name) AS account_name,
           COUNT(s.id) AS session_count,
           MAX(s.session_date) AS most_recent_session_date
         FROM sessions s
         JOIN session_participants sp ON sp.session_id = s.id AND sp.person_id = ?
         LEFT JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id
         LEFT JOIN people p ON p.person_id = bp.person_id
+        LEFT JOIN client_accounts ca
+          ON ca.default_billing_party_id = bp.billing_party_id
+         AND ca.active = 1
+        LEFT JOIN account_members cam
+          ON cam.account_id = ca.account_id
+         AND cam.person_id = sp.person_id
         WHERE s.billing_party_id IS NOT NULL
+          AND (ca.account_id IS NULL OR cam.person_id IS NOT NULL)
         GROUP BY bp.billing_party_id, bp.billing_name, bp.person_id, p.display_name, bp.active
         ORDER BY most_recent_session_date DESC
         """,
@@ -1805,12 +2012,21 @@ def _people_billed_for(conn: sqlite3.Connection, person_id: str) -> list[dict[st
         SELECT DISTINCT
           sp.person_id AS participant_person_id,
           COALESCE(p.display_name, sp.participant_name) AS participant_display_name,
+          MIN(ca.account_id) AS account_id,
+          MIN(ca.account_name) AS account_name,
           COUNT(DISTINCT s.id) AS session_count,
           MAX(s.session_date) AS latest_session_date
         FROM sessions s
         JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id AND bp.person_id = ?
         JOIN session_participants sp ON sp.session_id = s.id
         LEFT JOIN people p ON p.person_id = sp.person_id
+        LEFT JOIN client_accounts ca
+          ON ca.default_billing_party_id = bp.billing_party_id
+         AND ca.active = 1
+        LEFT JOIN account_members cam
+          ON cam.account_id = ca.account_id
+         AND cam.person_id = sp.person_id
+        WHERE ca.account_id IS NULL OR cam.person_id IS NOT NULL
         GROUP BY sp.person_id, participant_display_name
         ORDER BY latest_session_date DESC
         """,
@@ -2797,6 +3013,73 @@ def reactivate_account(conn: sqlite3.Connection, account_id: str) -> dict[str, A
         conn.rollback()
         raise
     return dict(conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone())
+
+
+def delete_or_archive_billing_relationship(conn: sqlite3.Connection, account_id: str) -> dict[str, Any]:
+    """Permanently delete an unused billing relationship, otherwise archive it.
+
+    Relationship deletion is allowed only when there is no protected billing
+    history pointing at the account or its current billing party. Historical
+    usage archives the relationship by setting client_accounts.active = 0.
+    """
+    init_db(conn)
+    account = conn.execute("SELECT * FROM client_accounts WHERE account_id = ?", (account_id,)).fetchone()
+    if not account:
+        raise ValueError("Account not found.")
+
+    billing_party_id = account["default_billing_party_id"]
+    checks: list[tuple[str, str, tuple[Any, ...]]] = [
+        ("session history", "SELECT 1 FROM sessions WHERE account_id = ? LIMIT 1", (account_id,)),
+        ("relationship-specific rates", "SELECT 1 FROM rate_rules WHERE client_account_id = ? LIMIT 1", (account_id,)),
+        ("calendar aliases", "SELECT 1 FROM calendar_aliases WHERE account_id = ? LIMIT 1", (account_id,)),
+    ]
+    if billing_party_id:
+        checks.extend(
+            [
+                ("approved sessions", "SELECT 1 FROM sessions WHERE billing_party_id = ? AND review_status = 'approved' LIMIT 1", (billing_party_id,)),
+                ("invoices", "SELECT 1 FROM invoices WHERE bill_to_party_id = ? LIMIT 1", (billing_party_id,)),
+                ("payments", "SELECT 1 FROM payments WHERE billing_party_id = ? LIMIT 1", (billing_party_id,)),
+            ]
+        )
+    protected_reasons = [
+        label for label, sql, params in checks if conn.execute(sql, params).fetchone()
+    ]
+    if protected_reasons:
+        archived = deactivate_account(conn, account_id)
+        return {
+            "ok": True,
+            "action": "archived",
+            "account": archived,
+            "message": (
+                "This billing relationship has historical billing usage, so it was archived instead of deleted. "
+                "Historical invoices, approved records, payments, and audit history remain intact."
+            ),
+            "protected_reasons": protected_reasons,
+        }
+
+    _begin_immediate(conn)
+    try:
+        _delete_billing_relationship_key(conn, account_id)
+        conn.execute("DELETE FROM account_members WHERE account_id = ?", (account_id,))
+        conn.execute("DELETE FROM client_accounts WHERE account_id = ?", (account_id,))
+        record_audit(
+            conn,
+            "client_account",
+            account_id,
+            "deleted_unused_billing_relationship",
+            {"account_name": account["account_name"]},
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {
+        "ok": True,
+        "action": "deleted",
+        "account_id": account_id,
+        "message": "Unused billing relationship deleted.",
+        "protected_reasons": [],
+    }
 
 
 def update_billing_relationship(

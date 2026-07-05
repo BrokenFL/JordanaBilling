@@ -147,6 +147,19 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Success-with-warning convention**: follows the same pattern used by the approve endpoint when invoice staging warns — the primary operation succeeds and the secondary failure is reported as an additive field on the success response rather than as an error status
 - **Existing tests**: `test_routine_queue_filter.py` (service-level), `test_write_endpoint_contracts.py` (HTTP-level), `test_request_validation.py` (HTTP-level regression)
 
+### POST /api/review/candidates/{id}/return-to-review
+
+- **Handler**: inline in `do_POST`
+- **Service**: `return_approved_session_to_review(conn, candidate_id, reason=data.get("reason", ""), action_source=data.get("action_source", "review_ui"))`
+- **Accepted fields**: `reason` (optional, default `""`), `action_source` (optional)
+- **Success status**: 200
+- **Success response**: full candidate detail dict with `returned_to_review: true` and `draft_invoice_ids_removed`
+- **DB tables**: `sessions`, `calendar_event_candidates`, `review_items`, `audit_log`, and draft-only `invoice_line_items`/`invoices` when the session was staged in a draft
+- **Eligibility**: only approved sessions; finalized invoices, posted session payments, payment allocations tied to the session, allocations tied to an invoice containing the session, or related receipts block the action
+- **Payment status distinction**: a stored payment-status label alone does not block the action unless actual payment, allocation, receipt, or finalized-invoice history exists
+- **Transaction boundary**: status change, audit record, review item, and any draft-only invoice-line removal commit atomically; blocked failures make no partial changes
+- **Existing tests**: `test_review_services.py` service-level return/blocking/audit coverage and `test_review_ui_static.py` UI contract coverage
+
 ### POST /api/review/candidates/{id}/send-to-review
 
 - **Handler**: inline in `do_POST`

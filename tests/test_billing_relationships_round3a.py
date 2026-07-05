@@ -2,11 +2,12 @@
 
 Tests cover:
 - Backend deactivate/reactivate with idempotency and audit
+- Guarded delete-or-archive lifecycle for mistaken relationships
 - Directory filtering by active/inactive/all
 - Suggestion and duplicate exclusion for inactive relationships
 - Historical preservation (sessions, invoices, payments, rates, members)
 - Frontend JS behavior (in-page confirmation, no browser confirm/alert)
-- No permanent deletion, no schema migration
+- No schema migration
 """
 import json
 import re
@@ -26,6 +27,7 @@ from jordana_invoice.review_services import (
     create_billing_party,
     create_person,
     deactivate_account,
+    delete_or_archive_billing_relationship,
     reactivate_account,
     find_duplicate_billing_relationship,
     find_equivalent_account,
@@ -289,6 +291,31 @@ class TestRound3ABackend(unittest.TestCase):
         self.assertIsNotNone(rate)
         self.assertEqual(rate["amount_cents"], 15000)
 
+    def test_delete_or_archive_deletes_unused_relationship(self):
+        account, _, _ = self._make_account()
+
+        result = delete_or_archive_billing_relationship(self.conn, account["account_id"])
+
+        self.assertEqual(result["action"], "deleted")
+        self.assertIsNone(get_account(self.conn, account["account_id"]))
+        member = self.conn.execute(
+            "SELECT 1 FROM account_members WHERE account_id = ?",
+            (account["account_id"],),
+        ).fetchone()
+        self.assertIsNone(member)
+
+    def test_delete_or_archive_archives_relationship_with_history(self):
+        account, _, bp = self._make_account()
+        self._make_session(account["account_id"], bp["billing_party_id"], "hist")
+
+        result = delete_or_archive_billing_relationship(self.conn, account["account_id"])
+
+        self.assertEqual(result["action"], "archived")
+        self.assertIn("session history", result["protected_reasons"])
+        fresh = get_account(self.conn, account["account_id"])
+        self.assertIsNotNone(fresh)
+        self.assertEqual(fresh["active"], 0)
+
     # 20. Reactivation restores active state
     def test_reactivation_restores_active(self):
         account, _, _ = self._make_account()
@@ -512,11 +539,13 @@ class TestRound3AJSBehavior(unittest.TestCase):
         self.assertIn('statusFilter === "active"', fn)
         self.assertIn('statusFilter === "inactive"', fn)
 
-    # 39. No permanent delete action is introduced
-    def test_no_delete_action(self):
-        self.assertNotIn("deleteAccount", self.js)
-        self.assertNotIn("Delete Billing Relationship", self.js)
-        # Check no DELETE method for accounts
+    # 39. Guarded delete/archive action is introduced without raw DELETE
+    def test_delete_or_archive_action(self):
+        self.assertIn("deleteAccountBtn", self.js)
+        self.assertIn("Delete Billing Relationship", self.js)
+        self.assertIn("delete-or-archive", self.js)
+        self.assertIn("Delete or Archive", self.js)
+        # Check no HTTP DELETE method for accounts
         delete_pattern = re.findall(r'method:\s*["\']DELETE["\']', self.js)
         self.assertEqual(len(delete_pattern), 0)
 

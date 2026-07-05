@@ -5,6 +5,7 @@ const approvalState = { submitting: false, candidateId: null };
 const excludeState = { submitting: false, candidateId: null };
 const duplicateState = { submitting: false, candidateId: null };
 const restoreState = { submitting: false, candidateId: null };
+const returnApprovedState = { submitting: false, candidateId: null };
 const billingWizardState = { submitting: false };
 
 function isFutureAppointment(session) {
@@ -104,6 +105,7 @@ const state = {
   },
   quitting: false
 };
+state.accountOriginPersonId = null;
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
   business_name: "",
@@ -268,6 +270,7 @@ function closeResponsiveSheet(panelId = null) {
 
 responsiveSheetQuery.addEventListener("change", updateResponsiveSheetMode);
 const monthYearFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+const weekdayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" });
 function monthLabelFromYearMonth(value) {
   const text = String(value || "").trim();
   const match = text.match(/^(\d{4})-(\d{2})$/);
@@ -287,6 +290,13 @@ function invoiceServicePeriodLabel(invoice) {
   return monthLabelFromYearMonth(invoice?.billing_month)
     || monthLabelFromDate(invoice?.billing_period_start)
     || "—";
+}
+function shortWeekday(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  const date = new Date(`${raw.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "—";
+  return weekdayFormatter.format(date);
 }
 const billingTypeLabel = (v, customDescription = "") => {
   if (v === "custom" && customDescription) return escapeHtml(customDescription);
@@ -419,6 +429,7 @@ function renderRows(items, total) {
     <tr data-id="${escapeAttr(item.candidate_id)}" class="${state.selected === item.candidate_id ? "selected" : ""}">
       <td><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
       <td>${fmt(item.date)}</td>
+      <td class="day-cell">${escapeHtml(shortWeekday(item.date))}</td>
       <td>${fmt(item.time)}</td>
       <td><span class="primary">${fmt(item.suggested_client)}</span></td>
       <td>${fmt(item.raw_title)}</td>
@@ -426,7 +437,7 @@ function renderRows(items, total) {
       <td>${money(item.rate)}</td>
       <td><button class="review-btn" data-review-id="${escapeAttr(item.candidate_id)}">Review</button></td>
     </tr>
-  `).join("") : '<tr class="empty-row"><td colspan="8">No sessions need review.</td></tr>';
+  `).join("") : '<tr class="empty-row"><td colspan="9">No sessions need review.</td></tr>';
   document.querySelectorAll("#candidateRows tr[data-id]").forEach(row => {
     row.addEventListener("click", (e) => {
       if (e.target.closest("button") || e.target.closest("a")) return;
@@ -830,12 +841,33 @@ function buildReturnContext() {
   };
 }
 
+function setupPayloadForReviewRelationship() {
+  const clients = sessionClientSummary();
+  const coveredIds = clients.map(p => p.person_id).filter(Boolean);
+  if (!coveredIds.length) return null;
+  if (state.billingParty?.billing_party_type === "organization" && state.billingParty?.billing_party_id) {
+    return {
+      payer_kind: "organization",
+      organization_billing_party_id: state.billingParty.billing_party_id,
+      covered_client_ids: coveredIds,
+    };
+  }
+  const payerPersonId = state.billingParty?.person_id || coveredIds.find(Boolean);
+  if (!payerPersonId) return null;
+  const payerKind = coveredIds.length === 1 && coveredIds[0] === payerPersonId ? "client" : "person";
+  return {
+    payer_kind: payerKind,
+    payer_person_id: payerPersonId,
+    covered_client_ids: coveredIds,
+  };
+}
+
 function validReturnContext(value) {
   return !!(value && typeof value.candidateId === "string" && value.candidateId && typeof value.sessionId === "string" && value.sessionId);
 }
 
 function returnContextHash(context) {
-  if (!validReturnContext(context)) return "#clients";
+  if (!validReturnContext(context)) return "#billing-relationships";
   const params = new URLSearchParams({
     returnView: context.returnView || "review",
     candidateId: context.candidateId,
@@ -846,7 +878,7 @@ function returnContextHash(context) {
   if (context.billingPartyId) params.set("billingPartyId", context.billingPartyId);
   const participantIds = (context.participants || []).map(p => p.person_id).filter(Boolean);
   if (participantIds.length) params.set("participantIds", participantIds.join(","));
-  return `#clients?${params.toString()}`;
+  return `#billing-relationships?${params.toString()}`;
 }
 
 function persistReturnContext(context) {
@@ -864,7 +896,7 @@ function persistReturnContext(context) {
 function hashReturnContext() {
   const raw = location.hash.startsWith("#") ? location.hash.slice(1) : "";
   const [view, query] = raw.split("?");
-  if (view !== "clients" || !query) return null;
+  if (!["billing-relationships", "clients"].includes(view) || !query) return null;
   const params = new URLSearchParams(query);
   const candidateId = params.get("candidateId") || "";
   const sessionId = params.get("sessionId") || "";
@@ -910,7 +942,9 @@ function clearReturnContext() {
   try {
     sessionStorage.removeItem(RETURN_CONTEXT_KEY);
   } catch (_) {}
-  if (location.hash.startsWith("#clients?")) location.hash = "#clients";
+  if (location.hash.startsWith("#billing-relationships?") || location.hash.startsWith("#clients?")) {
+    location.hash = "#billing-relationships";
+  }
 }
 
 
@@ -1051,25 +1085,39 @@ function renderRelationshipEditor(data) {
     </div>
     <div class="inline-actions"><button id="openAccountRecord">Open Billing Relationship Record</button></div>
   `;
-  if ($("openAccountRecord")) $("openAccountRecord").onclick = () => openAccountRecord(state.account && state.account.account_id);
+  if ($("openAccountRecord")) $("openAccountRecord").onclick = openBillingRelationshipEditor;
 }
 
-function openBillingRelationshipEditor() {
+async function openBillingRelationshipEditor() {
   if (!closeReviewOverlay()) return;
   const returnContext = persistReturnContext(buildReturnContext());
   if (!returnContext) {
-    location.hash = "clients";
-    showClients();
+    location.hash = "billing-relationships";
+    await showClients();
     return;
   }
-  const accountId = state.account && state.account.account_id;
+  let accountId = state.account && state.account.account_id;
+  if (!accountId) {
+    try {
+      const result = await ensureBillingRelationship(setupPayloadForReviewRelationship());
+      accountId = result.account_id;
+      returnContext.accountId = accountId;
+      state.account = { ...(state.account || {}), account_id: accountId, account_name: result.account_name };
+    } catch (err) {
+      alert(sanitizeUiErrorMessage(err.message, "Could not open this billing relationship."));
+      location.hash = returnContextHash(returnContext);
+      await showClients();
+      return;
+    }
+  }
   if (accountId) {
     location.hash = returnContextHash({ ...returnContext, accountId });
-    openAccountRecord(accountId, { returnContext });
+    await showClients();
+    await openAccountRecord(accountId, { returnContext });
     return;
   }
   location.hash = returnContextHash(returnContext);
-  showClients();
+  await showClients();
 }
 
 async function saveRelationshipSection() {
@@ -1225,14 +1273,16 @@ function validateCancellationBillingChoice() {
 function collectSessionDraftValues() {
   const durationChoice = $("durationChoiceInput")?.value || "60";
   const customMinutes = $("customDurationInput")?.value || "";
-  const approvedMinutes = durationChoice === "custom" ? customMinutes : durationChoice;
+  const approvedMinutes = durationChoice === "custom" ? positiveIntOrNull(customMinutes) : positiveIntOrNull(durationChoice);
+  const billingType = $("billingTypeInput")?.value || "psychotherapy";
   return {
     approved_duration_minutes: approvedMinutes,
-    billing_session_type: $("billingTypeInput")?.value || "psychotherapy",
+    billing_session_type: billingType,
     duration_choice: durationChoice,
-    custom_duration_minutes: durationChoice === "custom" ? (customMinutes || null) : null,
+    custom_duration_minutes: durationChoice === "custom" ? positiveIntOrNull(customMinutes) : null,
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
+    time_category: timeCategoryForBillingType(billingType, state.detail?.session?.time_category || "standard"),
     appointment_status: $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "completed",
     approved_rate: $("approvedRateInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
@@ -1258,15 +1308,17 @@ function restoreSessionDraftValues(values) {
 async function updateSessionRatePreview() {
   if (!$("sessionRatePreview") || !state.detail?.session?.id) return;
   const participantIds = confirmedSessionClients().map(p => p.person_id).filter(Boolean);
+  const billingType = $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy";
+  const durationChoice = $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes);
   const payload = {
     session_date: state.detail.session.session_date || state.detail.session.start_at?.slice(0, 10) || "",
-    duration_choice: $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes),
-    custom_duration_minutes: ($("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes)) === "custom" ? ($("customDurationInput")?.value || null) : null,
-    billing_session_type: $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy",
+    duration_choice: durationChoice,
+    custom_duration_minutes: durationChoice === "custom" ? positiveIntOrNull($("customDurationInput")?.value) : null,
+    billing_session_type: billingType,
     appointment_status: $("attendanceOutcomeInput")?.value || state.detail.session.appointment_status || "scheduled",
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
-    time_category: state.detail.session.time_category || "standard",
+    time_category: timeCategoryForBillingType(billingType, state.detail.session.time_category || "standard"),
     participant_person_ids: participantIds,
     person_id: participantIds.length === 1 ? participantIds[0] : "",
     client_account_id: state.account?.account_id || state.detail.session.account_id || "",
@@ -1404,12 +1456,13 @@ function collectPayload() {
     || "60";
   const customMinutes = $("customDurationInput")?.value || session.custom_duration_minutes || "";
   const approvedMinutes = durationChoice === "custom"
-    ? customMinutes
-    : ($("durationChoiceInput")?.value || session.approved_duration_minutes || session.duration_minutes || durationChoice);
+    ? positiveIntOrNull(customMinutes)
+    : positiveIntOrNull($("durationChoiceInput")?.value || session.approved_duration_minutes || session.duration_minutes || durationChoice);
   const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
   const futurePerson = $("saveFuturePersonRate")?.checked === true;
   const futureJoint = $("saveFutureJointRate")?.checked === true;
   const paymentStatus = $("paymentInput")?.value || session.payment_status || "unpaid";
+  const billingType = $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy";
 
   let rateScope = "session_only";
   let rateScopePersonId = null;
@@ -1428,19 +1481,19 @@ function collectPayload() {
   return {
     ...collectRelationshipPayload(),
     approved_duration_minutes: approvedMinutes,
-    billing_session_type: $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy",
+    billing_session_type: billingType,
     appointment_status: $("attendanceOutcomeInput")?.value || session.appointment_status || "completed",
     duration_choice: durationChoice,
-    custom_duration_minutes: durationChoice === "custom" ? (customMinutes || null) : null,
+    custom_duration_minutes: durationChoice === "custom" ? positiveIntOrNull(customMinutes) : null,
     custom_service_description: $("customDescInput")?.value || session.custom_service_description || "",
     custom_service_code: $("customCodeInput")?.value || session.custom_service_code || "",
-    time_category: session.time_category || "standard",
+    time_category: timeCategoryForBillingType(billingType, session.time_category || "standard"),
     suggested_rate: centString(session.suggested_rate_cents),
     billing_party_id: state.billingParty?.billing_party_id || state.detail?.effective_billing_party?.billing_party_id || null,
     approved_rate: rate,
     payment_status: paymentStatus,
     billing_treatment: $("billingTreatmentInput")?.value || session.billing_treatment || "",
-    billable_status: paymentStatus === "paid_at_session" ? "nonbillable" : "approved",
+    billable_status: "approved",
     rate_override_reason: $("overrideReasonInput")?.value || session.rate_override_reason || "",
     rate_scope: rateScope,
     rate_scope_person_id: rateScopePersonId,
@@ -1559,6 +1612,15 @@ function parseMoneyToCents(value) {
   if (!/^-?\d+(\.\d{1,2})?$/.test(raw)) return null;
   return Math.round(Number(raw) * 100);
 }
+function positiveIntOrNull(value) {
+  const parsed = Number.parseInt(String(value || "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+function timeCategoryForBillingType(billingType, fallback = "standard") {
+  if (billingType === "psychotherapy_weekend") return "weekend";
+  if (billingType === "psychotherapy_evening") return "evening";
+  return fallback || "standard";
+}
 function paymentMethodLabel(method) {
   return ({
     zelle: "Zelle",
@@ -1620,7 +1682,7 @@ document.getElementById("rateCardNav").onclick = (event) => {
 };
 document.getElementById("clientsNav").onclick = (event) => {
   event.preventDefault();
-  location.hash = "clients";
+  location.hash = "billing-relationships";
   showClients();
 };
 document.getElementById("peopleNav").onclick = (event) => {
@@ -1697,6 +1759,21 @@ function hideViews() {
   closeResponsiveSheet();
   ["reviewWorkbench","calendarImportView","reconciliationView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
   ["reviewNav","calendarImportNav","reconciliationNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+}
+
+async function showClientsTab(personId = null) {
+  location.hash = personId ? `people/${personId}` : "people";
+  if (personId) {
+    await showPersonRecordPage(personId);
+  } else {
+    await showPeople();
+  }
+}
+
+async function showBillingRelationshipsTab(accountId = null, options = {}) {
+  location.hash = "billing-relationships";
+  await showClients();
+  if (accountId) await openAccountRecord(accountId, options);
 }
 
 function showRateCard() {
@@ -2098,9 +2175,27 @@ function renderClientsLanding(returnContext = null) {
   };
 }
 
-function closeAccountRecord() {
+async function closeAccountRecord() {
   closeResponsiveSheet("accountRecord");
   $("accountRecord").innerHTML = `<div class="empty-state">Open a billing relationship record.</div>`;
+  const returnContext = readReturnContext();
+  if (validReturnContext(returnContext)) {
+    clearReturnContext();
+    location.hash = "";
+    await loadList();
+    await showReviewWorkbench();
+    await selectCandidate(returnContext.candidateId);
+    return;
+  }
+  const originPersonId = state.accountOriginPersonId;
+  state.accountOriginPersonId = null;
+  if (originPersonId) {
+    await showClientsTab(originPersonId);
+    return;
+  }
+  if (!location.hash.startsWith("#billing-relationships") && !location.hash.startsWith("#clients")) {
+    location.hash = "billing-relationships";
+  }
   const firstOpen = document.querySelector("[data-open-account]");
   if (firstOpen) firstOpen.focus();
 }
@@ -2154,10 +2249,13 @@ function renderSessions(rows, total) {
   $("sessionsResultCount").textContent = `Showing ${rows.length ? state.sessions.offset + 1 : 0} to ${state.sessions.offset + rows.length} of ${total} results`;
   $("sessionsRows").innerHTML = rows.map(row => {
     const canRestore = row.review_status === "excluded" && row.candidate_id;
+    const canReturnApproved = row.review_status === "approved" && row.candidate_id;
     const canPromote = !row.session_id && row.review_status === "needs_classification" && row.candidate_id;
     let actionCell = `<td></td>`;
     if (canRestore)
       actionCell = `<td><button class="restore-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button></td>`;
+    else if (canReturnApproved)
+      actionCell = `<td><button class="return-approved-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Edit Session</button></td>`;
     else if (canPromote)
       actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button></td>`;
     return `
@@ -2175,6 +2273,9 @@ function renderSessions(rows, total) {
   }).join("") || `<tr><td colspan="9" class="readonly-note">No appointments found.</td></tr>`;
   $("sessionsRows").querySelectorAll(".restore-session-btn").forEach(btn => {
     btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
+  });
+  $("sessionsRows").querySelectorAll(".return-approved-session-btn").forEach(btn => {
+    btn.addEventListener("click", () => returnApprovedSessionToReview(btn.dataset.cid, { refresh: loadSessions }));
   });
   $("sessionsRows").querySelectorAll(".send-session-to-review-btn").forEach(btn => {
     btn.addEventListener("click", () => sendSessionRowToReview(btn.dataset.cid));
@@ -2209,6 +2310,52 @@ async function sendSessionRowToReview(candidateId) {
     await loadSessions();
   } catch (err) {
     alert("Could not promote to review: " + err.message);
+  }
+}
+
+async function returnApprovedSessionToReview(candidateId, { refresh = null } = {}) {
+  if (returnApprovedState.submitting) return;
+  if (returnApprovedState.candidateId && returnApprovedState.candidateId !== candidateId) return;
+  if (!getWriteToken()) {
+    const message = "Write access expired. Refresh Jordana Billing and try again.";
+    showReviewActionError(message);
+    alert(message);
+    return;
+  }
+  returnApprovedState.submitting = true;
+  returnApprovedState.candidateId = candidateId;
+  const buttons = document.querySelectorAll(`.return-approved-session-btn[data-cid="${CSS.escape(candidateId)}"]`);
+  buttons.forEach(btn => {
+    btn.disabled = true;
+    btn.textContent = "Returning...";
+  });
+  try {
+    await api(`/api/review/candidates/${candidateId}/return-to-review`, {
+      method: "POST",
+      body: JSON.stringify({ action_source: "review_ui" }),
+    });
+    closeReviewOverlay();
+    state.selected = null;
+    state.detail = null;
+    location.hash = "";
+    await loadList();
+    await showReviewWorkbench();
+    await selectCandidate(candidateId);
+    showReviewSuccess("Session returned to Review. Please review and approve it again before billing.");
+    const row = document.querySelector(`[data-review-id="${CSS.escape(candidateId)}"]`);
+    if (row) row.focus();
+  } catch (err) {
+    const message = sanitizeUiErrorMessage(err.message, "Could not return this session to Review.");
+    showReviewActionError(message);
+    alert(message);
+    buttons.forEach(btn => {
+      if (!document.body.contains(btn)) return;
+      btn.disabled = false;
+      btn.textContent = "Edit Session";
+    });
+  } finally {
+    returnApprovedState.submitting = false;
+    returnApprovedState.candidateId = null;
   }
 }
 
@@ -4095,7 +4242,7 @@ function buildRateRulePayload() {
   const payload = {
     amount: $("rateAmountInput").value,
     duration_choice: $("rateDurationChoice").value,
-    custom_duration_minutes: $("rateDurationChoice").value === "custom" ? ($("rateCustomDurationMinutes").value || null) : null,
+    custom_duration_minutes: $("rateDurationChoice").value === "custom" ? positiveIntOrNull($("rateCustomDurationMinutes").value) : null,
     billing_session_type: $("rateBillingSessionType").value,
     custom_service_description: $("rateCustomDescription").value,
     custom_service_code: $("rateCustomCode").value,
@@ -4318,7 +4465,7 @@ function billingDirPayerSubtext(rec) {
     if (people.length > 1) {
       return `Pays for ${people.map(p => escapeHtml(p.display_name || "Unknown")).join(" and ")}`;
     }
-    return "Pays for herself";
+    return "Pays for themselves";
   }
   if (rec.record_type === "third_party") {
     const people = rec.covered_people || [];
@@ -4379,6 +4526,49 @@ function renderBillingDirDuplicateBanner() {
   banner.textContent = `${parts.join(" and ")} detected. Existing duplicates remain visible here and should be resolved later through an explicit audited deactivation or merge workflow.`;
 }
 
+function setupPayloadForBillingRelationshipRecord(rec) {
+  if (!rec || !rec.payer_person_id) return null;
+  let coveredIds = (rec.covered_people || []).map(p => p.person_id).filter(Boolean);
+  if (!coveredIds.length && rec.record_type === "self_pay") {
+    coveredIds = [rec.payer_person_id];
+  }
+  if (!coveredIds.length) return null;
+  const paysForSelfOnly = coveredIds.length === 1 && coveredIds[0] === rec.payer_person_id;
+  return {
+    payer_kind: paysForSelfOnly ? "client" : "person",
+    payer_person_id: rec.payer_person_id,
+    covered_client_ids: coveredIds,
+  };
+}
+
+async function ensureBillingRelationship(payload) {
+  if (!payload) throw new Error("This billing relationship needs a payer and at least one covered client before it can be edited.");
+  const result = await api("/api/billing-relationships/setup", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (!result || !result.account_id) {
+    throw new Error("Could not open this billing relationship.");
+  }
+  return result;
+}
+
+async function ensureAndOpenBillingRelationship(rec, options = {}) {
+  if (rec.account_id) {
+    await openAccountRecord(rec.account_id, options);
+    return rec.account_id;
+  }
+  try {
+    const result = await ensureBillingRelationship(setupPayloadForBillingRelationshipRecord(rec));
+    await loadClients();
+    await openAccountRecord(result.account_id, options);
+    return result.account_id;
+  } catch (err) {
+    alert(sanitizeUiErrorMessage(err.message, "Could not open this billing relationship."));
+    return null;
+  }
+}
+
 function billingDirDeliveryText(rec) {
   if (rec.record_type === "account") return "—";
   const method = rec.preferred_delivery_method;
@@ -4387,8 +4577,11 @@ function billingDirDeliveryText(rec) {
 }
 
 function billingDirOpenButton(rec) {
-  if (rec.record_type === "account") {
-    return `<button class="mini" data-open-account="${escapeHtml(rec.account_id)}">Open</button>`;
+  if (rec.account_id) {
+    return `<button class="mini" data-open-account="${escapeHtml(rec.account_id)}">Edit</button>`;
+  }
+  if (rec.payer_person_id && ["self_pay", "third_party"].includes(rec.record_type)) {
+    return `<button class="mini" data-ensure-relationship="${escapeHtml(rec.record_id)}">Edit</button>`;
   }
   if (rec.record_type === "organization") {
     return `<button class="mini" data-open-organization="${escapeHtml(rec.billing_party_id)}">Open</button>`;
@@ -4459,6 +4652,19 @@ function renderBillingDirRows() {
         e.stopPropagation();
         openAccountRecord(openAccountBtn.dataset.openAccount, { returnContext: readReturnContext() });
       };
+      tr.onclick = () => openAccountRecord(openAccountBtn.dataset.openAccount, { returnContext: readReturnContext() });
+    }
+    const ensureRelationshipBtn = tr.querySelector("[data-ensure-relationship]");
+    if (ensureRelationshipBtn) {
+      const openEnsured = async () => {
+        const rec = rows.find(row => row.record_id === ensureRelationshipBtn.dataset.ensureRelationship);
+        if (rec) await ensureAndOpenBillingRelationship(rec, { returnContext: readReturnContext() });
+      };
+      ensureRelationshipBtn.onclick = async (e) => {
+        e.stopPropagation();
+        await openEnsured();
+      };
+      tr.onclick = openEnsured;
     }
     const openPersonBtn = tr.querySelector("[data-open-person]");
     if (openPersonBtn) {
@@ -4685,12 +4891,12 @@ async function openOrganizationRecord(billingPartyId) {
     : `<span class="readonly-note">No invoices addressed to this organization yet.</span>`;
 
   const linkedAccountsHtml = (data.linked_accounts || []).length
-    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Status</th><th>Members</th><th>Open</th></tr></thead><tbody>
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Account Name</th><th>Status</th><th>Members</th><th>Edit</th></tr></thead><tbody>
         ${(data.linked_accounts || []).map(a => `<tr>
           <td>${escapeHtml(a.account_name)}</td>
           <td>${a.active ? "Active" : "Inactive"}</td>
           <td>${escapeHtml((a.members || []).map(m => m.display_name).join(", ") || "None")}</td>
-          <td><button class="mini" data-open-account="${escapeHtml(a.account_id)}">Open</button></td>
+          <td><button class="mini" data-open-account="${escapeHtml(a.account_id)}">Edit</button></td>
         </tr>`).join("")}
       </tbody></table></div>`
     : `<span class="readonly-note">No linked shared billing groups.</span>`;
@@ -4835,13 +5041,18 @@ function showLifecycleConfirm(accountId, action, accountName) {
   const box = $("lifecycleConfirmBox");
   if (!box) return;
   const isDeactivate = action === "deactivate";
-  const heading = isDeactivate ? "Deactivate this billing relationship?" : "Reactivate this billing relationship?";
-  const explanation = isDeactivate
-    ? "It will no longer appear in active searches or be suggested for future sessions. Existing sessions, invoices, rates, payments, and history will remain unchanged."
-    : "It will appear in active searches and be suggested for future sessions again.";
-  const confirmLabel = isDeactivate ? "Deactivate" : "Reactivate";
-  const confirmBtnId = isDeactivate ? "confirmDeactivateBtn" : "confirmReactivateBtn";
-  const spinnerText = isDeactivate ? "Deactivating…" : "Reactivating…";
+  const isDelete = action === "delete-or-archive";
+  const heading = isDelete
+    ? "Delete this billing relationship?"
+    : isDeactivate ? "Deactivate this billing relationship?" : "Reactivate this billing relationship?";
+  const explanation = isDelete
+    ? "If this relationship has no protected billing history, it will be deleted. If it has approved sessions, invoices, payments, rates, or other protected history, it will be archived instead."
+    : isDeactivate
+      ? "It will no longer appear in active searches or be suggested for future sessions. Existing sessions, invoices, rates, payments, and history will remain unchanged."
+      : "It will appear in active searches and be suggested for future sessions again.";
+  const confirmLabel = isDelete ? "Delete or Archive" : isDeactivate ? "Deactivate" : "Reactivate";
+  const confirmBtnId = isDelete ? "confirmDeleteAccountBtn" : isDeactivate ? "confirmDeactivateBtn" : "confirmReactivateBtn";
+  const spinnerText = isDelete ? "Checking…" : isDeactivate ? "Deactivating…" : "Reactivating…";
   box.hidden = false;
   box.innerHTML = `
     <div class="lifecycle-confirm-content">
@@ -4849,7 +5060,7 @@ function showLifecycleConfirm(accountId, action, accountName) {
       <p class="lifecycle-explanation">${escapeHtml(explanation)}</p>
       <div class="lifecycle-confirm-actions">
         <button type="button" id="lifecycleCancelBtn" class="modal-back">Cancel</button>
-        <button type="button" id="${confirmBtnId}" class="${isDeactivate ? "danger" : "save"}">${escapeHtml(confirmLabel)}</button>
+        <button type="button" id="${confirmBtnId}" class="${isDeactivate || isDelete ? "danger" : "save"}">${escapeHtml(confirmLabel)}</button>
       </div>
       <div class="lifecycle-error" id="lifecycleError"></div>
     </div>
@@ -4857,7 +5068,7 @@ function showLifecycleConfirm(accountId, action, accountName) {
   const cancelBtn = $("lifecycleCancelBtn");
   const confirmBtn = $(confirmBtnId);
   const errorDisplay = $("lifecycleError");
-  const triggerBtn = isDeactivate ? $("deactivateAccountBtn") : $("reactivateAccountBtn");
+  const triggerBtn = isDelete ? $("deleteAccountBtn") : isDeactivate ? $("deactivateAccountBtn") : $("reactivateAccountBtn");
   let inFlight = false;
 
   function closeConfirm() {
@@ -4882,8 +5093,14 @@ function showLifecycleConfirm(accountId, action, accountName) {
     confirmBtn.textContent = spinnerText;
     errorDisplay.textContent = "";
     try {
-      await api(`/api/accounts/${accountId}/${action}`, { method: "POST", body: "{}" });
-      await openAccountRecord(accountId);
+      const result = await api(`/api/accounts/${accountId}/${action}`, { method: "POST", body: "{}" });
+      if (result.action === "deleted") {
+        await closeAccountRecord();
+        showReviewSuccess(result.message || "Unused billing relationship deleted.");
+      } else {
+        await openAccountRecord(accountId);
+        if (result.message) showReviewWarning(result.message);
+      }
       await loadClients();
     } catch (err) {
       confirmBtn.disabled = false;
@@ -4898,10 +5115,15 @@ function showLifecycleConfirm(accountId, action, accountName) {
 async function openAccountRecord(accountId, options = {}) {
   if (!accountId) return alert("Select or create a billing relationship first.");
   closeOrganizationRecord();
+  if (options.originPersonId) {
+    state.accountOriginPersonId = options.originPersonId;
+  }
   const returnContext = validReturnContext(options.returnContext) ? persistReturnContext(options.returnContext) : readReturnContext();
   if (returnContext) {
     persistReturnContext({ ...returnContext, accountId });
-    if (!location.hash.startsWith("#clients?")) location.hash = returnContextHash({ ...returnContext, accountId });
+    if (!location.hash.startsWith("#billing-relationships?") && !location.hash.startsWith("#clients?")) {
+      location.hash = returnContextHash({ ...returnContext, accountId });
+    }
   }
   state.returnCandidate = state.selected;
   const data = await api(`/api/accounts/${accountId}`);
@@ -4911,6 +5133,7 @@ async function openAccountRecord(accountId, options = {}) {
   const lifecycleBtn = isActive
     ? '<button id="deactivateAccountBtn" class="danger">Deactivate Billing Relationship</button>'
     : '<button id="reactivateAccountBtn" class="save">Reactivate Billing Relationship</button>';
+  const deleteBtn = '<button id="deleteAccountBtn" class="danger">Delete Billing Relationship</button>';
 
   const payerType = bp.billing_party_type === "organization" ? "organization" : (bp.person_id ? "person" : "person");
   const payerName = bp.billing_name || bp.organization_name || "Not set";
@@ -4949,7 +5172,7 @@ async function openAccountRecord(accountId, options = {}) {
     <h3>${escapeHtml(data.account.account_name)}</h3>
     <div class="meta">${statusPill}</div>
     <div id="lifecycleConfirmBox" class="lifecycle-confirm-box" hidden></div>
-    <div class="record-actions">${lifecycleBtn}</div>
+    <div class="record-actions">${lifecycleBtn}${deleteBtn}</div>
 
     <div class="editor-section" id="editorRecipientSection">
       <h4>Invoice recipient</h4>
@@ -5125,6 +5348,9 @@ async function openAccountRecord(accountId, options = {}) {
   if ($("reactivateAccountBtn")) {
     $("reactivateAccountBtn").onclick = () => showLifecycleConfirm(accountId, "reactivate", data.account.account_name);
   }
+  if ($("deleteAccountBtn")) {
+    $("deleteAccountBtn").onclick = () => showLifecycleConfirm(accountId, "delete-or-archive", data.account.account_name);
+  }
 
   $("changeRecipientBtn").onclick = () => { markEditorDirty(); openRecipientSearch(accountId, data, editState, returnContext); };
   $("addCoveredBtn").onclick = () => { openCoveredSearch(accountId, data, editState, returnContext); };
@@ -5201,8 +5427,8 @@ async function openAccountRecord(accountId, options = {}) {
     });
   }
 
-  if (!location.hash.startsWith("#clients")) {
-    location.hash = "clients";
+  if (!location.hash.startsWith("#billing-relationships") && !location.hash.startsWith("#clients")) {
+    location.hash = "billing-relationships";
     showClients();
   }
 }
@@ -5399,6 +5625,7 @@ function openRecipientSearch(accountId, data, editState, returnContext) {
       if (el.dataset.type === "organization") {
         editState.payer_person_id = null;
       }
+      clearEditorCoveredClients(editState);
       $("editorRecipientSelected").hidden = true;
       $("editorRecipientResults").innerHTML = "";
       $("editorRecipientInput").value = "";
@@ -5452,6 +5679,7 @@ function renderRecipientResults(container, rows, kind, editState) {
         const person = rows.find(r => r.person_id === id);
         showEditorRecipientSelected(person.display_name, kind);
       }
+      clearEditorCoveredClients(editState);
     });
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
   });
@@ -5462,6 +5690,14 @@ function showEditorRecipientSelected(name, kind) {
   div.hidden = false;
   const label = kind === "organization" ? "Selected organization" : kind === "client" ? "Selected client" : "Selected person";
   div.innerHTML = `${escapeHtml(label)}: <strong>${escapeHtml(name)}</strong>`;
+}
+
+function clearEditorCoveredClients(editState) {
+  editState.covered_client_ids = [];
+  const list = document.querySelector("#editorCoveredSection .covered-clients-list");
+  if (list) list.innerHTML = '<div class="readonly-note">No covered clients selected.</div>';
+  const searchArea = $("coveredSearchArea");
+  if (searchArea) searchArea.innerHTML = "";
 }
 
 function openCoveredSearch(accountId, data, editState, returnContext) {
@@ -5720,6 +5956,12 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
       await selectCandidate(returnContext.candidateId);
       return;
     }
+    const originPersonId = state.accountOriginPersonId;
+    if (originPersonId) {
+      state.accountOriginPersonId = null;
+      await showClientsTab(originPersonId);
+      return;
+    }
     await openAccountRecord(accountId);
     await loadClients();
   } catch (err) {
@@ -5853,32 +6095,40 @@ async function openPersonRecord(personId, options = {}) {
       }).join("")
     : `<span class="readonly-note">No billing setup saved</span>`;
 
+  const relationshipEditAction = (relationship) => relationship.account_id
+    ? `<button class="mini" data-open-account="${escapeAttr(relationship.account_id)}">Edit Billing Relationship</button>`
+    : "";
   const relationshipLines = [];
   for (const p of payers) {
     const isSelfPay = p.payer_person_id === personId;
     const sessionInfo = `${fmt(p.session_count)} session${p.session_count === 1 ? "" : "s"}${p.most_recent_session_date ? ` • latest ${fmt(p.most_recent_session_date)}` : ""}`;
+    const action = relationshipEditAction(p);
     if (isSelfPay) {
-      relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} pays for herself</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span></div>`);
+      relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} pays for herself</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span>${action}</div>`);
     } else {
-      relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} is billed to ${escapeHtml(fmt(p.payer_display_name))}</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span></div>`);
+      relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} is billed to ${escapeHtml(fmt(p.payer_display_name))}</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span>${action}</div>`);
     }
   }
   for (const p of peopleBilledFor) {
     const isSelf = p.participant_person_id === personId;
     if (isSelf) continue;
     const sessionInfo = `${fmt(p.session_count)} session${p.session_count === 1 ? "" : "s"}${p.latest_session_date ? ` • latest ${fmt(p.latest_session_date)}` : ""}`;
-    relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} pays for ${escapeHtml(fmt(p.participant_display_name))}</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span></div>`);
+    relationshipLines.push(`<div class="relationship-line"><span>${escapeHtml(personName)} pays for ${escapeHtml(fmt(p.participant_display_name))}</span><span class="relationship-meta">${escapeHtml(sessionInfo)}</span>${relationshipEditAction(p)}</div>`);
   }
   const relationshipsHtml = relationshipLines.length
     ? relationshipLines.join("")
     : `<span class="readonly-note">No billing relationships yet.</span>`;
 
   const accountInfoHtml = (data.accounts || []).length
-    ? data.accounts.map(a => `<div class="compact-list-item"><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${escapeAttr(a.account_id)}">Open</button></div>`).join("")
+    ? data.accounts.map(a => `<div class="compact-list-item"><span>${fmt(a.account_name)} • ${fmt(a.relationship_role)}${a.is_primary ? " • Primary" : ""}</span><button class="mini" data-open-account="${escapeAttr(a.account_id)}">Edit Billing Relationship</button></div>`).join("")
     : `<span class="readonly-note">No related billing group information.</span>`;
 
   const sessionsRowsHtml = visibleSessions.length
-    ? visibleSessions.map(s => `<tr>
+    ? visibleSessions.map(s => {
+        const sessionAction = s.review_status === "approved" && s.candidate_id
+          ? `<button class="mini return-approved-session-btn" data-cid="${escapeAttr(s.candidate_id)}">Edit Session</button>`
+          : `<button class="mini" data-open-candidate="${escapeAttr(s.candidate_id)}">Open in Review</button>`;
+        return `<tr>
         <td>${fmt(s.session_date)}</td>
         <td>${fmt(s.other_participant_names ? "With " + s.other_participant_names : "Solo")}</td>
         <td>${userFacingSessionLabel(s.billing_session_type, s.appointment_status, s.custom_service_description || "")}</td>
@@ -5887,8 +6137,9 @@ async function openPersonRecord(personId, options = {}) {
         <td>${money(centString(s.approved_rate_cents))}</td>
         <td>${escapeHtml(paymentHandlingLabel(s.payment_status))}</td>
         <td>${fmt(s.review_status)}</td>
-        <td><button class="mini" data-open-candidate="${escapeAttr(s.candidate_id)}">Open in Review</button></td>
-      </tr>`).join("")
+        <td>${sessionAction}</td>
+      </tr>`;
+      }).join("")
     : `<tr><td colspan="9" class="readonly-note">No sessions yet.</td></tr>`;
 
   const invoiceRowsHtml = invoices.length
@@ -6008,7 +6259,7 @@ async function openPersonRecord(personId, options = {}) {
   if ($("returnFromPerson")) $("returnFromPerson").onclick = (event) => { event.preventDefault(); location.hash = ""; showReviewWorkbench(); };
   document.querySelectorAll("[data-open-account]").forEach(button => {
     button.onclick = async () => {
-      await openAccountRecord(button.dataset.openAccount);
+      await showBillingRelationshipsTab(button.dataset.openAccount, { originPersonId: personId });
     };
   });
   document.querySelectorAll("[data-open-candidate]").forEach(button => {
@@ -6017,6 +6268,13 @@ async function openPersonRecord(personId, options = {}) {
       await loadList();
       await showReviewWorkbench();
       await selectCandidate(button.dataset.openCandidate);
+    };
+  });
+  document.querySelectorAll(".return-approved-session-btn").forEach(button => {
+    button.onclick = async () => {
+      await returnApprovedSessionToReview(button.dataset.cid, {
+        refresh: () => openPersonRecord(personId, { showAllSessions }),
+      });
     };
   });
   document.querySelectorAll("[data-open-invoice]").forEach(button => {
@@ -6282,7 +6540,11 @@ function showBillingSetupForm(existing, defaultName) {
       </div>
     </div>
   `;
-  $("bsfCancelBtn").onclick = () => { container.innerHTML = ""; };
+  $("bsfCancelBtn").onclick = () => {
+    container.innerHTML = "";
+    if (!location.hash.startsWith("#people/")) location.hash = `people/${state.currentPersonId}`;
+    $("addBillingSetupBtn")?.focus();
+  };
   $("bsfSaveBtn").onclick = async () => {
     if (state.billingSetupSaving) return;
     const billingName = $("bsfBillingName").value.trim();
@@ -6381,7 +6643,12 @@ loadBuildInfo();
 loadList();
 if (location.hash === "#calendar-import") showCalendarImport();
 if (location.hash === "#rate-card") showRateCard();
-if (location.hash === "#clients" || location.pathname === "/clients") showClients();
+if (
+  location.hash === "#billing-relationships"
+  || location.hash === "#clients"
+  || location.pathname === "/billing-relationships"
+  || location.pathname === "/clients"
+) showClients();
 if (location.pathname.startsWith("/people/") && location.pathname.split("/")[2]) {
   showPersonRecordPage(location.pathname.split("/")[2]);
 } else if (location.hash.startsWith("#people/") && location.hash.split("/")[1]) {
@@ -6401,6 +6668,8 @@ window.addEventListener("hashchange", () => {
     if (personId) showPersonRecordPage(personId);
   } else if (hash === "people") {
     showPeople();
+  } else if (hash === "billing-relationships" || hash === "clients" || hash.startsWith("billing-relationships?") || hash.startsWith("clients?")) {
+    showClients();
   }
 });
 window.addEventListener("beforeunload", event => {

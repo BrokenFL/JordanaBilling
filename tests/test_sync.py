@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from jordana_invoice.db import connect, init_db
@@ -11,6 +12,7 @@ from jordana_invoice.google_sync import (
     get_cursor,
     parse_cursor,
     public_sync_status,
+    normalize_tls_certificate_environment,
     should_run_initial_full_sync,
     sync_calendar_automatically,
     sync_with_connection,
@@ -82,6 +84,38 @@ class SyncTests(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
         self.temp.cleanup()
+
+    def test_blank_certificate_environment_is_ignored(self):
+        old_ssl = os.environ.get("SSL_CERT_FILE")
+        old_requests = os.environ.get("REQUESTS_CA_BUNDLE")
+        try:
+            os.environ["SSL_CERT_FILE"] = ""
+            os.environ["REQUESTS_CA_BUNDLE"] = "   "
+            normalize_tls_certificate_environment()
+            self.assertNotIn("SSL_CERT_FILE", os.environ)
+            self.assertNotIn("REQUESTS_CA_BUNDLE", os.environ)
+        finally:
+            for key, value in (("SSL_CERT_FILE", old_ssl), ("REQUESTS_CA_BUNDLE", old_requests)):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_valid_certificate_environment_is_preserved(self):
+        old_ssl = os.environ.get("SSL_CERT_FILE")
+        old_requests = os.environ.get("REQUESTS_CA_BUNDLE")
+        try:
+            os.environ["SSL_CERT_FILE"] = "/tmp/example-ca.pem"
+            os.environ["REQUESTS_CA_BUNDLE"] = "/tmp/example-requests-ca.pem"
+            normalize_tls_certificate_environment()
+            self.assertEqual(os.environ["SSL_CERT_FILE"], "/tmp/example-ca.pem")
+            self.assertEqual(os.environ["REQUESTS_CA_BUNDLE"], "/tmp/example-requests-ca.pem")
+        finally:
+            for key, value in (("SSL_CERT_FILE", old_ssl), ("REQUESTS_CA_BUNDLE", old_requests)):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_empty_sync_response(self):
         result = sync_with_connection(

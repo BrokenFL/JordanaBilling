@@ -36,6 +36,7 @@ from .review_services import (
     create_account,
     create_account_or_return_existing,
     deactivate_account,
+    delete_or_archive_billing_relationship,
     create_billing_party,
     create_person,
     create_rate_rule_from_payload,
@@ -59,6 +60,7 @@ from .review_services import (
     recalc_unapproved_session_rates,
     reparse_unapproved_candidates,
     restore_candidate,
+    return_approved_session_to_review,
     preview_rate_suggestion,
     refresh_candidate_suggestions,
     replace_rate_rule_from_payload,
@@ -352,6 +354,9 @@ def is_safe_validation_error(error: Exception) -> bool:
             "A session already exists for this candidate.",
             "Raw snapshot not found for candidate.",
             "Session not found for candidate.",
+            "A reason is required to return an approved session to Review.",
+            "No session found for this candidate.",
+            "Only approved sessions can be returned to Review with this action.",
             "Select which participant should receive this future rate.",
             "session_ids must be a list.",
             "Each session_id must be a non-empty string.",
@@ -433,6 +438,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Cannot approve until required fields are complete:",
             "No active billing party found for ",
             "Session is not invoice eligible: ",
+            "Return to Review is blocked: ",
             "This appointment is scheduled for ",
             "Invalid year:",
             "Unsupported date range:",
@@ -1068,6 +1074,9 @@ def make_handler(
                     if action == "reactivate":
                         self.send_json(reactivate_account(self.conn(), account_id))
                         return
+                    if action == "delete-or-archive":
+                        self.send_json(delete_or_archive_billing_relationship(self.conn(), account_id))
+                        return
                     if action == "update-billing-relationship":
                         req = parse_update_billing_relationship_request(data)
                         self.send_json(update_billing_relationship(self.conn(), account_id, req.to_payload()))
@@ -1435,6 +1444,16 @@ def make_handler(
                             )
                         )
                         return
+                    if action == "return-to-review":
+                        self.send_json(
+                            return_approved_session_to_review(
+                                self.conn(),
+                                candidate_id,
+                                reason=data.get("reason", ""),
+                                action_source=data.get("action_source", "review_ui"),
+                            )
+                        )
+                        return
                     if action == "send-to-review":
                         self.send_json(
                             promote_candidate_to_review(
@@ -1526,7 +1545,10 @@ def make_handler(
                 )
                 return None, {}
             if not self.has_valid_write_token():
-                self.send_json({"ok": False, "error": "Forbidden."}, status=403)
+                self.send_json(
+                    {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."},
+                    status=403,
+                )
                 return None, {}
             try:
                 return parsed, self.read_json(length)

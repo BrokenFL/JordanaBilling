@@ -241,7 +241,7 @@ class ReviewServerSyncTests(unittest.TestCase):
         self.assertEqual(err.code, 403)
         self.assertEqual(
             json.loads(err.read().decode("utf-8")),
-            {"ok": False, "error": "Forbidden."},
+            {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."},
         )
         err.close()
 
@@ -262,7 +262,7 @@ class ReviewServerSyncTests(unittest.TestCase):
         self.assertEqual(err.code, 403)
         self.assertEqual(
             json.loads(err.read().decode("utf-8")),
-            {"ok": False, "error": "Forbidden."},
+            {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."},
         )
         err.close()
 

@@ -118,6 +118,146 @@ for (const [input, expected] of cases) {
         self.assertIn("Bill to client", js)
         self.assertIn("Change payer or shared billing", js)
         self.assertNotIn("Save Participants", js)
+
+    def test_review_queue_shows_day_column(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("<th>Day</th>", html)
+        self.assertIn("function shortWeekday(value)", js)
+        self.assertIn('<td class="day-cell">${escapeHtml(shortWeekday(item.date))}</td>', js)
+        self.assertIn('colspan="9"', js)
+
+    def test_manual_weekend_evening_session_type_sets_rate_time_category(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function timeCategoryForBillingType", js)
+        self.assertIn('if (billingType === "psychotherapy_weekend") return "weekend";', js)
+        self.assertIn('if (billingType === "psychotherapy_evening") return "evening";', js)
+        self.assertIn("timeCategoryForBillingType(billingType, session.time_category || \"standard\")", js)
+        self.assertIn("timeCategoryForBillingType(billingType, state.detail.session.time_category || \"standard\")", js)
+
+    def test_rate_card_custom_duration_sends_integer(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function positiveIntOrNull(value)", js)
+        self.assertIn('custom_duration_minutes: $("rateDurationChoice").value === "custom" ? positiveIntOrNull($("rateCustomDurationMinutes").value) : null', js)
+
+    def test_paid_at_session_payload_stays_billable_for_approval(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function collectPayload()")
+        end = js.index("function collectRelationshipPayload", start)
+        fn = js[start:end]
+
+        self.assertIn('payment_status: paymentStatus', fn)
+        self.assertIn('billable_status: "approved"', fn)
+        self.assertNotIn('paymentStatus === "paid_at_session" ? "nonbillable"', fn)
+
+    def test_review_relationship_summary_opens_canonical_account_editor(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openBillingRelationshipEditor()")
+        end = js.index("async function saveRelationshipSection", start)
+        fn = js[start:end]
+
+        self.assertIn("let accountId = state.account && state.account.account_id;", fn)
+        self.assertIn("await showClients();", fn)
+        self.assertIn("await openAccountRecord(accountId, { returnContext });", fn)
+        self.assertNotIn('state.detail?.session?.review_status === "approved"', fn)
+
+    def test_approved_session_return_to_review_is_guarded(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function returnApprovedSessionToReview")
+        end = js.index("async function loadSessions", start)
+        fn = js[start:end]
+
+        self.assertIn("const returnApprovedState = { submitting: false, candidateId: null };", js)
+        self.assertIn("return-approved-session-btn", js)
+        self.assertIn("Edit Session", js)
+        self.assertIn("/return-to-review", fn)
+        self.assertIn("getWriteToken()", fn)
+        self.assertIn("Write access expired. Refresh Jordana Billing and try again.", fn)
+        self.assertNotIn("prompt(", fn)
+        self.assertNotIn("confirm(", fn)
+        self.assertIn("returnApprovedState.submitting", fn)
+        self.assertIn('body: JSON.stringify({ action_source: "review_ui" })', fn)
+        self.assertIn("await showReviewWorkbench();", fn)
+        self.assertIn("await selectCandidate(candidateId);", fn)
+        self.assertIn("Session returned to Review. Please review and approve it again before billing.", js)
+
+    def test_billing_relationship_actions_are_visible_from_person_and_directory_surfaces(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("Edit Billing Relationship", js)
+        self.assertIn('data-open-account="${escapeAttr(relationship.account_id)}">Edit Billing Relationship</button>', js)
+        self.assertIn('data-open-account="${escapeAttr(a.account_id)}">Edit Billing Relationship</button>', js)
+        self.assertIn('return `<button class="mini" data-open-account="${escapeHtml(rec.account_id)}">Edit</button>`;', js)
+        self.assertIn('data-ensure-relationship="${escapeHtml(rec.record_id)}">Edit</button>', js)
+        self.assertIn("<th>Account Name</th><th>Status</th><th>Members</th><th>Edit</th>", js)
+
+    def test_client_and_billing_relationship_tabs_are_preserved(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("async function showClientsTab(personId = null)", js)
+        self.assertIn("async function showBillingRelationshipsTab(accountId = null, options = {})", js)
+        self.assertIn('location.hash = personId ? `people/${personId}` : "people";', js)
+        self.assertIn('location.hash = "billing-relationships";', js)
+        self.assertIn('location.hash === "#billing-relationships"', js)
+        self.assertIn('location.pathname === "/billing-relationships"', js)
+        self.assertIn("await showBillingRelationshipsTab(button.dataset.openAccount, { originPersonId: personId });", js)
+        self.assertIn('if (!location.hash.startsWith("#people/")) location.hash = `people/${state.currentPersonId}`;', js)
+        self.assertIn("state.accountOriginPersonId", js)
+        self.assertIn("await showClientsTab(originPersonId);", js)
+
+    def test_billing_relationship_route_keeps_relationships_active(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn('document.getElementById("clientsNav").classList.add("active");', js)
+        self.assertIn('hash === "billing-relationships"', js)
+        self.assertIn('hash.startsWith("billing-relationships?")', js)
+        self.assertIn('return `#billing-relationships?${params.toString()}`;', js)
+        self.assertIn('if (!["billing-relationships", "clients"].includes(view) || !query) return null;', js)
+
+    def test_billing_relationship_directory_prefers_account_id_over_person_fallback(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function billingDirOpenButton")
+        end = js.index("function renderBillingDirRows", start)
+        fn = js[start:end]
+
+        self.assertIn("if (rec.account_id)", fn)
+        self.assertIn('["self_pay", "third_party"].includes(rec.record_type)', fn)
+        self.assertLess(fn.index("if (rec.account_id)"), fn.index('if (rec.record_type === "organization")'))
+        rows_start = js.index('document.querySelectorAll("#clientRows tr").forEach')
+        rows_end = js.index("async function loadClients", rows_start)
+        rows_fn = js[rows_start:rows_end]
+        self.assertIn("tr.onclick = () => openAccountRecord(openAccountBtn.dataset.openAccount", rows_fn)
+        self.assertIn("ensureAndOpenBillingRelationship(rec, { returnContext: readReturnContext() })", rows_fn)
+
+    def test_self_pay_relationship_initializer_uses_setup_endpoint(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function setupPayloadForBillingRelationshipRecord(rec)", js)
+        self.assertIn('payer_kind: paysForSelfOnly ? "client" : "person"', js)
+        self.assertIn('await api("/api/billing-relationships/setup"', js)
+        self.assertIn("async function ensureAndOpenBillingRelationship(rec, options = {})", js)
+        self.assertIn("await openAccountRecord(result.account_id, options);", js)
+
+    def test_review_relationship_open_initializes_missing_canonical_relationship(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openBillingRelationshipEditor()")
+        end = js.index("async function saveRelationshipSection", start)
+        fn = js[start:end]
+
+        self.assertIn("setupPayloadForReviewRelationship()", js)
+        self.assertIn("await ensureBillingRelationship(setupPayloadForReviewRelationship());", fn)
+        self.assertIn("returnContext.accountId = accountId;", fn)
+        self.assertIn("await openAccountRecord(accountId, { returnContext });", fn)
+
+    def test_billing_relationship_payer_change_clears_covered_clients(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("function clearEditorCoveredClients(editState)", js)
+        self.assertIn("editState.covered_client_ids = [];", js)
+        self.assertGreaterEqual(js.count("clearEditorCoveredClients(editState);"), 2)
         self.assertNotIn("Open Person Record", js)
         self.assertNotIn("Same as sole participant", js)
         self.assertNotIn("Search or create a bill-to contact", js)
@@ -815,7 +955,7 @@ for (const [input, expected] of cases) {
     def test_invalid_or_missing_return_context_falls_back_to_normal_clients_screen(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
-        self.assertIn('if (view !== "clients" || !query) return null;', js)
+        self.assertIn('if (!["billing-relationships", "clients"].includes(view) || !query) return null;', js)
         self.assertIn("if (!candidateId || !sessionId) return null;", js)
         self.assertIn('renderClientsLanding(returnContext);', js)
         self.assertIn('Open a billing relationship record.', Path("app/jordana_invoice/static/review.html").read_text())
@@ -1172,7 +1312,7 @@ for (const [input, expected] of cases) {
 
     def test_billing_directory_self_pay_wording(self):
         js = self._clients_js()
-        self.assertIn("Pays for herself", js)
+        self.assertIn("Pays for themselves", js)
 
     def test_billing_directory_third_party_wording(self):
         js = self._clients_js()
@@ -1881,19 +2021,31 @@ class ReviewOverlayCloseTests(unittest.TestCase):
         self.assertIn("if (reviewOverlayCtrl.isOpen() && !skipDirtyCheck && state.dirty.size > 0)", self.js)
 
     def test_openBillingRelationshipEditor_closes_overlay_before_navigation(self):
-        start = self.js.index("function openBillingRelationshipEditor()")
+        start = self.js.index("async function openBillingRelationshipEditor()")
         end = self.js.index("function collectPayload", start)
         section = self.js[start:end]
         self.assertIn("closeReviewOverlay()", section)
         self.assertIn("if (!closeReviewOverlay()) return;", section)
+        self.assertIn("await showClients();", section)
+        self.assertIn("await openAccountRecord(accountId, { returnContext });", section)
 
     def test_openBillingRelationshipEditor_persists_return_context_after_close(self):
-        start = self.js.index("function openBillingRelationshipEditor()")
+        start = self.js.index("async function openBillingRelationshipEditor()")
         end = self.js.index("function collectPayload", start)
         section = self.js[start:end]
         close_idx = section.index("closeReviewOverlay()")
         persist_idx = section.index("persistReturnContext")
         self.assertLess(close_idx, persist_idx)
+
+    def test_account_close_returns_to_review_context(self):
+        start = self.js.index("async function closeAccountRecord()")
+        end = self.js.index("async function showClients", start)
+        section = self.js[start:end]
+
+        self.assertIn("const returnContext = readReturnContext();", section)
+        self.assertIn("if (validReturnContext(returnContext))", section)
+        self.assertIn("await showReviewWorkbench();", section)
+        self.assertIn("await selectCandidate(returnContext.candidateId);", section)
 
 
 class ReviewApprovalTests(unittest.TestCase):
@@ -1987,14 +2139,16 @@ class ReviewCustomDurationPayloadTests(unittest.TestCase):
         start = self.js.index("function collectPayload()")
         end = self.js.index("function collectRelationshipPayload", start)
         fn = self.js[start:end]
-        self.assertIn("custom_duration_minutes: durationChoice === \"custom\" ? (customMinutes || null) : null", fn)
+        self.assertIn("custom_duration_minutes: durationChoice === \"custom\" ? positiveIntOrNull(customMinutes) : null", fn)
+        self.assertIn("approved_duration_minutes: approvedMinutes", fn)
         self.assertNotIn('custom_duration_minutes: durationChoice === "custom" ? customMinutes : ""', fn)
 
     def test_collect_session_draft_sends_null_for_standard_duration(self):
         start = self.js.index("function collectSessionDraftValues()")
         end = self.js.index("function restoreSessionDraftValues", start)
         fn = self.js[start:end]
-        self.assertIn("custom_duration_minutes: durationChoice === \"custom\" ? (customMinutes || null) : null", fn)
+        self.assertIn("approvedMinutes = durationChoice === \"custom\" ? positiveIntOrNull(customMinutes) : positiveIntOrNull(durationChoice)", fn)
+        self.assertIn("custom_duration_minutes: durationChoice === \"custom\" ? positiveIntOrNull(customMinutes) : null", fn)
         self.assertNotIn('custom_duration_minutes: durationChoice === "custom" ? customMinutes : ""', fn)
 
     def test_restore_session_draft_handles_null(self):

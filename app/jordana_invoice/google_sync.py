@@ -31,6 +31,7 @@ DEFAULT_LIMIT = 500
 EMPTY_CURSOR = "1970-01-01T00:00:00.000Z"
 EMPTY_SNAPSHOT_KEY = ""
 SYNC_INTERVAL_ENV = "JORDANA_CALENDAR_SYNC_INTERVAL_MINUTES"
+TLS_CERT_ENV_VARS = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
 
 
 class SyncError(RuntimeError):
@@ -110,8 +111,16 @@ def load_env_file(path: str | Path = ".env") -> None:
         os.environ.setdefault(key, value)
 
 
+def normalize_tls_certificate_environment() -> None:
+    """Treat blank certificate env vars as unset while preserving real paths."""
+    for key in TLS_CERT_ENV_VARS:
+        if key in os.environ and not os.environ[key].strip():
+            os.environ.pop(key, None)
+
+
 def load_config(env_path: str | Path = ".env") -> SyncConfig:
     load_env_file(env_path)
+    normalize_tls_certificate_environment()
     missing = [
         key
         for key in (
@@ -137,6 +146,7 @@ def load_sync_config_for_database(
     env_path: str | Path = ".env",
 ) -> SyncConfig:
     load_env_file(env_path)
+    normalize_tls_certificate_environment()
     missing = [
         key
         for key in (
@@ -161,6 +171,7 @@ def default_transport(
     payload: dict[str, Any],
     timeout_seconds: int,
 ) -> dict[str, Any]:
+    normalize_tls_certificate_environment()
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,

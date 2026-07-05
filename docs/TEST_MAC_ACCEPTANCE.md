@@ -163,6 +163,31 @@ shasum -a 256 -c JordanaBilling-<release-label-or-version>-<commit>-macos-arm64.
 22. Reinstall the same release and confirm existing config and DB are preserved. Expected result: Apps Script URL and ingest API-key fields are disabled, clean-start initialization is disabled, and installation remains possible without re-entering secrets.
 23. Remove `~/Applications/Jordana Billing.app` only, then confirm private data remains in Application Support and user-facing generated folders remain in Documents.
 
+### Signing And Notarization Evidence
+
+If a Developer ID certificate and notarytool Keychain profile are available,
+run the prepared signing/notarization script against the release payload and
+DMG before distribution. Record the sanitized outcome of:
+
+- `codesign --verify --deep --strict --verbose=2`
+- `spctl --assess`
+- `xcrun notarytool submit --wait`
+- `xcrun stapler staple`
+- `xcrun stapler validate`
+- `hdiutil verify`
+
+If credentials are unavailable, record that signing/notarization was prepared
+but not completed. Do not describe Gatekeeper acceptance or notarization as
+passed unless the actual commands succeeded.
+
+### SSL Smoke Evidence
+
+Calendar Sync should be exercised once with blank inherited `SSL_CERT_FILE` and
+`REQUESTS_CA_BUNDLE` values to confirm they are ignored, and once with the
+normal environment to confirm TLS verification remains enabled through the same
+`urllib` path used by production sync. Do not record the Apps Script URL, API
+key, or private payloads.
+
 ## Operational Smoke Path
 
 After the installation mechanics pass, verify the actual user workflow with approved test data:

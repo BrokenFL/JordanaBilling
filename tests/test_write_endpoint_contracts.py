@@ -862,7 +862,7 @@ class TestWriteTokenEnforcementContract(WriteEndpointContractTestBase):
         )
         handler.do_POST()
         self.assertEqual(captured["status"], 403)
-        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."})
 
     def test_incorrect_write_token_returns_403(self):
         handler = object.__new__(self.handler_cls)
@@ -884,7 +884,7 @@ class TestWriteTokenEnforcementContract(WriteEndpointContractTestBase):
         handler.log_message = lambda *a: None
         handler.do_POST()
         self.assertEqual(captured["status"], 403)
-        self.assertEqual(captured["payload"], {"ok": False, "error": "Forbidden."})
+        self.assertEqual(captured["payload"], {"ok": False, "error": "Write access expired. Refresh Jordana Billing and try again."})
 
 
 # ---------------------------------------------------------------------------
