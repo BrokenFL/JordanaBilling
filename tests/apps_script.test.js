@@ -4,20 +4,130 @@ const path = require("path");
 const vm = require("vm");
 
 const moduleShim = { exports: {} };
+const context = {
+  module: moduleShim,
+  console,
+  Date,
+  JSON,
+  Number,
+  String,
+  Object,
+  Error,
+  Math,
+};
 vm.runInNewContext(
   fs.readFileSync(path.join(__dirname, "../integrations/apps_script/Code.gs"), "utf8"),
-  {
-    module: moduleShim,
-    console,
-    Date,
-    JSON,
-    Number,
-    String,
-    Object,
-    Error,
-  }
+  context
 );
 const script = moduleShim.exports;
+
+class MockRange {
+  constructor(sheet, row, column, rowCount, columnCount) {
+    this.sheet = sheet;
+    this.row = row;
+    this.column = column;
+    this.rowCount = rowCount;
+    this.columnCount = columnCount;
+  }
+
+  getValues() {
+    const values = [];
+    for (let rowOffset = 0; rowOffset < this.rowCount; rowOffset += 1) {
+      const source = this.sheet.rows[this.row - 1 + rowOffset] || [];
+      const row = [];
+      for (let columnOffset = 0; columnOffset < this.columnCount; columnOffset += 1) {
+        const value = source[this.column - 1 + columnOffset];
+        row.push(value === undefined ? "" : value);
+      }
+      values.push(row);
+    }
+    return values;
+  }
+
+  setValues(values) {
+    values.forEach((valueRow, rowOffset) => {
+      const targetRow = this.row - 1 + rowOffset;
+      while (this.sheet.rows.length <= targetRow) {
+        this.sheet.rows.push([]);
+      }
+      valueRow.forEach((value, columnOffset) => {
+        this.sheet.rows[targetRow][this.column - 1 + columnOffset] = value;
+      });
+    });
+  }
+}
+
+class MockSheet {
+  constructor(headers = []) {
+    this.rows = headers.length ? [headers.slice()] : [];
+  }
+
+  getLastColumn() {
+    return this.rows.reduce((maximum, row) => Math.max(maximum, row.length), 0);
+  }
+
+  getLastRow() {
+    return this.rows.length;
+  }
+
+  getRange(row, column, rowCount, columnCount) {
+    return new MockRange(this, row, column, rowCount, columnCount);
+  }
+
+  appendRow(row) {
+    this.rows.push(row.slice());
+  }
+}
+
+class MockSpreadsheet {
+  constructor() {
+    this.sheets = {};
+  }
+
+  getSheetByName(name) {
+    return this.sheets[name] || null;
+  }
+
+  insertSheet(name) {
+    const sheet = new MockSheet();
+    this.sheets[name] = sheet;
+    return sheet;
+  }
+}
+
+function useSpreadsheet(spreadsheet) {
+  context.PropertiesService = {
+    getScriptProperties() {
+      return {
+        getProperty(name) {
+          return name === "JORDANA_SPREADSHEET_ID" ? "spreadsheet-id" : "test-api-key";
+        },
+      };
+    },
+  };
+  context.SpreadsheetApp = {
+    openById() {
+      return spreadsheet;
+    },
+  };
+}
+
+function event(id) {
+  return {
+    calendar_event_id: id,
+    event_title: "Sanitized Client | 60 | Telehealth",
+    start_at: `2026-07-05T1${id}:00:00-04:00`,
+    end_at: `2026-07-05T1${id}:50:00-04:00`,
+  };
+}
+
+function runLogDataRows(sheet) {
+  return sheet.rows.slice(1);
+}
+
+function cells(row, start, end) {
+  return Array.prototype.slice.call(row, start, end);
+}
 
 assert.strictEqual(script.isPastCaptureWindow_("past_3_days"), true);
 assert.strictEqual(script.isFutureCaptureWindow_("next_7_days"), true);
@@ -204,5 +314,144 @@ assert.strictEqual(
   ).size,
   localeSensitiveRows.length
 );
+
+let runLogSheet = new MockSheet(script.RUN_LOG_HEADERS);
+context.SpreadsheetApp = {
+  openById() {
+    throw new Error("modern aggregate run_complete should not reread Raw_Event_Snapshots");
+  },
+};
+let aggregateResponse = script.handleAggregateRunComplete_(
+  runLogSheet,
+  {
+    run_id: "modern-run",
+    batch_name: "normal",
+    past_events_found: 2,
+    past_events_received: 2,
+    future_events_found: 3,
+    future_events_received: 2,
+  },
+  "modern-run"
+);
+assert.strictEqual(aggregateResponse.status, "partial");
+assert.deepStrictEqual(cells(runLogDataRows(runLogSheet)[0], 4, 9), [2, 2, 3, 2, "partial"]);
+
+runLogSheet = new MockSheet(script.RUN_LOG_HEADERS);
+aggregateResponse = script.handleAggregateRunComplete_(
+  runLogSheet,
+  {
+    run_id: "zero-run",
+    past_events_found: 0,
+    past_events_received: 0,
+    future_events_found: 0,
+    future_events_received: 0,
+  },
+  "zero-run"
+);
+assert.strictEqual(aggregateResponse.status, "complete");
+assert.deepStrictEqual(cells(runLogDataRows(runLogSheet)[0], 4, 9), [0, 0, 0, 0, "complete"]);
+
+const legacySpreadsheet = new MockSpreadsheet();
+legacySpreadsheet.sheets.Raw_Event_Snapshots = new MockSheet(script.RAW_HEADERS);
+legacySpreadsheet.sheets.Raw_Event_Snapshots.appendRow(
+  script.rawRow_(
+    { run_id: "legacy-run", capture_window: "past_3_days", batch_name: "legacy" },
+    event("1"),
+    0,
+    "2026-07-05T12:00:00.000Z"
+  )
+);
+legacySpreadsheet.sheets.Raw_Event_Snapshots.appendRow(
+  script.rawRow_(
+    { run_id: "legacy-run", capture_window: "next_7_days", batch_name: "legacy" },
+    event("2"),
+    0,
+    "2026-07-05T12:00:01.000Z"
+  )
+);
+useSpreadsheet(legacySpreadsheet);
+runLogSheet = new MockSheet(script.RUN_LOG_HEADERS);
+aggregateResponse = script.handleAggregateRunComplete_(
+  runLogSheet,
+  {
+    run_id: "legacy-run",
+    batch_name: "legacy",
+    past_events_found: 1,
+    future_events_found: 1,
+  },
+  "legacy-run"
+);
+assert.strictEqual(aggregateResponse.status, "complete");
+assert.deepStrictEqual(cells(runLogDataRows(runLogSheet)[0], 4, 9), [1, 1, 1, 1, "complete"]);
+
+aggregateResponse = script.handleAggregateRunComplete_(
+  runLogSheet,
+  {
+    run_id: "legacy-run",
+    batch_name: "legacy-retry",
+    past_events_found: 1,
+    future_events_found: 1,
+  },
+  "legacy-run"
+);
+assert.strictEqual(aggregateResponse.status, "complete");
+assert.strictEqual(runLogDataRows(runLogSheet).length, 1);
+assert.strictEqual(runLogDataRows(runLogSheet)[0][1], "legacy-retry");
+
+const batchSpreadsheet = new MockSpreadsheet();
+useSpreadsheet(batchSpreadsheet);
+let batchResponse = script.handleCalendarBatch_({
+  run_id: "batch-run",
+  batch_name: "normal",
+  capture_window: "past_3_days",
+  captured_at: "2026-07-05T12:00:00.000Z",
+  events: [event("1"), event("2")],
+});
+assert.strictEqual(batchResponse.received, 2);
+let batchRunLogRows = runLogDataRows(batchSpreadsheet.sheets.Run_Log);
+assert.strictEqual(batchRunLogRows.length, 1);
+assert.deepStrictEqual(cells(batchRunLogRows[0], 4, 9), [0, 2, 0, 0, "partial"]);
+assert.strictEqual(batchRunLogRows[0][9], "Awaiting final run_complete.");
+
+batchResponse = script.handleCalendarBatch_({
+  run_id: "batch-run",
+  batch_name: "normal",
+  capture_window: "next_7_days",
+  captured_at: "2026-07-05T12:00:10.000Z",
+  events: [event("3")],
+});
+assert.strictEqual(batchResponse.received, 1);
+batchRunLogRows = runLogDataRows(batchSpreadsheet.sheets.Run_Log);
+assert.deepStrictEqual(cells(batchRunLogRows[0], 4, 9), [0, 2, 0, 1, "partial"]);
+
+batchResponse = script.handleCalendarBatch_({
+  run_id: "batch-run",
+  batch_name: "normal",
+  capture_window: "past_3_days",
+  captured_at: "2026-07-05T12:00:20.000Z",
+  events: [event("1"), event("2")],
+});
+assert.strictEqual(batchResponse.received, 0);
+assert.strictEqual(batchSpreadsheet.sheets.Raw_Event_Snapshots.getLastRow(), 4);
+batchRunLogRows = runLogDataRows(batchSpreadsheet.sheets.Run_Log);
+assert.deepStrictEqual(cells(batchRunLogRows[0], 4, 9), [0, 2, 0, 1, "partial"]);
+
+const syncResponse = script.handleSyncRequest_({
+  after_ingested_at: "1970-01-01T00:00:00.000Z",
+  limit: 10,
+});
+assert.strictEqual(syncResponse.record_type, "sync_response");
+assert.strictEqual(syncResponse.rows.length, 3);
+assert.strictEqual(syncResponse.rows[0].run_id, "batch-run");
+
+const missingRunLogSpreadsheet = new MockSpreadsheet();
+missingRunLogSpreadsheet.sheets.Raw_Event_Snapshots = batchSpreadsheet.sheets.Raw_Event_Snapshots;
+useSpreadsheet(missingRunLogSpreadsheet);
+const missingRunLogSyncResponse = script.handleSyncRequest_({
+  after_ingested_at: "1970-01-01T00:00:00.000Z",
+  limit: 10,
+});
+assert.strictEqual(missingRunLogSyncResponse.rows.length, 3);
+assert.strictEqual(missingRunLogSpreadsheet.sheets.Run_Log, undefined);
 
 console.log("Apps Script helper tests passed");

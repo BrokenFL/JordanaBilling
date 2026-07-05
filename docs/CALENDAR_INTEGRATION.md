@@ -65,11 +65,58 @@ Timestamp-only cursors remain accepted for older stored sync state; duplicate
 same-timestamp rows are harmless because local SQLite keeps `snapshot_key`
 unique.
 
+### Run Completion Reliability
+
+Observed beta symptom: Jordana's scheduled iPhone Shortcut can report
+`kCFErrorDomainCFNetwork error -1001` even though Apps Script has already
+received and stored the calendar batch rows. In the confirmed case,
+`Raw_Event_Snapshots` contained the expected rows and the Mac Calendar Sync
+later imported them, while `Run_Log` did not show the matching completed run.
+That points to the final `run_complete` request timing out or failing after
+successful raw snapshot ingestion.
+
+The modern aggregate `run_complete` payload supplies
+`past_events_found`, `past_events_received`, `future_events_found`, and
+`future_events_received`. Apps Script now uses those supplied counts directly
+for `Run_Log` instead of rereading `Raw_Event_Snapshots` to recount the run.
+If those received-count fields are absent, the legacy recount fallback remains
+in place for older payloads. Numeric zero counts are valid supplied values, not
+missing fields.
+
+After a successful non-noop `calendar_batch`, Apps Script also creates or
+updates the matching `Run_Log` row as `partial`. This gives visible audit
+evidence even when the final `run_complete` request never arrives. Batch-level
+payloads do not currently provide reliable found-count fields, so partial rows
+preserve unknown found counts instead of inventing them; the final modern
+`run_complete` fills the exact found and received totals.
+
+Calendar Sync remains independent from `Run_Log`: `record_type=sync_request`
+reads `Raw_Event_Snapshots` directly and continues returning rows whether a run
+is complete, partial, or missing from `Run_Log`.
+
+Known remaining Apps Script performance concern: batch ingestion still uses
+`existingSnapshotKeys_`, which reads the complete snapshot-key column from
+`Raw_Event_Snapshots` for each batch before appending only new rows. That is
+separate from the fixed aggregate completion path.
+
 To redeploy the same Web App URL after editing `Code.gs`, open the existing
 Apps Script project, choose **Deploy > Manage deployments**, edit the current
 Web App deployment, select **New version**, and deploy. Do not create a new
 deployment, replace Script Properties, rotate the ingest key, or change the
 spreadsheet ID unless that is the explicit maintenance task.
+
+Manual supervised deployment checklist for this Apps Script source:
+
+1. Update the existing Apps Script project with the repository `Code.gs`.
+2. Create a new version of the existing Web App deployment.
+3. Preserve the current `/exec` endpoint; do not create a replacement Web App.
+4. Verify Script Properties remain unchanged.
+5. Send a sanitized test payload.
+6. Confirm `Raw_Event_Snapshots` receives rows.
+7. Confirm `Run_Log` moves from `partial` after batch receipt to `complete`
+   after modern `run_complete`.
+8. Confirm the Mac Calendar Sync still retrieves rows from
+   `Raw_Event_Snapshots`.
 
 ## Local Configuration
 

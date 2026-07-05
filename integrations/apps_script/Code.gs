@@ -138,6 +138,7 @@ function handleCalendarBatch_(payload) {
     }
   });
   appendRows_(sheet, rows);
+  updatePartialRunLogForBatch_(payload, captureWindow, events.length);
   return {
     ok: true,
     record_type: "calendar_batch_response",
@@ -152,80 +153,159 @@ function handleRunComplete_(payload) {
   if (captureWindow && !isSupportedCaptureWindow_(captureWindow)) {
     return { ok: false, error: "Unsupported capture window." };
   }
-  const sheet = ensureSheet_(spreadsheet_(), RUN_LOG_SHEET_NAME, RUN_LOG_HEADERS);
   const runId = runId_(payload);
   if (!runId) {
     return { ok: false, error: "Missing run id." };
   }
   if (!captureWindow && hasAggregateRunComplete_(payload)) {
-    return handleAggregateRunComplete_(sheet, payload, runId);
+    return handleAggregateRunComplete_(
+      ensureSheet_(spreadsheet_(), RUN_LOG_SHEET_NAME, RUN_LOG_HEADERS),
+      payload,
+      runId
+    );
   }
 
   const found = numberValue_(payload.events_found);
   const received =
-    payload.events_received === undefined
+    !hasField_(payload, "events_received")
       ? countRowsForRunWindow_(ensureSheet_(spreadsheet_(), RAW_SHEET_NAME, RAW_HEADERS), runId, captureWindow)
       : numberValue_(payload.events_received);
-  const previous = findRunLog_(sheet, runId);
-  const row = previous.values || blankRunLog_(runId);
-  row[0] = runId;
-  row[1] = String(payload.batch_name || row[1] || "");
-  row[2] = row[2] || String(payload.started_at || payload.captured_at || "");
-  row[3] = new Date().toISOString();
-  if (isFutureCaptureWindow_(captureWindow)) {
-    row[6] = found;
-    row[7] = received;
-  } else {
-    row[4] = found;
-    row[5] = received;
-  }
-  row[8] = runStatus_(row, captureWindow);
-  row[9] = row[8] === "complete" ? "" : "Received count did not match found count.";
-  row[10] = new Date().toISOString();
+  return withRunLogLock_(function () {
+    const sheet = ensureSheet_(spreadsheet_(), RUN_LOG_SHEET_NAME, RUN_LOG_HEADERS);
+    const previous = findRunLog_(sheet, runId);
+    const row = previous.values || blankRunLog_(runId);
+    row[0] = runId;
+    row[1] = String(payload.batch_name || row[1] || "");
+    row[2] = row[2] || String(payload.started_at || payload.captured_at || "");
+    row[3] = new Date().toISOString();
+    if (isFutureCaptureWindow_(captureWindow)) {
+      row[6] = found;
+      row[7] = received;
+    } else {
+      row[4] = found;
+      row[5] = received;
+    }
+    row[8] = runStatus_(row, captureWindow);
+    row[9] = row[8] === "complete" ? "" : "Received count did not match found count.";
+    row[10] = new Date().toISOString();
 
-  if (previous.rowNumber) {
-    sheet.getRange(previous.rowNumber, 1, 1, RUN_LOG_HEADERS.length).setValues([row]);
-  } else {
-    sheet.appendRow(row);
-  }
-  return { ok: true, record_type: "run_complete_response", run_id: runId, status: row[8] };
+    writeRunLogRow_(sheet, previous, row);
+    return { ok: true, record_type: "run_complete_response", run_id: runId, status: row[8] };
+  });
 }
 
 function handleAggregateRunComplete_(sheet, payload, runId) {
+  if (hasModernAggregateRunCompleteCounts_(payload)) {
+    return writeAggregateRunComplete_(
+      sheet,
+      payload,
+      runId,
+      numberValue_(payload.past_events_found),
+      numberValue_(payload.past_events_received),
+      numberValue_(payload.future_events_found),
+      numberValue_(payload.future_events_received),
+      false
+    );
+  }
+
   const rawSheet = ensureSheet_(spreadsheet_(), RAW_SHEET_NAME, RAW_HEADERS);
-  const previous = findRunLog_(sheet, runId);
-  const row = previous.values || blankRunLog_(runId);
   const backfillReceived = countRowsForRunWindow_(rawSheet, runId, BACKFILL_CAPTURE_WINDOW);
   const pastFound = numberValue_(payload.past_events_found);
   const futureFound = numberValue_(payload.future_events_found);
-  const totalFound = pastFound + futureFound;
-
-  row[0] = runId;
-  row[1] = String(payload.batch_name || row[1] || "");
-  row[2] = row[2] || String(payload.started_at || payload.captured_at || "");
-  row[3] = new Date().toISOString();
   if (backfillReceived > 0 || isBackfillBatchName_(payload.batch_name)) {
-    row[4] = totalFound;
-    row[5] = backfillReceived;
-    row[6] = 0;
-    row[7] = 0;
-    row[8] = runStatus_(row, BACKFILL_CAPTURE_WINDOW);
-  } else {
-    row[4] = pastFound;
-    row[5] = countRowsForRunWindow_(rawSheet, runId, "past_3_days");
-    row[6] = futureFound;
-    row[7] = countRowsForRunWindow_(rawSheet, runId, "next_7_days");
-    row[8] = row[4] === row[5] && row[6] === row[7] ? "complete" : "partial";
+    return writeAggregateRunComplete_(
+      sheet,
+      payload,
+      runId,
+      pastFound + futureFound,
+      backfillReceived,
+      0,
+      0,
+      true
+    );
   }
-  row[9] = row[8] === "complete" ? "" : "Received count did not match found count.";
-  row[10] = new Date().toISOString();
+  return writeAggregateRunComplete_(
+    sheet,
+    payload,
+    runId,
+    pastFound,
+    countRowsForRunWindow_(rawSheet, runId, "past_3_days"),
+    futureFound,
+    countRowsForRunWindow_(rawSheet, runId, "next_7_days"),
+    false
+  );
+}
 
-  if (previous.rowNumber) {
-    sheet.getRange(previous.rowNumber, 1, 1, RUN_LOG_HEADERS.length).setValues([row]);
-  } else {
-    sheet.appendRow(row);
+function writeAggregateRunComplete_(
+  sheet,
+  payload,
+  runId,
+  pastFound,
+  pastReceived,
+  futureFound,
+  futureReceived,
+  isBackfill
+) {
+  return withRunLogLock_(function () {
+    const previous = findRunLog_(sheet, runId);
+    const row = previous.values || blankRunLog_(runId);
+
+    row[0] = runId;
+    row[1] = String(payload.batch_name || row[1] || "");
+    row[2] = row[2] || String(payload.started_at || payload.captured_at || "");
+    row[3] = new Date().toISOString();
+    if (isBackfill) {
+      row[4] = pastFound;
+      row[5] = pastReceived;
+      row[6] = 0;
+      row[7] = 0;
+      row[8] = runStatus_(row, BACKFILL_CAPTURE_WINDOW);
+    } else {
+      row[4] = pastFound;
+      row[5] = pastReceived;
+      row[6] = futureFound;
+      row[7] = futureReceived;
+      row[8] = row[4] === row[5] && row[6] === row[7] ? "complete" : "partial";
+    }
+    row[9] = row[8] === "complete" ? "" : "Received count did not match found count.";
+    row[10] = new Date().toISOString();
+
+    writeRunLogRow_(sheet, previous, row);
+    return { ok: true, record_type: "run_complete_response", run_id: runId, status: row[8] };
+  });
+}
+
+function updatePartialRunLogForBatch_(payload, captureWindow, received) {
+  const runId = runId_(payload);
+  if (!runId) {
+    return;
   }
-  return { ok: true, record_type: "run_complete_response", run_id: runId, status: row[8] };
+  const found = hasField_(payload, "events_found") ? numberValue_(payload.events_found) : null;
+  withRunLogLock_(function () {
+    const sheet = ensureSheet_(spreadsheet_(), RUN_LOG_SHEET_NAME, RUN_LOG_HEADERS);
+    const previous = findRunLog_(sheet, runId);
+    const row = previous.values || blankRunLog_(runId);
+    row[0] = runId;
+    row[1] = String(payload.batch_name || row[1] || "");
+    row[2] = row[2] || String(payload.started_at || payload.captured_at || "");
+    if (isFutureCaptureWindow_(captureWindow)) {
+      if (found !== null) {
+        row[6] = maxNumber_(row[6], found);
+      }
+      row[7] = maxNumber_(row[7], received);
+    } else {
+      if (found !== null) {
+        row[4] = maxNumber_(row[4], found);
+      }
+      row[5] = maxNumber_(row[5], received);
+    }
+    if (String(row[8] || "") !== "complete") {
+      row[8] = "partial";
+      row[9] = "Awaiting final run_complete.";
+    }
+    row[10] = new Date().toISOString();
+    writeRunLogRow_(sheet, previous, row);
+  });
 }
 
 function handleSyncRequest_(payload) {
@@ -397,11 +477,25 @@ function runId_(payload) {
 function hasAggregateRunComplete_(payload) {
   return (
     payload &&
-    (payload.past_events_found !== undefined ||
-      payload.future_events_found !== undefined ||
-      payload.past_events_received !== undefined ||
-      payload.future_events_received !== undefined)
+    (hasField_(payload, "past_events_found") ||
+      hasField_(payload, "future_events_found") ||
+      hasField_(payload, "past_events_received") ||
+      hasField_(payload, "future_events_received"))
   );
+}
+
+function hasModernAggregateRunCompleteCounts_(payload) {
+  return (
+    payload &&
+    hasField_(payload, "past_events_found") &&
+    hasField_(payload, "past_events_received") &&
+    hasField_(payload, "future_events_found") &&
+    hasField_(payload, "future_events_received")
+  );
+}
+
+function hasField_(payload, fieldName) {
+  return Object.prototype.hasOwnProperty.call(payload || {}, fieldName);
 }
 
 function isBackfillBatchName_(batchName) {
@@ -471,6 +565,14 @@ function findRunLog_(sheet, runId) {
   return { rowNumber: null, values: null };
 }
 
+function writeRunLogRow_(sheet, previous, row) {
+  if (previous.rowNumber) {
+    sheet.getRange(previous.rowNumber, 1, 1, RUN_LOG_HEADERS.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+}
+
 function blankRunLog_(runId) {
   return [runId, "", "", "", 0, 0, 0, 0, "partial", "", ""];
 }
@@ -505,6 +607,23 @@ function numberValue_(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function maxNumber_(current, next) {
+  return Math.max(numberValue_(current), numberValue_(next));
+}
+
+function withRunLogLock_(callback) {
+  if (typeof LockService === "undefined" || !LockService.getScriptLock) {
+    return callback();
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function safeError_(message) {
   const error = new Error(message);
   error.safeMessage = message;
@@ -528,7 +647,11 @@ if (typeof module !== "undefined") {
     isSupportedCaptureWindow_,
     canonicalCaptureWindow_,
     countRowsForRunWindow_,
+    handleCalendarBatch_,
+    handleRunComplete_,
     handleAggregateRunComplete_,
+    handleSyncRequest_,
+    hasModernAggregateRunCompleteCounts_,
     runStatus_,
     rawRow_,
     syncCursorFromPayload_,
