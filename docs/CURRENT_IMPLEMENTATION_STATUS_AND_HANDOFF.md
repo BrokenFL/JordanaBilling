@@ -7,12 +7,12 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
-- **Latest recorded full-suite baseline:** 2,729 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.10`
+- **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
+- **Current test release target:** `v0.1.0-test.11`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post10`
+- **Current package/application version:** `0.1.0.post11`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.8` is superseded by test.10 for installation and update testing
+- **Prior test release:** `v0.1.0-test.10` is superseded by test.11 for installation and update testing
 
 ## Architecture
 
@@ -110,14 +110,14 @@ This is not yet a final production declaration. Brooke should remain available d
 The current controlled-beta release target is:
 
 ```text
-JordanaBilling-v0.1.0-test.10-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.11-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.10`
-- Python package/application version: `0.1.0.post10`
+- Release label: `v0.1.0-test.11`
+- Python package/application version: `0.1.0.post11`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -127,11 +127,27 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post10` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
-- Local browser smoke testing passed for June Reconciliation and in-app Quit on a sanitized temporary database
-- Focused tests pass for Quit, installer/update behavior, build identity, report filtering, and June reconciliation
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post11` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Local browser smoke testing: required before publication
+- Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
-### Bug Fixes In test.10
+### Bug Fixes In test.11
+
+1. **Weekday column in Review queue** — Review queue now shows a short weekday abbreviation (Mon–Sun) as a visual reminder for weekend sessions.
+2. **Weekend/evening custom-rate matching** — Manually selecting a weekend or evening billing session type now correctly propagates the `time_category` to rate suggestion, matching person exceptions and participant-combination exceptions at the correct tier.
+3. **Custom rate creation** — New custom rates save immediately to SQLite, appear in the rate list, persist after refresh, and participate in Review rate matching.
+4. **Edit Session (no reason required)** — Eligible approved sessions show an Edit Session button. Clicking it moves the session back to Review with no prompt. Preserved: participants, Bill To, Billing Relationship, duration, session type, time category, approved rate, payment status. Draft invoice line is removed and the draft total recalculated atomically. A system audit entry is written. Blocked cases return a sanitized reason without partial changes.
+5. **Billing Relationship delete/archive** — Unused relationships without billing history may be permanently deleted. Relationships with protected billing history are archived; historical invoices and approved records retain their references.
+6. **Self-pay Edit** — Self-pay rows now show Edit. Clicking it opens the canonical account editor, initializing the relationship on first access through the existing duplicate-safe setup service.
+7. **Billing Relationships dedicated route** — The sidebar Billing Relationships nav item now uses `#billing-relationships` and keeps its active state. It does not fall back to Clients.
+8. **Canonical relationship access** — All entry points (Billing Relationships page, payer person, covered-client person, Review modal, self-pay row) resolve to the same canonical `account_id`.
+9. **Review relationship deep-linking** — Open Billing Relationship Record from Review initializes the canonical relationship when none is already stored and opens the account editor directly. Close/save returns to the same Review session.
+10. **Active-tab preservation** — Closing or saving editors returns to the originating tab (Clients, Billing Relationships, person record, or Review) rather than defaulting to Review.
+11. **Write-token messaging** — Missing or expired write token returns `Write access expired. Refresh Jordana Billing and try again.` instead of a generic `Forbidden.`.
+12. **SSL blank-env handling** — Blank `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` values are treated as unset before sync requests. Valid nonblank paths are preserved.
+13. **Signing/notarization preparation** — `scripts/sign_and_notarize_release.sh` added for supervised Developer ID signing. Included in the release payload via `build_release.sh`.
+
+### Bug Fixes Inherited from test.10
 
 1. **Composite cursor ordering fix** — sync cursor comparison now correctly handles rows with equal `ingested_at` values by using `snapshot_key` as a tiebreaker.
 2. **Flaky test fix** — `test_07_health_endpoint` now includes a kill fallback on timeout.
@@ -146,9 +162,11 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 
 ### Prior Test Releases
 
-`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that stale installed runtime code could remain when multiple releases shared package version `0.1.0`. test.10 supersedes test.8 for installation and update testing.
+`v0.1.0-test.10` was built from commit `424cda3`. test.11 supersedes test.10 for installation and update testing.
 
-`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.10 as the current controlled-beta release target.
+`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that stale installed runtime code could remain when multiple releases shared package version `0.1.0`. test.10 superseded test.8.
+
+`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published.
 
 The prior installed-smoke baseline remains `v0.1.0-test.6` from commit `0dec58b6bf5ab35e2d48600b57fec83a477e304d`, which preserved existing private configuration and SQLite data during the brooketest upgrade installation and passed the major Billing Relationship, filing-owner, delivery-contact, invoice, and data-preservation workflows.
 
@@ -156,7 +174,7 @@ An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rej
 
 ## Controlled Beta Decision
 
-The test.10 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
+The test.11 artifact may be installed on Jordana's Mac for a controlled June-invoice beta when all of the following are true:
 
 1. Brooke has a verified backup of the source operational database.
 2. The private `.env` and SQLite database are transferred separately through a direct or encrypted method.

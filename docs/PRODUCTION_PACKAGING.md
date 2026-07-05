@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.10
+### Current Test Build — v0.1.0-test.11
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.10
-- **Python package/application version:** 0.1.0.post10
+- **Release label:** v0.1.0-test.11
+- **Python package/application version:** 0.1.0.post11
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,19 +36,35 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post9` wheel plus pinned production dependencies
-- **Local browser smoke:** required for Reconciliation and Quit before publication
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post11` wheel plus pinned production dependencies
+- **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.10 is the current test build after the stale-runtime installer incident. It
-uses a unique Python package version and embeds a build ID derived from the
-release label plus Git commit. The installer verifies the payload, installed
-files, installed package identity, and running server build ID before reporting
-success. test.10 also includes a composite cursor ordering fix for sync.
+test.11 adds the weekday Review column, weekend/evening rate matching via manually
+selected session type, Edit Session (no reason required), billing relationship
+delete/archive, self-pay Edit, dedicated Billing Relationships route, canonical
+relationship deep-linking, active-tab preservation, write-token messaging, SSL
+blank-env handling, and the prepared `scripts/sign_and_notarize_release.sh`
+signing script.
 
-### Bug Fixes In test.10
+### Bug Fixes In test.11
+
+1. **Weekday column** — Review queue shows short weekday abbreviation.
+2. **Weekend/evening rate matching** — Manually selected weekend/evening session type propagates `time_category` to rate suggestion.
+3. **Edit Session** — Eligible approved sessions return to Review without a reason prompt; draft line removed and total recalculated atomically.
+4. **Billing Relationship delete/archive** — Unused relationships deleted; history-protected relationships archived.
+5. **Self-pay Edit** — Self-pay rows show Edit; opens canonical account editor.
+6. **Dedicated Billing Relationships route** — `#billing-relationships` keeps the nav active.
+7. **Canonical relationship access** — All entry points resolve to the same `account_id`.
+8. **Review relationship deep-link** — Opens canonical account editor directly from Review.
+9. **Active-tab preservation** — Editor close/save returns to originating tab.
+10. **Write-token messaging** — Returns `Write access expired. Refresh Jordana Billing and try again.`
+11. **SSL blank-env handling** — Blank `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` treated as unset.
+12. **Signing preparation** — `scripts/sign_and_notarize_release.sh` added.
+
+### Bug Fixes Inherited from test.10
 
 1. **Composite cursor ordering fix** — sync cursor comparison now correctly handles rows with equal `ingested_at` values by using `snapshot_key` as a tiebreaker.
 2. **Flaky test fix** — `test_07_health_endpoint` now includes a kill fallback on timeout.
@@ -63,14 +79,15 @@ success. test.10 also includes a composite cursor ordering fix for sync.
 
 ### Prior Test Builds
 
+`v0.1.0-test.10` was built from commit `424cda3` with Python 3.14.4. test.11 supersedes test.10 for installation and update testing.
+
 `v0.1.0-test.8` was built from commit `d97d6ba` with Python 3.14.4. Its DMG
 payload was correct, but a supervised installation exposed that an older
 private runtime could remain installed because the prior installer requested
-the shared package version `0.1.0`. test.9 and test.10 supersede test.8 for installation
-and update testing.
+the shared package version `0.1.0`. test.9 and test.10 superseded test.8.
 
 `v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
-never published. It is superseded by test.10 as the current built and
+never published. It is superseded by test.11 as the current built and
 distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
@@ -84,9 +101,9 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5, test.6, test.7, and test.8 builds remain historically
-accurate for the periods in which they were the current builds. test.10
-supersedes test.9 and test.8 for installation and stale-runtime verification.
+The prior test.5, test.6, test.7, test.8, test.9, and test.10 builds remain historically
+accurate for the periods in which they were the current builds. test.11
+supersedes test.10, test.9, and test.8 for installation and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
@@ -119,12 +136,13 @@ V1 uses an offline pinned runtime install with a native macOS setup app:
 - The installer creates a private virtual environment inside the installed app bundle and installs only from the shipped wheelhouse.
 - Normal double-click launch uses that installed runtime and never runs pip, Git, dependency repair, or package installation.
 
-The app is not notarized and does not bundle Python itself. The clean Mac must
-have the Python major/minor version recorded in `release_manifest.json`
-installed once before installation because the wheelhouse may include
-Python-specific macOS wheels. Calendar sync can still require internet during
-application use; app startup and daily launch do not require PyPI, GitHub, or
-Wi-Fi.
+The app is not notarized unless the separate supervised Developer ID signing
+step has been completed with local Apple credentials. The app does not bundle
+Python itself. The clean Mac must have the Python major/minor version recorded
+in `release_manifest.json` installed once before installation because the
+wheelhouse may include Python-specific macOS wheels. Calendar sync can still
+require internet during application use; app startup and daily launch do not
+require PyPI, GitHub, or Wi-Fi.
 
 ## Locations
 
@@ -211,6 +229,42 @@ required Python major/minor family, payload checksums, and whether the artifact
 contains private data. The generated package embeds the same commit, build ID,
 release label, and package version in `jordana_invoice.build_info`; the running
 server exposes it through `/api/build-info` and `/api/health`.
+
+## Developer ID Signing And Notarization
+
+The default local build remains ad-hoc signed for development unless Apple
+Developer credentials are available. Do not claim Gatekeeper acceptance,
+notarization, or staple success unless the actual Apple commands pass.
+
+Prepared supervised signing path:
+
+```bash
+export JORDANA_CODESIGN_IDENTITY="Developer ID Application: Example Name (TEAMID)"
+export JORDANA_NOTARYTOOL_PROFILE="jordana-billing-notary"
+scripts/sign_and_notarize_release.sh \
+  --release-dir build/release/<release>/Install\ Jordana\ Billing.app/Contents/Resources/ReleasePayload \
+  --dmg build/release/JordanaBilling-<release>-macos-arm64.dmg
+```
+
+The notary profile must be created locally in Keychain using Apple's supported
+`xcrun notarytool store-credentials` workflow. Never commit Developer ID
+certificates, private keys, Apple IDs, app-specific passwords, keychain exports,
+or notarytool profiles.
+
+The script signs nested executable code and app bundles with hardened runtime,
+signs the DMG, submits with `xcrun notarytool submit --wait`, staples the
+ticket, and then reruns `codesign`, `spctl`, `stapler validate`, and
+`hdiutil verify`. Missing credentials fail clearly instead of falling back to a
+fake or ad-hoc notarization result.
+
+## SSL Certificate Environment
+
+Calendar Sync uses the production `urllib` transport. Blank inherited
+`SSL_CERT_FILE` or `REQUESTS_CA_BUNDLE` values are treated as unset before sync
+requests. Nonblank explicit certificate paths remain preserved, and TLS
+certificate verification stays enabled through Python's normal verified HTTPS
+path. Sync errors continue to be sanitized so the Apps Script URL, API key, and
+private payloads are not logged or displayed.
 
 ## Private Configuration Setup
 
