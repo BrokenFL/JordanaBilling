@@ -929,6 +929,7 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
         appointment_status=appointment_status,
         billing_treatment=billing_treatment,
         custom_service_description=custom_service_description,
+        custom_service_code=custom_service_code,
     )
     review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
     conn.execute(
@@ -1171,6 +1172,7 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
             appointment_status=session["appointment_status"],
             billing_treatment=session["billing_treatment"],
             custom_service_description=session["custom_service_description"] if "custom_service_description" in session.keys() else None,
+            custom_service_code=session["custom_service_code"] if "custom_service_code" in session.keys() else None,
         )
         if unresolved:
             raise ValueError("Cannot approve until required fields are complete: " + ", ".join(unresolved))
@@ -4440,6 +4442,7 @@ def refresh_candidate_suggestions(
         appointment_status=refreshed["appointment_status"],
         billing_treatment=refreshed["billing_treatment"],
         custom_service_description=refreshed["custom_service_description"] if "custom_service_description" in refreshed.keys() else None,
+        custom_service_code=refreshed["custom_service_code"] if "custom_service_code" in refreshed.keys() else None,
     )
     review_status = "ready_for_approval" if not unresolved else status_from_unresolved(unresolved)
     conn.execute(
@@ -4996,7 +4999,11 @@ def unresolved_from_values(**values: Any) -> list[str]:
     billing_type = values.get("billing_session_type") or map_service_mode_to_billing_type(values.get("service_mode"))
     if billing_type not in ALLOWED_BILLING_SESSION_TYPES:
         unresolved.append("service_mode")
-    if billing_type == "custom" and not text(values.get("custom_service_description")).strip():
+    if (
+        billing_type == "custom"
+        and not text(values.get("custom_service_description")).strip()
+        and not text(values.get("custom_service_code")).strip()
+    ):
         unresolved.append("custom_service_description")
     if not values["time_category"]:
         unresolved.append("time_category")
@@ -5673,8 +5680,8 @@ def preview_rate_suggestion(conn: sqlite3.Connection, data: dict[str, Any]) -> d
         data.get("custom_service_description")
     )
     custom_service_code = normalize_optional_custom_code(data.get("custom_service_code"))
-    if billing_session_type == "custom" and not custom_service_description:
-        raise ValueError("Custom session type requires a description.")
+    if billing_session_type == "custom" and not custom_service_description and not custom_service_code:
+        raise ValueError("Custom session type requires a description or code.")
     time_category = normalize_time_category(data.get("time_category") or "standard")
     participant_person_ids = normalize_participant_ids(data.get("participant_person_ids") or [])
     person_id = text(data.get("person_id")) or None
@@ -5926,8 +5933,8 @@ def normalized_rate_rule_payload(
     billing_session_type = validate_billing_session_type(text(data.get("billing_session_type")) or "")
     custom_service_description = normalize_optional_custom_description(data.get("custom_service_description"))
     custom_service_code = normalize_optional_custom_code(data.get("custom_service_code"))
-    if billing_session_type == "custom" and not custom_service_description:
-        raise ValueError("Custom session type requires a description.")
+    if billing_session_type == "custom" and not custom_service_description and not custom_service_code:
+        raise ValueError("Custom session type requires a description or code.")
     time_category = normalize_time_category(data.get("time_category") or "")
     effective_from = text(data.get("effective_from")) or date.today().isoformat()
     validate_effective_date(effective_from)

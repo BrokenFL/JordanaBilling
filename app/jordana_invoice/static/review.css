@@ -705,7 +705,49 @@ body.responsive-sheet-open {
   #invoicesView .invoice-layout > section,
   #paymentsView .invoice-layout > section {
     min-width: 0;
-    overflow-x: auto;
+    overflow-x: hidden;
+  }
+
+  #clientsView .crm-table,
+  #clientsView .billing-dir-table,
+  #sessionsView .sessions-table,
+  #invoicesView .invoice-list-table,
+  #paymentsView .invoice-list-table,
+  #paymentsView .paid-invoices-table,
+  #paymentsView .all-payments-table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  #clientsView .billing-dir-table th:nth-child(8),
+  #clientsView .billing-dir-table td:nth-child(8),
+  #invoicesView .invoice-list-table th:nth-child(12),
+  #invoicesView .invoice-list-table td:nth-child(12),
+  #paymentsView .unpaid-list-table th:nth-child(8),
+  #paymentsView .unpaid-list-table td:nth-child(8),
+  #paymentsView .paid-invoices-table th:nth-child(8),
+  #paymentsView .paid-invoices-table td:nth-child(8),
+  #paymentsView .all-payments-table th:nth-child(9),
+  #paymentsView .all-payments-table td:nth-child(9) {
+    display: none;
+  }
+
+  #clientsView .billing-dir-table th,
+  #clientsView .billing-dir-table td,
+  #sessionsView .sessions-table th,
+  #sessionsView .sessions-table td,
+  #invoicesView .invoice-list-table th,
+  #invoicesView .invoice-list-table td,
+  #paymentsView .invoice-list-table th,
+  #paymentsView .invoice-list-table td,
+  #paymentsView .paid-invoices-table th,
+  #paymentsView .paid-invoices-table td,
+  #paymentsView .all-payments-table th,
+  #paymentsView .all-payments-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
   #clientsView #accountRecord:not(.responsive-sheet-active),
@@ -784,6 +826,27 @@ body.responsive-sheet-open {
     padding: 12px 18px;
     background: white;
     border-top: 1px solid var(--line);
+  }
+
+  #invoicesView .invoice-workspace.responsive-sheet-active {
+    position: static;
+    width: 100%;
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+    contain: none;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    box-shadow: none;
+    padding: 18px 0 0;
+  }
+
+  #invoicesView .invoice-builder > .actions {
+    position: static;
+    margin: 14px 0 0;
+    padding: 0;
+    border-top: 0;
   }
 }
 

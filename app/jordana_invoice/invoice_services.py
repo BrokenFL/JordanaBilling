@@ -1045,6 +1045,10 @@ def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row
     count = conn.execute("SELECT COUNT(*) FROM session_participants WHERE session_id = ?", (s["id"],)).fetchone()[0]
     if not count: reasons.append("Participants are not confirmed")
     if not s.get("billing_party_id"): reasons.append("Bill-to party is not confirmed")
+    if s.get("account_id"):
+        account = conn.execute("SELECT active FROM client_accounts WHERE account_id = ?", (s["account_id"],)).fetchone()
+        if account and not int(account["active"] or 0):
+            reasons.append("Billing relationship is archived")
     if s.get("approved_rate_cents") is None and s.get("rate_cents_snapshot") is None: reasons.append("Approved charged amount is missing")
     amount = s.get("rate_cents_snapshot") if s.get("rate_cents_snapshot") is not None else s.get("approved_rate_cents")
     if amount is not None and int(amount) < 0: reasons.append("Approved amount cannot be negative")

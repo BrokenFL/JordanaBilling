@@ -107,6 +107,7 @@ def _generate_invoice_pdf_bytes(
     meta_rows: list[tuple[str, str]] | None = None,
     page_footer_label: str = "Invoice Draft",
     doc_title: str = "Invoice Draft",
+    document_title: str = "INVOICE",
 ) -> bytes:
     """Shared canonical PDF rendering for both draft previews and finalized invoices.
 
@@ -271,6 +272,7 @@ def _generate_invoice_pdf_bytes(
         meta_label,
         meta_value,
         para,
+        document_title=document_title,
     )
     header = _build_header_table(
         render, meta, block_text, label, styles["Heading2"], invoice.get("business_name_snapshot") or "",
@@ -377,11 +379,12 @@ def _build_meta_block(
     meta_value_style: Any,
     para: Any,
     *,
+    document_title: str = "INVOICE",
     extra_title_flowables: list[Any] | None = None,
 ) -> list[Any]:
     from reportlab.platypus import Spacer
 
-    meta = [para("INVOICE", title_style)]
+    meta = [para(document_title, title_style)]
     meta.extend(extra_title_flowables or [])
     values = [value for _label, value in rows if value]
     if values:
@@ -1025,10 +1028,12 @@ def _build_pdf_footer(
         ]),
     )
 
-    footer = footer_table_flowables + [
-        Spacer(1, PAYMENT_SECTION_TOP_SPACING),
-        payment_table,
-    ]
+    footer = list(footer_table_flowables)
+    if not render.get("suppress_payment_instructions"):
+        footer.extend([
+            Spacer(1, PAYMENT_SECTION_TOP_SPACING),
+            payment_table,
+        ])
     notes = str(render.get("notes") or "").strip()
     if notes:
         notes_style = ParagraphStyle(

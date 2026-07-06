@@ -148,7 +148,8 @@ class InvoiceLifecycleTests(unittest.TestCase):
         })
         self.assertEqual(updated["invoice"]["delivery_method"], "mail")
         self.assertEqual(get_invoice(self.conn, draft["invoice"]["invoice_id"])["lines"][0]["description_snapshot"], "Office session")
-        removed = remove_line_from_draft(self.conn, draft["invoice"]["invoice_id"], draft["lines"][1]["invoice_line_item_id"])
+        line_to_remove = next(line for line in draft["lines"] if line["line_amount_cents"] == 7500)
+        removed = remove_line_from_draft(self.conn, draft["invoice"]["invoice_id"], line_to_remove["invoice_line_item_id"])
         self.assertEqual(removed["invoice"]["total_cents"], 12500)
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")

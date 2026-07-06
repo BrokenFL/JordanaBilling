@@ -41,6 +41,7 @@ const state = {
   account: null,
   billingParty: null,
   dirty: new Set(),
+  pendingSessionDraft: null,
   returnCandidate: null,
   returnContext: null,
   detail: null,
@@ -578,7 +579,7 @@ function renderInspector(data) {
                <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${escapeAttr(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || "")}"></label>
                <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${escapeAttr(s.custom_service_description || "")}"></label>
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
-               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
+               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}" data-suggested-rate="${escapeAttr(suggestedRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
                <label class="field">Payment Handling<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Invoice billing</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at session</option></select></label>
                <div class="field wide" id="paidAtSessionSection" ${s.payment_status === "paid_at_session" ? "" : "hidden"} style="background: rgba(0,0,0,0.02); padding: 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1); margin-top: 8px;">
                  <h4 style="margin: 0 0 8px 0;">Paid at Session Details</h4>
@@ -1176,9 +1177,13 @@ async function saveSessionSection() {
   if (button) button.disabled = true;
   try {
     validateCancellationBillingChoice();
+    const sessionDraft = collectSessionDraftValues();
     const updated = await api(`/api/review/candidates/${state.selected}/save-session`, { method: "POST", body: JSON.stringify(collectPayload()) });
     state.detail = updated;
     state.editSteps.session = false;
+    state.pendingSessionDraft = sessionDraft.payment_status === "paid_at_session"
+      ? { candidateId: state.selected, values: sessionDraft }
+      : null;
     renderInspector(updated);
     markSaved("session", "Session saved");
     await loadList();
@@ -1236,6 +1241,7 @@ async function save(approve) {
       if (updated.report_warning) {
         showReviewWarning(updated.report_warning);
       }
+      state.pendingSessionDraft = null;
       
       if (!document.getElementById("invoicesView").hidden) {
         await loadInvoices();
@@ -1293,6 +1299,11 @@ function collectSessionDraftValues() {
     appointment_status: $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "completed",
     approved_rate: $("approvedRateInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
+    amount_received: $("paymentAmountInput")?.value || "",
+    payment_date: $("paymentDateInput")?.value || "",
+    payment_method: $("paymentMethodInput")?.value || "",
+    reference_number: $("paymentRefInput")?.value || "",
+    administrative_note: $("paymentNoteInput")?.value || "",
     billing_treatment: $("billingTreatmentInput")?.value || "",
     rate_override_reason: $("overrideReasonInput")?.value || ""
   };
@@ -1308,8 +1319,14 @@ function restoreSessionDraftValues(values) {
   if ($("attendanceOutcomeInput")) $("attendanceOutcomeInput").value = values.appointment_status;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
   if ($("paymentInput")) $("paymentInput").value = values.payment_status;
+  if ($("paymentAmountInput")) $("paymentAmountInput").value = values.amount_received;
+  if ($("paymentDateInput")) $("paymentDateInput").value = values.payment_date;
+  if ($("paymentMethodInput")) $("paymentMethodInput").value = values.payment_method;
+  if ($("paymentRefInput")) $("paymentRefInput").value = values.reference_number;
+  if ($("paymentNoteInput")) $("paymentNoteInput").value = values.administrative_note;
   if ($("billingTreatmentInput")) $("billingTreatmentInput").value = values.billing_treatment;
   if ($("overrideReasonInput")) $("overrideReasonInput").value = values.rate_override_reason;
+  syncSessionCustomFields();
 }
 
 async function updateSessionRatePreview() {
@@ -1336,10 +1353,24 @@ async function updateSessionRatePreview() {
     const previewText = preview.amount
       ? `Suggested by Rate Card: $${preview.amount} (${preview.explanation})`
       : "No matching Rate Card rule. This session will stay marked Needs Rate unless you enter one.";
+    applyMatchedRatePreview(preview);
     $("sessionRatePreview").textContent = previewText;
   } catch (err) {
     $("sessionRatePreview").textContent = err.message || "Unable to preview suggested rate.";
   }
+}
+
+function applyMatchedRatePreview(preview) {
+  const rateInput = $("approvedRateInput");
+  if (!rateInput || !preview?.amount) return;
+  const previousSuggested = rateInput.dataset.suggestedRate || "";
+  const currentCents = parseMoneyToCents(rateInput.value);
+  const previousSuggestedCents = parseMoneyToCents(previousSuggested);
+  const shouldApply = currentCents === null || (previousSuggestedCents !== null && currentCents === previousSuggestedCents);
+  if (shouldApply) {
+    rateInput.value = preview.amount;
+  }
+  rateInput.dataset.suggestedRate = preview.amount;
 }
 
 async function resolveTypedSelections() {
@@ -1458,6 +1489,9 @@ function approvalSuccessMessageForStaging(summary) {
 function collectPayload() {
   const session = state.detail?.session || {};
   const paidAtSessionPayment = state.detail?.paid_at_session_payment || {};
+  const pendingSessionDraft = state.pendingSessionDraft?.candidateId === state.selected
+    ? state.pendingSessionDraft.values
+    : {};
   const durationChoice = $("durationChoiceInput")?.value
     || session.duration_choice
     || durationToChoice(session.approved_duration_minutes || session.duration_minutes)
@@ -1469,7 +1503,7 @@ function collectPayload() {
   const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
   const futurePerson = $("saveFuturePersonRate")?.checked === true;
   const futureJoint = $("saveFutureJointRate")?.checked === true;
-  const paymentStatus = $("paymentInput")?.value || session.payment_status || "unpaid";
+  const paymentStatus = $("paymentInput")?.value || pendingSessionDraft.payment_status || session.payment_status || "unpaid";
   const billingType = $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy";
   const appointmentStatus = $("attendanceOutcomeInput")?.value || session.appointment_status || "completed";
   const billingTreatment = $("billingTreatmentInput")?.value
@@ -1490,13 +1524,16 @@ function collectPayload() {
     || centString(session.suggested_rate_cents)
     || "";
   const paidAtSessionAmount = $("paymentAmountInput")?.value
+    || pendingSessionDraft.amount_received
     || centString(paidAtSessionPayment.amount_cents)
     || rate;
   const paidAtSessionDate = $("paymentDateInput")?.value
+    || pendingSessionDraft.payment_date
     || paidAtSessionPayment.received_at
     || session.session_date
     || (session.start_at ? session.start_at.substring(0, 10) : "");
   const paidAtSessionMethod = $("paymentMethodInput")?.value
+    || pendingSessionDraft.payment_method
     || paidAtSessionPayment.method
     || "";
 
@@ -1522,8 +1559,8 @@ function collectPayload() {
     amount_received: paymentStatus === "paid_at_session" ? paidAtSessionAmount : "",
     payment_date: paymentStatus === "paid_at_session" ? paidAtSessionDate : "",
     payment_method: paymentStatus === "paid_at_session" ? paidAtSessionMethod : "",
-    reference_number: $("paymentRefInput")?.value || paidAtSessionPayment.reference_number || "",
-    administrative_note: $("paymentNoteInput")?.value || paidAtSessionPayment.administrative_note || ""
+    reference_number: $("paymentRefInput")?.value || pendingSessionDraft.reference_number || paidAtSessionPayment.reference_number || "",
+    administrative_note: $("paymentNoteInput")?.value || pendingSessionDraft.administrative_note || paidAtSessionPayment.administrative_note || ""
   };
 }
 
@@ -2680,6 +2717,13 @@ function renderPaidInvoices(items) {
   document.querySelectorAll("#paidRows [data-open-payment]").forEach(btn => {
     btn.onclick = () => openPaymentDetail(btn.dataset.openPayment);
   });
+  document.querySelectorAll("#paidRows tr[data-invoice-id], #paidRows tr[data-payment-id]").forEach(row => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      if (row.dataset.paymentId) openPaymentDetail(row.dataset.paymentId);
+      else if (row.dataset.invoiceId) openPaidInvoice(row.dataset.invoiceId);
+    });
+  });
 }
 
 async function openPaidInvoice(invoiceId) {
@@ -2762,6 +2806,12 @@ function renderAllPayments(items) {
     : '<tr class="empty-row"><td colspan="9">No payments recorded.</td></tr>';
   document.querySelectorAll("#allPaymentsRows [data-open-payment]").forEach(btn => {
     btn.onclick = () => openPaymentDetail(btn.dataset.openPayment);
+  });
+  document.querySelectorAll("#allPaymentsRows tr[data-payment-id]").forEach(row => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      openPaymentDetail(row.dataset.paymentId);
+    });
   });
 }
 
@@ -4256,8 +4306,8 @@ function buildRateRulePayload() {
     throw new Error("Custom duration requires actual minutes.");
   }
   if (!payload.billing_session_type) throw new Error("Session type is required.");
-  if (payload.billing_session_type === "custom" && !$("rateCustomDescription").value.trim()) {
-    throw new Error("Custom session type requires a description.");
+  if (payload.billing_session_type === "custom" && !$("rateCustomDescription").value.trim() && !$("rateCustomCode").value.trim()) {
+    throw new Error("Custom session type requires a description or code.");
   }
   if (!payload.time_category) throw new Error("Time category is required.");
   if (!payload.effective_from || !/^\d{4}-\d{2}-\d{2}$/.test(payload.effective_from)) {
@@ -4669,6 +4719,9 @@ function renderBillingDirRows() {
         e.stopPropagation();
         location.hash = `people/${openPersonBtn.dataset.openPerson}`;
       };
+      tr.onclick = () => {
+        location.hash = `people/${openPersonBtn.dataset.openPerson}`;
+      };
     }
     const openOrgBtn = tr.querySelector("[data-open-organization]");
     if (openOrgBtn) {
@@ -4676,6 +4729,7 @@ function renderBillingDirRows() {
         e.stopPropagation();
         openOrganizationRecord(openOrgBtn.dataset.openOrganization);
       };
+      tr.onclick = () => openOrganizationRecord(openOrgBtn.dataset.openOrganization);
     }
     const normalizeBtn = tr.querySelector("[data-normalize-payer]");
     if (normalizeBtn) {
@@ -6639,6 +6693,7 @@ document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
 loadBuildInfo();
 loadList();
 if (location.hash === "#calendar-import") showCalendarImport();
+if (location.hash === "#reconciliation") showReconciliation();
 if (location.hash === "#rate-card") showRateCard();
 if (
   location.hash === "#billing-relationships"
@@ -6667,6 +6722,18 @@ window.addEventListener("hashchange", () => {
     showPeople();
   } else if (hash === "billing-relationships" || hash === "clients" || hash.startsWith("billing-relationships?") || hash.startsWith("clients?")) {
     showClients();
+  } else if (hash === "calendar-import") {
+    showCalendarImport();
+  } else if (hash === "reconciliation") {
+    showReconciliation();
+  } else if (hash === "rate-card") {
+    showRateCard();
+  } else if (hash === "sessions") {
+    showSessions();
+  } else if (hash === "settings") {
+    showSettings();
+  } else if (!hash) {
+    showReviewWorkbench();
   }
 });
 window.addEventListener("beforeunload", event => {

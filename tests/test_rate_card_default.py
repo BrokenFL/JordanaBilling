@@ -683,6 +683,42 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertEqual(by_code["amount_cents"], 27500)
         self.assertEqual(by_description["amount_cents"], 27500)
 
+    def test_known_client_custom_code_rate_overrides_global_default(self):
+        client = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
+        self._create_rate_rule(
+            amount=350,
+            duration_minutes=75,
+            billing_session_type="custom",
+            custom_service_description="Parent coaching",
+            time_category="standard",
+        )
+        create_rate_rule_from_payload(self.conn, {
+            "amount": "425",
+            "duration_choice": "custom",
+            "custom_duration_minutes": "75",
+            "billing_session_type": "custom",
+            "custom_service_code": "PC-75",
+            "time_category": "standard",
+            "applies_to": "person",
+            "person_id": client["person_id"],
+            "effective_from": "2026-01-01",
+        })
+
+        preview = preview_rate_suggestion(self.conn, {
+            "duration_choice": "custom",
+            "custom_duration_minutes": "75",
+            "billing_session_type": "custom",
+            "custom_service_code": "pc 75",
+            "time_category": "standard",
+            "service_mode": "office",
+            "session_date": "2026-06-18",
+            "person_id": client["person_id"],
+            "participant_person_ids": [client["person_id"]],
+        })
+
+        self.assertEqual(preview["amount_cents"], 42500)
+        self.assertEqual(preview["rate_source"], "person_exception")
+
     def test_replace_rule_ends_old_day_before_new_effective_date(self):
         original = self._create_default_rule()
         replacement = replace_rate_rule_from_payload(self.conn, original["rate_rule_id"], {

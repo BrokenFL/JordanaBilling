@@ -29,7 +29,7 @@ def normalize_custom_service_description(value: str | None) -> str:
 
 
 def normalize_custom_service_code(value: str | None) -> str:
-    return re.sub(r"\s+", "", text(value).strip()).upper()
+    return re.sub(r"[^A-Za-z0-9]", "", text(value).strip()).upper()
 
 
 @dataclass

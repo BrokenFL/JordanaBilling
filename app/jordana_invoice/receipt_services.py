@@ -260,6 +260,15 @@ def _allocation_snapshot(conn: sqlite3.Connection, alloc: dict[str, Any]) -> dic
         line = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_line_item_id = ?", (alloc["invoice_line_item_id"],)).fetchone()
         if line:
             invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (line["invoice_id"],)).fetchone()
+    participants = ""
+    description = "Session payment"
+    duration_minutes = session["approved_duration_minutes"] or session["duration_minutes"]
+    if line:
+        participants = line["participants_snapshot"] or ""
+        description = line["description_snapshot"] or line["service_name_snapshot"] or description
+        duration_minutes = line["duration_minutes"]
+    if not participants:
+        participants = _session_participant_names(conn, session["id"])
     charge_cents = int(line["line_amount_cents"] if line else (session["rate_cents_snapshot"] or session["approved_rate_cents"] or 0))
     if invoice and line:
         paid_cents = conn.execute(
@@ -293,12 +302,29 @@ def _allocation_snapshot(conn: sqlite3.Connection, alloc: dict[str, Any]) -> dic
         "reference_display": reference,
         "service_date": session["session_date"],
         "service_date_display": format_long_date(session["session_date"]),
+        "participants_display": participants,
+        "description_display": description,
+        "duration_display": f"{int(duration_minutes)} min" if duration_minutes is not None else "",
         "amount_cents": alloc["amount_cents"],
         "amount_display": money(alloc["amount_cents"]),
         "charge_cents": charge_cents,
         "remaining_balance_cents": remaining,
         "remaining_balance_display": money(remaining),
     }
+
+
+def _session_participant_names(conn: sqlite3.Connection, session_id: str) -> str:
+    rows = conn.execute(
+        """
+        SELECT COALESCE(p.display_name, sp.participant_name) AS name
+        FROM session_participants sp
+        LEFT JOIN people p ON p.person_id = sp.person_id
+        WHERE sp.session_id = ?
+        ORDER BY sp.is_primary DESC, name
+        """,
+        (session_id,),
+    ).fetchall()
+    return " & ".join(row["name"] for row in rows if row["name"])
 
 
 def _resolve_receipt_filing_owner(

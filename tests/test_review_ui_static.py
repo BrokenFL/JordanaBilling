@@ -1061,7 +1061,7 @@ for (const [input, expected] of cases) {
         self.assertIn('id="rateCustomDescription"', html)
         self.assertIn('id="rateCustomCode"', html)
         self.assertIn('id="rateAppointmentStatus"', html)
-        self.assertIn("Custom session type requires a description.", js)
+        self.assertIn("Custom session type requires a description or code.", js)
         self.assertIn("Custom duration requires actual minutes.", js)
 
     def test_rate_card_groups_rules_and_supports_replace_and_end_actions(self):
@@ -1082,6 +1082,15 @@ for (const [input, expected] of cases) {
         self.assertIn('await api("/api/rate-rules/preview"', js)
         self.assertIn('id="sessionRatePreview"', js)
         self.assertIn("Suggested by Rate Card:", js)
+        self.assertIn("applyMatchedRatePreview(preview)", js)
+        self.assertIn('data-suggested-rate', js)
+
+    def test_invoice_workspace_uses_normal_page_scroll_at_laptop_widths(self):
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn("#invoicesView .invoice-workspace.responsive-sheet-active", css)
+        self.assertIn("position: static;", css)
+        self.assertIn("#invoicesView .invoice-builder > .actions", css)
 
     def test_settings_screen_uses_existing_business_profile_api_and_defaults(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
@@ -2628,6 +2637,17 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("Paid at session", js)
         self.assertIn("state.detail?.paid_at_session_payment", js)
         self.assertIn("paymentStatus === \"paid_at_session\" ? paidAtSessionAmount", js)
+
+    def test_saved_paid_at_session_details_survive_collapsed_session_card(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("pendingSessionDraft: null", js)
+        self.assertIn("state.pendingSessionDraft = sessionDraft.payment_status === \"paid_at_session\"", js)
+        self.assertIn("state.pendingSessionDraft?.candidateId === state.selected", js)
+        self.assertIn("|| pendingSessionDraft.amount_received", js)
+        self.assertIn("|| pendingSessionDraft.payment_date", js)
+        self.assertIn("|| pendingSessionDraft.payment_method", js)
+        self.assertIn("state.pendingSessionDraft = null;", js)
 
     def test_sessions_table_header_uses_payment_handling(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()

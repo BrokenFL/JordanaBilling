@@ -256,6 +256,25 @@ class PaymentReceiptTests(unittest.TestCase):
         after = dict(self.conn.execute("SELECT pdf_path, pdf_sha256, invoice_number, status FROM invoices WHERE invoice_id = ?", (invoice,)).fetchone())
         self.assertEqual(before, after)
 
+    def test_receipt_pdf_uses_invoice_layout_with_paid_on_date(self):
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            self.skipTest("pypdf is not installed in the active test interpreter")
+        session = self._approved_session("receipt-layout")
+        invoice = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(self.conn, invoice_id=invoice, payment_date="2026-05-15", amount_cents=15000, payment_method="zelle")["payment"]
+
+        result = create_payment_receipt(self.conn, payment["payment_id"], pdf_root=self.root / "Receipts")
+
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(result["receipt"]["pdf_path"]).pages)
+        self.assertIn("RECEIPT", text)
+        self.assertIn("Paid on May 15, 2026", text)
+        self.assertIn("R-2026-0001", text)
+        self.assertIn("AMOUNT PAID", text)
+        self.assertNotIn("PAYMENT RECEIPT", text)
+        self.assertNotIn("Please make checks payable to", text)
+
 
 if __name__ == "__main__":
     unittest.main()

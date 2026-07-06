@@ -827,7 +827,8 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         final_text = self._extract_pdf_text(final_bytes)
         self.assertIn("DRAFT", draft_text)
         self.assertNotIn("DRAFT", final_text)
-        self.assertIn("Invoice No. 2026-0042", final_text)
+        self.assertIn("2026-0042", final_text)
+        self.assertNotIn("Invoice No. 2026-0042", final_text)
         self.assertNotIn("2026-0042", draft_text)
 
     def test_layout_parity_short_bill_to(self):

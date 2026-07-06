@@ -8,7 +8,7 @@ from unittest.mock import patch
 from jordana_invoice.db import DatabaseBusyError, connect, migrate_database
 from jordana_invoice.importer import import_rows
 from jordana_invoice.review_server import make_handler
-from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
+from jordana_invoice.review_services import approve_candidate, create_account, create_billing_party, create_person
 from jordana_invoice.invoice_services import save_business_profile
 from jordana_invoice.util import stable_hash
 
@@ -140,6 +140,32 @@ class StagingApiTests(unittest.TestCase):
         self.assertEqual(captured2["payload"]["sessions_already_staged"], 2)
         drafts = self.conn.execute("SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL").fetchall()
         self.assertEqual(len(drafts), 1)
+
+    def test_archived_billing_relationship_is_not_staged(self):
+        sid = self.approved_session("archived-rel", day=10)
+        account = create_account(self.conn, "Archived relationship", "individual")
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ?, active = 0 WHERE account_id = ?",
+            (self.party["billing_party_id"], account["account_id"]),
+        )
+        self.conn.execute(
+            "UPDATE sessions SET account_id = ? WHERE id = ?",
+            (account["account_id"], sid),
+        )
+        self.conn.commit()
+
+        handler, captured = self._handler("/api/invoices/stage", body=b"{}")
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["drafts_created"], 0)
+        self.assertEqual(captured["payload"]["sessions_staged"], 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM invoices WHERE status = 'draft'").fetchone()[0],
+            0,
+        )
+        skipped = captured["payload"]["sessions_skipped"]
+        self.assertTrue(any("Billing relationship is archived" in item["reasons"] for item in skipped))
 
     # 5. Malformed JSON returns 400
     def test_malformed_json_returns_400(self):
