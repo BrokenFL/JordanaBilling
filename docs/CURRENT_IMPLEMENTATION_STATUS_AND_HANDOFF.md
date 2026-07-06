@@ -65,7 +65,7 @@ This is not yet a final production declaration. Brooke should remain available d
 
 - Monthly invoice staging by Bill To and billing month
 - Draft invoice editing with optimistic revision locking
-- Canonical PDF preview and final PDF produced by one shared renderer
+- Canonical invoice render model drives the in-app HTML preview, exact draft/finalization PDF previews, and final PDF
 - Two-step finalization with transaction-safe numbering
 - Repeated finalize requests return the existing immutable invoice rather than renumbering or regenerating it
 - Finalized invoice snapshots and PDFs remain immutable
@@ -134,6 +134,10 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 ### Bug Fixes In test.12
 
 14. **Duplicate Billing Relationships display suppression** — The Billing Relationships directory no longer shows an implicit/session-derived self-pay row alongside an existing canonical active Billing Relationship for the same person. One visible active row is shown per actual Billing Relationship. Canonical account wins: when a canonical active account exists, the shadowed implicit row is suppressed while the Edit action and canonical `account_id` are preserved. No data merge, cleanup, or account creation is performed. The defect was display-only; no real duplicate active `client_accounts` rows existed.
+15. **Paid-at-session review persistence** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Approval continues to create or validate one provenance-linked payment/allocation idempotently and remains excluded from invoice staging.
+16. **Chronological invoice line order** — Draft editor rows, in-app HTML previews, exact PDF previews, finalized PDFs, and canonical invoice serialization now order session lines by service date, source start time, and stable line UUID rather than import, approval, insertion, or row order.
+17. **Model-backed HTML invoice preview restored** — Draft, finalization, and finalized/void invoice screens use a clean in-app HTML card built from the current canonical invoice render model. Exact PDF open/download/print actions remain available, and the stored PDF remains the official customer-facing artifact.
+18. **Invoice and review layout polish** — The Review queue uses the required Status, Date, Day, Time, Calendar, Clients, Duration, Rate, Review order with more usable widths. The draft invoice editor uses the sheet width more effectively, and the invoice library now has a populated month dropdown plus compact Advanced filters.
 
 ### Bug Fixes In test.11
 

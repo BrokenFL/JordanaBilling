@@ -237,6 +237,28 @@ def _derive_payment_status(status: str, paid_cents: int, total_cents: int) -> st
     return "partially_paid"
 
 
+def _invoice_line_order_sql() -> str:
+    return """
+        ORDER BY
+          li.service_date ASC,
+          COALESCE(s.start_at, li.service_date || 'T00:00:00') ASC,
+          li.invoice_line_item_id ASC
+    """
+
+
+def invoice_line_rows(conn: sqlite3.Connection, invoice_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        f"""
+        SELECT li.*, s.start_at AS source_start_at
+        FROM invoice_line_items li
+        LEFT JOIN sessions s ON s.id = li.source_session_id
+        WHERE li.invoice_id = ?
+        {_invoice_line_order_sql()}
+        """,
+        (invoice_id,),
+    ).fetchall()
+
+
 _VALID_SORT_FIELDS = {
     "invoice_date": "i.invoice_date",
     "invoice_number": "i.invoice_number",
@@ -748,7 +770,7 @@ def list_invoice_records(
 
     sort_col = _VALID_SORT_FIELDS.get(sort_by, "i.invoice_date")
     sort_direction = "DESC" if (sort_dir or "desc").lower() == "desc" else "ASC"
-    # Secondary sort for stability
+    # Secondary sort for deterministic newest-first invoice library display.
     secondary = "i.invoice_number DESC" if sort_col != "i.invoice_number" else "i.created_at DESC"
 
     rows = conn.execute(
@@ -764,7 +786,7 @@ def list_invoice_records(
         LEFT JOIN invoice_line_items li ON li.invoice_id = i.invoice_id
         {where}
         GROUP BY i.invoice_id
-        ORDER BY {sort_col} {sort_direction}, {secondary}, i.created_at DESC
+        ORDER BY {sort_col} {sort_direction}, {secondary}, i.created_at DESC, i.invoice_id DESC
         """,
         params,
     ).fetchall()
@@ -820,6 +842,15 @@ def list_invoice_records(
         key=lambda item: item["billing_month"],
         reverse=True,
     )
+    month_rows = conn.execute(
+        """
+        SELECT DISTINCT billing_month
+        FROM invoices
+        WHERE billing_month IS NOT NULL
+          AND TRIM(billing_month) != ''
+        ORDER BY billing_month DESC
+        """
+    ).fetchall()
 
     # Paginate
     if limit > 0:
@@ -833,6 +864,7 @@ def list_invoice_records(
         "limit": limit,
         "offset": offset,
         "draft_month_totals": draft_month_totals,
+        "billing_month_options": [row["billing_month"] for row in month_rows],
     }
 
 
@@ -843,7 +875,7 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     if row["status"] == "draft":
         synchronize_draft_delivery_method(conn, invoice_id)
         row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
-    lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order, created_at", (invoice_id,)).fetchall()
+    lines = invoice_line_rows(conn, invoice_id)
     current_profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     current_party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (row["bill_to_party_id"],)).fetchone()
     profile = dict(current_profile) if current_profile and row["status"] == "draft" else None
@@ -1869,14 +1901,14 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
 
 def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
-        """
+        f"""
         SELECT li.invoice_line_item_id, li.service_date, li.participants_snapshot,
                li.duration_minutes, li.line_amount_cents, li.source_session_id,
                s.start_at, s.end_at
         FROM invoice_line_items li
         LEFT JOIN sessions s ON s.id = li.source_session_id
         WHERE li.invoice_id = ?
-        ORDER BY li.service_date, s.start_at, li.sort_order
+        {_invoice_line_order_sql()}
         """,
         (invoice_id,),
     ).fetchall()
@@ -1989,7 +2021,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         if not readiness["ready"]:
             raise ValueError("; ".join(e["message"] for e in readiness["errors"]))
         invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
-        lines = conn.execute("SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order", (invoice_id,)).fetchall()
+        lines = invoice_line_rows(conn, invoice_id)
         profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
         party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
         filing = resolve_invoice_filing_owner(conn, invoice_id)

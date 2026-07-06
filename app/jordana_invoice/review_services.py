@@ -591,6 +591,7 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
         "account_members": get_account_members(conn, row["account_id"]),
         "billing_party": active_billing_party,
         "effective_billing_party": effective_billing_party,
+        "paid_at_session_payment": paid_at_session_payment_summary(conn, row["id"]),
         "bill_to_options": eligible_bill_to_options(
             conn,
             display_participants,
@@ -599,6 +600,44 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
         "checklist": checklist_for(row, display_participants, readiness),
         "readiness": readiness,
         "audit": audit_history(conn, row["id"], row["candidate_id"]),
+    }
+
+
+def paid_at_session_payment_summary(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
+    payment = conn.execute(
+        """
+        SELECT *
+        FROM payments
+        WHERE source_type = 'paid_at_session_backfill'
+          AND source_session_id = ?
+        ORDER BY created_at DESC, payment_id DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    if payment is None:
+        return None
+    allocation = conn.execute(
+        """
+        SELECT COALESCE(SUM(amount_cents), 0) AS allocated_cents,
+               COUNT(*) AS allocation_count
+        FROM payment_allocations
+        WHERE payment_id = ?
+          AND session_id = ?
+          AND status = 'active'
+        """,
+        (payment["payment_id"], session_id),
+    ).fetchone()
+    return {
+        "payment_id": payment["payment_id"],
+        "amount_cents": payment["amount_cents"],
+        "received_at": payment["received_at"],
+        "method": payment["method"],
+        "reference_number": payment["reference_number"] or "",
+        "administrative_note": payment["administrative_note"] or "",
+        "status": payment["status"],
+        "allocated_cents": allocation["allocated_cents"] if allocation else 0,
+        "allocation_count": allocation["allocation_count"] if allocation else 0,
     }
 
 

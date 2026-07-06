@@ -6,7 +6,14 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 ## Draft
 
-Drafts can add/remove eligible sessions, reorder lines, override delivery, and change dates. Totals use integer cents.
+Drafts can add/remove eligible sessions, override delivery, and change dates. Totals use integer cents.
+
+Invoice session lines are displayed and serialized chronologically: earliest
+service date first, then start time for sessions on the same date, then stable
+line UUID as the final deterministic tie-breaker. This ordering is applied by
+the canonical invoice line fetch and render model, so the draft editor, in-app
+HTML preview, exact draft/finalization PDF previews, and finalized PDFs do not
+depend on import order, approval order, insertion order, or database row order.
 
 ### Line Item Editing
 
@@ -121,7 +128,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI embeds the canonical draft PDF preview from `POST /api/invoices/{id}/draft-pdf`, so the approval preview uses the same ReportLab renderer as finalization. The Invoices workspace also embeds the same canonical draft PDF when a draft is opened; it does not use a separate HTML invoice mockup as the approval or layout representation. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -144,7 +151,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
-Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot and PDF match the embedded canonical preview except for approved final metadata such as the real invoice number replacing the draft marker.
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
 
 ### Optional Insurance Coding
 
@@ -427,7 +434,7 @@ POST /api/invoices/{invoice_id}/finalization-preview-token
 
 Returns a real PDF preview of a draft invoice using the same canonical ReportLab renderer (`_generate_invoice_pdf_bytes`) as final invoice generation. The PDF is clearly marked **DRAFT** and does not assign an invoice number. Side-effect free: does not write to the database, does not write `pdf_path` or `pdf_sha256`, does not change invoice status or revision, and does not create any audit event. Missing readiness errors (e.g. missing address or email) do not block the preview. Only available for draft invoices; finalized or void invoices return HTTP 400.
 
-The Review & Finalize confirmation step embeds the same-origin `GET /api/invoices/{id}/finalization-preview-pdf` endpoint instead of a blob URL or separate HTML invoice design. The draft invoice editor also embeds `GET /api/invoices/{id}/draft-pdf` inline and provides a separate `Open PDF in new tab` link for the standalone browser PDF viewer. Optional insurance/coding preview values are stored only in a short-lived in-memory preview token and are not written to SQLite or persisted until the user explicitly confirms finalization.
+The Review & Finalize confirmation step shows an in-app HTML invoice card built from the canonical render model and uses the same-origin `GET /api/invoices/{id}/finalization-preview-pdf` endpoint only for the explicit exact-PDF action. The draft invoice editor uses the same model-backed HTML card and provides `Open Exact PDF`, download, and print actions for the standalone browser PDF viewer. Optional insurance/coding preview values are held only in browser state for the HTML card and in a short-lived in-memory preview token for exact PDF preview; they are not written to SQLite or persisted until the user explicitly confirms finalization.
 
 Both draft PDF and final PDF endpoints use dedicated inline PDF response headers (`Content-Type: application/pdf`, `Content-Disposition: inline`) compatible with Safari. PDF responses use `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` but do not apply the `X-Frame-Options: DENY` or CSP headers used for HTML/JSON responses, allowing inline browser preview.
 
@@ -439,7 +446,7 @@ GET /api/invoices/{invoice_id}/final-pdf
 
 Serves the stored PDF file for finalized or void invoices. Returns the raw PDF bytes with `Content-Type: application/pdf` and `Content-Disposition: inline`. Does not expose the file path to the client. Returns HTTP 400 for draft invoices, HTTP 404 if the invoice or PDF file is missing.
 
-The Invoices workspace embeds this stored final PDF inline for finalized and void invoices and keeps the document action buttons (`Open PDF`, `Show in Finder`, `Open client invoice folder`, and `Print PDF`) below the canonical preview. The workspace must not render the older HTML invoice card for finalized or void invoices because the stored PDF and frozen snapshot are the authoritative customer-facing artifact.
+The Invoices workspace shows finalized and void invoices with an in-app HTML preview from the frozen render model and keeps document action buttons (`Open PDF`, `Download PDF`, `Show in Finder`, `Open client invoice folder`, and `Print PDF`) below it. The stored PDF remains the official customer-facing artifact served by `GET /api/invoices/{id}/final-pdf`; the HTML card is a model-backed in-app reading view, not a separate invoice definition.
 
 ### Normalize Duplicate Payer Billing Parties
 

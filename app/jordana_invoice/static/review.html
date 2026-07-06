@@ -78,8 +78,8 @@
                   <th>Date</th>
                   <th>Day</th>
                   <th>Time</th>
-                  <th>Clients</th>
                   <th>Calendar</th>
+                  <th>Clients</th>
                   <th>Duration</th>
                   <th>Rate</th>
                   <th>Review</th>
@@ -343,9 +343,15 @@
             <div class="crm-tools">
               <input id="invoiceSearch" type="search" placeholder="Search invoice number or Bill To..." />
               <select id="invoiceStatusFilter"><option value="">All statuses</option><option value="draft">Drafts</option><option value="finalized">Finalized</option><option value="void">Void</option></select>
+              <select id="invoiceDraftMonthFilter"><option value="">All months</option></select>
+              <button id="newInvoiceBtn" class="save">Create Invoice</button>
+            </div>
+          </div>
+          <details class="advanced-filters" id="invoiceAdvancedFilters">
+            <summary>Advanced filters</summary>
+            <div class="crm-tools compact-tools">
               <select id="invoicePaymentStatusFilter"><option value="">All payment statuses</option><option value="unpaid">Unpaid</option><option value="partially_paid">Partially Paid</option><option value="paid">Paid</option><option value="void">Void</option></select>
               <select id="invoiceBillToFilter"><option value="">All Bill To</option></select>
-              <label class="field inline-field">Billing month<input id="invoiceDraftMonthFilter" type="month" /></label>
               <select id="invoiceSortFilter">
                 <option value="invoice_date:desc">Newest invoice date</option>
                 <option value="billing_month:desc">Billing month newest</option>
@@ -361,9 +367,8 @@
                 <option value="this_year">This year</option>
                 <option value="custom">Custom range</option>
               </select>
-              <button id="newInvoiceBtn" class="save">Create Invoice</button>
             </div>
-          </div>
+          </details>
           <div class="financial-summary-toolbar">
             <label class="field">Summary month<input id="invoiceSummaryMonth" type="month" /></label>
           </div>

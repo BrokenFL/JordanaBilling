@@ -37,13 +37,38 @@ for (const [input, expected] of cases) {
         self.assertNotIn("${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}", js)
         self.assertNotIn("${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}", js)
 
-    def test_invoice_previews_use_canonical_pdf_surfaces(self):
+    def test_invoice_previews_use_canonical_html_with_exact_pdf_actions(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
-        self.assertIn("draftPdfFrame", js)
-        self.assertIn("storedPdfFrame", js)
+        self.assertIn("function renderCanonicalInvoicePreview", js)
+        self.assertIn("renderCanonicalInvoicePreview(data.render_model)", js)
         self.assertIn("/draft-pdf", js)
         self.assertIn("/final-pdf", js)
-        self.assertNotIn("<strong>Billing Period:</strong>", js)
+        self.assertIn("Open Exact PDF", js)
+        self.assertNotIn("draftPdfFrame", js)
+        self.assertNotIn("storedPdfFrame", js)
+
+    def test_review_queue_column_order_matches_required_layout(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        header = html[html.index('<table class="review-table">'):html.index('<tbody id="candidateRows">')]
+        expected = ["Status", "Date", "Day", "Time", "Calendar", "Clients", "Duration", "Rate", "Review"]
+        positions = [header.index(f"<th>{label}</th>") for label in expected]
+        self.assertEqual(positions, sorted(positions))
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        row_start = js.index("function renderRows(")
+        row_end = js.index("document.querySelectorAll(\"#candidateRows", row_start)
+        row_fn = js[row_start:row_end]
+        self.assertLess(row_fn.index("calendar-cell"), row_fn.index("clients-cell"))
+        self.assertIn("duration-cell", row_fn)
+        self.assertIn("rate-cell", row_fn)
+
+    def test_invoice_library_uses_month_dropdown_and_advanced_filters(self):
+        html = Path("app/jordana_invoice/static/review.html").read_text()
+        self.assertIn('<select id="invoiceDraftMonthFilter"><option value="">All months</option></select>', html)
+        self.assertIn('class="advanced-filters"', html)
+        self.assertLess(html.index("invoiceSearch"), html.index("invoiceAdvancedFilters"))
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("billing_month_options", js)
+        self.assertIn("renderInvoiceMonthOptions", js)
 
     def test_inspector_dirty_list_does_not_reference_removed_session_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -2326,17 +2351,19 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
     def test_preview_shows_draft_status_pill(self):
         self.assertIn('<span class="status-pill">Draft</span>', self.fn)
 
-    def test_preview_embeds_canonical_pdf_renderer_output(self):
-        self.assertIn("finalization-pdf-preview", self.fn)
-        self.assertIn("finalizationPdfFrame", self.fn)
+    def test_preview_uses_canonical_html_and_on_demand_pdf(self):
+        self.assertIn("finalizationHtmlPreview", self.fn)
+        self.assertIn("renderCanonicalInvoicePreview(preview.render_model", self.fn)
         self.assertIn("/finalization-preview-token", self.fn)
         self.assertIn("preview_pdf_url", self.fn)
+        self.assertIn("Open Exact PDF Preview", self.fn)
+        self.assertNotIn("finalizationPdfFrame", self.fn)
         self.assertNotIn("createObjectURL", self.fn)
         self.assertNotIn("blob:", self.fn)
 
-    def test_preview_can_open_embedded_pdf_without_popup_dependency(self):
-        self.assertIn("openFinalizationPdfPreview", self.fn)
-        self.assertIn("Preview PDF", self.fn)
+    def test_preview_can_open_exact_pdf_on_demand(self):
+        self.assertIn("ensureFinalizationPdfPreviewUrl", self.fn)
+        self.assertIn("Open Exact PDF Preview", self.fn)
 
     def test_preview_hides_delivery_method(self):
         self.assertNotIn("Delivery method", self.fn)
@@ -2349,14 +2376,9 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("Nothing has been changed.", self.fn)
         self.assertIn("duplicate-warning", self.css)
 
-    def test_preview_does_not_render_old_html_invoice_visual(self):
-        self.assertNotIn("invoice-preview-header", self.fn)
-        self.assertNotIn("invoice-preview-table", self.fn)
-        self.assertNotIn("invoice-preview-sender", self.fn)
-        self.assertNotIn("bill_to_lines", self.fn)
-        self.assertNotIn("sender_lines", self.fn)
-        self.assertNotIn("payment_lines", self.fn)
-        self.assertNotIn("payment_zelle_line", self.fn)
+    def test_preview_uses_render_model_values(self):
+        self.assertIn("renderCanonicalInvoicePreview(preview.render_model", self.fn)
+        self.assertIn("collectInsurancePayload", self.fn)
 
     def test_preview_shows_total(self):
         self.assertIn("invoice-total", self.js)
@@ -2651,8 +2673,8 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("margin-bottom: 2px", mobile_section)
 
 
-class DraftInvoicePdfPreviewUiTests(unittest.TestCase):
-    """Draft invoice PDF preview stays inline until the user explicitly opens it."""
+class DraftInvoicePreviewUiTests(unittest.TestCase):
+    """Draft invoice preview uses HTML first and exact PDF as an action."""
 
     def setUp(self):
         self.js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -2660,21 +2682,20 @@ class DraftInvoicePdfPreviewUiTests(unittest.TestCase):
         end = self.js.index("function openLineEditModal(", start)
         self.fn = self.js[start:end]
 
-    def test_draft_preview_embeds_pdf_inline(self):
-        self.assertIn("draftPdfPreviewPanel", self.fn)
-        self.assertIn("draftPdfFrame", self.fn)
+    def test_draft_preview_renders_canonical_html(self):
+        self.assertIn("renderCanonicalInvoicePreview(data.render_model)", self.fn)
         self.assertIn("openDraftPdfPreview", self.fn)
         self.assertIn("/draft-pdf", self.fn)
-        self.assertIn("frame.src = previewUrl", self.fn)
+        self.assertNotIn("draftPdfFrame", self.fn)
 
-    def test_draft_preview_button_does_not_open_new_window(self):
+    def test_draft_print_button_opens_exact_pdf(self):
         handler_start = self.fn.index('$("printPreviewBtn").onclick')
         handler = self.fn[handler_start:]
-        self.assertNotIn("window.open", handler)
+        self.assertIn("window.open", handler)
 
 
-class StoredInvoicePdfPreviewUiTests(unittest.TestCase):
-    """Finalized and void invoice previews use the stored PDF, not stale HTML."""
+class StoredInvoicePreviewUiTests(unittest.TestCase):
+    """Finalized and void invoice previews use frozen render model HTML plus stored PDF actions."""
 
     def setUp(self):
         self.js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -2682,20 +2703,17 @@ class StoredInvoicePdfPreviewUiTests(unittest.TestCase):
         end = self.js.index("function finalInvoicePdfUrl(", start)
         self.fn = self.js[start:end]
 
-    def test_stored_invoice_preview_embeds_final_pdf_inline(self):
-        self.assertIn("storedPdfPreviewPanel", self.fn)
-        self.assertIn("storedPdfFrame", self.fn)
-        self.assertIn("openStoredPdfPreview", self.fn)
+    def test_stored_invoice_preview_renders_frozen_html(self):
+        self.assertIn("renderCanonicalInvoicePreview(data.render_model)", self.fn)
         self.assertIn("finalInvoicePdfUrl(i)", self.fn)
-        self.assertIn("storedPdfFrame.src = pdfUrl", self.fn)
+        self.assertIn("Download PDF", self.fn)
+        self.assertNotIn("storedPdfFrame", self.fn)
 
-    def test_stored_invoice_preview_does_not_render_legacy_html_invoice(self):
-        self.assertNotIn("invoice-preview-header", self.fn)
-        self.assertNotIn("invoice-preview-table", self.fn)
-        self.assertNotIn("invoice-preview-sender", self.fn)
-        self.assertNotIn("bill_to_lines", self.fn)
-        self.assertNotIn("sender_lines", self.fn)
-        self.assertNotIn("payment_lines", self.fn)
+    def test_stored_invoice_preview_keeps_pdf_actions(self):
+        self.assertIn("openPdfBtn", self.fn)
+        self.assertIn("showPdfInFinderBtn", self.fn)
+        self.assertIn("openClientFolderBtn", self.fn)
+        self.assertIn("printPdfBtn", self.fn)
 
 
 if __name__ == "__main__":

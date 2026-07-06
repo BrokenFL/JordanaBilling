@@ -126,6 +126,13 @@ The visible choices are:
 
 Payment Handling is separate from appointment status and cancelled or no-show billing treatment.
 
+After a paid-at-session approval, reopening or reloading the approved session
+shows the stored paid-at-session state from the payment ledger, including the
+posted amount, date, method, active allocation total, and reference/admin fields
+when present. The review UI does not recreate payments for display; repeated
+approval validates or repairs the existing provenance-linked payment/allocation
+instead of creating duplicates.
+
 The legacy paid-at-session backfill analyzer remains dry-run only. Historical backfill apply is not implemented.
 
 ## Cancelled And No-Show Sessions

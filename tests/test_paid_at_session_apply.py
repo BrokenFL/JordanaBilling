@@ -136,6 +136,15 @@ class PaidAtSessionApplyTests(unittest.TestCase):
         self.assertEqual(allocations[0]["amount_cents"], 20000)
         self.assertEqual(allocations[0]["status"], "active")
 
+        reloaded = get_review_candidate(self.conn, cid)
+        summary = reloaded["paid_at_session_payment"]
+        self.assertEqual(reloaded["session"]["payment_status"], "paid_at_session")
+        self.assertEqual(summary["amount_cents"], 20000)
+        self.assertEqual(summary["received_at"], "2026-07-10")
+        self.assertEqual(summary["method"], "zelle")
+        self.assertEqual(summary["allocated_cents"], 20000)
+        self.assertEqual(summary["allocation_count"], 1)
+
     # 2. Approved paid_at_session session is excluded from monthly invoice staging
     def test_session_excluded_from_invoice_staging(self):
         cid = self._import_candidate("s1")

@@ -452,7 +452,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         )
         return snips
 
-    def test_billing_period_removed_from_pdf_metadata(self):
+    def test_billing_period_included_in_pdf_metadata(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         path = self._generate_pdf()
@@ -460,7 +460,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = PdfReader(path).pages[0].extract_text() or ""
         self.assertNotIn("Invoice Number", text)
         self.assertNotIn("Invoice Date", text)
-        self.assertNotIn("Billing Period", text)
+        self.assertIn("Billing Period: May 2026", text)
 
     def test_draft_preview_uses_approved_layout(self):
         if not _has_pdf_deps():
@@ -474,7 +474,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIn("Bill To:", text)
         self.assertIn("Jordana Singer, LCSW", text)
         self.assertNotIn("Demo Practice", text)
-        self.assertNotIn("Billing Period", text)
+        self.assertIn("Billing Period: May 2026", text)
         self.assertNotIn("FROM", text)
         self.assertIn("TOTAL DUE", text)
         self.assertNotIn("Account name:", text)
@@ -490,7 +490,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIn("Invoice No. 2026-0042", text)
         self.assertIn("Bill To:", text)
         self.assertIn("Jordana Singer, LCSW", text)
-        self.assertNotIn("Billing Period", text)
+        self.assertIn("Billing Period: May 2026", text)
         self.assertNotIn("FROM", text)
 
     def test_long_client_multiline_address_and_delivery_line_render(self):
@@ -1076,6 +1076,82 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         for s in ["Diagnosis Code: F41.1", "EIN: 12-3456789", "NPI: 1234567890", "SW: SW001"]:
             self.assertIn(s, draft_text, f"Draft PDF missing insurance line: {s}")
             self.assertIn(s, final_text, f"Finalized PDF missing insurance line: {s}")
+
+    def test_html_preview_and_pdf_use_same_canonical_values(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_rendering import build_invoice_render_model, build_print_preview_html
+
+        invoice = _sample_invoice(
+            invoice_number="",
+            status="draft",
+            billing_month="2026-05",
+            notes="Please include invoice number with payment.",
+        )
+        lines = _sample_lines(count=2, date_start=22)
+        profile = {
+            "insurance_ein": "00-0000000",
+            "insurance_npi": "0000000000",
+            "insurance_sw": "SW-TEST",
+        }
+        account_summary = {
+            "current_invoice_total_cents": 10000,
+            "current_invoice_paid_cents": 0,
+            "current_invoice_balance_cents": 10000,
+            "prior_unpaid_balance_cents": 2500,
+            "total_amount_due_cents": 12500,
+            "prior_invoices": [
+                {
+                    "invoice_number": "2026-0001",
+                    "invoice_date": "2026-04-30",
+                    "remaining_balance_cents": 2500,
+                }
+            ],
+        }
+        insurance_payload = {
+            "insurance_coding_included": True,
+            "insurance_diagnosis_code": "Z00.0",
+        }
+        html = build_print_preview_html(
+            invoice,
+            lines,
+            business_profile=profile,
+            account_summary=account_summary,
+            insurance_coding_payload=insurance_payload,
+        )
+        render_model = build_invoice_render_model(
+            invoice,
+            lines,
+            business_profile=profile,
+            account_summary=account_summary,
+            insurance_coding_payload=insurance_payload,
+        )
+        pdf_text = self._extract_pdf_text(
+            generate_draft_pdf_bytes(invoice, lines, render_model=render_model)
+        )
+
+        expected_values = [
+            "Avery Stone",
+            "June 01, 2026",
+            "May 2026",
+            "May 22, 2026",
+            "May 23, 2026",
+            "Office Visit",
+            "60 min",
+            "$50.00",
+            "$100.00",
+            "$25.00",
+            "$125.00",
+            "demo-zelle@example.test",
+            "Please include invoice number with payment.",
+            "Diagnosis Code: Z00.0",
+            "EIN: 00-0000000",
+            "NPI: 0000000000",
+            "SW: SW-TEST",
+        ]
+        for value in expected_values:
+            self.assertIn(value, html)
+            self.assertIn(value, pdf_text)
 
     def test_old_renderer_not_reachable_from_finalization(self):
         """Verify that generate_invoice_pdf delegates to _generate_invoice_pdf_bytes

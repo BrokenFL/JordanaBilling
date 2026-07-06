@@ -95,6 +95,7 @@ const state = {
     sortBy: "invoice_date",
     sortDir: "desc",
     draftMonthTotals: [],
+    billingMonthOptions: [],
     loaded: false
   },
   reconciliation: {
@@ -427,15 +428,15 @@ function renderRows(items, total) {
   $("resultCount").textContent = `Showing ${items.length ? state.offset + 1 : 0} to ${state.offset + items.length} of ${total} results`;
   $("candidateRows").innerHTML = items.length ? items.map(item => `
     <tr data-id="${escapeAttr(item.candidate_id)}" class="${state.selected === item.candidate_id ? "selected" : ""}">
-      <td><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
-      <td>${fmt(item.date)}</td>
+      <td class="status-cell"><span class="dot ${statusColor(item.status, item.classification)}"></span>${calendarBadge(item)}</td>
+      <td class="date-cell">${fmt(item.date)}</td>
       <td class="day-cell">${escapeHtml(shortWeekday(item.date))}</td>
-      <td>${fmt(item.time)}</td>
-      <td><span class="primary">${fmt(item.suggested_client)}</span></td>
-      <td>${fmt(item.raw_title)}</td>
-      <td>${fmt(item.duration_minutes)}</td>
-      <td>${money(item.rate)}</td>
-      <td><button class="review-btn" data-review-id="${escapeAttr(item.candidate_id)}">Review</button></td>
+      <td class="time-cell">${fmt(item.time)}</td>
+      <td class="calendar-cell">${fmt(item.calendar_name || "Unspecified")}</td>
+      <td class="clients-cell"><span class="primary">${fmt(item.suggested_client || item.raw_title)}</span></td>
+      <td class="duration-cell">${fmt(item.duration_minutes)}</td>
+      <td class="rate-cell">${money(item.rate)}</td>
+      <td class="review-action-cell"><button class="review-btn" data-review-id="${escapeAttr(item.candidate_id)}">Review</button></td>
     </tr>
   `).join("") : '<tr class="empty-row"><td colspan="9">No sessions need review.</td></tr>';
   document.querySelectorAll("#candidateRows tr[data-id]").forEach(row => {
@@ -495,6 +496,13 @@ function renderInspector(data) {
   const showBillingSave = !billingLocked && (!readiness.billing_ready || state.dirty.has("billing"));
   const confirmedDuration = s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes;
   const confirmedRate = centString(firstPresent(s.approved_rate_cents, s.suggested_rate_cents));
+  const paidAtSessionPayment = data.paid_at_session_payment || null;
+  const paidAtSessionAmount = paidAtSessionPayment ? centString(paidAtSessionPayment.amount_cents) : currentRate;
+  const paidAtSessionDate = paidAtSessionPayment?.received_at || s.session_date || (s.start_at ? s.start_at.substring(0, 10) : "");
+  const paidAtSessionMethod = paidAtSessionPayment?.method || "";
+  const paidAtSessionSummary = s.payment_status === "paid_at_session"
+    ? `<div class="payment-confirmation">Paid at session${paidAtSessionPayment ? `: ${money(centString(paidAtSessionPayment.amount_cents))} on ${fmt(paidAtSessionPayment.received_at)} by ${escapeHtml(paymentMethodLabel(paidAtSessionPayment.method))}` : ""}</div>`
+    : "";
   const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
   const overlayContent = $("reviewOverlayContent");
   if (!overlayContent) return;
@@ -563,7 +571,7 @@ function renderInspector(data) {
       ${sessionLocked
         ? `<div class="readonly-note">${!readiness.clients_ready ? "Confirm Client(s) first." : "Confirm Bill To first."}</div>`
         : readiness.session_ready && !sessionEditing
-          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(confirmedDuration)} min • ${money(confirmedRate)}</div></div>
+          ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${userFacingSessionLabel(s.billing_session_type || mapLegacyToType(s), s.appointment_status, s.custom_service_description || "")} • ${fmt(confirmedDuration)} min • ${money(confirmedRate)}</div>${paidAtSessionSummary}</div>
              <div class="inline-actions"><button id="changeSessionBtn">Change</button></div>`
           : `<div class="field-grid">
                <label class="field">Session Type<select id="billingTypeInput">${billingTypeOptions(s.billing_session_type || mapLegacyToType(s))}</select></label>
@@ -576,11 +584,11 @@ function renderInspector(data) {
                <div class="field wide" id="paidAtSessionSection" ${s.payment_status === "paid_at_session" ? "" : "hidden"} style="background: rgba(0,0,0,0.02); padding: 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1); margin-top: 8px;">
                  <h4 style="margin: 0 0 8px 0;">Paid at Session Details</h4>
                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
-                   <label class="field">Amount received ($)<input id="paymentAmountInput" type="text" value="${escapeAttr(currentRate)}"></label>
-                   <label class="field">Payment Date<input id="paymentDateInput" type="date" value="${escapeAttr(s.session_date || (s.start_at ? s.start_at.substring(0, 10) : ''))}"></label>
-                   <label class="field">Payment Method<select id="paymentMethodInput"><option value="" selected disabled>Select method...</option><option value="zelle">Zelle</option><option value="check">Check</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="card">Card</option><option value="other">Other</option></select></label>
-                   <label class="field">Reference #<input id="paymentRefInput" placeholder="Optional"></label>
-                   <label class="field">Admin Note<input id="paymentNoteInput" placeholder="Optional"></label>
+                   <label class="field">Amount received ($)<input id="paymentAmountInput" type="text" value="${escapeAttr(paidAtSessionAmount)}"></label>
+                   <label class="field">Payment Date<input id="paymentDateInput" type="date" value="${escapeAttr(paidAtSessionDate)}"></label>
+                   <label class="field">Payment Method<select id="paymentMethodInput"><option value="" ${paidAtSessionMethod ? "" : "selected"} disabled>Select method...</option><option value="zelle" ${paidAtSessionMethod === "zelle" ? "selected" : ""}>Zelle</option><option value="check" ${paidAtSessionMethod === "check" ? "selected" : ""}>Check</option><option value="cash" ${paidAtSessionMethod === "cash" ? "selected" : ""}>Cash</option><option value="ach" ${paidAtSessionMethod === "ach" ? "selected" : ""}>ACH</option><option value="card" ${paidAtSessionMethod === "card" ? "selected" : ""}>Card</option><option value="other" ${paidAtSessionMethod === "other" ? "selected" : ""}>Other</option></select></label>
+                   <label class="field">Reference #<input id="paymentRefInput" placeholder="Optional" value="${escapeAttr(paidAtSessionPayment?.reference_number || "")}"></label>
+                   <label class="field">Admin Note<input id="paymentNoteInput" placeholder="Optional" value="${escapeAttr(paidAtSessionPayment?.administrative_note || "")}"></label>
                  </div>
                </div>
                <details class="field wide" id="advancedReviewDetails" ${advancedOpen ? "open" : ""}><summary>Advanced Review</summary><div class="field-grid">
@@ -3357,6 +3365,7 @@ async function loadInvoices() {
   lib.items = result.items || [];
   lib.total = result.total || 0;
   lib.draftMonthTotals = result.draft_month_totals || [];
+  lib.billingMonthOptions = result.billing_month_options || [];
   lib.loaded = true;
   renderInvoiceLibrary();
   await loadFinancialSummary();
@@ -3366,6 +3375,7 @@ function renderInvoiceLibrary() {
   const lib = state.invoiceLibrary;
   const items = lib.items;
   const tbody = $("invoiceRows");
+  renderInvoiceMonthOptions();
   tbody.innerHTML = items.length
     ? items.map(row => `
       <tr data-invoice="${escapeAttr(row.invoice_id)}">
@@ -3395,6 +3405,17 @@ function renderInvoiceLibrary() {
   $("invoiceResultCount").textContent = lib.total === 0 ? "No results" : `Showing ${start}–${end} of ${lib.total}`;
   $("invoicePrevPage").disabled = lib.offset === 0;
   $("invoiceNextPage").disabled = lib.offset + lib.limit >= lib.total;
+}
+
+function renderInvoiceMonthOptions() {
+  const select = $("invoiceDraftMonthFilter");
+  if (!select) return;
+  const current = state.invoiceLibrary.billingMonth || select.value || "";
+  const options = state.invoiceLibrary.billingMonthOptions || [];
+  select.innerHTML = `<option value="">All months</option>` + options.map(month =>
+    `<option value="${escapeAttr(month)}">${escapeHtml(formatBillingMonth(month))}</option>`
+  ).join("");
+  select.value = options.includes(current) ? current : "";
 }
 
 function renderDraftMonthTotals() {
@@ -3520,12 +3541,10 @@ async function renderInvoiceEditor(data) {
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
-    <section id="draftPdfPreviewPanel" class="finalization-pdf-preview" aria-label="Draft invoice PDF preview">
-      <div id="draftPdfStatus" class="finalization-pdf-status">Loading PDF preview...</div>
-      <iframe id="draftPdfFrame" class="finalization-pdf-frame" title="Draft invoice PDF preview"></iframe>
-      <div class="finalization-pdf-actions"><a id="openDraftPdfPreview" href="#" target="_blank" rel="noopener">Open PDF in new tab</a></div>
+    <section class="invoice-html-preview-panel" aria-label="Draft invoice preview">
+      ${renderCanonicalInvoicePreview(data.render_model)}
     </section>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><button id="printPreviewBtn">Update PDF Preview</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><a class="button-link" id="openDraftPdfPreview" href="/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf" target="_blank" rel="noopener">Open Exact PDF</a><a class="button-link" id="downloadDraftPdfPreview" href="/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf" download>Download PDF</a><button id="printPreviewBtn">Print Exact PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
@@ -3569,31 +3588,8 @@ async function renderInvoiceEditor(data) {
     renderFinalizationPreview(preview, {included: false, diagnosisCode: ""});
   };
 
-  function refreshDraftPdfPreview() {
-    const panel = $("draftPdfPreviewPanel");
-    const status = $("draftPdfStatus");
-    const frame = $("draftPdfFrame");
-    const link = $("openDraftPdfPreview");
-    const previewUrl = `/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf`;
-    if (!panel || !status || !frame || !link) return;
-    panel.hidden = false;
-    status.textContent = "Loading PDF preview...";
-    status.className = "finalization-pdf-status";
-    link.href = previewUrl;
-    frame.onload = () => {
-      status.textContent = "PDF preview loaded.";
-      status.className = "finalization-pdf-status";
-    };
-    frame.onerror = () => {
-      status.textContent = "Failed to load PDF preview.";
-      status.className = "finalization-pdf-status error";
-    };
-    frame.src = previewUrl;
-  }
-
-  $("printPreviewBtn").onclick = refreshDraftPdfPreview;
-  refreshDraftPdfPreview();
-  // /print-preview HTML endpoint remains available as a fallback
+  $("printPreviewBtn").onclick = () => window.open(`/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf`, "_blank");
+  // /print-preview HTML endpoint remains available as a fallback.
 }
 
 
@@ -3883,7 +3879,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insuranceNpi = escapeHtml(profile.insurance_npi || "");
   const insuranceSw = escapeHtml(profile.insurance_sw || "");
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
-    <div class="help">Review the PDF below carefully. It uses the same invoice renderer as finalization. Click <strong>Finalize Invoice</strong> to finalize. If the invoice has changed since this preview, finalization will be rejected.</div>
+    <div class="help">Review the invoice below carefully. It uses the same canonical invoice model as the exact PDF and finalization. If the saved draft changes after this preview, finalization will be rejected.</div>
     ${readinessHtml}
     ${duplicateWarningsHtml}
     <div id="finalizeError" class="reports-error" style="display:none;"></div>
@@ -3901,12 +3897,10 @@ function renderFinalizationPreview(preview, insuranceState) {
         </div>
       </div>
     </div>
-    <section class="finalization-pdf-preview" aria-label="Canonical invoice PDF preview">
-      <div id="finalizationPdfStatus" class="finalization-pdf-status">Loading canonical PDF preview...</div>
-      <iframe id="finalizationPdfFrame" class="finalization-pdf-frame" title="Canonical invoice PDF preview"></iframe>
-      <div class="finalization-pdf-actions"><a id="openFinalizationPdfPreview" href="#" target="_blank" rel="noopener">Open PDF preview in new tab</a></div>
+    <section class="invoice-html-preview-panel" id="finalizationHtmlPreview" aria-label="Invoice finalization preview">
+      ${renderCanonicalInvoicePreview(preview.render_model)}
     </section>
-    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="repreviewBtn">Update Preview</button><button id="draftPdfPreviewBtn">Preview PDF</button><button id="backToDraftBtn">Back to Draft</button></div>
+    <div class="actions"><button id="confirmFinalizeBtn" class="approve" ${ready ? "" : "disabled"}>Finalize Invoice</button><button id="repreviewBtn">Update Preview</button><button id="draftPdfPreviewBtn">Open Exact PDF Preview</button><button id="backToDraftBtn">Back to Draft</button></div>
   </div>`;
   const finalizeBtn = $("confirmFinalizeBtn");
   const backBtn = $("backToDraftBtn");
@@ -3917,32 +3911,40 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insFields = $("insuranceCodingFields");
   const insDiagnosisInput = $("insuranceDiagnosisCodeInput");
   const repreviewBtn = $("repreviewBtn");
-  const pdfStatus = $("finalizationPdfStatus");
-  const pdfFrame = $("finalizationPdfFrame");
-  const pdfOpenLink = $("openFinalizationPdfPreview");
   backBtn.onclick = () => { state.finalizeInProgress = false; revokeFinalizationPreviewPdfUrl(); renderInvoiceEditor(preview); };
   if (insCheckbox) insCheckbox.onchange = () => {
     insFields.style.display = insCheckbox.checked ? "" : "none";
-    refreshFinalizationPdfPreview();
+    refreshFinalizationHtmlPreview();
   };
-  if (insDiagnosisInput) insDiagnosisInput.oninput = () => scheduleFinalizationPdfRefresh();
+  if (insDiagnosisInput) insDiagnosisInput.oninput = () => scheduleFinalizationHtmlRefresh();
   function collectInsurancePayload() {
     return {
       insurance_coding_included: insCheckbox ? insCheckbox.checked : false,
       insurance_diagnosis_code: insDiagnosisInput ? insDiagnosisInput.value.trim() : "",
     };
   }
-  let pdfRefreshTimer = null;
-  function scheduleFinalizationPdfRefresh() {
-    if (pdfRefreshTimer) window.clearTimeout(pdfRefreshTimer);
-    pdfRefreshTimer = window.setTimeout(refreshFinalizationPdfPreview, 300);
+  function currentInsuranceCodingOverride() {
+    const payload = collectInsurancePayload();
+    if (!payload.insurance_coding_included || !payload.insurance_diagnosis_code) return null;
+    return [
+      {label: "Diagnosis Code", value: payload.insurance_diagnosis_code},
+      {label: "EIN", value: profile.insurance_ein || ""},
+      {label: "NPI", value: profile.insurance_npi || ""},
+      {label: "SW", value: profile.insurance_sw || ""},
+    ];
   }
-  async function refreshFinalizationPdfPreview() {
-    if (!pdfFrame) return;
-    if (pdfStatus) {
-      pdfStatus.textContent = "Loading canonical PDF preview...";
-      pdfStatus.className = "finalization-pdf-status";
-    }
+  let htmlRefreshTimer = null;
+  function scheduleFinalizationHtmlRefresh() {
+    if (htmlRefreshTimer) window.clearTimeout(htmlRefreshTimer);
+    htmlRefreshTimer = window.setTimeout(refreshFinalizationHtmlPreview, 300);
+  }
+  function refreshFinalizationHtmlPreview() {
+    const panel = $("finalizationHtmlPreview");
+    if (panel) panel.innerHTML = renderCanonicalInvoicePreview(preview.render_model, {insuranceCoding: currentInsuranceCodingOverride()});
+    revokeFinalizationPreviewPdfUrl();
+  }
+  async function ensureFinalizationPdfPreviewUrl() {
+    if (finalizationPreviewPdfUrl) return finalizationPreviewPdfUrl;
     const payload = collectInsurancePayload();
     try {
       const tokenResponse = await api(`/api/invoices/${i.invoice_id}/finalization-preview-token`, {
@@ -3952,15 +3954,9 @@ function renderFinalizationPreview(preview, insuranceState) {
       const previewUrl = tokenResponse.preview_pdf_url;
       if (!previewUrl) throw new Error("Failed to generate PDF preview.");
       finalizationPreviewPdfUrl = previewUrl;
-      pdfFrame.src = finalizationPreviewPdfUrl;
-      if (pdfOpenLink) pdfOpenLink.href = finalizationPreviewPdfUrl;
-      if (pdfStatus) pdfStatus.textContent = "Canonical PDF preview loaded.";
+      return finalizationPreviewPdfUrl;
     } catch (err) {
-      if (pdfStatus) {
-        pdfStatus.textContent = err.message || "Failed to generate PDF preview.";
-        pdfStatus.className = "finalization-pdf-status error";
-      }
-      if (pdfOpenLink) pdfOpenLink.href = "#";
+      throw err;
     }
   }
   if (repreviewBtn) repreviewBtn.onclick = async () => {
@@ -3974,9 +3970,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   };
   if ($("draftPdfPreviewBtn")) $("draftPdfPreviewBtn").onclick = async () => {
     try {
-      if (!finalizationPreviewPdfUrl) await refreshFinalizationPdfPreview();
-      if (!finalizationPreviewPdfUrl) throw new Error("Failed to generate PDF preview.");
-      window.open(finalizationPreviewPdfUrl, "_blank");
+      window.open(await ensureFinalizationPdfPreviewUrl(), "_blank");
     } catch (err) {
       errorDiv.textContent = err.message || "Failed to generate PDF preview.";
       errorDiv.style.display = "block";
@@ -4011,7 +4005,7 @@ function renderFinalizationPreview(preview, insuranceState) {
       errorDiv.style.display = "block";
     }
   };
-  refreshFinalizationPdfPreview();
+  refreshFinalizationHtmlPreview();
 }
 
 function renderDuplicateBillingWarnings(warnings) {
@@ -4071,16 +4065,14 @@ function renderInvoicePreview(data) {
   const hasStoredPdf = i.status === "finalized" || i.status === "void";
   const pdfUrl = hasStoredPdf ? finalInvoicePdfUrl(i) : "";
   const pdfButtonsHtml = hasStoredPdf
-    ? `<button id="openPdfBtn">Open PDF</button><button id="showPdfInFinderBtn">Show in Finder</button><button id="openClientFolderBtn">Open client invoice folder</button><button id="printPdfBtn">Print PDF</button>`
+    ? `<button id="openPdfBtn">Open PDF</button><a class="button-link" id="downloadFinalPdfBtn" href="${escapeAttr(pdfUrl)}" download>Download PDF</a><button id="showPdfInFinderBtn">Show in Finder</button><button id="openClientFolderBtn">Open client invoice folder</button><button id="printPdfBtn">Print PDF</button>`
     : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     ${voidHtml}
     ${paymentSummaryHtml}
     <div class="relationship-summary"><strong>File invoice under</strong><div>${fmt(filingDisplay || "—")}</div></div>
-    <section id="storedPdfPreviewPanel" class="finalization-pdf-preview" aria-label="Stored invoice PDF preview">
-      <div id="storedPdfStatus" class="finalization-pdf-status">Loading stored PDF preview...</div>
-      <iframe id="storedPdfFrame" class="finalization-pdf-frame" title="Stored invoice PDF preview"></iframe>
-      <div class="finalization-pdf-actions"><a id="openStoredPdfPreview" href="${escapeAttr(pdfUrl)}" target="_blank" rel="noopener">Open PDF in new tab</a></div>
+    <section class="invoice-html-preview-panel" aria-label="Stored invoice preview">
+      ${renderCanonicalInvoicePreview(data.render_model)}
     </section>
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
@@ -4091,19 +4083,6 @@ function renderInvoicePreview(data) {
   if ($("showPdfInFinderBtn")) $("showPdfInFinderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"show_in_finder"})});
   if ($("openClientFolderBtn")) $("openClientFolderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"open_client_folder"})});
   if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
-  const storedPdfFrame = $("storedPdfFrame");
-  const storedPdfStatus = $("storedPdfStatus");
-  if (storedPdfFrame && storedPdfStatus && pdfUrl) {
-    storedPdfFrame.onload = () => {
-      storedPdfStatus.textContent = "Stored PDF preview loaded.";
-      storedPdfStatus.className = "finalization-pdf-status";
-    };
-    storedPdfFrame.onerror = () => {
-      storedPdfStatus.textContent = "Failed to load stored PDF preview.";
-      storedPdfStatus.className = "finalization-pdf-status error";
-    };
-    storedPdfFrame.src = pdfUrl;
-  }
 }
 
 function finalInvoicePdfUrl(invoice) {
@@ -4121,13 +4100,65 @@ function openFinalInvoicePdf(invoice, targetWindow) {
   return window.open(url, "_blank");
 }
 
+function renderCanonicalInvoicePreview(renderModel, options = {}) {
+  const model = renderModel || {};
+  const lines = model.lines || [];
+  const summary = model.account_summary || null;
+  const insuranceCoding = options.insuranceCoding !== undefined ? options.insuranceCoding : model.insurance_coding;
+  const summaryRows = summary
+    ? `
+      <tr><td colspan="4">Current Charges</td><td>${fmt(summary.current_invoice_total_display)}</td></tr>
+      ${summary.current_invoice_paid_cents ? `<tr><td colspan="4">Payments Applied</td><td>-${fmt(summary.current_invoice_paid_display)}</td></tr>` : ""}
+      ${summary.current_invoice_paid_cents ? `<tr><td colspan="4">Current Invoice Balance</td><td>${fmt(summary.current_invoice_balance_display)}</td></tr>` : ""}
+      ${summary.prior_unpaid_balance_cents ? `<tr><td colspan="4">Prior Unpaid Balance</td><td>${fmt(summary.prior_unpaid_balance_display)}</td></tr>` : ""}
+      <tr class="invoice-preview-total"><td colspan="4">TOTAL AMOUNT DUE</td><td>${fmt(summary.total_amount_due_display)}</td></tr>
+    `
+    : `<tr class="invoice-preview-total"><td colspan="4">${fmt(model.total_label || "TOTAL DUE")}</td><td>${fmt(model.total_display)}</td></tr>`;
+  const priorInvoices = summary?.prior_invoices || [];
+  const priorHtml = priorInvoices.length
+    ? `<div class="invoice-preview-prior"><strong>Prior unpaid invoices:</strong>${priorInvoices.map(item => `<div>Invoice ${fmt(item.invoice_number)} · ${fmt(item.invoice_date)} · ${money(centString(item.remaining_balance_cents))} remaining</div>`).join("")}</div>`
+    : "";
+  const insuranceHtml = insuranceCoding
+    ? `<div class="invoice-preview-insurance">${insuranceCoding.map(item => `<div>${fmt(item.label)}: ${fmt(item.value)}</div>`).join("")}</div>`
+    : "";
+  return `
+    <article class="invoice-preview canonical-invoice-preview">
+      <header class="invoice-preview-header">
+        <div class="invoice-preview-left">
+          <div class="invoice-preview-title"><h3>INVOICE</h3></div>
+          <div><strong>Invoice Number:</strong> ${fmt(model.invoice_number_display)}</div>
+          <div><strong>Invoice Date:</strong> ${fmt(model.invoice_date_display)}</div>
+          <div><strong>Billing Period:</strong> ${fmt(model.billing_period_display)}</div>
+          <div class="invoice-preview-billto"><strong>BILL TO</strong>${(model.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+        </div>
+        <div class="invoice-preview-provider">
+          ${model.logo_data_uri ? `<img src="${escapeAttr(model.logo_data_uri)}" alt="Business logo">` : ""}
+          <div class="invoice-preview-sender">${(model.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+        </div>
+      </header>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Description</th><th>Duration</th><th>Amount</th></tr></thead><tbody>
+        ${lines.map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}
+        ${summaryRows}
+      </tbody></table>
+      ${priorHtml}
+      <footer class="invoice-preview-payment">
+        <strong>${fmt(model.payment_title || "Please make checks payable to:")}</strong>
+        <div>${fmt(model.payment_name)}</div>
+        ${(model.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}
+        ${model.payment_zelle_line ? `<div>${fmt(model.payment_zelle_line)}</div>` : ""}
+      </footer>
+      ${insuranceHtml}
+      ${model.notes ? `<div class="notes"><strong>Notes:</strong> ${fmt(model.notes)}</div>` : ""}
+    </article>
+  `;
+}
+
 $("newInvoiceBtn").onclick = startInvoiceBuilder;
 $("invoiceStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoicePaymentStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoiceBillToFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoiceDraftMonthFilter").onchange = () => {
   state.invoiceLibrary.offset = 0;
-  if ($("invoiceDraftMonthFilter").value && !$("invoiceStatusFilter").value) $("invoiceStatusFilter").value = "draft";
   loadInvoices();
 };
 $("invoiceSortFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };

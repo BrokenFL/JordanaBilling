@@ -92,6 +92,29 @@ class InvoiceLibraryTests(unittest.TestCase):
         self.assertIn("payment_status", item)
         self.assertEqual(item["payment_status"], "unpaid")
         self.assertIn("participants_display", item)
+        self.assertIn("billing_month_options", result)
+        self.assertEqual(result["billing_month_options"], ["2026-05"])
+
+    def test_invoice_lines_are_chronological_not_insertion_order(self):
+        later_date = self.approved_session("order1", start="2026-05-12T15:00:00-04:00")
+        same_day_late = self.approved_session("order2", start="2026-05-10T12:00:00-04:00")
+        same_day_early = self.approved_session("order3", start="2026-05-10T09:00:00-04:00")
+
+        draft = self.draft([later_date, same_day_late, same_day_early])
+        data = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+
+        self.assertEqual(
+            [(line["service_date"], line["source_start_at"]) for line in data["lines"]],
+            [
+                ("2026-05-10", "2026-05-10T09:00:00-04:00"),
+                ("2026-05-10", "2026-05-10T12:00:00-04:00"),
+                ("2026-05-12", "2026-05-12T15:00:00-04:00"),
+            ],
+        )
+        self.assertEqual(
+            [line["service_date_display"] for line in data["render_model"]["lines"]],
+            ["May 10, 2026", "May 10, 2026", "May 12, 2026"],
+        )
 
     def test_search_by_invoice_number(self):
         s = self.approved_session("search1")

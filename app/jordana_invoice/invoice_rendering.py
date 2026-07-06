@@ -282,8 +282,16 @@ def build_invoice_render_model(
     if not zelle_recipient and str(invoice.get("status") or "") == "draft":
         zelle_recipient = str(profile.get("zelle_recipient") or "").strip()
 
+    ordered_lines = sorted(
+        lines,
+        key=lambda line: (
+            str(line.get("service_date") or ""),
+            str(line.get("source_start_at") or line.get("start_at") or ""),
+            str(line.get("invoice_line_item_id") or ""),
+        ),
+    )
     rendered_lines = []
-    for line in lines:
+    for line in ordered_lines:
         rendered_lines.append({
             "service_date_display": format_long_date(line.get("service_date")),
             "participants_display": line.get("participants_snapshot") or "",

@@ -266,6 +266,7 @@ def _generate_invoice_pdf_bytes(
         meta_rows or [
             ("", render.get("invoice_date_display") or ""),
             ("", render.get("invoice_number_display") or ""),
+            ("", f"Billing Period: {render.get('billing_period_display')}" if render.get("billing_period_display") else ""),
         ],
         title,
         meta_label,
@@ -318,6 +319,7 @@ def generate_invoice_pdf(
         meta_rows=[
             ("", resolved_model.get("invoice_date_display") or ""),
             ("", f"Invoice No. {resolved_model.get('invoice_number_display')}" if resolved_model.get("invoice_number_display") else ""),
+            ("", f"Billing Period: {resolved_model.get('billing_period_display')}" if resolved_model.get("billing_period_display") else ""),
         ],
         page_footer_label=f"Invoice {number}",
         doc_title=f"Invoice {number}",
@@ -387,10 +389,10 @@ def _build_meta_block(
     if values:
         meta.append(Spacer(1, INVOICE_TO_DATE_SPACING))
         meta.append(para(values[0], meta_value_style))
-    if len(values) > 1:
+    for value in values[1:]:
         if DATE_TO_METADATA_SPACING:
             meta.append(Spacer(1, DATE_TO_METADATA_SPACING))
-        meta.append(para(values[1], meta_value_style))
+        meta.append(para(value, meta_value_style))
     return meta
 
 
@@ -814,6 +816,7 @@ def generate_draft_pdf_bytes(
         meta_rows=[
             ("", resolved_model.get("invoice_date_display") or ""),
             ("", "DRAFT"),
+            ("", f"Billing Period: {resolved_model.get('billing_period_display')}" if resolved_model.get("billing_period_display") else ""),
         ],
         page_footer_label="Invoice DRAFT",
         doc_title="Invoice DRAFT",
@@ -1029,4 +1032,19 @@ def _build_pdf_footer(
         Spacer(1, PAYMENT_SECTION_TOP_SPACING),
         payment_table,
     ]
+    notes = str(render.get("notes") or "").strip()
+    if notes:
+        notes_style = ParagraphStyle(
+            "InvoiceNotes",
+            parent=small_style,
+            fontSize=BODY_FONT_SIZE,
+            leading=BODY_LEADING,
+            alignment=TA_LEFT,
+            spaceBefore=0,
+            spaceAfter=0,
+        )
+        footer.extend([
+            Spacer(1, 0.18 * inch),
+            Paragraph(f"<b>Notes:</b> {_escape(notes)}", notes_style),
+        ])
     return footer
