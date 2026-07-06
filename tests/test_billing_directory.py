@@ -13,11 +13,13 @@ from jordana_invoice.review_services import (
     add_account_member,
     create_billing_party,
     create_person,
+    analyze_billing_relationship_duplicates,
     list_account_records,
     list_billing_relationship_records,
     list_review_candidates,
     save_billing_section,
     save_relationship_section,
+    setup_billing_relationship,
 )
 
 
@@ -254,7 +256,7 @@ class BillingDirectoryTests(unittest.TestCase):
         self.assertEqual(bp_rec["account_id"], account["account_id"])
         self.assertEqual(bp_rec["account_name"], "Smith Household")
         acct_records = [r for r in records if r["record_type"] == "account"]
-        self.assertEqual(len(acct_records), 1)
+        self.assertEqual(len(acct_records), 0)
 
     def test_genuine_multi_member_account_not_collapsed_to_self_pay(self):
         fred = create_person(self.conn, {"display_name": "Fred Smith", "first_name": "Fred", "last_name": "Smith"})
@@ -275,10 +277,10 @@ class BillingDirectoryTests(unittest.TestCase):
         self._import_and_approve("snap-multi", "Fred and Bobsey 6", [fred["person_id"], bobsey["person_id"]], payer["billing_party_id"])
 
         records = list_billing_relationship_records(self.conn)
-        acct_records = [r for r in records if r["record_type"] == "account"]
-        self.assertEqual(len(acct_records), 1)
-        self.assertEqual(acct_records[0]["account_id"], account["account_id"])
-        member_ids = [m["person_id"] for m in acct_records[0]["covered_people"]]
+        relationship_records = [r for r in records if r["account_id"] == account["account_id"]]
+        self.assertEqual(len(relationship_records), 1)
+        self.assertEqual(relationship_records[0]["record_type"], "third_party")
+        member_ids = [m["person_id"] for m in relationship_records[0]["covered_people"]]
         self.assertIn(fred["person_id"], member_ids)
         self.assertIn(bobsey["person_id"], member_ids)
 
@@ -384,6 +386,140 @@ class BillingDirectoryTests(unittest.TestCase):
         self.assertIsNotNone(bp_rec)
         self.assertEqual(bp_rec["record_type"], "organization")
         self.assertEqual(bp_rec["account_id"], account["account_id"])
+
+    def test_canonical_self_pay_account_suppresses_generic_account_duplicate(self):
+        bonnie = create_person(self.conn, {"display_name": "Bonnie Stern", "first_name": "Bonnie", "last_name": "Stern"})
+        result = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": bonnie["person_id"],
+            "covered_client_ids": [bonnie["person_id"]],
+        })
+
+        records = list_billing_relationship_records(self.conn)
+        matching = [r for r in records if r["account_id"] == result["account_id"]]
+
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["record_type"], "self_pay")
+        self.assertEqual(matching[0]["payer_person_id"], bonnie["person_id"])
+
+    def test_implicit_self_pay_hidden_when_matching_canonical_account_exists(self):
+        bonnie = create_person(self.conn, {"display_name": "Bonnie Stern", "first_name": "Bonnie", "last_name": "Stern"})
+        payer = create_billing_party(self.conn, {
+            "billing_name": "Bonnie Stern",
+            "billing_party_type": "person",
+            "person_id": bonnie["person_id"],
+        })
+        self._import_and_approve("snap-bonnie", "Bonnie Stern 6", [bonnie["person_id"]], payer["billing_party_id"])
+        result = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": bonnie["person_id"],
+            "covered_client_ids": [bonnie["person_id"]],
+        })
+
+        records = list_billing_relationship_records(self.conn)
+        matching = [r for r in records if r["payer_person_id"] == bonnie["person_id"]]
+
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["account_id"], result["account_id"])
+        self.assertEqual(matching[0]["record_type"], "self_pay")
+
+    def test_repeated_setup_reuses_existing_self_pay_account(self):
+        bonnie = create_person(self.conn, {"display_name": "Bonnie Stern", "first_name": "Bonnie", "last_name": "Stern"})
+        payload = {
+            "payer_kind": "client",
+            "payer_person_id": bonnie["person_id"],
+            "covered_client_ids": [bonnie["person_id"]],
+        }
+
+        first = setup_billing_relationship(self.conn, payload)
+        second = setup_billing_relationship(self.conn, payload)
+
+        account_count = self.conn.execute("SELECT COUNT(*) AS c FROM client_accounts WHERE active = 1").fetchone()["c"]
+        self.assertEqual(first["account_id"], second["account_id"])
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(account_count, 1)
+
+    def test_same_person_id_with_billing_name_variant_does_not_duplicate(self):
+        fred = create_person(self.conn, {"display_name": "Fred Colin", "first_name": "Fred", "last_name": "Colin"})
+        canonical = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": fred["person_id"],
+            "covered_client_ids": [fred["person_id"]],
+        })
+        create_billing_party(self.conn, {
+            "billing_name": "Fred Colon",
+            "billing_party_type": "person",
+            "person_id": fred["person_id"],
+        })
+        repeated = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": fred["person_id"],
+            "covered_client_ids": [fred["person_id"]],
+        })
+        analysis = analyze_billing_relationship_duplicates(self.conn)
+
+        self.assertEqual(repeated["account_id"], canonical["account_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) AS c FROM client_accounts WHERE active = 1").fetchone()["c"], 1)
+        self.assertEqual(analysis["summary"]["payer_name_mismatch_count"], 1)
+        self.assertEqual(analysis["payer_name_mismatches"][0]["payer_person_id"], fred["person_id"])
+
+    def test_archived_account_excluded_from_active_directory(self):
+        amy = create_person(self.conn, {"display_name": "Amy Archive", "first_name": "Amy", "last_name": "Archive"})
+        result = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": amy["person_id"],
+            "covered_client_ids": [amy["person_id"]],
+        })
+        self.conn.execute("UPDATE client_accounts SET active = 0 WHERE account_id = ?", (result["account_id"],))
+        self.conn.commit()
+
+        active_records = [r for r in list_billing_relationship_records(self.conn) if r["active"]]
+
+        self.assertFalse(any(r["account_id"] == result["account_id"] for r in active_records))
+
+    def test_shared_relationship_does_not_emit_self_pay_account_fallback(self):
+        lou = create_person(self.conn, {"display_name": "Lou Yeager", "first_name": "Lou", "last_name": "Yeager"})
+        elli = create_person(self.conn, {"display_name": "Elli Yeager", "first_name": "Elli", "last_name": "Yeager"})
+        payer = create_billing_party(self.conn, {
+            "billing_name": "Lou Yeager",
+            "billing_party_type": "person",
+            "person_id": lou["person_id"],
+        })
+        self._import_and_approve("snap-lou", "Lou Yeager 6", [lou["person_id"]], payer["billing_party_id"])
+        result = setup_billing_relationship(self.conn, {
+            "payer_kind": "person",
+            "payer_person_id": lou["person_id"],
+            "covered_client_ids": [lou["person_id"], elli["person_id"]],
+        })
+
+        records = list_billing_relationship_records(self.conn)
+        matching = [r for r in records if r["payer_person_id"] == lou["person_id"]]
+
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["account_id"], result["account_id"])
+        self.assertEqual(matching[0]["record_type"], "third_party")
+
+    def test_duplicate_diagnostic_reports_shadowed_implicit_rows(self):
+        robin = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})
+        payer = create_billing_party(self.conn, {
+            "billing_name": "Robin Rivers",
+            "billing_party_type": "person",
+            "person_id": robin["person_id"],
+        })
+        self._import_and_approve("snap-shadow", "Robin Rivers 6", [robin["person_id"]], payer["billing_party_id"])
+        result = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": robin["person_id"],
+            "covered_client_ids": [robin["person_id"]],
+        })
+
+        analysis = analyze_billing_relationship_duplicates(self.conn)
+
+        self.assertEqual(analysis["summary"]["implicit_shadowed_row_count"], 1)
+        self.assertEqual(
+            analysis["implicit_rows_shadowed_by_canonical_accounts"][0]["canonical_account_id"],
+            result["account_id"],
+        )
 
 
 class BillingDirectoryEndpointTests(unittest.TestCase):

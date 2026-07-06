@@ -6465,6 +6465,107 @@ def analyze_billing_relationship_duplicates(conn: sqlite3.Connection) -> dict[st
             }
         )
 
+    implicit_shadowed_rows: list[dict[str, Any]] = []
+    for row in conn.execute(
+        """
+        SELECT
+          bp.billing_party_id,
+          bp.billing_party_type,
+          bp.person_id AS payer_person_id,
+          GROUP_CONCAT(DISTINCT sp.person_id) AS covered_person_ids_raw,
+          COUNT(DISTINCT s.id) AS session_count
+        FROM billing_parties bp
+        JOIN sessions s ON s.billing_party_id = bp.billing_party_id
+        LEFT JOIN session_participants sp ON sp.session_id = s.id AND sp.person_id IS NOT NULL
+        WHERE bp.person_id IS NOT NULL
+          AND s.account_id IS NULL
+          AND bp.active = 1
+        GROUP BY bp.billing_party_id
+        """
+    ).fetchall():
+        payer_person_id = row["payer_person_id"]
+        covered_client_ids = _normalized_covered_client_ids(
+            [pid for pid in (row["covered_person_ids_raw"] or "").split(",") if pid]
+        )
+        if not payer_person_id or not covered_client_ids:
+            continue
+        duplicate = find_duplicate_billing_relationship(
+            conn,
+            "client" if len(covered_client_ids) == 1 and covered_client_ids[0] == payer_person_id else "person",
+            payer_person_id,
+            None,
+            covered_client_ids,
+        )
+        if not duplicate and len(covered_client_ids) == 1 and covered_client_ids[0] == payer_person_id:
+            for candidate in active_accounts:
+                if candidate["payer_person_id"] != payer_person_id:
+                    continue
+                member_ids = _normalized_covered_client_ids(
+                    [
+                        member["person_id"]
+                        for member in conn.execute(
+                            "SELECT person_id FROM account_members WHERE account_id = ?",
+                            (candidate["account_id"],),
+                        ).fetchall()
+                        if member["person_id"]
+                    ]
+                )
+                if payer_person_id in member_ids:
+                    duplicate = {
+                        "account_id": candidate["account_id"],
+                        "billing_party_id": candidate["default_billing_party_id"],
+                    }
+                    break
+        if duplicate:
+            implicit_shadowed_rows.append(
+                {
+                    "billing_party_id": row["billing_party_id"],
+                    "payer_person_id": payer_person_id,
+                    "covered_client_ids": covered_client_ids,
+                    "canonical_account_id": duplicate["account_id"],
+                    "canonical_billing_party_id": duplicate["billing_party_id"],
+                    "session_count": int(row["session_count"] or 0),
+                }
+            )
+
+    payer_name_mismatches: list[dict[str, Any]] = []
+    for row in conn.execute(
+        """
+        SELECT
+          bp.person_id AS payer_person_id,
+          p.display_name AS person_display_name,
+          GROUP_CONCAT(DISTINCT bp.billing_name) AS billing_names,
+          GROUP_CONCAT(DISTINCT bp.billing_party_id) AS billing_party_ids,
+          GROUP_CONCAT(DISTINCT ca.account_id) AS account_ids,
+          COUNT(DISTINCT bp.billing_name) AS billing_name_count,
+          SUM(
+            CASE
+              WHEN lower(COALESCE(bp.billing_name, '')) != lower(COALESCE(p.display_name, ''))
+              THEN 1 ELSE 0
+            END
+          ) AS mismatch_count
+        FROM billing_parties bp
+        JOIN people p ON p.person_id = bp.person_id
+        LEFT JOIN client_accounts ca ON ca.default_billing_party_id = bp.billing_party_id
+          AND ca.active = 1
+        WHERE bp.active = 1
+          AND bp.person_id IS NOT NULL
+        GROUP BY bp.person_id
+        HAVING billing_name_count > 1
+           OR mismatch_count > 0
+        ORDER BY p.display_name, bp.person_id
+        """
+    ).fetchall():
+        payer_name_mismatches.append(
+            {
+                "payer_person_id": row["payer_person_id"],
+                "person_display_name": row["person_display_name"],
+                "billing_names": [name for name in (row["billing_names"] or "").split(",") if name],
+                "billing_party_ids": [bid for bid in (row["billing_party_ids"] or "").split(",") if bid],
+                "account_ids": [aid for aid in (row["account_ids"] or "").split(",") if aid],
+            }
+        )
+
     duplicate_account_ids = {
         account_id
         for item in exact_duplicates
@@ -6482,12 +6583,16 @@ def analyze_billing_relationship_duplicates(conn: sqlite3.Connection) -> dict[st
             "exact_active_duplicate_relationship_count": len(duplicate_account_ids),
             "duplicate_self_pay_group_count": sum(1 for item in exact_duplicates if item["is_self_pay"]),
             "payer_record_conflict_count": len(payer_record_conflicts),
+            "implicit_shadowed_row_count": len(implicit_shadowed_rows),
+            "payer_name_mismatch_count": len(payer_name_mismatches),
         },
         "exact_active_duplicates": exact_duplicates,
         "duplicate_self_pay_relationships": [
             item for item in exact_duplicates if item["is_self_pay"]
         ],
         "payer_record_conflicts": payer_record_conflicts,
+        "implicit_rows_shadowed_by_canonical_accounts": implicit_shadowed_rows,
+        "payer_name_mismatches": payer_name_mismatches,
         "duplicate_account_ids": sorted(duplicate_account_ids),
         "payer_conflict_account_ids": sorted(payer_conflict_account_ids),
         "recommended_resolution": (
@@ -6745,7 +6850,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         for row in conn.execute("SELECT person_id, display_name FROM people").fetchall()
     }
 
-    account_links: dict[str, dict[str, Any]] = {}
+    account_links: dict[str, list[dict[str, Any]]] = {}
     duplicate_analysis = analyze_billing_relationship_duplicates(conn)
     duplicate_account_ids = set(duplicate_analysis["duplicate_account_ids"])
     payer_conflict_account_ids = set(duplicate_analysis["payer_conflict_account_ids"])
@@ -6758,6 +6863,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         FROM client_accounts ca
         LEFT JOIN billing_parties bp ON bp.billing_party_id = ca.default_billing_party_id
         WHERE ca.default_billing_party_id IS NOT NULL
+        ORDER BY ca.active DESC
         """
     ).fetchall():
         link = {
@@ -6765,9 +6871,10 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             "account_code": row["account_code"],
             "account_name": row["account_name"],
             "account_type": row["account_type"],
+            "account_active": bool(row["active"]),
         }
-        account_links[row["default_billing_party_id"]] = link
-        if row["payer_person_id"]:
+        account_links.setdefault(row["default_billing_party_id"], []).append(link)
+        if row["payer_person_id"] and row["active"]:
             person_linked_account_ids.add(row["account_id"])
 
     bp_rows = conn.execute(
@@ -6875,8 +6982,8 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             d = p["latest_session_date"]
             if d and (latest_date is None or d > latest_date):
                 latest_date = d
-            link = account_links.get(p["billing_party_id"])
-            if link:
+            links = account_links.get(p["billing_party_id"], [])
+            for link in links:
                 all_account_ids.append(link["account_id"])
                 for mid in account_member_map.get(link["account_id"], []):
                     all_covered.add(mid)
@@ -6907,7 +7014,11 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         else:
             record_type = "self_pay"
 
-        link = account_links.get(canonical_id)
+        links = account_links.get(canonical_id, [])
+        link = links[0] if links else None
+        record_active = bool(canonical["billing_party_active"])
+        if link:
+            record_active = bool(link["account_active"])
 
         records.append(
             {
@@ -6922,7 +7033,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "billing_email": canonical["billing_email"],
                 "billing_phone": canonical["billing_phone"],
                 "preferred_delivery_method": canonical["preferred_delivery_method"],
-                "active": bool(canonical["billing_party_active"]),
+                "active": record_active,
                 "covered_people": covered_people,
                 "session_count": len(all_session_ids),
                 "latest_session_date": latest_date,
@@ -6954,7 +7065,10 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         ]
 
         record_type = "organization"
-        link = account_links.get(bp_id)
+        links = account_links.get(bp_id, [])
+        link = links[0] if links else None
+        if link:
+            active = bool(link["account_active"])
 
         records.append(
             {
@@ -7008,7 +7122,9 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     ).fetchall()
 
     for row in acct_rows:
-        if row["account_id"] in person_linked_account_ids and row["account_id"] in account_session_map:
+        if row["default_billing_party_id"]:
+            continue
+        if row["account_id"] in person_linked_account_ids:
             continue
         member_ids = [
             mid for mid in (row["member_ids_raw"] or "").split(",") if mid

@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.11
+### Current Test Build — v0.1.0-test.12
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.11
-- **Python package/application version:** 0.1.0.post11
+- **Release label:** v0.1.0-test.12
+- **Python package/application version:** 0.1.0.post12
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,20 +36,22 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post11` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post12` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.11 adds the weekday Review column, weekend/evening rate matching via manually
-selected session type, Edit Session (no reason required), billing relationship
-delete/archive, self-pay Edit, dedicated Billing Relationships route, canonical
-relationship deep-linking, active-tab preservation, write-token messaging, SSL
-blank-env handling, and the prepared `scripts/sign_and_notarize_release.sh`
-signing script.
+test.12 fixes the duplicate Billing Relationships display: implicit/session-derived
+self-pay rows are now suppressed when a canonical active Billing Relationship
+already exists for the same person. The fix is display-only; no data merge,
+cleanup, or account creation is performed.
 
-### Bug Fixes In test.11
+### Bug Fixes In test.12
+
+1. **Duplicate Billing Relationships display suppression** — One visible active row per actual Billing Relationship. Canonical active account wins; implicit/session-derived fallback row suppressed. Self-pay Edit, canonical account_id, and Edit action are preserved. No live data merge performed.
+
+### Bug Fixes Inherited from test.11
 
 1. **Weekday column** — Review queue shows short weekday abbreviation.
 2. **Weekend/evening rate matching** — Manually selected weekend/evening session type propagates `time_category` to rate suggestion.
@@ -79,7 +81,9 @@ signing script.
 
 ### Prior Test Builds
 
-`v0.1.0-test.10` was built from commit `424cda3` with Python 3.14.4. test.11 supersedes test.10 for installation and update testing.
+`v0.1.0-test.11` was built from commit `7bcb8d3` with Python 3.14.4. test.12 supersedes test.11 for installation and update testing.
+
+`v0.1.0-test.10` was built from commit `424cda3` with Python 3.14.4.
 
 `v0.1.0-test.8` was built from commit `d97d6ba` with Python 3.14.4. Its DMG
 payload was correct, but a supervised installation exposed that an older
@@ -87,7 +91,7 @@ private runtime could remain installed because the prior installer requested
 the shared package version `0.1.0`. test.9 and test.10 superseded test.8.
 
 `v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
-never published. It is superseded by test.11 as the current built and
+never published. It is superseded by test.12 as the current built and
 distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That

@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.11`
+- **Current test release target:** `v0.1.0-test.12`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post11`
+- **Current package/application version:** `0.1.0.post12`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.10` is superseded by test.11 for installation and update testing
+- **Prior test release:** `v0.1.0-test.11` is superseded by test.12 for installation and update testing
 
 ## Architecture
 
@@ -107,17 +107,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is:
+The current controlled-beta release target is (test.12 supersedes test.11):
 
 ```text
-JordanaBilling-v0.1.0-test.11-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.12-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.11`
-- Python package/application version: `0.1.0.post11`
+- Release label: `v0.1.0-test.12`
+- Python package/application version: `0.1.0.post12`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -127,9 +127,13 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post11` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post12` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Bug Fixes In test.12
+
+14. **Duplicate Billing Relationships display suppression** — The Billing Relationships directory no longer shows an implicit/session-derived self-pay row alongside an existing canonical active Billing Relationship for the same person. One visible active row is shown per actual Billing Relationship. Canonical account wins: when a canonical active account exists, the shadowed implicit row is suppressed while the Edit action and canonical `account_id` are preserved. No data merge, cleanup, or account creation is performed. The defect was display-only; no real duplicate active `client_accounts` rows existed.
 
 ### Bug Fixes In test.11
 
@@ -162,7 +166,9 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 
 ### Prior Test Releases
 
-`v0.1.0-test.10` was built from commit `424cda3`. test.11 supersedes test.10 for installation and update testing.
+`v0.1.0-test.11` was built from commit `7bcb8d3`. test.12 supersedes test.11 for installation and update testing.
+
+`v0.1.0-test.10` was built from commit `424cda3`.
 
 `v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that stale installed runtime code could remain when multiple releases shared package version `0.1.0`. test.10 superseded test.8.
 
