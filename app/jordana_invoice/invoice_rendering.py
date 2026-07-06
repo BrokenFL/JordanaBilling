@@ -48,6 +48,17 @@ def format_long_date(value: Any) -> str:
     return parsed.strftime("%B %d, %Y")
 
 
+def format_invoice_header_date(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = date.fromisoformat(text[:10])
+    except (TypeError, ValueError):
+        return text
+    return f"{parsed.strftime('%b').upper()} {parsed.day}, {parsed.year}"
+
+
 def format_month_label(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -331,7 +342,7 @@ def build_invoice_render_model(
         "sender_lines": sender_lines,
         "bill_to_lines": bill_to_lines,
         "invoice_number_display": display_invoice_number(invoice.get("invoice_number"), invoice.get("status")),
-        "invoice_date_display": format_long_date(invoice.get("invoice_date")),
+        "invoice_date_display": format_invoice_header_date(invoice.get("invoice_date")),
         "billing_period_display": format_billing_period(
             invoice.get("billing_month"),
             invoice.get("billing_period_start"),
@@ -510,13 +521,12 @@ def build_print_preview_html(
   <div class="draft-banner">DRAFT — NOT FINAL</div>
   <div class="draft-watermark">DRAFT</div>
   <div class="print-btn-row"><button class="print-btn" onclick="window.print()">Print</button></div>
-  <div class="invoice-header">
+    <div class="invoice-header">
     <div class="invoice-header-left">{logo_html}{sender_lines}</div>
     <div class="invoice-header-right">
       <h1>INVOICE</h1>
-      <div><strong>Invoice Number:</strong> {_esc(render.get('invoice_number_display'))}</div>
-      <div><strong>Invoice Date:</strong> {_esc(render.get('invoice_date_display'))}</div>
-      <div><strong>Billing Period:</strong> {_esc(render.get('billing_period_display'))}</div>
+      <div>{_esc(render.get('invoice_date_display'))}</div>
+      <div>{_esc(render.get('invoice_number_display'))}</div>
     </div>
   </div>
   <div class="bill-to"><strong>BILL TO</strong>{bill_to_lines}</div>

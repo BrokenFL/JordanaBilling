@@ -8,12 +8,21 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 Drafts can add/remove eligible sessions, override delivery, and change dates. Totals use integer cents.
 
+The draft editor displays invoice sessions in separate columns: Date,
+Participants, Session Type, Duration, and Rate. Date and Participants are not
+combined.
+
 Invoice session lines are displayed and serialized chronologically: earliest
 service date first, then start time for sessions on the same date, then stable
 line UUID as the final deterministic tie-breaker. This ordering is applied by
 the canonical invoice line fetch and render model, so the draft editor, in-app
 HTML preview, exact draft/finalization PDF previews, and finalized PDFs do not
 depend on import order, approval order, insertion order, or database row order.
+
+The main Invoices screen exposes only Status and Service Period filters. Service
+Period options are generated from invoice service periods currently present in
+SQLite. The filtered invoice list sorts alphabetically by the Bill To/client
+first name and shows filtered Draft and Finalized invoice counts and totals.
 
 ### Line Item Editing
 
@@ -128,7 +137,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, the formatted invoice date, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -336,13 +345,19 @@ The **Payments** workspace (formerly the "Unpaid" screen) now covers the normal 
 The sidebar entry formerly labelled "Unpaid" is now **Payments**, a tabbed workspace with three views:
 
 - **Outstanding** — finalized invoices with a positive remaining balance; supports recording payments (same as Round 1)
-- **Paid** — finalized invoices with zero balance, showing paid date and payment method
-- **All Payments** — chronological ledger of every payment with bill-to name, applied amount, and status
+- **Paid** — finalized invoices with zero balance plus posted paid-at-session session payments, showing invoice/service period, paid date, and payment method
+- **All Payments** — payment ledger rows with bill-to name, applied amount, invoice/service period, and status
+
+Outstanding, Paid, and All Payments share an **Invoice Period** filter. The
+filter options are generated from finalized invoice periods and posted
+paid-at-session session payments. Each view sorts rows by Bill To/client first
+name for scanning consistency.
 
 Shared calculation functions in `payment_services.py`:
 
-- `list_paid_invoices(conn)` — finalized non-void invoices with zero balance
-- `list_all_payments(conn)` — all payments with applied amounts and bill-to names
+- `list_paid_invoices(conn, billing_month=None)` — finalized non-void invoices with zero balance and paid-at-session display rows
+- `list_all_payments(conn, billing_month=None)` — all payments with applied amounts, bill-to names, and invoice/service period metadata
+- `list_payment_service_period_options(conn)` — available invoice/service periods for the Payments filter
 - `get_payment_detail_view(conn, payment_id)` — payment detail with allocations and invoice references
 - `client_account_summary(conn, person_id)` — total billed, total paid, current balance, account status
 

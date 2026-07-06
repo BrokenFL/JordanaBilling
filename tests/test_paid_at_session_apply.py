@@ -22,6 +22,7 @@ from jordana_invoice.review_services import (
     create_billing_party,
     create_person,
     get_review_candidate,
+    list_review_candidates,
     save_interpretation,
 )
 from jordana_invoice.util import stable_hash
@@ -144,6 +145,30 @@ class PaidAtSessionApplyTests(unittest.TestCase):
         self.assertEqual(summary["method"], "zelle")
         self.assertEqual(summary["allocated_cents"], 20000)
         self.assertEqual(summary["allocation_count"], 1)
+
+    def test_completed_paid_at_session_approval_without_visible_billing_treatment_leaves_review(self):
+        cid = self._import_candidate("s1")
+        payload = {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Casey Sample"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "billing_session_type": "psychotherapy",
+            "service_mode": "office",
+            "time_category": "standard",
+            "appointment_status": "completed",
+            "approved_rate": "200.00",
+            "payment_status": "paid_at_session",
+            "amount_received": "200.00",
+            "payment_date": "2026-07-10",
+            "payment_method": "zelle",
+        }
+
+        res = approve_candidate(self.conn, cid, payload)
+
+        self.assertEqual(res["session"]["review_status"], "approved")
+        self.assertEqual(res["session"]["billing_treatment"], "billable")
+        queue = list_review_candidates(self.conn)
+        self.assertNotIn(cid, {item["candidate_id"] for item in queue["items"]})
 
     # 2. Approved paid_at_session session is excluded from monthly invoice staging
     def test_session_excluded_from_invoice_staging(self):

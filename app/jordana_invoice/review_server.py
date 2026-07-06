@@ -112,6 +112,7 @@ from .payment_services import (
     list_invoice_payment_history,
     list_outstanding_invoices,
     list_paid_invoices,
+    list_payment_service_period_options,
     record_invoice_payment,
     reverse_allocation,
     void_payment,
@@ -766,13 +767,25 @@ def make_handler(
                     ))
                     return
                 if parsed.path == "/api/payments/outstanding-invoices":
-                    self.send_json({"items": list_outstanding_invoices(self.conn())})
+                    query = parse_qs(parsed.query)
+                    self.send_json({
+                        "items": list_outstanding_invoices(self.conn(), billing_month=first(query, "billing_month") or None),
+                        "service_period_options": list_payment_service_period_options(self.conn()),
+                    })
                     return
                 if parsed.path == "/api/payments/paid-invoices":
-                    self.send_json({"items": list_paid_invoices(self.conn())})
+                    query = parse_qs(parsed.query)
+                    self.send_json({
+                        "items": list_paid_invoices(self.conn(), billing_month=first(query, "billing_month") or None),
+                        "service_period_options": list_payment_service_period_options(self.conn()),
+                    })
                     return
                 if parsed.path == "/api/payments":
-                    self.send_json({"items": list_all_payments(self.conn())})
+                    query = parse_qs(parsed.query)
+                    self.send_json({
+                        "items": list_all_payments(self.conn(), billing_month=first(query, "billing_month") or None),
+                        "service_period_options": list_payment_service_period_options(self.conn()),
+                    })
                     return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-preview"):
                     payment_id = parsed.path.strip("/").split("/")[2]

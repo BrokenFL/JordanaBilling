@@ -56,6 +56,81 @@ PAYMENT_METHODS = {"zelle", "check", "cash", "ach", "card", "other"}
 RECENT_DUPLICATE_WINDOW_SECONDS = 120
 
 
+def _month_key(value: str | None) -> str:
+    raw = text(value)
+    return raw[:7] if len(raw) >= 7 else ""
+
+
+def _month_label(month_key: str | None) -> str:
+    raw = text(month_key)
+    if len(raw) != 7:
+        return raw
+    try:
+        return datetime.strptime(raw, "%Y-%m").strftime("%B %Y")
+    except ValueError:
+        return raw
+
+
+def _invoice_period_key(row: sqlite3.Row | dict[str, Any]) -> str:
+    getter = row.get if isinstance(row, dict) else row.__getitem__
+    billing_month = text(getter("billing_month")) if "billing_month" in row.keys() else ""
+    if billing_month:
+        return billing_month
+    start = text(getter("billing_period_start")) if "billing_period_start" in row.keys() else ""
+    return _month_key(start)
+
+
+def _invoice_period_display(row: sqlite3.Row | dict[str, Any]) -> str:
+    getter = row.get if isinstance(row, dict) else row.__getitem__
+    key = _invoice_period_key(row)
+    start = text(getter("billing_period_start")) if "billing_period_start" in row.keys() else ""
+    end = text(getter("billing_period_end")) if "billing_period_end" in row.keys() else ""
+    if key:
+        return _month_label(key)
+    if start and end:
+        return f"{start} - {end}"
+    return start or end
+
+
+def _first_name_sort_key(name: str | None) -> tuple[str, str]:
+    display = text(name)
+    parts = display.split()
+    first = parts[0].lower() if parts else ""
+    return first, display.lower()
+
+
+def _sort_payment_rows(rows: list[dict[str, Any]], name_key: str) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda row: (*_first_name_sort_key(row.get(name_key)), text(row.get("invoice_number") or row.get("received_at"))))
+
+
+def list_payment_service_period_options(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """Return every invoice/service month represented on the Payments screen."""
+    months: set[str] = set()
+    for row in conn.execute(
+        """
+        SELECT billing_month, billing_period_start
+        FROM invoices
+        WHERE status = 'finalized'
+        """
+    ).fetchall():
+        key = _invoice_period_key(row)
+        if key:
+            months.add(key)
+    for row in conn.execute(
+        """
+        SELECT COALESCE(s.session_date, substr(s.start_at, 1, 10), p.received_at) AS service_date
+        FROM payments p
+        JOIN sessions s ON s.id = p.source_session_id
+        WHERE p.source_type = 'paid_at_session_backfill'
+          AND p.status = 'posted'
+        """
+    ).fetchall():
+        key = _month_key(row["service_date"])
+        if key:
+            months.add(key)
+    return [{"value": month, "label": _month_label(month)} for month in sorted(months, reverse=True)]
+
+
 def _validate_payment_method(value: str | None, *, required: bool = False) -> str:
     raw = text(value).lower()
     if not raw:
@@ -756,8 +831,9 @@ def get_payment_detail(conn: sqlite3.Connection, payment_id: str) -> dict[str, A
     }
 
 
-def list_outstanding_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_outstanding_invoices(conn: sqlite3.Connection, *, billing_month: str | None = None) -> list[dict[str, Any]]:
     """List finalized invoices with a positive remaining balance."""
+    period = text(billing_month)
     rows = conn.execute(
         """
         SELECT i.invoice_id
@@ -769,10 +845,14 @@ def list_outstanding_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for row in rows:
         summary = _invoice_balance_summary(conn, row["invoice_id"])
+        if period and _invoice_period_key(summary) != period:
+            continue
         if summary["balance_cents"] <= 0:
             continue
+        summary["invoice_period"] = _invoice_period_key(summary)
+        summary["invoice_period_display"] = _invoice_period_display(summary)
         results.append(summary)
-    return results
+    return _sort_payment_rows(results, "bill_to_display_name")
 
 
 def _invoice_paid_date_and_methods(conn: sqlite3.Connection, invoice_id: str) -> tuple[str | None, str | None]:
@@ -800,8 +880,9 @@ def _invoice_paid_date_and_methods(conn: sqlite3.Connection, invoice_id: str) ->
     return paid_date, method_label
 
 
-def list_paid_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_paid_invoices(conn: sqlite3.Connection, *, billing_month: str | None = None) -> list[dict[str, Any]]:
     """List finalized, non-void invoices whose derived balance is zero."""
+    period = text(billing_month)
     rows = conn.execute(
         """
         SELECT i.invoice_id
@@ -813,21 +894,65 @@ def list_paid_invoices(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for row in rows:
         summary = _invoice_balance_summary(conn, row["invoice_id"])
+        if period and _invoice_period_key(summary) != period:
+            continue
         if summary["balance_cents"] > 0:
             continue
         paid_date, method_label = _invoice_paid_date_and_methods(conn, row["invoice_id"])
         summary["paid_date"] = paid_date
         summary["payment_method"] = method_label
+        summary["invoice_period"] = _invoice_period_key(summary)
+        summary["invoice_period_display"] = _invoice_period_display(summary)
+        summary["row_type"] = "invoice"
         results.append(summary)
-    return results
+    for row in conn.execute(
+        """
+        SELECT
+          p.payment_id,
+          p.billing_party_id,
+          p.amount_cents,
+          p.received_at,
+          p.method,
+          p.reference_number,
+          s.id AS session_id,
+          COALESCE(s.session_date, substr(s.start_at, 1, 10), p.received_at) AS service_date,
+          bp.billing_name AS bill_to_display_name
+        FROM payments p
+        JOIN sessions s ON s.id = p.source_session_id
+        JOIN billing_parties bp ON bp.billing_party_id = p.billing_party_id
+        WHERE p.source_type = 'paid_at_session_backfill'
+          AND p.status = 'posted'
+        """
+    ).fetchall():
+        row_period = _month_key(row["service_date"])
+        if period and row_period != period:
+            continue
+        results.append({
+            "row_type": "paid_at_session",
+            "payment_id": row["payment_id"],
+            "session_id": row["session_id"],
+            "invoice_id": "",
+            "invoice_number": "Paid at session",
+            "bill_to_display_name": row["bill_to_display_name"],
+            "invoice_period": row_period,
+            "invoice_period_display": _month_label(row_period),
+            "total_cents": row["amount_cents"],
+            "paid_cents": row["amount_cents"],
+            "balance_cents": 0,
+            "paid_date": row["received_at"],
+            "payment_method": row["method"],
+            "payment_status": "paid",
+        })
+    return _sort_payment_rows(results, "bill_to_display_name")
 
 
-def list_all_payments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Return a chronological ledger of all recorded payments.
+def list_all_payments(conn: sqlite3.Connection, *, billing_month: str | None = None) -> list[dict[str, Any]]:
+    """Return the recorded payment ledger for the Payments screen.
 
-    Sorts newest payment date first, then stable by internal created_at.
+    Sorts by bill-to first name, then stable by payment date.
     Each row includes bill_to_name, invoice numbers, and applied amount.
     """
+    period = text(billing_month)
     rows = conn.execute(
         """
         SELECT
@@ -842,6 +967,18 @@ def list_all_payments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
           p.status,
           p.source_type,
           p.created_at,
+          COALESCE(
+            (SELECT COALESCE(i.billing_month, substr(i.billing_period_start, 1, 7))
+             FROM payment_allocations pa2
+             JOIN invoice_line_items li ON li.invoice_line_item_id = pa2.invoice_line_item_id
+             JOIN invoices i ON i.invoice_id = li.invoice_id
+             WHERE pa2.payment_id = p.payment_id AND pa2.status = 'active'
+             ORDER BY i.billing_period_start ASC
+             LIMIT 1),
+            (SELECT substr(COALESCE(s.session_date, s.start_at, p.received_at), 1, 7)
+             FROM sessions s
+             WHERE s.id = p.source_session_id)
+          ) AS invoice_period,
           bp.billing_name AS bill_to_name,
           COALESCE((
             SELECT GROUP_CONCAT(DISTINCT i.invoice_number)
@@ -857,6 +994,9 @@ def list_all_payments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ).fetchall()
     results: list[dict[str, Any]] = []
     for row in rows:
+        row_period = text(row["invoice_period"])
+        if period and row_period != period:
+            continue
         applied = conn.execute(
             """
             SELECT COALESCE(SUM(pa.amount_cents), 0)
@@ -886,8 +1026,10 @@ def list_all_payments(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "source_type": row["source_type"],
             "amount_applied_cents": applied,
             "invoice_numbers": invoice_display,
+            "invoice_period": row_period,
+            "invoice_period_display": _month_label(row_period),
         })
-    return results
+    return _sort_payment_rows(results, "bill_to_name")
 
 
 def get_payment_correction_history(conn: sqlite3.Connection, payment_id: str) -> list[dict[str, Any]]:

@@ -55,7 +55,10 @@ class InvoiceLibraryTests(unittest.TestCase):
         self.conn.close()
         self.temp.cleanup()
 
-    def approved_session(self, key, title="Avery Stone | 60 | Office", start=None, amount="150.00"):
+    def approved_session(self, key, title="Avery Stone | 60 | Office", start=None, amount="150.00", person=None, party=None, display_name=None):
+        person = person or self.person
+        party = party or self.party
+        display_name = display_name or person["display_name"]
         start = start or f"2026-05-{10 + len(key):02d}T10:00:00-04:00"
         import_rows(self.conn, [raw_row(key, title, start)], "test")
         candidate_id = self.conn.execute(
@@ -63,19 +66,30 @@ class InvoiceLibraryTests(unittest.TestCase):
             (stable_hash(f"calendar_event_id:event-{key}"),),
         ).fetchone()[0]
         detail = approve_candidate(self.conn, candidate_id, {
-            "participants": [{"person_id": self.person["person_id"], "display_name": "Avery Stone"}],
-            "billing_party_id": self.party["billing_party_id"], "approved_duration_minutes": 60,
+            "participants": [{"person_id": person["person_id"], "display_name": display_name}],
+            "billing_party_id": party["billing_party_id"], "approved_duration_minutes": 60,
             "service_mode": "office", "time_category": "standard", "approved_rate": amount,
             "payment_status": "unpaid", "billing_treatment": "billable",
         })
         return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
 
-    def draft(self, sessions, invoice_date="2026-05-31", period_start="2026-05-01", period_end="2026-05-31"):
+    def draft(self, sessions, invoice_date="2026-05-31", period_start="2026-05-01", period_end="2026-05-31", party=None):
+        party = party or self.party
         return create_invoice_draft(self.conn, {
-            "bill_to_party_id": self.party["billing_party_id"], "billing_period_start": period_start,
+            "bill_to_party_id": party["billing_party_id"], "billing_period_start": period_start,
             "billing_period_end": period_end, "invoice_date": invoice_date,
             "session_ids": [row["id"] for row in sessions],
         })
+
+    def other_party(self, first="Blake", last="Example"):
+        person = create_person(self.conn, {"first_name": first, "last_name": last, "display_name": f"{first} {last}"})
+        party = create_billing_party(self.conn, {
+            "billing_name": f"{first} {last}", "person_id": person["person_id"],
+            "billing_email": f"{first.lower()}@example.test", "billing_address_line_1": "20 Sample Street",
+            "billing_city": "Example", "billing_state": "FL", "billing_postal_code": "00000",
+            "preferred_delivery_method": "both",
+        })
+        return person, party
 
     def test_list_returns_paginated_dict_with_payment_fields(self):
         s = self.approved_session("lib1")
@@ -134,6 +148,49 @@ class InvoiceLibraryTests(unittest.TestCase):
         self.assertEqual(drafts["total"], 1)
         finalized = list_invoice_records(self.conn, status="finalized")
         self.assertEqual(finalized["total"], 0)
+
+    def test_status_service_period_totals_and_first_name_sorting(self):
+        blake, blake_party = self.other_party("Blake", "Example")
+        blake_session = self.approved_session(
+            "blake",
+            title="Blake Example | 60 | Office",
+            start="2026-07-01T10:00:00-04:00",
+            amount="200.00",
+            person=blake,
+            party=blake_party,
+            display_name="Blake Example",
+        )
+        avery_session = self.approved_session(
+            "avery",
+            start="2026-06-10T10:00:00-04:00",
+            amount="150.00",
+        )
+        self.draft([blake_session], invoice_date="2026-07-31", period_start="2026-07-01", period_end="2026-07-31", party=blake_party)
+        avery_draft = self.draft([avery_session], invoice_date="2026-06-30", period_start="2026-06-01", period_end="2026-06-30")
+        finalize_invoice(
+            self.conn,
+            avery_draft["invoice"]["invoice_id"],
+            expected_revision=avery_draft["invoice"]["revision"],
+            pdf_root=self.root / "pdfs",
+        )
+
+        result = list_invoice_records(self.conn)
+
+        self.assertEqual([row["current_bill_to_name"] for row in result["items"]], ["Avery Stone", "Blake Example"])
+        self.assertEqual(
+            [option["value"] for option in result["service_period_options"]],
+            ["2026-07", "2026-06"],
+        )
+        self.assertEqual(result["status_totals"]["draft"], {"count": 1, "total_cents": 20000})
+        self.assertEqual(result["status_totals"]["finalized"], {"count": 1, "total_cents": 15000})
+
+        july = list_invoice_records(self.conn, billing_month="2026-07")
+        self.assertEqual(july["total"], 1)
+        self.assertEqual(july["items"][0]["current_bill_to_name"], "Blake Example")
+
+        drafts = list_invoice_records(self.conn, status="draft")
+        self.assertEqual(drafts["status_totals"]["draft"], {"count": 1, "total_cents": 20000})
+        self.assertEqual(drafts["status_totals"]["finalized"], {"count": 0, "total_cents": 0})
 
     def test_filter_by_payment_status(self):
         s = self.approved_session("pay1")

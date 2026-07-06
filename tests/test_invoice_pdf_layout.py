@@ -452,7 +452,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         )
         return snips
 
-    def test_billing_period_included_in_pdf_metadata(self):
+    def test_invoice_header_omits_labels_and_billing_period(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         path = self._generate_pdf()
@@ -460,7 +460,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = PdfReader(path).pages[0].extract_text() or ""
         self.assertNotIn("Invoice Number", text)
         self.assertNotIn("Invoice Date", text)
-        self.assertIn("Billing Period: May 2026", text)
+        self.assertNotIn("Billing Period", text)
+        self.assertIn("JUN 1, 2026", text)
+        self.assertIn("2026-0042", text)
 
     def test_draft_preview_uses_approved_layout(self):
         if not _has_pdf_deps():
@@ -471,10 +473,11 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIn("DRAFT", text)
         self.assertNotIn("Invoice Number", text)
         self.assertNotIn("Invoice Date", text)
+        self.assertNotIn("Billing Period", text)
+        self.assertIn("JUN 1, 2026", text)
         self.assertIn("Bill To:", text)
         self.assertIn("Jordana Singer, LCSW", text)
         self.assertNotIn("Demo Practice", text)
-        self.assertIn("Billing Period: May 2026", text)
         self.assertNotIn("FROM", text)
         self.assertIn("TOTAL DUE", text)
         self.assertNotIn("Account name:", text)
@@ -487,10 +490,11 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertNotIn("DRAFT", text)
         self.assertNotIn("Invoice Number", text)
         self.assertNotIn("Invoice Date", text)
-        self.assertIn("Invoice No. 2026-0042", text)
+        self.assertNotIn("Billing Period", text)
+        self.assertIn("JUN 1, 2026", text)
+        self.assertIn("2026-0042", text)
         self.assertIn("Bill To:", text)
         self.assertIn("Jordana Singer, LCSW", text)
-        self.assertIn("Billing Period: May 2026", text)
         self.assertNotIn("FROM", text)
 
     def test_long_client_multiline_address_and_delivery_line_render(self):
@@ -1132,8 +1136,7 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
 
         expected_values = [
             "Avery Stone",
-            "June 01, 2026",
-            "May 2026",
+            "JUN 1, 2026",
             "May 22, 2026",
             "May 23, 2026",
             "Office Visit",
@@ -1152,6 +1155,10 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         for value in expected_values:
             self.assertIn(value, html)
             self.assertIn(value, pdf_text)
+        self.assertNotIn("Invoice Number:", html)
+        self.assertNotIn("Invoice Date:", html)
+        self.assertNotIn("Billing Period", html)
+        self.assertNotIn("Billing Period", pdf_text)
 
     def test_old_renderer_not_reachable_from_finalization(self):
         """Verify that generate_invoice_pdf delegates to _generate_invoice_pdf_bytes

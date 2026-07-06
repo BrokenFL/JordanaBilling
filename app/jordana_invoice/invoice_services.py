@@ -9,7 +9,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
-from .invoice_rendering import build_invoice_render_model, resolve_logo_path
+from .invoice_rendering import build_invoice_render_model, format_month_label, resolve_logo_path
 from .invoice_pdf import generate_invoice_pdf
 from .csv_reports import refresh_reports_after_commit
 from .service_catalog import learn_service, list_services
@@ -267,6 +267,40 @@ _VALID_SORT_FIELDS = {
     "bill_to_name": "bp.billing_name",
     "billing_month": "i.billing_month",
 }
+
+
+def _invoice_service_period_key(record: dict[str, Any]) -> str:
+    billing_month = str(record.get("billing_month") or "").strip()
+    if billing_month:
+        return billing_month
+    start = str(record.get("billing_period_start") or "").strip()
+    return start[:7] if len(start) >= 7 else ""
+
+
+def _first_name_sort_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    name = str(
+        record.get("bill_to_name_snapshot")
+        or record.get("current_bill_to_name")
+        or ""
+    ).strip()
+    parts = name.casefold().split()
+    first = parts[0] if parts else ""
+    rest = " ".join(parts[1:])
+    return (first, rest, str(record.get("invoice_id") or ""))
+
+
+def _status_totals(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    totals = {
+        "draft": {"count": 0, "total_cents": 0},
+        "finalized": {"count": 0, "total_cents": 0},
+    }
+    for record in records:
+        status = record.get("status")
+        if status not in totals:
+            continue
+        totals[status]["count"] += 1
+        totals[status]["total_cents"] += int(record.get("total_cents") or 0)
+    return totals
 
 
 def _sanitize_path_part(value: Any, fallback: str = "Unknown") -> str:
@@ -715,8 +749,8 @@ def list_invoice_records(
     billing_month: str | None = None,
     service_period_from: str | None = None,
     service_period_to: str | None = None,
-    sort_by: str = "invoice_date",
-    sort_dir: str = "desc",
+    sort_by: str = "bill_to_first_name",
+    sort_dir: str = "asc",
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -755,7 +789,7 @@ def list_invoice_records(
         params.append(invoice_date_to)
 
     if billing_month:
-        conditions.append("i.billing_month = ?")
+        conditions.append("COALESCE(NULLIF(TRIM(i.billing_month), ''), substr(i.billing_period_start, 1, 7)) = ?")
         params.append(billing_month)
 
     if service_period_from:
@@ -768,7 +802,7 @@ def list_invoice_records(
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-    sort_col = _VALID_SORT_FIELDS.get(sort_by, "i.invoice_date")
+    sort_col = _VALID_SORT_FIELDS.get(sort_by, "bp.billing_name")
     sort_direction = "DESC" if (sort_dir or "desc").lower() == "desc" else "ASC"
     # Secondary sort for deterministic newest-first invoice library display.
     secondary = "i.invoice_number DESC" if sort_col != "i.invoice_number" else "i.created_at DESC"
@@ -818,6 +852,7 @@ def list_invoice_records(
             record["participants_display"] = ", ".join(seen)
         else:
             record["participants_display"] = ""
+        record["service_period"] = _invoice_service_period_key(record)
         enriched.append(record)
 
     # Post-filter by payment_status (derived field)
@@ -825,7 +860,12 @@ def list_invoice_records(
     if payment_status and payment_status in valid_payment_statuses:
         enriched = [r for r in enriched if r["payment_status"] == payment_status]
 
+    if sort_by == "bill_to_first_name":
+        reverse = (sort_dir or "asc").lower() == "desc"
+        enriched.sort(key=_first_name_sort_key, reverse=reverse)
+
     total = len(enriched)
+    status_totals = _status_totals(enriched)
     draft_month_map: dict[str, dict[str, Any]] = {}
     for record in enriched:
         if record.get("status") != "draft":
@@ -844,13 +884,17 @@ def list_invoice_records(
     )
     month_rows = conn.execute(
         """
-        SELECT DISTINCT billing_month
+        SELECT DISTINCT COALESCE(NULLIF(TRIM(billing_month), ''), substr(billing_period_start, 1, 7)) AS billing_month
         FROM invoices
-        WHERE billing_month IS NOT NULL
-          AND TRIM(billing_month) != ''
+        WHERE COALESCE(NULLIF(TRIM(billing_month), ''), substr(billing_period_start, 1, 7)) IS NOT NULL
+          AND TRIM(COALESCE(NULLIF(TRIM(billing_month), ''), substr(billing_period_start, 1, 7))) != ''
         ORDER BY billing_month DESC
         """
     ).fetchall()
+    service_period_options = [
+        {"value": row["billing_month"], "label": format_month_label(row["billing_month"])}
+        for row in month_rows
+    ]
 
     # Paginate
     if limit > 0:
@@ -865,6 +909,8 @@ def list_invoice_records(
         "offset": offset,
         "draft_month_totals": draft_month_totals,
         "billing_month_options": [row["billing_month"] for row in month_rows],
+        "service_period_options": service_period_options,
+        "status_totals": status_totals,
     }
 
 

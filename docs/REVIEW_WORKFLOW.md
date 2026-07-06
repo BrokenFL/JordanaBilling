@@ -125,6 +125,11 @@ The visible choices are:
 - **Paid at session** — approval requires the received amount, payment date, and supported method; approval idempotently creates or validates one posted payment and allocation and skips invoice staging
 
 Payment Handling is separate from appointment status and cancelled or no-show billing treatment.
+For completed sessions, the hidden cancellation-billing field is treated as
+`billable` during save and approval, so a fully completed Paid at session
+review can approve normally. If the paid-at-session detail form has already
+been saved and collapsed, approval reuses the stored amount, date, method,
+reference, and administrative note instead of submitting blank payment fields.
 
 After a paid-at-session approval, reopening or reloading the approved session
 shows the stored paid-at-session state from the payment ledger, including the

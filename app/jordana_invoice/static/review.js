@@ -70,6 +70,8 @@ const state = {
   },
   payments: {
     activeTab: "outstanding",
+    billingMonth: "",
+    servicePeriodOptions: [],
     paidItems: [],
     allPaymentsItems: [],
     selectedPaidInvoiceId: null,
@@ -86,16 +88,13 @@ const state = {
     limit: 50,
     search: "",
     status: "",
-    paymentStatus: "",
-    billToPartyId: "",
     billingMonth: "",
-    dateFilter: "",
-    dateFrom: "",
-    dateTo: "",
-    sortBy: "invoice_date",
-    sortDir: "desc",
+    sortBy: "bill_to_first_name",
+    sortDir: "asc",
     draftMonthTotals: [],
     billingMonthOptions: [],
+    servicePeriodOptions: [],
+    statusTotals: {draft: {count: 0, total_cents: 0}, finalized: {count: 0, total_cents: 0}},
     loaded: false
   },
   reconciliation: {
@@ -432,7 +431,7 @@ function renderRows(items, total) {
       <td class="date-cell">${fmt(item.date)}</td>
       <td class="day-cell">${escapeHtml(shortWeekday(item.date))}</td>
       <td class="time-cell">${fmt(item.time)}</td>
-      <td class="calendar-cell">${fmt(item.calendar_name || "Unspecified")}</td>
+      <td class="raw-client-cell">${fmt(item.raw_title || "Unspecified")}</td>
       <td class="clients-cell"><span class="primary">${fmt(item.suggested_client || item.raw_title)}</span></td>
       <td class="duration-cell">${fmt(item.duration_minutes)}</td>
       <td class="rate-cell">${money(item.rate)}</td>
@@ -1458,6 +1457,7 @@ function approvalSuccessMessageForStaging(summary) {
 
 function collectPayload() {
   const session = state.detail?.session || {};
+  const paidAtSessionPayment = state.detail?.paid_at_session_payment || {};
   const durationChoice = $("durationChoiceInput")?.value
     || session.duration_choice
     || durationToChoice(session.approved_duration_minutes || session.duration_minutes)
@@ -1471,6 +1471,10 @@ function collectPayload() {
   const futureJoint = $("saveFutureJointRate")?.checked === true;
   const paymentStatus = $("paymentInput")?.value || session.payment_status || "unpaid";
   const billingType = $("billingTypeInput")?.value || session.billing_session_type || "psychotherapy";
+  const appointmentStatus = $("attendanceOutcomeInput")?.value || session.appointment_status || "completed";
+  const billingTreatment = $("billingTreatmentInput")?.value
+    || session.billing_treatment
+    || (appointmentStatus === "completed" ? "billable" : "");
 
   let rateScope = "session_only";
   let rateScopePersonId = null;
@@ -1485,12 +1489,22 @@ function collectPayload() {
     || centString(firstPresent(session.approved_rate_cents, null))
     || centString(session.suggested_rate_cents)
     || "";
+  const paidAtSessionAmount = $("paymentAmountInput")?.value
+    || centString(paidAtSessionPayment.amount_cents)
+    || rate;
+  const paidAtSessionDate = $("paymentDateInput")?.value
+    || paidAtSessionPayment.received_at
+    || session.session_date
+    || (session.start_at ? session.start_at.substring(0, 10) : "");
+  const paidAtSessionMethod = $("paymentMethodInput")?.value
+    || paidAtSessionPayment.method
+    || "";
 
   return {
     ...collectRelationshipPayload(),
     approved_duration_minutes: approvedMinutes,
     billing_session_type: billingType,
-    appointment_status: $("attendanceOutcomeInput")?.value || session.appointment_status || "completed",
+    appointment_status: appointmentStatus,
     duration_choice: durationChoice,
     custom_duration_minutes: durationChoice === "custom" ? positiveIntOrNull(customMinutes) : null,
     custom_service_description: $("customDescInput")?.value || session.custom_service_description || "",
@@ -1500,16 +1514,16 @@ function collectPayload() {
     billing_party_id: state.billingParty?.billing_party_id || state.detail?.effective_billing_party?.billing_party_id || null,
     approved_rate: rate,
     payment_status: paymentStatus,
-    billing_treatment: $("billingTreatmentInput")?.value || session.billing_treatment || "",
+    billing_treatment: billingTreatment,
     billable_status: "approved",
     rate_override_reason: $("overrideReasonInput")?.value || session.rate_override_reason || "",
     rate_scope: rateScope,
     rate_scope_person_id: rateScopePersonId,
-    amount_received: $("paymentAmountInput")?.value || "",
-    payment_date: $("paymentDateInput")?.value || "",
-    payment_method: $("paymentMethodInput")?.value || "",
-    reference_number: $("paymentRefInput")?.value || "",
-    administrative_note: $("paymentNoteInput")?.value || ""
+    amount_received: paymentStatus === "paid_at_session" ? paidAtSessionAmount : "",
+    payment_date: paymentStatus === "paid_at_session" ? paidAtSessionDate : "",
+    payment_method: paymentStatus === "paid_at_session" ? paidAtSessionMethod : "",
+    reference_number: $("paymentRefInput")?.value || paidAtSessionPayment.reference_number || "",
+    administrative_note: $("paymentNoteInput")?.value || paidAtSessionPayment.administrative_note || ""
   };
 }
 
@@ -1913,7 +1927,8 @@ function closePaymentWorkspace() {
 }
 
 async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selectedInvoiceId) {
-  const data = await api("/api/payments/outstanding-invoices");
+  const data = await api(`/api/payments/outstanding-invoices${paymentPeriodQuery()}`);
+  updatePaymentPeriodOptions(data.service_period_options || []);
   state.unpaid.items = data.items || [];
   renderOutstandingInvoices(state.unpaid.items);
   await loadFinancialSummary();
@@ -1942,7 +1957,7 @@ function renderOutstandingInvoices(items) {
         <td><span class="status-pill ${escapeAttr(item.payment_status)}">${escapeHtml(paymentStatusLabel(item.payment_status))}</span></td>
         <td>${fmt(item.invoice_number)}</td>
         <td>${fmt(item.bill_to_display_name)}</td>
-        <td>${fmt(item.invoice_date)}</td>
+        <td>${fmt(item.invoice_period_display)}</td>
         <td>${money(centString(item.total_cents))}</td>
         <td>${money(centString(item.paid_cents))}</td>
         <td>${money(centString(item.balance_cents))}</td>
@@ -2394,9 +2409,8 @@ async function showInvoices() {
   $("invoicesView").hidden = false;
   $("invoicesNav").classList.add("active");
   $("pageTitle").textContent = "Invoices";
-  $("pageSubtitle").textContent = "Search, filter, preview, finalize, and preserve invoice history";
+  $("pageSubtitle").textContent = "Preview, finalize, and preserve invoice history";
   document.title = "Jordana Billing - Invoices";
-  await loadInvoiceBillToFilter();
   await loadInvoices();
 }
 
@@ -2608,6 +2622,17 @@ function setupPaymentsTabs() {
       switchPaymentsTab(tab.dataset.paymentsTab);
     };
   });
+  const periodFilter = $("paymentsPeriodFilter");
+  if (periodFilter) {
+    periodFilter.value = state.payments.billingMonth || "";
+    periodFilter.onchange = () => {
+      state.payments.billingMonth = periodFilter.value;
+      state.unpaid.selectedInvoiceId = null;
+      if (state.payments.activeTab === "outstanding") loadOutstandingInvoices(null);
+      else if (state.payments.activeTab === "paid") loadPaidInvoices();
+      else if (state.payments.activeTab === "all-payments") loadAllPayments();
+    };
+  }
 }
 
 function switchPaymentsTab(tabName) {
@@ -2624,7 +2649,8 @@ function switchPaymentsTab(tabName) {
 }
 
 async function loadPaidInvoices() {
-  const data = await api("/api/payments/paid-invoices");
+  const data = await api(`/api/payments/paid-invoices${paymentPeriodQuery()}`);
+  updatePaymentPeriodOptions(data.service_period_options || []);
   state.payments.paidItems = data.items || [];
   renderPaidInvoices(state.payments.paidItems);
   await loadFinancialSummary();
@@ -2634,20 +2660,25 @@ function renderPaidInvoices(items) {
   const tbody = $("paidRows");
   tbody.innerHTML = items.length
     ? items.map(item => `
-      <tr data-invoice-id="${escapeAttr(item.invoice_id)}">
+      <tr data-invoice-id="${escapeAttr(item.invoice_id || "")}" data-payment-id="${escapeAttr(item.payment_id || "")}">
         <td><span class="primary">${fmt(item.invoice_number)}</span></td>
         <td>${fmt(item.bill_to_display_name)}</td>
-        <td>${fmt(item.invoice_date)}</td>
+        <td>${fmt(item.invoice_period_display)}</td>
         <td>${money(centString(item.total_cents))}</td>
         <td>${fmt(item.paid_date)}</td>
         <td>${escapeHtml(paymentMethodLabel(item.payment_method))}</td>
         <td><span class="status-pill paid">Paid</span></td>
-        <td><button class="mini" data-open-paid-invoice="${escapeAttr(item.invoice_id)}">Open</button></td>
+        <td>${item.row_type === "paid_at_session"
+          ? `<button class="mini" data-open-payment="${escapeAttr(item.payment_id)}">Open</button>`
+          : `<button class="mini" data-open-paid-invoice="${escapeAttr(item.invoice_id)}">Open</button>`}</td>
       </tr>
     `).join("")
     : '<tr class="empty-row"><td colspan="8">No paid invoices.</td></tr>';
   document.querySelectorAll("#paidRows [data-open-paid-invoice]").forEach(btn => {
     btn.onclick = () => openPaidInvoice(btn.dataset.openPaidInvoice);
+  });
+  document.querySelectorAll("#paidRows [data-open-payment]").forEach(btn => {
+    btn.onclick = () => openPaymentDetail(btn.dataset.openPayment);
   });
 }
 
@@ -2705,7 +2736,8 @@ async function openPaidInvoice(invoiceId) {
 }
 
 async function loadAllPayments() {
-  const data = await api("/api/payments");
+  const data = await api(`/api/payments${paymentPeriodQuery()}`);
+  updatePaymentPeriodOptions(data.service_period_options || []);
   state.payments.allPaymentsItems = data.items || [];
   renderAllPayments(state.payments.allPaymentsItems);
   await loadFinancialSummary();
@@ -2731,6 +2763,21 @@ function renderAllPayments(items) {
   document.querySelectorAll("#allPaymentsRows [data-open-payment]").forEach(btn => {
     btn.onclick = () => openPaymentDetail(btn.dataset.openPayment);
   });
+}
+
+function paymentPeriodQuery() {
+  const month = state.payments.billingMonth || "";
+  return month ? `?billing_month=${encodeURIComponent(month)}` : "";
+}
+
+function updatePaymentPeriodOptions(options) {
+  state.payments.servicePeriodOptions = options;
+  const select = $("paymentsPeriodFilter");
+  if (!select) return;
+  const current = state.payments.billingMonth || "";
+  select.innerHTML = `<option value="">All</option>${options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join("")}`;
+  select.value = options.some(option => option.value === current) ? current : "";
+  if (select.value !== current) state.payments.billingMonth = "";
 }
 
 async function openPaymentDetail(paymentId) {
@@ -3280,92 +3327,32 @@ async function showSettings() {
   await loadBusinessProfile();
 }
 
-function _invoiceDateRangeParams() {
-  const filter = state.invoiceLibrary.dateFilter;
-  if (!filter) return {};
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  if (filter === "this_month") {
-    const start = `${y}-${String(m + 1).padStart(2, "0")}-01`;
-    const next = new Date(y, m + 1, 1);
-    const end = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
-    return { invoice_date_from: start, invoice_date_to: end };
-  }
-  if (filter === "last_month") {
-    const prev = new Date(y, m - 1, 1);
-    const start = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`;
-    const end = `${y}-${String(m + 1).padStart(2, "0")}-01`;
-    return { invoice_date_from: start, invoice_date_to: end };
-  }
-  if (filter === "this_quarter") {
-    const qStart = Math.floor(m / 3) * 3;
-    const start = `${y}-${String(qStart + 1).padStart(2, "0")}-01`;
-    const qEndMonth = qStart + 3;
-    const next = new Date(y, qEndMonth, 1);
-    const end = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
-    return { invoice_date_from: start, invoice_date_to: end };
-  }
-  if (filter === "this_year") {
-    return { invoice_date_from: `${y}-01-01`, invoice_date_to: `${y}-12-31` };
-  }
-  if (filter === "custom") {
-    const params = {};
-    if (state.invoiceLibrary.dateFrom) params.invoice_date_from = state.invoiceLibrary.dateFrom;
-    if (state.invoiceLibrary.dateTo) params.invoice_date_to = state.invoiceLibrary.dateTo;
-    return params;
-  }
-  return {};
-}
-
 function _buildInvoiceQueryParams() {
   const lib = state.invoiceLibrary;
   const params = new URLSearchParams();
   if (lib.status) params.set("status", lib.status);
-  if (lib.search) params.set("search", lib.search);
-  if (lib.billToPartyId) params.set("bill_to_party_id", lib.billToPartyId);
   if (lib.billingMonth) params.set("billing_month", lib.billingMonth);
-  if (lib.paymentStatus) params.set("payment_status", lib.paymentStatus);
-  params.set("sort_by", lib.sortBy || "invoice_date");
-  params.set("sort_dir", lib.sortDir || "desc");
-  const dateRange = _invoiceDateRangeParams();
-  if (dateRange.invoice_date_from) params.set("invoice_date_from", dateRange.invoice_date_from);
-  if (dateRange.invoice_date_to) params.set("invoice_date_to", dateRange.invoice_date_to);
+  params.set("sort_by", lib.sortBy || "bill_to_first_name");
+  params.set("sort_dir", lib.sortDir || "asc");
   params.set("limit", String(lib.limit));
   params.set("offset", String(lib.offset));
   return params.toString();
 }
 
-async function loadInvoiceBillToFilter() {
-  const parties = await api("/api/billing-parties?q=");
-  const select = $("invoiceBillToFilter");
-  const current = select.value;
-  select.innerHTML = '<option value="">All Bill To</option>' + parties.map(p =>
-    `<option value="${escapeAttr(p.billing_party_id)}">${fmt(p.billing_name)}</option>`
-  ).join("");
-  select.value = current;
-}
-
 async function loadInvoices() {
   const lib = state.invoiceLibrary;
   lib.status = $("invoiceStatusFilter").value || "";
-  lib.paymentStatus = $("invoicePaymentStatusFilter").value || "";
-  lib.billToPartyId = $("invoiceBillToFilter").value || "";
   lib.billingMonth = $("invoiceDraftMonthFilter") ? $("invoiceDraftMonthFilter").value || "" : "";
-  lib.dateFilter = $("invoiceDateFilter").value || "";
-  lib.dateFrom = $("invoiceDateFrom") ? $("invoiceDateFrom").value : "";
-  lib.dateTo = $("invoiceDateTo") ? $("invoiceDateTo").value : "";
-  lib.search = $("invoiceSearch") ? $("invoiceSearch").value.trim() : "";
-  const sortValue = $("invoiceSortFilter") ? $("invoiceSortFilter").value : "invoice_date:desc";
-  const [sortBy, sortDir] = sortValue.split(":");
-  lib.sortBy = sortBy || "invoice_date";
-  lib.sortDir = sortDir || "desc";
+  lib.sortBy = "bill_to_first_name";
+  lib.sortDir = "asc";
   const qs = _buildInvoiceQueryParams();
   const result = await api(`/api/invoices?${qs}`);
   lib.items = result.items || [];
   lib.total = result.total || 0;
   lib.draftMonthTotals = result.draft_month_totals || [];
   lib.billingMonthOptions = result.billing_month_options || [];
+  lib.servicePeriodOptions = result.service_period_options || [];
+  lib.statusTotals = result.status_totals || {draft: {count: 0, total_cents: 0}, finalized: {count: 0, total_cents: 0}};
   lib.loaded = true;
   renderInvoiceLibrary();
   await loadFinancialSummary();
@@ -3411,29 +3398,24 @@ function renderInvoiceMonthOptions() {
   const select = $("invoiceDraftMonthFilter");
   if (!select) return;
   const current = state.invoiceLibrary.billingMonth || select.value || "";
-  const options = state.invoiceLibrary.billingMonthOptions || [];
-  select.innerHTML = `<option value="">All months</option>` + options.map(month =>
-    `<option value="${escapeAttr(month)}">${escapeHtml(formatBillingMonth(month))}</option>`
+  const options = state.invoiceLibrary.servicePeriodOptions || (state.invoiceLibrary.billingMonthOptions || []).map(month => ({value: month, label: formatBillingMonth(month)}));
+  select.innerHTML = `<option value="">All</option>` + options.map(option =>
+    `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label || formatBillingMonth(option.value))}</option>`
   ).join("");
-  select.value = options.includes(current) ? current : "";
+  select.value = options.some(option => option.value === current) ? current : "";
 }
 
 function renderDraftMonthTotals() {
   const node = $("draftMonthTotals");
   if (!node) return;
-  const totals = state.invoiceLibrary.draftMonthTotals || [];
-  if (!totals.length) {
-    node.innerHTML = "";
-    return;
-  }
+  const statusTotals = state.invoiceLibrary.statusTotals || {};
+  const draft = statusTotals.draft || {count: 0, total_cents: 0};
+  const finalized = statusTotals.finalized || {count: 0, total_cents: 0};
   node.innerHTML = `
-    <div class="draft-month-summary-title">Draft totals by billing month</div>
+    <div class="draft-month-summary-title">Filtered invoice totals</div>
     <div class="draft-month-summary-grid">
-      ${totals.map(row => `<div class="draft-month-summary-item">
-        <span>${escapeHtml(formatBillingMonth(row.billing_month))}</span>
-        <strong>${money(centString(row.total_cents || 0))}</strong>
-        <small>${Number(row.draft_count || 0)} draft${Number(row.draft_count || 0) === 1 ? "" : "s"}</small>
-      </div>`).join("")}
+      <div class="draft-month-summary-item"><span>Draft</span><strong>${money(centString(draft.total_cents || 0))}</strong><small>${Number(draft.count || 0)} invoice${Number(draft.count || 0) === 1 ? "" : "s"}</small></div>
+      <div class="draft-month-summary-item"><span>Finalized</span><strong>${money(centString(finalized.total_cents || 0))}</strong><small>${Number(finalized.count || 0)} invoice${Number(finalized.count || 0) === 1 ? "" : "s"}</small></div>
     </div>`;
 }
 
@@ -3539,7 +3521,7 @@ async function renderInvoiceEditor(data) {
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
       ${filingControl}
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date / participants</th><th>Description</th><th>Duration</th><th>Amount</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}<small class="secondary">${fmt(line.participants_snapshot)}</small></td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
+    <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <section class="invoice-html-preview-panel" aria-label="Draft invoice preview">
       ${renderCanonicalInvoicePreview(data.render_model)}
@@ -4126,9 +4108,8 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
       <header class="invoice-preview-header">
         <div class="invoice-preview-left">
           <div class="invoice-preview-title"><h3>INVOICE</h3></div>
-          <div><strong>Invoice Number:</strong> ${fmt(model.invoice_number_display)}</div>
-          <div><strong>Invoice Date:</strong> ${fmt(model.invoice_date_display)}</div>
-          <div><strong>Billing Period:</strong> ${fmt(model.billing_period_display)}</div>
+          <div>${fmt(model.invoice_date_display)}</div>
+          <div>${fmt(model.invoice_number_display)}</div>
           <div class="invoice-preview-billto"><strong>BILL TO</strong>${(model.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
         </div>
         <div class="invoice-preview-provider">
@@ -4155,25 +4136,10 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
 
 $("newInvoiceBtn").onclick = startInvoiceBuilder;
 $("invoiceStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
-$("invoicePaymentStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
-$("invoiceBillToFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoiceDraftMonthFilter").onchange = () => {
   state.invoiceLibrary.offset = 0;
   loadInvoices();
 };
-$("invoiceSortFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
-$("invoiceDateFilter").onchange = () => {
-  state.invoiceLibrary.offset = 0;
-  const custom = $("invoiceDateFilter").value === "custom";
-  $("invoiceCustomDateRange").hidden = !custom;
-  loadInvoices();
-};
-$("invoiceSearch").addEventListener("input", () => {
-  clearTimeout(state.invoiceLibrary._searchTimer);
-  state.invoiceLibrary._searchTimer = setTimeout(() => { state.invoiceLibrary.offset = 0; loadInvoices(); }, 300);
-});
-$("invoiceDateFrom").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
-$("invoiceDateTo").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoicePrevPage").onclick = () => {
   const lib = state.invoiceLibrary;
   if (lib.offset > 0) { lib.offset = Math.max(0, lib.offset - lib.limit); loadInvoices(); }

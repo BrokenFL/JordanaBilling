@@ -50,25 +50,48 @@ for (const [input, expected] of cases) {
     def test_review_queue_column_order_matches_required_layout(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
         header = html[html.index('<table class="review-table">'):html.index('<tbody id="candidateRows">')]
-        expected = ["Status", "Date", "Day", "Time", "Calendar", "Clients", "Duration", "Rate", "Review"]
+        expected = ["Status", "Date", "Day", "Time", "RAW CLIENT", "Clients", "Duration", "Rate", "Review"]
         positions = [header.index(f"<th>{label}</th>") for label in expected]
         self.assertEqual(positions, sorted(positions))
         js = Path("app/jordana_invoice/static/review.js").read_text()
         row_start = js.index("function renderRows(")
         row_end = js.index("document.querySelectorAll(\"#candidateRows", row_start)
         row_fn = js[row_start:row_end]
-        self.assertLess(row_fn.index("calendar-cell"), row_fn.index("clients-cell"))
+        self.assertLess(row_fn.index("raw-client-cell"), row_fn.index("clients-cell"))
+        self.assertIn('item.raw_title || "Unspecified"', row_fn)
         self.assertIn("duration-cell", row_fn)
         self.assertIn("rate-cell", row_fn)
 
-    def test_invoice_library_uses_month_dropdown_and_advanced_filters(self):
+    def test_invoice_library_uses_only_status_and_service_period_filters(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
-        self.assertIn('<select id="invoiceDraftMonthFilter"><option value="">All months</option></select>', html)
-        self.assertIn('class="advanced-filters"', html)
-        self.assertLess(html.index("invoiceSearch"), html.index("invoiceAdvancedFilters"))
+        self.assertIn('id="invoiceStatusFilter"', html)
+        self.assertIn('id="invoiceDraftMonthFilter"', html)
+        self.assertIn('Service Period', html)
+        self.assertNotIn('id="invoiceSearch"', html)
+        self.assertNotIn('id="invoicePaymentStatusFilter"', html)
+        self.assertNotIn('id="invoiceBillToFilter"', html)
+        self.assertNotIn('id="invoiceDateFilter"', html)
+        self.assertNotIn('id="invoiceAdvancedFilters"', html)
         js = Path("app/jordana_invoice/static/review.js").read_text()
-        self.assertIn("billing_month_options", js)
+        self.assertIn("service_period_options", js)
+        self.assertIn("status_totals", js)
         self.assertIn("renderInvoiceMonthOptions", js)
+
+    def test_draft_invoice_editor_has_separate_date_and_participants_columns(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn("<th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th>", js)
+        self.assertNotIn("<th>Date / participants</th>", js)
+
+    def test_invoice_preview_header_has_unlabeled_date_and_number(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function renderCanonicalInvoicePreview")
+        end = js.index('table class="invoice-preview-table"', start)
+        preview = js[start:end]
+        self.assertIn("${fmt(model.invoice_date_display)}", preview)
+        self.assertIn("${fmt(model.invoice_number_display)}", preview)
+        self.assertNotIn("Invoice Number:", preview)
+        self.assertNotIn("Invoice Date:", preview)
+        self.assertNotIn("Billing Period", preview)
 
     def test_inspector_dirty_list_does_not_reference_removed_session_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -92,7 +115,9 @@ for (const [input, expected] of cases) {
         html = Path("app/jordana_invoice/static/review.html").read_text()
 
         self.assertIn("Payments", html)
-        self.assertIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
+        self.assertIn('id="paymentsPeriodFilter"', html)
+        self.assertIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Period</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
+        self.assertNotIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th>", html)
         self.assertIn('id="unpaidRows"', html)
         self.assertIn('id="unpaidWorkspace"', html)
         self.assertIn('id="paymentsView"', html)
@@ -2582,6 +2607,8 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         html = Path("app/jordana_invoice/static/review.html").read_text()
 
         self.assertIn("paid-invoices-table", html)
+        self.assertIn("<th>Invoice Period</th>", html)
+        self.assertNotIn("<th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th>", html)
         self.assertIn("<th>Paid Date</th>", html)
         self.assertIn("<th>Payment Method</th>", html)
 
@@ -2599,6 +2626,8 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("function paymentHandlingLabel(", js)
         self.assertIn("Invoice billing", js)
         self.assertIn("Paid at session", js)
+        self.assertIn("state.detail?.paid_at_session_payment", js)
+        self.assertIn("paymentStatus === \"paid_at_session\" ? paidAtSessionAmount", js)
 
     def test_sessions_table_header_uses_payment_handling(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()

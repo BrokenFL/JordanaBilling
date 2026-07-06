@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.12`
+- **Current test release target:** `v0.1.0-test.13`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post12`
+- **Current package/application version:** `0.1.0.post13`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.11` is superseded by test.12 for installation and update testing
+- **Prior test release:** `v0.1.0-test.12` is superseded by test.13 for installation and update testing
 
 ## Architecture
 
@@ -86,7 +86,7 @@ This is not yet a final production declaration. Brooke should remain available d
 - Allocation reversal and payment voiding
 - Correction history
 - Manual immutable receipt generation
-- Outstanding, Paid, and All Payments views
+- Outstanding, Paid, and All Payments views with shared Invoice Period filtering and first-name sorting
 - Shared invoice/payment financial-summary calculations
 - Read-only historical paid-at-session analyzer and CLI
 
@@ -107,17 +107,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.12 supersedes test.11):
+The current controlled-beta release target is (test.13 supersedes test.12):
 
 ```text
-JordanaBilling-v0.1.0-test.12-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.13-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.12`
-- Python package/application version: `0.1.0.post12`
+- Release label: `v0.1.0-test.13`
+- Python package/application version: `0.1.0.post13`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -127,17 +127,23 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post12` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post13` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
+### Bug Fixes In test.13
+
+14. **Paid-at-session review persistence and approval** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Completed paid-at-session reviews approve normally even when the cancellation-billing field is hidden; the backend normalizes that completed-session treatment to billable. If the paid-at-session detail form has already been saved and collapsed, approval reuses the stored payment detail instead of sending blank fields. Approval continues to create or validate one provenance-linked payment/allocation idempotently and remains excluded from invoice staging.
+15. **Chronological invoice line order** — Draft editor rows, in-app HTML previews, exact PDF previews, finalized PDFs, and canonical invoice serialization now order session lines by service date, source start time, and stable line UUID rather than import, approval, insertion, or row order.
+16. **Model-backed HTML invoice preview restored** — Draft, finalization, and finalized/void invoice screens use a clean in-app HTML card built from the current canonical invoice render model. Exact PDF open/download/print actions remain available, and the stored PDF remains the official customer-facing artifact.
+17. **Invoice and review layout polish** — The Review queue uses the required Status, Date, Day, Time, RAW CLIENT, Clients, Duration, Rate, Review order and shows the original raw calendar title in the RAW CLIENT column. The draft invoice editor separates Date and Participants. The invoice library exposes only Status and Service Period filters, dynamically lists current service periods, shows filtered Draft/Finalized counts and totals, and sorts by Bill To/client first name.
+18. **Invoice header presentation** — Draft previews, finalization previews, and finalized PDFs show the invoice header as `INVOICE`, an unlabeled uppercase short invoice date, and an unlabeled invoice number or draft placeholder. Billing Period is not displayed in the invoice header.
+19. **Payments period filtering** — The Payments screen now filters Outstanding, Paid, and All Payments by Invoice Period rather than invoice date. Outstanding and Paid invoice tables display Invoice Period, rows sort by Bill To/client first name, and paid-at-session posted payments appear in the Paid tab as session-payment rows without creating invoices or changing finalized invoice history.
+20. **Reports browser smoke** — `/reports` and `/api/reports` were verified in a real browser during release prep after the local debug session; report metadata loads and cards render.
+
 ### Bug Fixes In test.12
 
-14. **Duplicate Billing Relationships display suppression** — The Billing Relationships directory no longer shows an implicit/session-derived self-pay row alongside an existing canonical active Billing Relationship for the same person. One visible active row is shown per actual Billing Relationship. Canonical account wins: when a canonical active account exists, the shadowed implicit row is suppressed while the Edit action and canonical `account_id` are preserved. No data merge, cleanup, or account creation is performed. The defect was display-only; no real duplicate active `client_accounts` rows existed.
-15. **Paid-at-session review persistence** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Approval continues to create or validate one provenance-linked payment/allocation idempotently and remains excluded from invoice staging.
-16. **Chronological invoice line order** — Draft editor rows, in-app HTML previews, exact PDF previews, finalized PDFs, and canonical invoice serialization now order session lines by service date, source start time, and stable line UUID rather than import, approval, insertion, or row order.
-17. **Model-backed HTML invoice preview restored** — Draft, finalization, and finalized/void invoice screens use a clean in-app HTML card built from the current canonical invoice render model. Exact PDF open/download/print actions remain available, and the stored PDF remains the official customer-facing artifact.
-18. **Invoice and review layout polish** — The Review queue uses the required Status, Date, Day, Time, Calendar, Clients, Duration, Rate, Review order with more usable widths. The draft invoice editor uses the sheet width more effectively, and the invoice library now has a populated month dropdown plus compact Advanced filters.
+1. **Duplicate Billing Relationships display suppression** — The Billing Relationships directory no longer shows an implicit/session-derived self-pay row alongside an existing canonical active Billing Relationship for the same person. One visible active row is shown per actual Billing Relationship. Canonical account wins: when a canonical active account exists, the shadowed implicit row is suppressed while the Edit action and canonical `account_id` are preserved. No data merge, cleanup, or account creation is performed. The defect was display-only; no real duplicate active `client_accounts` rows existed.
 
 ### Bug Fixes In test.11
 

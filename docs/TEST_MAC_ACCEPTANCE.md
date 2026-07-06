@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.9
+### Current Test Build — v0.1.0-test.13
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.9
-- **Python package/application version:** 0.1.0.post9
+- **Release label:** v0.1.0-test.13
+- **Python package/application version:** 0.1.0.post13
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,17 +40,16 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.9 supersedes test.8 for installation and update testing because it uses a
-unique package version and verifies the exact installed runtime plus running
+test.13 supersedes test.12 for installation and update testing because it uses
+a unique package version and verifies the exact installed runtime plus running
 server build ID before reporting success.
 
-### Bug Fixes In test.9
+### Bug Fixes In test.13
 
-1. **In-app Quit** — visible sidebar Quit stops the sync runtime and local server without orphaning the process.
-2. **Exact runtime installation** — the installer reads the package version and exact app wheel from the release manifest, force-reinstalls it from the shipped wheelhouse, and verifies installed package build info.
-3. **Running build-ID proof** — installation launches the installed app and confirms `/api/build-info` reports the expected build ID before success.
-4. **Rollback-safe update** — the prior installed app/runtime is restored automatically when verification fails.
-5. **June reconciliation workflow** — June dry-run/apply has focused service and browser verification on a sanitized temporary database.
+1. **Paid-at-session approval** — saved paid-at-session payment details are reused during approval when the editor is collapsed.
+2. **Invoice presentation** — simplified invoice filters, separated draft columns, corrected invoice headers, and raw calendar titles in Review.
+3. **Payments workspace** — Invoice Period filtering, first-name sorting, and paid-at-session rows in Paid.
+4. **Reports smoke** — Reports route and API verified during release prep.
 
 ### Prior Test Builds
 
@@ -70,17 +69,17 @@ replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, and test.8 builds remain historically
-accurate for the periods in which they were the current builds. test.9
-supersedes test.8 for installation and stale-runtime verification.
+accurate for the periods in which they were the current builds. test.13
+supersedes test.12 for installation and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
 missing-database, uninstall preservation) remains incomplete and should
 be recorded before final production handoff.
 
-### v0.1.0-test.9 Acceptance Checklist Results
+### v0.1.0-test.13 Acceptance Checklist Results
 
-1. **Build exact test.9 DMG** — required before publication
+1. **Build exact test.13 DMG** — required before publication
 2. **Verify checksum locally** — required before publication
 3. **Verify release manifest, exact wheel, package version, commit, and build ID** — required before publication
 4. **Verify private-file scan** — required before publication

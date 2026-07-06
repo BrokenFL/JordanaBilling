@@ -266,7 +266,6 @@ def _generate_invoice_pdf_bytes(
         meta_rows or [
             ("", render.get("invoice_date_display") or ""),
             ("", render.get("invoice_number_display") or ""),
-            ("", f"Billing Period: {render.get('billing_period_display')}" if render.get("billing_period_display") else ""),
         ],
         title,
         meta_label,
@@ -318,8 +317,7 @@ def generate_invoice_pdf(
         render_model=resolved_model,
         meta_rows=[
             ("", resolved_model.get("invoice_date_display") or ""),
-            ("", f"Invoice No. {resolved_model.get('invoice_number_display')}" if resolved_model.get("invoice_number_display") else ""),
-            ("", f"Billing Period: {resolved_model.get('billing_period_display')}" if resolved_model.get("billing_period_display") else ""),
+            ("", resolved_model.get("invoice_number_display") or ""),
         ],
         page_footer_label=f"Invoice {number}",
         doc_title=f"Invoice {number}",
@@ -815,8 +813,7 @@ def generate_draft_pdf_bytes(
         render_model=resolved_model,
         meta_rows=[
             ("", resolved_model.get("invoice_date_display") or ""),
-            ("", "DRAFT"),
-            ("", f"Billing Period: {resolved_model.get('billing_period_display')}" if resolved_model.get("billing_period_display") else ""),
+            ("", resolved_model.get("invoice_number_display") or "DRAFT"),
         ],
         page_footer_label="Invoice DRAFT",
         doc_title="Invoice DRAFT",

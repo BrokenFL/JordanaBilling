@@ -1,6 +1,18 @@
 # Invoice Template
 
-The ReportLab letter template contains a balanced two-column header: `INVOICE`, invoice number/date/billing period, and `BILL TO` on the left; the logo and centered provider block on the right. The line-item table, configured `TOTAL DUE`, and restrained footer-style payment block span the full content width below the header. The Bill To block shows the delivery destination implied by the invoice delivery method: mailing address for mail, `Via Email: ...` for email, or both in that order. The payment block shows the check instructions plus `Or send payment via Zelle to: ...`. It has no due date, clinical note, or treatment summary. Standard self-pay invoices do not include diagnosis codes or insurance coding; optional insurance coding may be added at finalization when required for administrative insurance billing (see Optional Insurance Coding Block below).
+The ReportLab letter template contains a balanced two-column header. The
+right-side invoice block shows exactly `INVOICE`, the invoice date as an
+unlabeled uppercase short date such as `JUL 1, 2025`, and the invoice number as
+an unlabeled value such as `10-2025`. Billing Period is not displayed on the
+invoice. The line-item table, configured `TOTAL DUE`, and restrained
+footer-style payment block span the full content width below the header. The
+Bill To block shows the delivery destination implied by the invoice delivery
+method: mailing address for mail, `Via Email: ...` for email, or both in that
+order. The payment block shows the check instructions plus `Or send payment via
+Zelle to: ...`. It has no due date, clinical note, or treatment summary.
+Standard self-pay invoices do not include diagnosis codes or insurance coding;
+optional insurance coding may be added at finalization when required for
+administrative insurance billing (see Optional Insurance Coding Block below).
 
 ## PDF Layout (US Letter Portrait)
 
@@ -12,7 +24,7 @@ The ReportLab letter template contains a balanced two-column header: `INVOICE`, 
 - **Line-item table columns**: Date 1.12", Participants 1.65", Service 2.78", Duration 0.85", Amount 1.10" — sum exactly 7.5".
 - **Date column**: 1.12" wide, sufficient for ordinary long-form dates like "June 22, 2026" without unnecessary wrapping.
 - **Logo**: top-right PNG, up to 2.10" wide and 1.35" tall, preserving aspect ratio. The current approved asset uses no optical offset and reads centered over the provider block.
-- **Header hierarchy**: `INVOICE` sits top-left with Invoice Number and Invoice Date directly beneath it in a tight label/value block. The Bill To block follows in the same left column. The logo sits top-right with the compact provider block directly beneath it. The session table starts beneath both columns with only a modest gap.
+- **Header hierarchy**: The invoice metadata block shows `INVOICE`, then the unlabeled invoice date, then the unlabeled invoice number or draft placeholder. `Invoice Number:`, `Invoice Date:`, and `Billing Period:` labels are not rendered. The invoice-number line is aligned with the final line of the left-side address block. The session table starts beneath both columns with only a modest gap.
 - **Line order**: Session rows are chronological by service date, then source start time, then stable line UUID. Import, approval, insertion, and database row order do not control display order.
 - **Table spacing**: 9pt top/bottom row padding with 6pt left/right cell padding for more readable printed rows.
 - **Total section**: aligned to the 7.5" line-item table width, with top and bottom rules matching the table edges exactly and clean right alignment.

@@ -137,6 +137,17 @@ def _coerce_charge_for_attendance(
     return outcome, treatment, approved_rate_cents, scheduled_rate_cents
 
 
+def _review_billing_treatment(
+    appointment_status: str | None,
+    billing_treatment: str | None,
+) -> str:
+    outcome = normalize_attendance_outcome(appointment_status)
+    treatment = normalize_billing_treatment_for_outcome(outcome, billing_treatment)
+    if outcome == "completed" and treatment in {"", "unresolved"}:
+        return "billable"
+    return treatment
+
+
 def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """
@@ -845,7 +856,10 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
     )
     payment_status = normalize_payment_status(payload.get("payment_status") or session["payment_status"])
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
-    billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
+    billing_treatment = _review_billing_treatment(
+        appointment_status,
+        payload.get("billing_treatment") or session["billing_treatment"] or "unresolved",
+    )
     appointment_status, billing_treatment, approved_rate_cents, scheduled_rate_cents = _coerce_charge_for_attendance(
         appointment_status,
         billing_treatment,
@@ -1389,7 +1403,10 @@ def save_session_draft(conn: sqlite3.Connection, candidate_id: str, payload: dic
     )
     payment_status = normalize_payment_status(payload.get("payment_status") or session["payment_status"])
     billable_status = payload.get("billable_status") or session["billable_status"] or "proposed"
-    billing_treatment = payload.get("billing_treatment") or session["billing_treatment"] or "unresolved"
+    billing_treatment = _review_billing_treatment(
+        appointment_status,
+        payload.get("billing_treatment") or session["billing_treatment"] or "unresolved",
+    )
     appointment_status, billing_treatment, approved_rate_cents, scheduled_rate_cents = _coerce_charge_for_attendance(
         appointment_status,
         billing_treatment,

@@ -78,7 +78,7 @@
                   <th>Date</th>
                   <th>Day</th>
                   <th>Time</th>
-                  <th>Calendar</th>
+                  <th>RAW CLIENT</th>
                   <th>Clients</th>
                   <th>Duration</th>
                   <th>Rate</th>
@@ -339,36 +339,13 @@
 
         <section class="invoice-view" id="invoicesView" hidden>
           <div class="crm-header">
-            <div><h2>Invoices</h2><p>Search, filter, preview, finalize, and preserve invoice history.</p></div>
+            <div><h2>Invoices</h2><p>Preview, finalize, and preserve invoice history.</p></div>
             <div class="crm-tools">
-              <input id="invoiceSearch" type="search" placeholder="Search invoice number or Bill To..." />
-              <select id="invoiceStatusFilter"><option value="">All statuses</option><option value="draft">Drafts</option><option value="finalized">Finalized</option><option value="void">Void</option></select>
-              <select id="invoiceDraftMonthFilter"><option value="">All months</option></select>
+              <label class="field">Status<select id="invoiceStatusFilter"><option value="">All</option><option value="draft">Draft</option><option value="finalized">Finalized</option></select></label>
+              <label class="field">Service Period<select id="invoiceDraftMonthFilter"><option value="">All</option></select></label>
               <button id="newInvoiceBtn" class="save">Create Invoice</button>
             </div>
           </div>
-          <details class="advanced-filters" id="invoiceAdvancedFilters">
-            <summary>Advanced filters</summary>
-            <div class="crm-tools compact-tools">
-              <select id="invoicePaymentStatusFilter"><option value="">All payment statuses</option><option value="unpaid">Unpaid</option><option value="partially_paid">Partially Paid</option><option value="paid">Paid</option><option value="void">Void</option></select>
-              <select id="invoiceBillToFilter"><option value="">All Bill To</option></select>
-              <select id="invoiceSortFilter">
-                <option value="invoice_date:desc">Newest invoice date</option>
-                <option value="billing_month:desc">Billing month newest</option>
-                <option value="billing_month:asc">Billing month oldest</option>
-                <option value="bill_to_name:asc">Bill To A-Z</option>
-                <option value="bill_to_name:desc">Bill To Z-A</option>
-              </select>
-              <select id="invoiceDateFilter">
-                <option value="">All dates</option>
-                <option value="this_month">This month</option>
-                <option value="last_month">Last month</option>
-                <option value="this_quarter">This quarter</option>
-                <option value="this_year">This year</option>
-                <option value="custom">Custom range</option>
-              </select>
-            </div>
-          </details>
           <div class="financial-summary-toolbar">
             <label class="field">Summary month<input id="invoiceSummaryMonth" type="month" /></label>
           </div>
@@ -376,10 +353,6 @@
             <div class="summary-card"><div class="summary-card-label">Draft Invoice Value</div><div class="summary-card-value" id="invoiceDraftValue">$0.00</div><div class="summary-card-note">Current drafts</div></div>
             <div class="summary-card"><div class="summary-card-label">Finalized This Month</div><div class="summary-card-value" id="invoiceFinalizedValue">$0.00</div><div class="summary-card-note">By finalization date</div></div>
             <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value" id="invoiceOutstandingValue">$0.00</div><div class="summary-card-note">All finalized invoices</div></div>
-          </div>
-          <div id="invoiceCustomDateRange" class="invoice-custom-date-range" hidden>
-            <label class="field">From<input id="invoiceDateFrom" type="date"></label>
-            <label class="field">To<input id="invoiceDateTo" type="date"></label>
           </div>
           <div id="draftMonthTotals" class="draft-month-summary" aria-live="polite"></div>
           <div class="invoice-layout">
@@ -404,6 +377,7 @@
           </div>
           <div class="financial-summary-toolbar">
             <label class="field">Summary month<input id="paymentsSummaryMonth" type="month" /></label>
+            <label class="field">Invoice Period<select id="paymentsPeriodFilter"><option value="">All</option></select></label>
           </div>
           <div class="summary-cards financial-summary-cards" id="paymentsSummaryCards" aria-live="polite">
             <div class="summary-card"><div class="summary-card-label">Invoiced This Month</div><div class="summary-card-value" id="paymentsInvoicedValue">$0.00</div><div class="summary-card-note">Finalized invoices</div></div>
@@ -419,7 +393,7 @@
             <div class="invoice-layout">
               <section>
                 <table class="review-table invoice-list-table unpaid-list-table">
-                  <thead><tr><th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Period</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
                   <tbody id="unpaidRows"></tbody>
                 </table>
               </section>
@@ -428,7 +402,7 @@
           </div>
           <div class="payments-panel" id="paymentsPaidPanel" hidden>
             <table class="review-table paid-invoices-table">
-              <thead><tr><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th><th>Total</th><th>Paid Date</th><th>Payment Method</th><th>Status</th><th>Open</th></tr></thead>
+              <thead><tr><th>Invoice Number</th><th>Bill To</th><th>Invoice Period</th><th>Total</th><th>Paid Date</th><th>Payment Method</th><th>Status</th><th>Open</th></tr></thead>
               <tbody id="paidRows"></tbody>
             </table>
           </div>

@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.12
+### Current Test Build — v0.1.0-test.13
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.12
-- **Python package/application version:** 0.1.0.post12
+- **Release label:** v0.1.0-test.13
+- **Python package/application version:** 0.1.0.post13
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,18 +36,25 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post12` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post13` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.12 fixes the duplicate Billing Relationships display: implicit/session-derived
-self-pay rows are now suppressed when a canonical active Billing Relationship
-already exists for the same person. The fix is display-only; no data merge,
-cleanup, or account creation is performed.
+test.13 fixes paid-at-session approval after saving/collapsing the payment
+detail form, simplifies invoice filtering, updates invoice header presentation,
+balances the Review queue columns, and updates the Payments workspace to filter
+by invoice/service period while showing paid-at-session payments in the Paid tab.
 
-### Bug Fixes In test.12
+### Bug Fixes In test.13
+
+1. **Paid-at-session approval after saved session details** — Approval reuses the saved payment amount, date, method, reference, and administrative note when the detail form is collapsed, avoiding blank-payment validation failures and duplicate payment creation.
+2. **Invoice and Review presentation** — Invoices use only Status and Service Period filters, draft session rows separate Date and Participants, the Review queue displays RAW CLIENT from the raw calendar title, and invoice headers show only `INVOICE`, date, and invoice number with Billing Period removed.
+3. **Payments workspace period filtering** — Outstanding, Paid, and All Payments use an Invoice Period filter, sort by Bill To/client first name, display Invoice Period instead of Invoice Date, and include posted paid-at-session session payments in Paid without creating invoices or modifying finalized invoice history.
+4. **Local Reports smoke** — `/reports` and `/api/reports` were browser-smoked during release prep; report cards render and the API returns metadata.
+
+### Bug Fixes Inherited from test.12
 
 1. **Duplicate Billing Relationships display suppression** — One visible active row per actual Billing Relationship. Canonical active account wins; implicit/session-derived fallback row suppressed. Self-pay Edit, canonical account_id, and Edit action are preserved. No live data merge performed.
 
@@ -81,7 +88,9 @@ cleanup, or account creation is performed.
 
 ### Prior Test Builds
 
-`v0.1.0-test.11` was built from commit `7bcb8d3` with Python 3.14.4. test.12 supersedes test.11 for installation and update testing.
+`v0.1.0-test.12` was built from commit `d9fd342` with Python 3.14.x. test.13 supersedes test.12 for installation and update testing.
+
+`v0.1.0-test.11` was built from commit `7bcb8d3` with Python 3.14.4.
 
 `v0.1.0-test.10` was built from commit `424cda3` with Python 3.14.4.
 
@@ -91,7 +100,7 @@ private runtime could remain installed because the prior installer requested
 the shared package version `0.1.0`. test.9 and test.10 superseded test.8.
 
 `v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
-never published. It is superseded by test.12 as the current built and
+never published. It is superseded by test.13 as the current built and
 distributable controlled-beta release.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
@@ -105,9 +114,10 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5, test.6, test.7, test.8, test.9, and test.10 builds remain historically
-accurate for the periods in which they were the current builds. test.11
-supersedes test.10, test.9, and test.8 for installation and stale-runtime verification.
+The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, and
+test.12 builds remain historically accurate for the periods in which they were
+the current builds. test.13 supersedes test.12 for installation and
+stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,

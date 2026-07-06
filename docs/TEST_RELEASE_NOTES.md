@@ -1,78 +1,68 @@
-# Jordana Billing v0.1.0-test.10 Release Notes
+# Jordana Billing v0.1.0-test.13 Release Notes
 
 ## Release Status
 
-This private release is approved for a supervised Jordana beta using June invoices. It remains a controlled pilot/test release and is not represented as final production software.
+This private release is approved for supervised Jordana beta testing. It remains
+a controlled pilot/test release and is not represented as final production
+software.
 
-Use the exact `v0.1.0-test.10` artifact published on GitHub. The release manifest inside the DMG records the source commit, build ID, exact wheel path, and checksum facts.
+Use the exact `v0.1.0-test.13` artifact published on GitHub. The release
+manifest inside the DMG records the source commit, build ID, exact wheel path,
+and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.10-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.13-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.10
-- **Python package/application version:** 0.1.0.post10
+- **Release label:** v0.1.0-test.13
+- **Python package/application version:** 0.1.0.post13
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
-- **Builder Python:** 3.14.4
+- **Builder Python:** 3.14.x
 - **Required Python family:** 3.14.x
 - **Architecture:** arm64
 - **DMG checksum verification:** required before publication; verify the matching `.sha256` asset again after download
 - **DMG SHA-256:** recorded in the published `.sha256` asset
 - **hdiutil verify:** required before publication
-- **Private-file scan:** no `.env`, SQLite, or PDF files found
+- **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post10` app wheel plus pinned production dependencies
-- **Unit tests:** required before publication
-- **Temporary-DB acceptance test:** required before publication (operational database untouched)
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post13` app wheel plus pinned production dependencies
+- **Unit tests and focused browser smoke:** required before publication
+- **Temporary-DB acceptance test:** required before publication when running the broader release checklist
 - **Privacy and Git safety checks:** required before publication
 
-## Superseded Prior Releases
+## Bug Fixes In test.13
 
-`v0.1.0-test.9` was built in two local attempts from commits `4f0e993f248e` and `ba815ec81459`. Both local DMGs were stale — they did not match the intended final repository state and were never published to GitHub. test.10 supersedes both stale test.9 artifacts.
+1. **Paid-at-session approval after saved details** — Approval now reuses the saved paid-at-session amount, date, method, reference, and administrative note when the Session Details section is collapsed. This fixes the unexpected approval error without creating duplicate payments or changing finalized invoice history.
+2. **Invoices screen simplification** — The invoice library now exposes only Status and Service Period filters, lists service periods dynamically, shows filtered Draft and Finalized counts/totals, and sorts by Bill To/client first name.
+3. **Draft invoice table layout** — Draft invoice rows now separate Date and Participants and show Date, Participants, Session Type, Duration, and Rate as distinct columns.
+4. **Review raw calendar title** — Review queue uses the RAW CLIENT label and displays the original raw calendar event title, matching the Session evidence source without altering raw evidence.
+5. **Invoice header presentation** — Draft previews, finalization previews, finalized invoice views, and PDFs show the header as `INVOICE`, an unlabeled invoice date, and an unlabeled invoice number. Billing Period is removed from the invoice header.
+6. **Payments period filtering** — Outstanding, Paid, and All Payments now filter by invoice/service period, display Invoice Period instead of Invoice Date on invoice-payment tables, sort by Bill To/client first name, and include posted paid-at-session session payments in Paid.
+7. **Reports smoke verification** — `/reports` and `/api/reports` were verified in a real browser during release prep after a user-reported loading concern.
 
-`v0.1.0-test.8` was built from commit `d97d6babc2278bd1e19fbc36319d65acce24fbb4`. Its DMG payload was correct, but supervised installation showed that an older installed Python runtime could survive because the prior installer requested the shared package version `0.1.0`. test.9 and test.10 supersede test.8 for installation and update testing.
+## Bug Fixes Inherited from test.12
 
-`v0.1.0-test.7` was built from commit `179da1fe14ac1fd56ed1e6b939b34fafe7299760` but was never published. It is superseded by test.10 as the current built and distributable controlled-beta release.
+1. **Duplicate Billing Relationships display suppression** — One visible active row per actual Billing Relationship. Canonical active account wins; implicit/session-derived fallback rows are suppressed while Edit and canonical `account_id` are preserved. No live data merge is performed.
 
-The prior verified controlled-beta release was `v0.1.0-test.6` from commit `0dec58b`. An earlier test.6 artifact built from commit `6c3dbab` using Python 3.11 was rejected and was not published or distributed. Do not use it.
+## Bug Fixes Inherited from test.11
 
-## Bug Fixes In test.10
+1. **Weekday column** — Review queue shows short weekday abbreviation.
+2. **Weekend/evening rate matching** — Manually selected weekend/evening session type propagates `time_category` to rate suggestion.
+3. **Edit Session** — Eligible approved sessions return to Review without a reason prompt; draft line removed and total recalculated atomically.
+4. **Billing Relationship delete/archive** — Unused relationships delete; history-protected relationships archive.
+5. **Self-pay Edit and canonical relationship access** — Self-pay rows open the canonical account editor consistently.
+6. **Write-token messaging and SSL blank-env handling** — User-facing auth expiry and blank certificate env handling are hardened.
 
-1. **Composite cursor ordering fix** — sync cursor comparison now correctly handles rows with equal `ingested_at` values by using `snapshot_key` as a tiebreaker, preventing skipped rows during incremental sync.
-2. **Flaky test fix** — `test_07_health_endpoint` in `test_clean_install.py` now includes a kill fallback when the server process does not terminate within the timeout.
+## Installation Notes
 
-## Bug Fixes Inherited from test.9
-
-1. **In-app Quit** — the sidebar includes a visible Quit action. It stops the sync runtime and local server safely and treats repeated quit requests as idempotent.
-2. **Installer stale-runtime hardening** — the installer reads the exact package version and wheel path from `release_manifest.json`, force-reinstalls that wheel from the shipped wheelhouse, verifies payload and installed files against manifest checksums, verifies installed package build info, launches the app, and confirms the running server reports the expected build ID.
-3. **Rollback-safe updates** — the installer coordinates with an already-running Jordana Billing process, refuses unrelated port owners, and restores the previous installed app/runtime if verification fails.
-4. **June reconciliation workflow** — the in-app June 2026 dry-run/apply path is verified end to end on a sanitized temporary database. Missing sessions recover into Review and Sessions, pending edits refresh to the newest source version, excluded/non-client rows stay out of billing, and approved sessions are protected from silent rewrites.
-5. **Report filtering** — client-facing session exports exclude unresolved and excluded rows while All Appointments remains the complete audit ledger.
-
-## Acceptance Completed
-
-The test.10 artifact was locally built, checksum-verified, privacy-scanned,
-installed over an older build (test.8), and verified with the running server
-reporting the expected build ID.
-
-Confirmed:
-
-1. Focused Quit, installer, build-identity, sync/cursor, and packaging tests pass.
-2. Full unit suite (2759 tests, 0 failures, 11 skipped) passes.
-3. Acceptance import, privacy checks, Git safety checks, package verification, and upgrade-over-old-build verification all pass.
-4. In-app Quit verified: server shuts down cleanly with no orphaned process.
-5. Apps Script Version 18 composite cursor compatibility verified (unit tests and Apps Script helper tests pass).
-6. Installed server reports build ID `v0.1.0-test.10-c6bf2a5551ba`.
-
-Prior test.6 installed-smoke results remain the latest recorded brooketest
-installation evidence: existing private configuration and SQLite data were
-preserved, filing-owner workflows passed, future draft inheritance passed,
-finalized invoice immutability passed, and major Billing Relationship,
-delivery-contact, invoice, and data-preservation smoke workflows passed.
+- The DMG is not notarized. Gatekeeper may require right-click Open.
+- Python 3.14.x must be available for the one-time installer because the release wheelhouse is built for that Python family.
+- The installer preserves existing private config, SQLite data, reports, invoices, and receipts outside the app bundle.
+- Do not transfer private production data through GitHub.
 
 ## Controlled Beta Conditions
 
@@ -81,77 +71,9 @@ Install on Jordana's Mac only when:
 - Brooke has retained a verified source database backup.
 - The private `.env` and operational SQLite database are transferred separately and securely.
 - Transfer checksums and SQLite integrity pass.
-- Python 3.14.x is available for the one-time installation.
 - Brooke is present for installation and the first complete smoke path.
 - Jordana reviews every session and invoice before approval or finalization.
-- The prior working installation and source backup remain available until the June billing cycle is completed successfully.
-
-## Feature Highlights
-
-### Review
-
-- Independent saves for Participants, Bill To, and Session Draft
-- Approval single-submit protection
-- Clean overlay completion and stale-state removal
-- Duplicate resolution using **Confirm Duplicate & Next**
-- Conservative handling of unresolved calendar evidence
-
-### Billing Relationships
-
-The editor separates:
-
-1. **Bill To / payer** — responsible for payment
-2. **Covered clients** — people whose sessions the payer covers
-3. **Participants** — people who attended
-4. **Save invoices under** — filing owner and folder organization
-5. **Send invoice to** — delivery contact
-
-Filing owners and delivery contacts can be selected from the active people directory or created inline. Neither action silently changes payer, Bill To, covered-client, or Participant roles.
-
-### Invoices
-
-- Monthly staging by Bill To and billing month
-- Canonical draft PDF preview embedded directly in the Invoices workspace
-- Stored finalized/void PDF preview embedded directly in the Invoices workspace
-- Shared PDF renderer for draft and final output
-- Separate `Open PDF` / `Open PDF in new tab` actions for standalone browser PDF viewing
-- Transaction-safe numbering and immutable finalization
-- Repeated finalization returns the existing canonical PDF
-- Client/month filing folders
-- Organization, payer, covered-client, and explicitly selected person filing owners
-- Prior-balance and account-summary snapshots
-- Optional invoice-specific insurance coding
-- Void and reissue
-- Waived late-cancellation $0.00 line support
-
-### Payments
-
-- Payment ledger and allocations
-- Paid-at-session workflow
-- Available-funds application
-- Reversals, voids, corrections, receipts, and balance views
-
-### Installation
-
-- Native setup app
-- Offline wheelhouse
-- Explicit Pillow runtime dependency for ReportLab PDF rendering
-- Installer and installed-app verification import `PIL` so PDF dependency problems fail during installation
-- Private runtime
-- Application Support storage for config and SQLite
-- Documents storage for reports and client files
-- Daily launch without Git, pip, PyPI, or Terminal
-- Rollback-safe app-bundle replacement
-
-## Known Beta Friction
-
-### Client Refresh After Confirmation
-
-An unresolved client may initially show fallback values such as Standard 60. After the client identity is confirmed and saved, refresh or reopen the session before approval so the final duration, time category, and related defaults are visible.
-
-### Delivery Is Manual
-
-The application creates and files invoice PDFs but does not send or track them by email or mail.
+- The prior working installation and source backup remain available until the billing cycle completes successfully.
 
 ## Known Limitations
 
@@ -165,24 +87,10 @@ Not included in this release:
 - notarized installer
 - bundled Python runtime
 
-## Remaining Production Evidence
-
-The following acceptance scenarios still require a fully recorded clean-Mac result before final production declaration:
-
-- restart launch
-- duplicate launch
-- cross-user port ownership
-- unrelated process on port 8765
-- missing-config failure
-- missing-database failure
-- reinstall preservation
-- uninstall preservation
-- installer rollback behavior
-
-Follow `docs/HANDOFF_TO_JORDANA_MAC.md` and `docs/TEST_MAC_ACCEPTANCE.md`.
-
 ## Privacy
 
-No private configuration, operational database, credentials, invoices, receipts, reports, logs, real client data, or real diagnosis codes are included in the release artifact.
+No private configuration, operational database, credentials, invoices, receipts,
+reports, logs, real client data, or real diagnosis codes are included in the
+release artifact.
 
-Private production data must never move through GitHub or a public release asset.
+Private production data must never move through GitHub or a release asset.

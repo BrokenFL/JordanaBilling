@@ -200,13 +200,13 @@ class SafeFinalizationTests(unittest.TestCase):
         self.assertIn("render_model", preview)
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_preview_render_model_uses_long_dates_month_period_and_pending_number(self, fake_pdf):
+    def test_preview_render_model_uses_header_date_month_period_and_pending_number(self, fake_pdf):
         fake_pdf.return_value = "x" * 64
         session = self._approved_session("render1")
         draft = self._draft([session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
-        self.assertEqual(render["invoice_date_display"], "May 31, 2026")
+        self.assertEqual(render["invoice_date_display"], "MAY 31, 2026")
         self.assertEqual(render["billing_period_display"], "May 2026")
         self.assertEqual(render["invoice_number_display"], "Assigned when finalized")
         self.assertEqual(render["lines"][0]["service_date_display"], "May 17, 2026")

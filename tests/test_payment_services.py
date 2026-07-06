@@ -27,6 +27,7 @@ from jordana_invoice.payment_services import (
     list_invoice_payment_history,
     list_outstanding_invoices,
     list_paid_invoices,
+    list_payment_service_period_options,
     apply_available_funds,
     get_payment_correction_history,
     payment_allocated_amount,
@@ -103,6 +104,31 @@ class PaymentServicesTests(unittest.TestCase):
             "time_category": "standard", "approved_rate": amount,
             "payment_status": "unpaid", "billing_treatment": "billable",
         })
+        return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
+
+    def _approved_session_for(self, key, start_at, person, party, amount="150.00", payment_status="unpaid"):
+        import_rows(self.conn, [raw_row(key, f"{person['display_name']} | 60 | Office", start_at)], "test")
+        candidate_id = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
+            (stable_hash(f"calendar_event_id:event-{key}"),),
+        ).fetchone()[0]
+        payload = {
+            "participants": [{"person_id": person["person_id"], "display_name": person["display_name"]}],
+            "billing_party_id": party["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": amount,
+            "payment_status": payment_status,
+            "billing_treatment": "billable",
+        }
+        if payment_status == "paid_at_session":
+            payload.update({
+                "amount_received": amount,
+                "payment_date": start_at[:10],
+                "payment_method": "zelle",
+            })
+        detail = approve_candidate(self.conn, candidate_id, payload)
         return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
 
     def _draft_and_finalize(self, session_id):
@@ -686,6 +712,8 @@ class PaymentServicesTests(unittest.TestCase):
         self.assertEqual(paid[0]["paid_cents"], 15000)
         self.assertIsNotNone(paid[0]["paid_date"])
         self.assertEqual(paid[0]["payment_method"], "zelle")
+        self.assertEqual(paid[0]["invoice_period"], "2026-05")
+        self.assertEqual(paid[0]["invoice_period_display"], "May 2026")
 
     # 34. list_paid_invoices excludes partially-paid and outstanding
     def test_list_paid_invoices_excludes_partial(self):
@@ -694,7 +722,7 @@ class PaymentServicesTests(unittest.TestCase):
         paid = list_paid_invoices(self.conn)
         self.assertEqual(len(paid), 0)
 
-    # 35. list_all_payments returns chronological ledger
+    # 35. list_all_payments returns the payment ledger
     def test_list_all_payments(self):
         final = self._draft_and_finalize(self.session_id)
         p1 = record_invoice_payment(self.conn, invoice_id=final["invoice"]["invoice_id"], payment_date="2026-05-15", amount_cents=10000, payment_method="zelle")
@@ -712,6 +740,63 @@ class PaymentServicesTests(unittest.TestCase):
             if p["payment_id"] == p2["payment_id"]:
                 self.assertEqual(p["amount_applied_cents"], 0)
                 self.assertEqual(p["status"], "posted")
+
+    def test_payment_lists_filter_by_invoice_period_and_sort_by_first_name(self):
+        robin_session = self._approved_session_for(
+            "robin-filter",
+            "2026-06-12T10:00:00-04:00",
+            self.person2,
+            self.party2,
+        )
+        pat_final = self._draft_and_finalize(self.session_id)
+        robin_draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party2["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [robin_session["id"]],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
+            fake_pdf.return_value = "x" * 64
+            preview = preview_finalization(self.conn, robin_draft["invoice"]["invoice_id"])
+            robin_final = finalize_invoice(
+                self.conn,
+                robin_draft["invoice"]["invoice_id"],
+                expected_revision=preview["preview_revision"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        outstanding = list_outstanding_invoices(self.conn)
+        self.assertEqual([row["bill_to_display_name"] for row in outstanding], ["Pat Client", "Robin Other"])
+        june = list_outstanding_invoices(self.conn, billing_month="2026-06")
+        self.assertEqual([row["invoice_id"] for row in june], [robin_final["invoice"]["invoice_id"]])
+        may = list_outstanding_invoices(self.conn, billing_month="2026-05")
+        self.assertEqual([row["invoice_id"] for row in may], [pat_final["invoice"]["invoice_id"]])
+
+        options = list_payment_service_period_options(self.conn)
+        self.assertIn({"value": "2026-05", "label": "May 2026"}, options)
+        self.assertIn({"value": "2026-06", "label": "June 2026"}, options)
+
+    def test_paid_at_session_payments_appear_in_paid_and_all_payment_periods(self):
+        paid_session = self._approved_session_for(
+            "paid-session-list",
+            "2026-06-18T10:00:00-04:00",
+            self.person2,
+            self.party2,
+            payment_status="paid_at_session",
+        )
+        paid_rows = list_paid_invoices(self.conn, billing_month="2026-06")
+        paid_at_session_rows = [row for row in paid_rows if row.get("row_type") == "paid_at_session"]
+        self.assertEqual(len(paid_at_session_rows), 1)
+        self.assertEqual(paid_at_session_rows[0]["session_id"], paid_session["id"])
+        self.assertEqual(paid_at_session_rows[0]["bill_to_display_name"], "Robin Other")
+        self.assertEqual(paid_at_session_rows[0]["invoice_number"], "Paid at session")
+        self.assertEqual(paid_at_session_rows[0]["invoice_period_display"], "June 2026")
+
+        ledger = list_all_payments(self.conn, billing_month="2026-06")
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(ledger[0]["source_type"], "paid_at_session_backfill")
+        self.assertEqual(ledger[0]["bill_to_name"], "Robin Other")
 
     # 36. get_payment_detail_view returns payment with invoice info
     def test_get_payment_detail_view(self):
