@@ -84,7 +84,7 @@ def _receipt_render_model(snapshot: dict[str, Any]) -> dict[str, Any]:
         "total_label": "AMOUNT PAID",
         "total_display": format_money(snapshot.get("amount_cents")),
         "account_summary": None,
-        "insurance_coding": [],
+        "insurance_coding": snapshot.get("insurance_coding") or [],
         "suppress_payment_instructions": True,
     }
 

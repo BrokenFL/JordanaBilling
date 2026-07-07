@@ -304,6 +304,7 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `preview_payment_receipt` builds a draft receipt snapshot from the current posted payment ledger without reserving a number, inserting a row, writing a file, or advancing the receipt sequence.
 - `create_payment_receipt` creates one finalized receipt per posted payment. Repeated create requests return the existing receipt.
 - Finalized receipts store one immutable `snapshot_json` and serve the stored PDF; they are not re-rendered from live payment or allocation state.
+- Receipts for payments allocated to finalized invoices preserve the invoice's finalized insurance-coding snapshot when that invoice was finalized with coding.
 - Receipt PDFs are stored under the configured receipt root. Installed releases set that root to `~/Documents/Jordana Billing/Client Files`, using `Client Files/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`.
 - Invoice-linked payments inherit invoice filing ownership. Paid-at-session payments without invoices resolve an eligible session participant; ambiguous ownership blocks final creation.
 

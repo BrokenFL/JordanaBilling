@@ -188,6 +188,7 @@ def _build_receipt_snapshot(
         raise ValueError("Business profile is required before creating a receipt.")
 
     allocation_rows = [_allocation_snapshot(conn, alloc) for alloc in active_allocations]
+    insurance_coding = _receipt_insurance_coding(allocation_rows)
     filing = _resolve_receipt_filing_owner(
         conn,
         allocation_rows,
@@ -246,6 +247,7 @@ def _build_receipt_snapshot(
         "sender_lines": sender_lines,
         "logo_path": resolve_logo_path(profile["logo_path"]),
         "allocations": allocation_rows,
+        "insurance_coding": insurance_coding,
         "filing_owner": filing,
     }
 
@@ -310,7 +312,51 @@ def _allocation_snapshot(conn: sqlite3.Connection, alloc: dict[str, Any]) -> dic
         "charge_cents": charge_cents,
         "remaining_balance_cents": remaining,
         "remaining_balance_display": money(remaining),
+        "insurance_coding": _invoice_insurance_coding(invoice),
     }
+
+
+def _invoice_insurance_coding(invoice: sqlite3.Row | None) -> list[dict[str, str]]:
+    if not invoice or not int(invoice["insurance_coding_included"] or 0):
+        return []
+    diagnosis = str(invoice["insurance_diagnosis_code_snapshot"] or "").strip()
+    if not diagnosis:
+        return []
+    return [
+        {"label": "Diagnosis Code", "value": diagnosis},
+        {"label": "EIN", "value": str(invoice["insurance_ein_snapshot"] or "").strip()},
+        {"label": "NPI", "value": str(invoice["insurance_npi_snapshot"] or "").strip()},
+        {"label": "SW", "value": str(invoice["insurance_sw_snapshot"] or "").strip()},
+    ]
+
+
+def _receipt_insurance_coding(allocation_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    unique_blocks: list[tuple[str, list[dict[str, str]]]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for row in allocation_rows:
+        coding = row.get("insurance_coding") or []
+        if not coding:
+            continue
+        key = tuple((str(item.get("label") or ""), str(item.get("value") or "")) for item in coding)
+        if key in seen:
+            continue
+        seen.add(key)
+        reference = str(row.get("invoice_number") or row.get("invoice_id") or "Invoice")
+        unique_blocks.append((reference, coding))
+
+    if not unique_blocks:
+        return []
+    if len(unique_blocks) == 1:
+        return unique_blocks[0][1]
+
+    combined: list[dict[str, str]] = []
+    for reference, coding in unique_blocks:
+        for item in coding:
+            combined.append({
+                "label": f"{reference} {item['label']}",
+                "value": item["value"],
+            })
+    return combined
 
 
 def _session_participant_names(conn: sqlite3.Connection, session_id: str) -> str:

@@ -59,6 +59,7 @@ class PaymentReceiptTests(unittest.TestCase):
             "phone": "555-0100", "email": "billing@test", "payee_name": "Test Payee",
             "payment_address_line_1": "100 Test Ave", "payment_city": "Test", "payment_state": "FL",
             "payment_postal_code": "00000", "zelle_recipient": "demo-zelle@example.test",
+            "insurance_ein": "00-0000000", "insurance_npi": "0000000000", "insurance_sw": "SW-TEST",
         })
 
     def tearDown(self):
@@ -86,7 +87,7 @@ class PaymentReceiptTests(unittest.TestCase):
         detail = approve_candidate(self.conn, candidate_id, payload)
         return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
 
-    def _finalize_invoice(self, session_id):
+    def _finalize_invoice(self, session_id, *, insurance_coding_included=False, insurance_diagnosis_code=""):
         draft = create_invoice_draft(self.conn, {
             "bill_to_party_id": self.party["billing_party_id"],
             "billing_period_start": "2026-05-01",
@@ -102,6 +103,8 @@ class PaymentReceiptTests(unittest.TestCase):
                 draft["invoice"]["invoice_id"],
                 expected_revision=preview["preview_revision"],
                 pdf_root=self.root / "Invoices",
+                insurance_coding_included=insurance_coding_included,
+                insurance_diagnosis_code=insurance_diagnosis_code,
             )
 
     def _line_id(self, session_id):
@@ -274,6 +277,43 @@ class PaymentReceiptTests(unittest.TestCase):
         self.assertIn("AMOUNT PAID", text)
         self.assertNotIn("PAYMENT RECEIPT", text)
         self.assertNotIn("Please make checks payable to", text)
+
+    def test_receipt_preserves_finalized_invoice_insurance_coding(self):
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            self.skipTest("pypdf is not installed in the active test interpreter")
+        session = self._approved_session("receipt-coding")
+        invoice = self._finalize_invoice(
+            session["id"],
+            insurance_coding_included=True,
+            insurance_diagnosis_code="DEMO-CODE",
+        )["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn,
+            invoice_id=invoice,
+            payment_date="2026-05-15",
+            amount_cents=15000,
+            payment_method="zelle",
+        )["payment"]
+
+        preview = preview_payment_receipt(self.conn, payment["payment_id"])
+        result = create_payment_receipt(self.conn, payment["payment_id"], pdf_root=self.root / "Receipts")
+
+        self.assertEqual(
+            preview["snapshot"]["insurance_coding"],
+            [
+                {"label": "Diagnosis Code", "value": "DEMO-CODE"},
+                {"label": "EIN", "value": "00-0000000"},
+                {"label": "NPI", "value": "0000000000"},
+                {"label": "SW", "value": "SW-TEST"},
+            ],
+        )
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(result["receipt"]["pdf_path"]).pages)
+        self.assertIn("Diagnosis Code: DEMO-CODE", text)
+        self.assertIn("EIN: 00-0000000", text)
+        self.assertIn("NPI: 0000000000", text)
+        self.assertIn("SW: SW-TEST", text)
 
 
 if __name__ == "__main__":
