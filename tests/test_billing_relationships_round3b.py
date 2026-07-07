@@ -477,7 +477,9 @@ class TestRound3BEditorJS(unittest.TestCase):
         render_start = self.js.index("function renderEditorCoveredResults")
         render_end = self.js.index("async function saveBillingRelationship", render_start)
         render_func = self.js[render_start:render_end]
-        self.assertIn("Click to remove", render_func)
+        self.assertIn("Already included", render_func)
+        self.assertIn("Remove", render_func)
+        self.assertIn("removeCoveredClientImmediate", render_func)
 
     def test_editor_save_validates_payer(self):
         save_start = self.js.index("async function saveBillingRelationship")

@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.14 Release Notes
+# Jordana Billing v0.1.0-test.15 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.14` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.15` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.14-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.15-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.14
-- **Python package/application version:** 0.1.0.post14
+- **Release label:** v0.1.0-test.15
+- **Python package/application version:** 0.1.0.post15
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,18 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post14` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post15` app wheel plus pinned production dependencies
 - **Unit tests and focused browser smoke:** required before publication
 - **Temporary-DB acceptance test:** required before publication when running the broader release checklist
 - **Privacy and Git safety checks:** required before publication
+
+## Bug Fixes In test.15
+
+1. **Review self-pay switch** — The Review Bill To section now includes a direct Self pay action for single-client sessions. It saves the client as Bill To and detaches the stale session-level Billing Relationship/account link so an archived or deleted shared relationship does not keep shadowing the review item.
+2. **Billing Relationship switcher** — Change payer or shared billing now opens the relationship wizard from Review instead of trapping the user in the old relationship record.
+3. **Structured person selection** — Billing Relationship payer, recipient, delivery-contact, and covered-client searches now show explicit Select/Add/Remove buttons so typed matches are easier to choose reliably.
+4. **Covered-client edit refresh** — Adding or removing a covered client from a Billing Relationship refreshes the originating Review candidate before returning, preventing removed names from lingering in the Review tab.
+5. **Last-name-first list labels** — Invoice, payment, client, and Billing Relationship list views show person names as Last, First while the Review queue remains date-driven.
 
 ## Bug Fixes In test.14
 

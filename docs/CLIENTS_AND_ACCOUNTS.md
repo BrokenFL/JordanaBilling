@@ -1035,7 +1035,7 @@ The saved billing relationship editor (`openAccountRecord`) has been redesigned 
 
 1. **Invoice recipient** — read-only display of current payer name, type, email, phone, delivery method, and address. A "Change invoice recipient" button opens an inline search with payer type choices (A client, Another person, An organization).
 
-2. **Pays for** — list of covered clients with × remove buttons. An "Add client" button opens an inline search. Already-selected clients show "Click to remove" and can be toggled.
+2. **Pays for** — list of covered clients with remove buttons. An "Add client" button opens an inline search. Already-selected clients show an explicit Remove action.
 
 3. **Billing delivery** — editable fields: billing name, email, phone, contact name, address lines, city, state, postal code, preferred delivery method, and administrative notes.
 

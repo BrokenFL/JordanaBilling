@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.14
+### Current Test Build — v0.1.0-test.15
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.14
-- **Python package/application version:** 0.1.0.post14
+- **Release label:** v0.1.0-test.15
+- **Python package/application version:** 0.1.0.post15
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,17 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.14 supersedes test.13 for installation and update testing because it uses
+test.15 supersedes test.14 for installation and update testing because it uses
 a unique package version and verifies the exact installed runtime plus running
 server build ID before reporting success.
+
+### Bug Fixes In test.15
+
+1. **Review self-pay switch** — Review can switch a single-client session to Self pay and detach the stale session-level Billing Relationship/account link.
+2. **Billing Relationship switcher** — Change payer or shared billing opens the relationship wizard from Review.
+3. **Structured person selection** — Billing Relationship searches show explicit Select/Add/Remove actions.
+4. **Covered-client edit refresh** — Covered-client changes refresh the originating Review candidate before returning.
+5. **Last-name-first list labels** — Invoice, payment, client, and Billing Relationship list views show person names as Last, First while Review stays date-driven.
 
 ### Bug Fixes In test.14
 
@@ -53,6 +61,9 @@ server build ID before reporting success.
 5. **Paid-at-session Receipt button** — Review inspector shows Receipt button for paid-at-session payments.
 
 ### Prior Test Builds
+
+`v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.4. test.15
+supersedes test.14 for installation and update testing.
 
 `v0.1.0-test.13` was built from commit `5436468` with Python 3.14.4. test.14
 supersedes test.13 for installation and update testing.
@@ -68,9 +79,10 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5, test.6, test.7, and test.8 builds remain historically
-accurate for the periods in which they were the current builds. test.14
-supersedes test.13 for installation and stale-runtime verification.
+The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
+test.13, and test.14 builds remain historically accurate for the periods in
+which they were the current builds. test.15 supersedes test.14 for installation
+and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,

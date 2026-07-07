@@ -980,21 +980,25 @@ body.responsive-sheet-open {
 .billing-modal .modal-search-wrap { position: relative; margin-bottom: 8px; }
 .billing-modal .modal-search-wrap label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
 .billing-modal .modal-search { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
-.billing-modal .modal-results { max-height: 200px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; }
-.billing-modal .modal-result-row {
+.modal-results { max-height: 200px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; }
+.modal-result-row {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   cursor: pointer;
   font-size: 13px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 10px;
 }
-.billing-modal .modal-result-row:last-child { border-bottom: none; }
-.billing-modal .modal-result-row:hover { background: var(--soft); }
-.billing-modal .modal-result-row.selected { background: #e8f0fe; border-color: var(--blue); }
-.billing-modal .modal-selected { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding: 6px 8px; background: var(--soft); border-radius: 5px; }
-.billing-modal .modal-selected strong { color: var(--text); }
+.modal-result-row:last-child { border-bottom: none; }
+.modal-result-row:hover { background: var(--soft); }
+.modal-result-row.selected { background: #e8f0fe; border-color: var(--blue); }
+.modal-result-main { display: grid; gap: 2px; min-width: 0; }
+.modal-result-main > span:first-child { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-result-action { flex: 0 0 auto; }
+.modal-selected { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding: 6px 8px; background: var(--soft); border-radius: 5px; }
+.modal-selected strong { color: var(--text); }
 .billing-modal .modal-error { color: var(--red); font-size: 12px; margin: 6px 0; min-height: 16px; }
 .billing-modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 .billing-modal .modal-actions button { min-height: 32px; padding: 0 16px; font-size: 13px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
@@ -1003,8 +1007,7 @@ body.responsive-sheet-open {
 .billing-modal .modal-actions .modal-submit { background: var(--blue); color: white; border-color: var(--blue); }
 .billing-modal .modal-actions .modal-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .billing-modal .modal-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 12px; }
-.billing-modal .modal-result-row.already-included { opacity: 0.55; cursor: default; }
-.billing-modal .modal-result-row.already-included:hover { background: transparent; }
+.modal-result-row.already-included .modal-result-main { opacity: 0.65; }
 .billing-modal .already-included-label { color: var(--muted); font-style: italic; }
 .billing-modal .modal-link-btn { background: none; border: none; color: var(--blue); cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; margin-left: 4px; }
 

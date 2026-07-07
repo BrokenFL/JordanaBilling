@@ -1364,11 +1364,17 @@ def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: d
             billing_party_id = created["billing_party_id"]
     if billing_party_id:
         now = now_iso()
+        if payload.get("detach_account"):
+            conn.execute(
+                "UPDATE sessions SET account_id = NULL, updated_at = ? WHERE id = ?",
+                (now, session["id"]),
+            )
+            session = session_for_candidate(conn, candidate_id)
         conn.execute(
             "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
             (billing_party_id, now, session["id"]),
         )
-        if session["account_id"]:
+        if session["account_id"] and not payload.get("detach_account"):
             conn.execute(
                 "UPDATE client_accounts SET default_billing_party_id = COALESCE(default_billing_party_id, ?), updated_at = ? WHERE account_id = ?",
                 (billing_party_id, now, session["account_id"]),
@@ -4862,8 +4868,15 @@ def get_organization_billing_record(conn: sqlite3.Connection, billing_party_id: 
           i.invoice_date,
           i.status,
           i.total_cents,
-          i.finalized_at
+          i.finalized_at,
+          bp.billing_name AS bill_to_name,
+          bp.billing_party_type AS bill_to_type,
+          bp.person_id AS bill_to_person_id,
+          bill_to_person.first_name AS bill_to_first_name,
+          bill_to_person.last_name AS bill_to_last_name
         FROM invoices i
+        JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+        LEFT JOIN people bill_to_person ON bill_to_person.person_id = bp.person_id
         WHERE i.bill_to_party_id = ?
         ORDER BY i.invoice_date DESC, i.created_at DESC
         """,
@@ -6908,9 +6921,13 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     """
     init_db(conn)
 
-    people_map: dict[str, str] = {
-        row["person_id"]: row["display_name"]
-        for row in conn.execute("SELECT person_id, display_name FROM people").fetchall()
+    people_map: dict[str, dict[str, str]] = {
+        row["person_id"]: {
+            "display_name": row["display_name"],
+            "first_name": row["first_name"],
+            "last_name": row["last_name"],
+        }
+        for row in conn.execute("SELECT person_id, display_name, first_name, last_name FROM people").fetchall()
     }
 
     account_links: dict[str, list[dict[str, Any]]] = {}
@@ -7069,7 +7086,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                     all_covered.add(cid)
 
         covered_people = [
-            {"person_id": cid, "display_name": people_map.get(cid, "")}
+            {"person_id": cid, **people_map.get(cid, {"display_name": "", "first_name": "", "last_name": ""})}
             for cid in sorted(all_covered)
         ]
 
@@ -7092,7 +7109,9 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "record_id": canonical_id,
                 "billing_party_id": canonical_id,
                 "payer_person_id": pid,
-                "payer_display_name": people_map.get(pid, ""),
+                "payer_display_name": people_map.get(pid, {}).get("display_name", ""),
+                "payer_first_name": people_map.get(pid, {}).get("first_name", ""),
+                "payer_last_name": people_map.get(pid, {}).get("last_name", ""),
                 "organization_name": None,
                 "billing_name": canonical["billing_name"],
                 "billing_party_type": "person",
@@ -7126,7 +7145,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             pid for pid in (row["covered_person_ids_raw"] or "").split(",") if pid
         ]
         covered_people = [
-            {"person_id": pid, "display_name": people_map.get(pid, "")}
+            {"person_id": pid, **people_map.get(pid, {"display_name": "", "first_name": "", "last_name": ""})}
             for pid in covered_ids
         ]
 
@@ -7196,7 +7215,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             mid for mid in (row["member_ids_raw"] or "").split(",") if mid
         ]
         members = [
-            {"person_id": mid, "display_name": people_map.get(mid, "")}
+            {"person_id": mid, **people_map.get(mid, {"display_name": "", "first_name": "", "last_name": ""})}
             for mid in member_ids
         ]
 

@@ -28,6 +28,30 @@ function futureAppointmentMessage(session) {
   }
 }
 
+function displayNameLastFirst(displayName, firstName = "", lastName = "") {
+  const display = String(displayName || "").trim();
+  const first = String(firstName || "").trim();
+  const last = String(lastName || "").trim();
+  if (last && first) return `${last}, ${first}`;
+  if (last) return last;
+  if (first) return first;
+  if (display.includes(",")) return display;
+  const parts = display.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[parts.length - 1]}, ${parts.slice(0, -1).join(" ")}`;
+  return display;
+}
+
+function personRowNameLastFirst(row, displayKey = "display_name") {
+  if (!row) return "";
+  return displayNameLastFirst(row[displayKey], row.first_name, row.last_name);
+}
+
+function billToListName(row, displayKey = "bill_to_display_name") {
+  if (!row) return "";
+  if (row.bill_to_type && row.bill_to_type !== "person") return row[displayKey] || "";
+  return displayNameLastFirst(row[displayKey], row.bill_to_first_name, row.bill_to_last_name);
+}
+
 let paymentOverlayReturnFocus = null;
 let paymentDetailReturnFocus = null;
 let finalizationPreviewPdfUrl = null;
@@ -90,7 +114,7 @@ const state = {
     search: "",
     status: "",
     billingMonth: "",
-    sortBy: "bill_to_first_name",
+    sortBy: "bill_to_last_name",
     sortDir: "asc",
     draftMonthTotals: [],
     billingMonthOptions: [],
@@ -600,9 +624,13 @@ function renderInspector(data) {
         ? `<div class="readonly-note">Confirm Client(s) first.</div>`
         : readiness.billing_ready
           ? `${billToSummary(data)}
-             <div class="inline-actions"><button id="editBillingRelationship">Change payer or shared billing</button></div>`
+             <div class="inline-actions">
+               <button id="setSelfPayBtn">Self pay</button>
+               <button id="editBillingRelationship">Change payer or shared billing</button>
+             </div>`
           : `<label class="field wide">Bill to client<select id="billToClientSelect">${billToClientOptions(data)}</select></label>
              <div class="inline-actions">
+               <button id="setSelfPayBtn">Self pay</button>
                <button id="editBillingRelationship">Change payer or shared billing</button>
                ${showBillingSave ? '<button id="saveBillingBtn" class="save">Save Bill To</button>' : ""}
              </div>`}
@@ -683,10 +711,11 @@ function wireInspector() {
   if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = saveRelationshipSection;
   if ($("changeClientsBtn")) $("changeClientsBtn").onclick = () => { state.editSteps.clients = true; markDirty("relationship"); renderInspector(state.detail); };
   if ($("saveBillingBtn")) $("saveBillingBtn").onclick = saveBillingSection;
+  if ($("setSelfPayBtn")) $("setSelfPayBtn").onclick = saveSelfPayBilling;
   if ($("changeSessionBtn")) $("changeSessionBtn").onclick = () => { state.editSteps.session = true; markDirty("session"); renderInspector(state.detail); };
   if ($("openPaidAtSessionReceiptBtn")) $("openPaidAtSessionReceiptBtn").onclick = () => openPaymentDetail($("openPaidAtSessionReceiptBtn").dataset.paymentId);
   if ($("saveSessionBtn")) $("saveSessionBtn").onclick = saveSessionSection;
-  if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipEditor;
+  if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipSwitcher;
   if ($("excludeBtn")) $("excludeBtn").onclick = excludeSelectedCandidate;
   [
     "billingTypeInput",
@@ -1139,6 +1168,12 @@ function renderRelationshipEditor(data) {
   if ($("openAccountRecord")) $("openAccountRecord").onclick = openBillingRelationshipEditor;
 }
 
+function openBillingRelationshipSwitcher() {
+  const returnContext = buildReturnContext();
+  if (!returnContext) return alert("Select a session before changing the billing relationship.");
+  openCreateRelationshipModal(persistReturnContext(returnContext), $("editBillingRelationship"));
+}
+
 async function openBillingRelationshipEditor() {
   if (!closeReviewOverlay()) return;
   const returnContext = persistReturnContext(buildReturnContext());
@@ -1212,6 +1247,29 @@ async function saveBillingSection() {
   renderInspector(updated);
   restoreSessionDraftValues(sessionDraft);
   markSaved("billing", "Bill to saved");
+  await loadList();
+}
+
+async function saveSelfPayBilling() {
+  await resolveTypedSelections();
+  const clients = confirmedSessionClients();
+  if (clients.length !== 1 || !clients[0].person_id) {
+    return alert("Self pay needs exactly one confirmed client in this session.");
+  }
+  const sessionDraft = collectSessionDraftValues();
+  const updated = await api(`/api/review/candidates/${state.selected}/save-billing`, {
+    method: "POST",
+    body: JSON.stringify({
+      bill_to_person_id: clients[0].person_id,
+      detach_account: true,
+    })
+  });
+  state.detail = updated;
+  state.account = updated.account;
+  state.billingParty = updated.billing_party || updated.effective_billing_party;
+  renderInspector(updated);
+  restoreSessionDraftValues(sessionDraft);
+  markSaved("billing", "Self pay saved");
   await loadList();
 }
 
@@ -2036,7 +2094,7 @@ function renderOutstandingInvoices(items) {
       <tr data-invoice-id="${escapeAttr(item.invoice_id)}" class="${state.unpaid.selectedInvoiceId === item.invoice_id ? "selected" : ""}">
         <td><span class="status-pill ${escapeAttr(item.payment_status)}">${escapeHtml(paymentStatusLabel(item.payment_status))}</span></td>
         <td>${fmt(item.invoice_number)}</td>
-        <td>${fmt(item.bill_to_display_name)}</td>
+        <td>${fmt(billToListName(item))}</td>
         <td>${fmt(item.invoice_period_display)}</td>
         <td>${money(centString(item.total_cents))}</td>
         <td>${money(centString(item.paid_cents))}</td>
@@ -2082,7 +2140,7 @@ function renderOutstandingInvoiceWorkspace(data) {
       <div class="payment-panel-header">
         <div>
           <h3>${fmt(invoice.invoice_number)}</h3>
-          <div class="help">${fmt(invoice.bill_to_display_name)} • Invoice date ${fmt(invoice.invoice_date)}</div>
+          <div class="help">${fmt(billToListName(invoice))} • Invoice date ${fmt(invoice.invoice_date)}</div>
         </div>
         <button class="save" id="workspaceRecordPayment">Record Payment</button>
       </div>
@@ -2742,7 +2800,7 @@ function renderPaidInvoices(items) {
     ? items.map(item => `
       <tr data-invoice-id="${escapeAttr(item.invoice_id || "")}" data-payment-id="${escapeAttr(item.payment_id || "")}">
         <td><span class="primary">${fmt(item.invoice_number)}</span></td>
-        <td>${fmt(item.bill_to_display_name)}</td>
+        <td>${fmt(billToListName(item))}</td>
         <td>${fmt(item.invoice_period_display)}</td>
         <td>${money(centString(item.total_cents))}</td>
         <td>${fmt(item.paid_date)}</td>
@@ -2779,7 +2837,7 @@ async function openPaidInvoice(invoiceId) {
       <div class="payment-panel-header">
         <div>
           <h3>${fmt(invoice.invoice_number)}</h3>
-          <div class="help">${fmt(invoice.bill_to_display_name)} • Invoice date ${fmt(invoice.invoice_date)}</div>
+          <div class="help">${fmt(billToListName(invoice))} • Invoice date ${fmt(invoice.invoice_date)}</div>
         </div>
       </div>
       <div class="payment-panel-summary">
@@ -2836,7 +2894,7 @@ function renderAllPayments(items) {
     ? items.map(item => `
       <tr data-payment-id="${escapeAttr(item.payment_id)}">
         <td>${fmt(item.received_at)}</td>
-        <td>${fmt(item.bill_to_name)}</td>
+        <td>${fmt(billToListName(item, "bill_to_name"))}</td>
         <td>${fmt(item.invoice_numbers)}</td>
         <td>${escapeHtml(paymentMethodLabel(item.method))}</td>
         <td>${fmt(item.reference_number)}</td>
@@ -3425,7 +3483,7 @@ function _buildInvoiceQueryParams() {
   const params = new URLSearchParams();
   if (lib.status) params.set("status", lib.status);
   if (lib.billingMonth) params.set("billing_month", lib.billingMonth);
-  params.set("sort_by", lib.sortBy || "bill_to_first_name");
+  params.set("sort_by", lib.sortBy || "bill_to_last_name");
   params.set("sort_dir", lib.sortDir || "asc");
   params.set("limit", String(lib.limit));
   params.set("offset", String(lib.offset));
@@ -3436,7 +3494,7 @@ async function loadInvoices() {
   const lib = state.invoiceLibrary;
   lib.status = $("invoiceStatusFilter").value || "";
   lib.billingMonth = $("invoiceDraftMonthFilter") ? $("invoiceDraftMonthFilter").value || "" : "";
-  lib.sortBy = "bill_to_first_name";
+  lib.sortBy = "bill_to_last_name";
   lib.sortDir = "asc";
   const qs = _buildInvoiceQueryParams();
   const result = await api(`/api/invoices?${qs}`);
@@ -3462,7 +3520,7 @@ function renderInvoiceLibrary() {
         <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
         <td>${fmt(row.invoice_date)}</td>
         <td>${escapeHtml(invoiceServicePeriodLabel(row))}</td>
-        <td>${fmt(row.bill_to_name_snapshot || row.current_bill_to_name)}</td>
+        <td>${fmt(billToListName({...row, current_bill_to_name: row.bill_to_name_snapshot || row.current_bill_to_name}, "current_bill_to_name"))}</td>
         <td>${fmt(row.filing_owner_display || "—")}</td>
         <td>${escapeHtml(row.participants_display || "—")}</td>
         <td><span class="status-pill ${escapeAttr(row.status)}">${fmt(row.status)}</span></td>
@@ -4543,41 +4601,44 @@ const BILLING_DIR_TYPE_LABELS = {
 function billingDirCoversText(rec) {
   const people = rec.covered_people || [];
   if (!people.length) return "—";
-  return people.map(p => escapeHtml(p.display_name || "Unknown")).join(", ");
+  return people.map(p => escapeHtml(personRowNameLastFirst(p) || "Unknown")).join(", ");
 }
 
 function billingDirPayerName(rec) {
   if (rec.record_type === "account") {
     return escapeHtml(rec.account_name || "Unnamed group");
   }
-  return escapeHtml(rec.payer_display_name || rec.organization_name || rec.billing_name || "Unknown");
+  if (rec.payer_person_id) {
+    return escapeHtml(displayNameLastFirst(rec.payer_display_name, rec.payer_first_name, rec.payer_last_name) || "Unknown");
+  }
+  return escapeHtml(rec.organization_name || rec.billing_name || "Unknown");
 }
 
 function billingDirPayerSubtext(rec) {
   if (rec.record_type === "self_pay") {
     const people = rec.covered_people || [];
     if (people.length > 1) {
-      return `Pays for ${people.map(p => escapeHtml(p.display_name || "Unknown")).join(" and ")}`;
+      return `Pays for ${people.map(p => escapeHtml(personRowNameLastFirst(p) || "Unknown")).join(" and ")}`;
     }
     return "Pays for themselves";
   }
   if (rec.record_type === "third_party") {
     const people = rec.covered_people || [];
     if (people.length === 1) {
-      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")}`;
+      return `Pays for ${escapeHtml(personRowNameLastFirst(people[0]) || "Unknown")}`;
     }
     if (people.length > 1) {
-      return `Pays for ${people.map(p => escapeHtml(p.display_name || "Unknown")).join(" and ")}`;
+      return `Pays for ${people.map(p => escapeHtml(personRowNameLastFirst(p) || "Unknown")).join(" and ")}`;
     }
     return "Pays for others";
   }
   if (rec.record_type === "organization") {
     const people = rec.covered_people || [];
     if (people.length === 1) {
-      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")}`;
+      return `Pays for ${escapeHtml(personRowNameLastFirst(people[0]) || "Unknown")}`;
     }
     if (people.length > 1) {
-      return `Pays for ${escapeHtml(people[0].display_name || "Unknown")} and ${people.length - 1} other${people.length - 1 === 1 ? "" : "s"}`;
+      return `Pays for ${escapeHtml(personRowNameLastFirst(people[0]) || "Unknown")} and ${people.length - 1} other${people.length - 1 === 1 ? "" : "s"}`;
     }
     return "";
   }
@@ -5670,12 +5731,12 @@ function renderDeliveryContactSearchResults(container, rows, data) {
   }
   container.innerHTML = rows.map(row => `
     <div class="modal-result-row" data-person-id="${escapeAttr(row.person_id)}" tabindex="0" role="button">
-      <span>${escapeHtml(row.display_name || "Unnamed contact")}</span>
-      ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
+      <span class="modal-result-main"><span>${escapeHtml(row.display_name || "Unnamed contact")}</span>${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}</span>
+      <button type="button" class="mini modal-result-action">Select</button>
     </div>
   `).join("");
   container.querySelectorAll(".modal-result-row").forEach(el => {
-    el.addEventListener("click", () => {
+    const select = () => {
       const person = rows.find(row => row.person_id === el.dataset.personId);
       appendDeliveryContactOption(person);
       applyDeliveryContactDetails(person);
@@ -5684,7 +5745,10 @@ function renderDeliveryContactSearchResults(container, rows, data) {
       }
       if ($("newDeliveryContactFields")) $("newDeliveryContactFields").hidden = true;
       if ($("deliveryContactSearchArea")) $("deliveryContactSearchArea").hidden = true;
-    });
+    };
+    el.addEventListener("click", select);
+    const button = el.querySelector(".modal-result-action");
+    if (button) button.addEventListener("click", (event) => { event.stopPropagation(); select(); });
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
   });
 }
@@ -5760,11 +5824,12 @@ function renderRecipientResults(container, rows, kind, editState) {
     const id = kind === "organization" ? row.billing_party_id : row.person_id;
     const name = kind === "organization" ? (row.organization_name || row.billing_name || "Unnamed") : (row.display_name || "Unnamed");
     return `<div class="modal-result-row ${id === selectedId ? "selected" : ""}" data-id="${escapeHtml(id)}" tabindex="0" role="button">
-      <span>${escapeHtml(name)}</span>
+      <span class="modal-result-main"><span>${escapeHtml(name)}</span></span>
+      <button type="button" class="mini modal-result-action">${id === selectedId ? "Selected" : "Select"}</button>
     </div>`;
   }).join("");
   container.querySelectorAll(".modal-result-row").forEach(el => {
-    el.addEventListener("click", () => {
+    const select = () => {
       const id = el.dataset.id;
       if (kind === "organization") {
         editState.organization_billing_party_id = id;
@@ -5778,7 +5843,10 @@ function renderRecipientResults(container, rows, kind, editState) {
         showEditorRecipientSelected(person.display_name, kind);
       }
       clearEditorCoveredClients(editState);
-    });
+    };
+    el.addEventListener("click", select);
+    const button = el.querySelector(".modal-result-action");
+    if (button) button.addEventListener("click", (event) => { event.stopPropagation(); select(); });
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
   });
 }
@@ -5830,23 +5898,45 @@ function renderEditorCoveredResults(container, rows, selectedIds, editState, acc
   container.innerHTML = rows.map(row => {
     const isSelected = selectedIds.has(row.person_id);
     return `<div class="modal-result-row ${isSelected ? "selected already-included" : ""}" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
-      <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
-      ${isSelected ? '<span class="help already-included-label">Click to remove</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}
+      <span class="modal-result-main"><span>${escapeHtml(row.display_name || "Unnamed client")}</span>${isSelected ? '<span class="help already-included-label">Already included</span>' : (row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : "")}</span>
+      <button type="button" class="mini modal-result-action">${isSelected ? "Remove" : "Add"}</button>
     </div>`;
   }).join("");
   container.querySelectorAll(".modal-result-row").forEach(el => {
     const pid = el.dataset.personId;
     if (selectedIds.has(pid)) {
-      el.addEventListener("click", async () => {
+      const remove = async () => {
         await removeCoveredClientImmediate(accountId, pid, editState, returnContext, el);
-      });
+      };
+      el.addEventListener("click", remove);
+      const button = el.querySelector(".modal-result-action");
+      if (button) button.addEventListener("click", async (event) => { event.stopPropagation(); await remove(); });
     } else {
-      el.addEventListener("click", async () => {
+      const add = async () => {
         await addCoveredClientImmediate(accountId, pid, returnContext, el);
-      });
+      };
+      el.addEventListener("click", add);
+      const button = el.querySelector(".modal-result-action");
+      if (button) button.addEventListener("click", async (event) => { event.stopPropagation(); await add(); });
     }
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
   });
+}
+
+async function refreshReturnContextCandidate(returnContext) {
+  if (!validReturnContext(returnContext)) return;
+  try {
+    await api(`/api/review/candidates/${returnContext.candidateId}/refresh`, { method: "POST", body: "{}" });
+  } catch (_) {}
+  if (state.selected === returnContext.candidateId) {
+    try {
+      const data = await api(`/api/review/candidates/${returnContext.candidateId}`);
+      state.detail = data;
+      state.participants = data.participants.map(participantState);
+      state.account = data.account;
+      state.billingParty = data.billing_party || data.effective_billing_party;
+    } catch (_) {}
+  }
 }
 
 async function addCoveredClientImmediate(accountId, personId, returnContext, trigger) {
@@ -5864,6 +5954,7 @@ async function addCoveredClientImmediate(accountId, personId, returnContext, tri
         is_primary: false,
       })
     });
+    await refreshReturnContextCandidate(returnContext);
     await openAccountRecord(accountId, { returnContext });
     await loadClients();
     showReviewSuccess("Covered client added.");
@@ -5894,6 +5985,8 @@ async function removeCoveredClientImmediate(accountId, personId, editState, retu
       method: "POST",
       body: JSON.stringify({ person_id: personId })
     });
+    editState.covered_client_ids = (editState.covered_client_ids || []).filter(id => id !== personId);
+    await refreshReturnContextCandidate(returnContext);
     await openAccountRecord(accountId, { returnContext });
     await loadClients();
     showReviewSuccess("Covered client removed.");
@@ -6100,7 +6193,7 @@ async function loadPeople() {
       <td>${fmt(row.person_code)}</td>
       <td>${fmt(row.last_name)}</td>
       <td>${fmt(row.first_name)}</td>
-      <td><span class="primary">${fmt(row.display_name)}</span></td>
+      <td><span class="primary">${fmt(personRowNameLastFirst(row))}</span></td>
       <td>${fmt(row.accounts)}</td>
       <td>${fmt(row.billing_for)}</td>
       <td>${fmt(row.last_session)}</td>
@@ -6137,7 +6230,7 @@ async function openPersonRecord(personId, options = {}) {
   const payers = data.payers_for_client || [];
   const peopleBilledFor = data.people_billed_for || [];
   const invoices = data.invoices || [];
-  const personName = fmt(data.person.display_name);
+  const personName = fmt(personRowNameLastFirst(data.person));
   const futureRateDate = defaultFutureEffectiveDate();
 
   const deliveryLabels = { email: "Email", mail: "Mail", both: "Email and mail", unresolved: "Unresolved" };
@@ -6245,7 +6338,7 @@ async function openPersonRecord(personId, options = {}) {
         <td><span class="primary">${fmt(inv.invoice_number || "Draft")}</span></td>
         <td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>
         <td>${fmt(inv.invoice_date)}</td>
-        <td>${fmt(inv.bill_to_name)}</td>
+        <td>${fmt(billToListName(inv, "bill_to_name"))}</td>
         <td><span class="status-pill ${escapeAttr(inv.status)}">${fmt(inv.status)}</span></td>
         <td><span class="status-pill ${escapeAttr(inv.payment_status || "unpaid")}">${escapeHtml(paymentStatusLabel(inv.payment_status || "unpaid"))}</span></td>
         <td>${money(centString(inv.total_cents))}</td>
@@ -6260,7 +6353,7 @@ async function openPersonRecord(personId, options = {}) {
     <a href="#people" class="return-link" id="backToClients">← Back to Clients</a>
     <div class="client-workspace">
       <div class="client-header">
-        <h2>${fmt(data.person.display_name)}</h2>
+        <h2>${fmt(personRowNameLastFirst(data.person))}</h2>
         <div class="meta"><span>${fmt(data.person.person_code)}</span><span>${fmt(data.person.active_status)}</span></div>
       </div>
 
@@ -7136,13 +7229,16 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
       const name = kind === "person" ? (row.display_name || "Unnamed") : (row.organization_name || row.billing_name || "Unnamed");
       const sub = kind === "person" ? (row.person_code || "") : (row.billing_name || "");
       return `<div class="modal-result-row ${id === selectedId ? "selected" : ""}" data-id="${escapeHtml(id)}" tabindex="0" role="button">
-        <span>${escapeHtml(name)}</span>
-        ${sub ? `<span class="help">${escapeHtml(sub)}</span>` : ""}
+        <span class="modal-result-main"><span>${escapeHtml(name)}</span>${sub ? `<span class="help">${escapeHtml(sub)}</span>` : ""}</span>
+        <button type="button" class="mini modal-result-action">${id === selectedId ? "Selected" : "Select"}</button>
       </div>`;
     }).join("");
     container.querySelectorAll(".modal-result-row").forEach(el => {
       const id = el.dataset.id;
-      el.addEventListener("click", () => selectPayer(id, rows, kind));
+      const select = () => selectPayer(id, rows, kind);
+      el.addEventListener("click", select);
+      const button = el.querySelector(".modal-result-action");
+      if (button) button.addEventListener("click", (event) => { event.stopPropagation(); select(); });
       el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
     });
   }
@@ -7165,7 +7261,7 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
   function showPayerSelected(container, name, kind) {
     container.hidden = false;
     const label = kind === "client" ? "Selected client" : kind === "organization" ? "Selected organization" : "Selected person";
-    container.innerHTML = `${escapeHtml(label)}: <strong>${escapeHtml(name)}</strong>`;
+    container.innerHTML = `<span>${escapeHtml(label)}:</span> <strong>${escapeHtml(name)}</strong>`;
   }
 
   function updateContinueDisabled() {
@@ -7221,13 +7317,16 @@ function openCreateRelationshipModal(returnContext, originatingBtn) {
     if (!available.length) { container.innerHTML = '<div class="modal-empty">No clients found. Try a different search.</div>'; return; }
     container.innerHTML = available.map(row => {
       return `<div class="modal-result-row" data-person-id="${escapeHtml(row.person_id)}" tabindex="0" role="button">
-        <span>${escapeHtml(row.display_name || "Unnamed client")}</span>
-        ${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}
+        <span class="modal-result-main"><span>${escapeHtml(row.display_name || "Unnamed client")}</span>${row.person_code ? `<span class="help">${escapeHtml(row.person_code)}</span>` : ""}</span>
+        <button type="button" class="mini modal-result-action">Add</button>
       </div>`;
     }).join("");
     container.querySelectorAll(".modal-result-row").forEach(el => {
       const pid = el.dataset.personId;
-      el.addEventListener("click", () => addCoveredClient(pid, available));
+      const add = () => addCoveredClient(pid, available);
+      el.addEventListener("click", add);
+      const button = el.querySelector(".modal-result-action");
+      if (button) button.addEventListener("click", (event) => { event.stopPropagation(); add(); });
       el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.click(); } });
     });
   }

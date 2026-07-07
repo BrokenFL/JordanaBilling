@@ -265,6 +265,7 @@ _VALID_SORT_FIELDS = {
     "total_cents": "i.total_cents",
     "created_at": "i.created_at",
     "bill_to_name": "bp.billing_name",
+    "bill_to_last_name": "bp.billing_name",
     "billing_month": "i.billing_month",
 }
 
@@ -277,16 +278,16 @@ def _invoice_service_period_key(record: dict[str, Any]) -> str:
     return start[:7] if len(start) >= 7 else ""
 
 
-def _first_name_sort_key(record: dict[str, Any]) -> tuple[str, str, str]:
+def _last_name_sort_key(record: dict[str, Any]) -> tuple[str, str, str]:
     name = str(
         record.get("bill_to_name_snapshot")
         or record.get("current_bill_to_name")
         or ""
     ).strip()
     parts = name.casefold().split()
-    first = parts[0] if parts else ""
-    rest = " ".join(parts[1:])
-    return (first, rest, str(record.get("invoice_id") or ""))
+    last = parts[-1] if parts else ""
+    first = " ".join(parts[:-1])
+    return (last, first, name.casefold(), str(record.get("invoice_id") or ""))
 
 
 def _status_totals(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
@@ -749,7 +750,7 @@ def list_invoice_records(
     billing_month: str | None = None,
     service_period_from: str | None = None,
     service_period_to: str | None = None,
-    sort_by: str = "bill_to_first_name",
+    sort_by: str = "bill_to_last_name",
     sort_dir: str = "asc",
     limit: int = 50,
     offset: int = 0,
@@ -810,12 +811,17 @@ def list_invoice_records(
     rows = conn.execute(
         f"""
         SELECT i.*, bp.billing_name AS current_bill_to_name,
+               bp.billing_party_type AS bill_to_type,
+               bp.person_id AS bill_to_person_id,
+               bill_to_person.first_name AS bill_to_first_name,
+               bill_to_person.last_name AS bill_to_last_name,
                fp.display_name AS filing_owner_current_name,
                fp.person_code AS filing_owner_current_code,
                COUNT(DISTINCT li.invoice_line_item_id) AS line_count,
                GROUP_CONCAT(DISTINCT li.participants_snapshot) AS participants_display
         FROM invoices i
         JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+        LEFT JOIN people bill_to_person ON bill_to_person.person_id = bp.person_id
         LEFT JOIN people fp ON fp.person_id = i.filing_owner_person_id
         LEFT JOIN invoice_line_items li ON li.invoice_id = i.invoice_id
         {where}
@@ -860,9 +866,9 @@ def list_invoice_records(
     if payment_status and payment_status in valid_payment_statuses:
         enriched = [r for r in enriched if r["payment_status"] == payment_status]
 
-    if sort_by == "bill_to_first_name":
+    if sort_by in {"bill_to_first_name", "bill_to_last_name"}:
         reverse = (sort_dir or "asc").lower() == "desc"
-        enriched.sort(key=_first_name_sort_key, reverse=reverse)
+        enriched.sort(key=_last_name_sort_key, reverse=reverse)
 
     total = len(enriched)
     status_totals = _status_totals(enriched)

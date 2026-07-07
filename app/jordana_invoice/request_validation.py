@@ -405,13 +405,15 @@ def parse_save_relationship_section_request(payload: Any) -> SaveSectionRequest:
 def parse_save_billing_section_request(payload: Any) -> SaveSectionRequest:
     """Parse and validate a save-billing section request payload.
 
-    Accepted fields: billing_party_id, bill_to_person_id, billing_party (dict).
+    Accepted fields: billing_party_id, bill_to_person_id, billing_party (dict),
+    detach_account.
     """
     data = _require_object(payload)
 
     _optional_nonempty_str(data, "billing_party_id")
     _optional_nonempty_str(data, "bill_to_person_id")
     _optional_dict(data, "billing_party")
+    _optional_bool(data, "detach_account")
 
     return SaveSectionRequest(payload=data)
 

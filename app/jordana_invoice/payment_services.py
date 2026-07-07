@@ -92,15 +92,16 @@ def _invoice_period_display(row: sqlite3.Row | dict[str, Any]) -> str:
     return start or end
 
 
-def _first_name_sort_key(name: str | None) -> tuple[str, str]:
+def _last_name_sort_key(name: str | None) -> tuple[str, str, str]:
     display = text(name)
     parts = display.split()
-    first = parts[0].lower() if parts else ""
-    return first, display.lower()
+    last = parts[-1].lower() if parts else ""
+    first = " ".join(parts[:-1]).lower()
+    return last, first, display.lower()
 
 
 def _sort_payment_rows(rows: list[dict[str, Any]], name_key: str) -> list[dict[str, Any]]:
-    return sorted(rows, key=lambda row: (*_first_name_sort_key(row.get(name_key)), text(row.get("invoice_number") or row.get("received_at"))))
+    return sorted(rows, key=lambda row: (*_last_name_sort_key(row.get(name_key)), text(row.get("invoice_number") or row.get("received_at"))))
 
 
 def list_payment_service_period_options(conn: sqlite3.Connection) -> list[dict[str, str]]:
@@ -208,9 +209,14 @@ def _invoice_paid_amount(conn: sqlite3.Connection, invoice_id: str) -> int:
 def _invoice_summary_row(conn: sqlite3.Connection, invoice_id: str) -> sqlite3.Row:
     row = conn.execute(
         """
-        SELECT i.*, bp.billing_name AS bill_to_display_name
+        SELECT i.*, bp.billing_name AS bill_to_display_name,
+               bp.billing_party_type AS bill_to_type,
+               bp.person_id AS bill_to_person_id,
+               bill_to_person.first_name AS bill_to_first_name,
+               bill_to_person.last_name AS bill_to_last_name
         FROM invoices i
         JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
+        LEFT JOIN people bill_to_person ON bill_to_person.person_id = bp.person_id
         WHERE i.invoice_id = ?
         """,
         (invoice_id,),
@@ -916,10 +922,15 @@ def list_paid_invoices(conn: sqlite3.Connection, *, billing_month: str | None = 
           p.reference_number,
           s.id AS session_id,
           COALESCE(s.session_date, substr(s.start_at, 1, 10), p.received_at) AS service_date,
-          bp.billing_name AS bill_to_display_name
+          bp.billing_name AS bill_to_display_name,
+          bp.billing_party_type AS bill_to_type,
+          bp.person_id AS bill_to_person_id,
+          bill_to_person.first_name AS bill_to_first_name,
+          bill_to_person.last_name AS bill_to_last_name
         FROM payments p
         JOIN sessions s ON s.id = p.source_session_id
         JOIN billing_parties bp ON bp.billing_party_id = p.billing_party_id
+        LEFT JOIN people bill_to_person ON bill_to_person.person_id = bp.person_id
         WHERE p.source_type = 'paid_at_session_backfill'
           AND p.status = 'posted'
         """
@@ -934,6 +945,10 @@ def list_paid_invoices(conn: sqlite3.Connection, *, billing_month: str | None = 
             "invoice_id": "",
             "invoice_number": "Paid at session",
             "bill_to_display_name": row["bill_to_display_name"],
+            "bill_to_type": row["bill_to_type"],
+            "bill_to_person_id": row["bill_to_person_id"],
+            "bill_to_first_name": row["bill_to_first_name"],
+            "bill_to_last_name": row["bill_to_last_name"],
             "invoice_period": row_period,
             "invoice_period_display": _month_label(row_period),
             "total_cents": row["amount_cents"],
@@ -949,7 +964,7 @@ def list_paid_invoices(conn: sqlite3.Connection, *, billing_month: str | None = 
 def list_all_payments(conn: sqlite3.Connection, *, billing_month: str | None = None) -> list[dict[str, Any]]:
     """Return the recorded payment ledger for the Payments screen.
 
-    Sorts by bill-to first name, then stable by payment date.
+    Sorts by bill-to last name, then stable by payment date.
     Each row includes bill_to_name, invoice numbers, and applied amount.
     """
     period = text(billing_month)
@@ -980,6 +995,10 @@ def list_all_payments(conn: sqlite3.Connection, *, billing_month: str | None = N
              WHERE s.id = p.source_session_id)
           ) AS invoice_period,
           bp.billing_name AS bill_to_name,
+          bp.billing_party_type AS bill_to_type,
+          bp.person_id AS bill_to_person_id,
+          bill_to_person.first_name AS bill_to_first_name,
+          bill_to_person.last_name AS bill_to_last_name,
           COALESCE((
             SELECT GROUP_CONCAT(DISTINCT i.invoice_number)
             FROM payment_allocations pa2
@@ -989,6 +1008,7 @@ def list_all_payments(conn: sqlite3.Connection, *, billing_month: str | None = N
           ), '') AS invoice_numbers
         FROM payments p
         JOIN billing_parties bp ON bp.billing_party_id = p.billing_party_id
+        LEFT JOIN people bill_to_person ON bill_to_person.person_id = bp.person_id
         ORDER BY p.received_at DESC, p.created_at DESC, p.payment_id DESC
         """
     ).fetchall()
@@ -1016,6 +1036,10 @@ def list_all_payments(conn: sqlite3.Connection, *, billing_month: str | None = N
             "payment_id": row["payment_id"],
             "billing_party_id": row["billing_party_id"],
             "bill_to_name": row["bill_to_name"],
+            "bill_to_type": row["bill_to_type"],
+            "bill_to_person_id": row["bill_to_person_id"],
+            "bill_to_first_name": row["bill_to_first_name"],
+            "bill_to_last_name": row["bill_to_last_name"],
             "amount_cents": row["amount_cents"],
             "received_at": row["received_at"],
             "method": row["method"],

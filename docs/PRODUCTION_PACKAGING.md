@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.14
+### Current Test Build — v0.1.0-test.15
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.14
-- **Python package/application version:** 0.1.0.post14
+- **Release label:** v0.1.0-test.15
+- **Python package/application version:** 0.1.0.post15
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,25 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post14` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post15` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.14 fixes static asset cache-busting, inactive payer record conflict
-warnings, SELECT change-event handling in Review and Rate Card, inline invoice
-workspace at laptop widths, and adds a Receipt button to the paid-at-session
-summary in the Review inspector.
+test.15 fixes the Review self-pay switch away from stale Billing Relationships,
+opens the Billing Relationship wizard for payer changes, makes person-selection
+results explicit with Select/Add/Remove buttons, refreshes the Review candidate
+after covered-client edits, and shows person names as Last, First in list views
+outside the date-driven Review queue.
+
+### Bug Fixes In test.15
+
+1. **Review self-pay switch** — The Review Bill To section includes a direct Self pay action for single-client sessions. It saves the client as Bill To and detaches the stale session-level Billing Relationship/account link, so an archived or deleted shared relationship no longer keeps shadowing the review item.
+2. **Billing Relationship switcher** — Change payer or shared billing opens the relationship wizard from Review instead of trapping the user in the old relationship record.
+3. **Structured person selection** — Billing Relationship payer, recipient, delivery-contact, and covered-client searches show explicit Select/Add/Remove buttons so typed matches are easier to choose reliably.
+4. **Covered-client edit refresh** — Adding or removing a covered client refreshes the originating Review candidate before returning, preventing removed names from lingering in the Review tab.
+5. **Last-name-first list labels** — Invoice, payment, client, and Billing Relationship list views show person names as Last, First while the Review queue remains date-driven.
 
 ### Bug Fixes In test.14
 
@@ -96,6 +105,8 @@ summary in the Review inspector.
 
 ### Prior Test Builds
 
+`v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.x. test.15 supersedes test.14 for installation and update testing.
+
 `v0.1.0-test.13` was built from commit `5436468` with Python 3.14.x. test.14 supersedes test.13 for installation and update testing.
 
 `v0.1.0-test.12` was built from commit `d9fd342` with Python 3.14.x. test.13 supersedes test.12 for installation and update testing.
@@ -125,8 +136,8 @@ replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
-and test.13 builds remain historically accurate for the periods in which they
-were the current builds. test.14 supersedes test.13 for installation and
+and test.14 builds remain historically accurate for the periods in which they
+were the current builds. test.15 supersedes test.14 for installation and
 stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,

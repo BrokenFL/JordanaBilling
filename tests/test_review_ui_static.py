@@ -230,6 +230,79 @@ for (const [input, expected] of cases) {
         self.assertIn("await openAccountRecord(accountId, { returnContext });", fn)
         self.assertNotIn('state.detail?.session?.review_status === "approved"', fn)
 
+    def test_review_billing_actions_offer_self_pay_and_relationship_switch(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        render_start = js.index("function renderInspector(data)")
+        render_end = js.index("function wireInspector()", render_start)
+        render_fn = js[render_start:render_end]
+        wire_start = js.index("function wireInspector()")
+        wire_end = js.index("function syncSessionCustomFields", wire_start)
+        wire_fn = js[wire_start:wire_end]
+
+        self.assertIn('id="setSelfPayBtn"', render_fn)
+        self.assertIn('id="editBillingRelationship"', render_fn)
+        self.assertIn('onclick = saveSelfPayBilling', wire_fn)
+        self.assertIn('onclick = openBillingRelationshipSwitcher', wire_fn)
+
+    def test_list_views_format_person_names_last_first_outside_review_queue(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        review_rows = js[js.index("function renderRows("):js.index("function statusColor", js.index("function renderRows("))]
+        helper = js[js.index("function displayNameLastFirst"):js.index("let paymentOverlayReturnFocus")]
+
+        self.assertIn("function displayNameLastFirst", js)
+        self.assertIn("function billToListName", js)
+        self.assertIn('sortBy: "bill_to_last_name"', js)
+        self.assertIn('params.set("sort_by", lib.sortBy || "bill_to_last_name")', js)
+        self.assertIn("fmt(billToListName(item))", js)
+        self.assertIn("fmt(personRowNameLastFirst(row))", js)
+        self.assertIn("billingDirPayerName", js)
+        self.assertNotIn("billToListName", review_rows)
+        self.assertNotIn("personRowNameLastFirst", review_rows)
+        script = helper + """
+const cases = [
+  [["Avery Stone", "Avery", "Stone"], "Stone, Avery"],
+  [["Avery Stone", "", ""], "Stone, Avery"],
+  [["Stone, Avery", "", ""], "Stone, Avery"],
+  [["Avery", "", ""], "Avery"],
+];
+for (const [args, expected] of cases) {
+  const actual = displayNameLastFirst(...args);
+  if (actual !== expected) {
+    throw new Error(`${JSON.stringify(args)} -> ${actual}, expected ${expected}`);
+  }
+}
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_self_pay_button_detaches_stale_account_for_single_confirmed_client(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function saveSelfPayBilling()")
+        end = js.index("async function saveSessionSection", start)
+        fn = js[start:end]
+
+        self.assertIn("clients.length !== 1", fn)
+        self.assertIn("bill_to_person_id: clients[0].person_id", fn)
+        self.assertIn("detach_account: true", fn)
+        self.assertIn('markSaved("billing", "Self pay saved")', fn)
+
+    def test_billing_relationship_search_rows_have_explicit_actions(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+
+        self.assertIn("modal-result-main", js)
+        self.assertIn("modal-result-action", js)
+        self.assertIn('button type="button" class="mini modal-result-action"', js)
+        self.assertIn("event.stopPropagation(); select();", js)
+        self.assertIn("event.stopPropagation(); add();", js)
+
+    def test_covered_client_editor_refreshes_review_context_after_add_or_remove(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function refreshReturnContextCandidate")
+        end = js.index("async function saveBillingRelationship", start)
+        fn = js[start:end]
+
+        self.assertIn("/api/review/candidates/${returnContext.candidateId}/refresh", fn)
+        self.assertEqual(fn.count("await refreshReturnContextCandidate(returnContext);"), 2)
+
     def test_approved_session_return_to_review_is_guarded(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("async function returnApprovedSessionToReview")

@@ -741,7 +741,7 @@ class PaymentServicesTests(unittest.TestCase):
                 self.assertEqual(p["amount_applied_cents"], 0)
                 self.assertEqual(p["status"], "posted")
 
-    def test_payment_lists_filter_by_invoice_period_and_sort_by_first_name(self):
+    def test_payment_lists_filter_by_invoice_period_and_sort_by_last_name(self):
         robin_session = self._approved_session_for(
             "robin-filter",
             "2026-06-12T10:00:00-04:00",

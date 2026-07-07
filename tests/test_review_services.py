@@ -741,6 +741,40 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(detail["readiness"]["billing_party_source"], "account_default")
         self.assertEqual(detail["effective_billing_party"]["billing_party_id"], payer["billing_party_id"])
 
+    def test_self_pay_billing_detaches_stale_account_for_review_session(self):
+        person = create_person(self.conn, "Fred Smith")
+        account = create_account(self.conn, "Fred Household", "household")
+        payer = create_billing_party(self.conn, {"billing_name": "Household Payer", "billing_party_type": "organization"})
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?",
+            (payer["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        save_relationship_section(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}],
+                "account_id": account["account_id"],
+            },
+        )
+
+        saved = save_billing_section(
+            self.conn,
+            self.candidate_id,
+            {"bill_to_person_id": person["person_id"], "detach_account": True},
+        )
+
+        session = self.conn.execute(
+            "SELECT account_id, billing_party_id FROM sessions WHERE candidate_id = ?",
+            (self.candidate_id,),
+        ).fetchone()
+        self.assertIsNone(session["account_id"])
+        self.assertEqual(session["billing_party_id"], saved["billing_party"]["billing_party_id"])
+        self.assertEqual(saved["billing_party"]["person_id"], person["person_id"])
+        self.assertEqual(saved["readiness"]["billing_party_source"], "session")
+        self.assertIsNone(saved["account"])
+
     def test_one_participant_with_exactly_one_active_billing_record_is_suggested(self):
         person = create_person(self.conn, "Fred Smith")
         payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})

@@ -199,7 +199,7 @@ class TestRound1JsStatic(unittest.TestCase):
         self.assertNotIn(">Add Member<", self.js)
 
     def test_duplicate_warning_text(self):
-        self.assertIn("Click to remove", self.js)
+        self.assertIn("This billing relationship already exists.", self.js)
 
     def test_search_existing_clients_label(self):
         self.assertIn("Search existing clients", self.js)
@@ -497,7 +497,8 @@ class TestRound1CorrectionJsStatic(unittest.TestCase):
     def test_render_covered_results_supports_selected_ids(self):
         self.assertIn("selectedIds", self.js)
         self.assertIn("already-included", self.js)
-        self.assertIn("Click to remove", self.js)
+        self.assertIn("Already included", self.js)
+        self.assertIn("Remove", self.js)
 
     def test_existing_members_clickable_to_remove(self):
         """renderEditorCoveredResults attaches click handlers for already-included clients to remove them."""

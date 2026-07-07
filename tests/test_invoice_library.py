@@ -149,7 +149,7 @@ class InvoiceLibraryTests(unittest.TestCase):
         finalized = list_invoice_records(self.conn, status="finalized")
         self.assertEqual(finalized["total"], 0)
 
-    def test_status_service_period_totals_and_first_name_sorting(self):
+    def test_status_service_period_totals_and_last_name_sorting(self):
         blake, blake_party = self.other_party("Blake", "Example")
         blake_session = self.approved_session(
             "blake",
@@ -176,7 +176,7 @@ class InvoiceLibraryTests(unittest.TestCase):
 
         result = list_invoice_records(self.conn)
 
-        self.assertEqual([row["current_bill_to_name"] for row in result["items"]], ["Avery Stone", "Blake Example"])
+        self.assertEqual([row["current_bill_to_name"] for row in result["items"]], ["Blake Example", "Avery Stone"])
         self.assertEqual(
             [option["value"] for option in result["service_period_options"]],
             ["2026-07", "2026-06"],
