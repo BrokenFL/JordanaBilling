@@ -354,7 +354,7 @@ mkdir -p "$TMP_APP/Contents/Resources/runtime"
 "$PYTHON_BIN" -m venv "$TMP_APP/Contents/Resources/runtime/venv"
 VENV_PYTHON="$TMP_APP/Contents/Resources/runtime/venv/bin/python"
 "$VENV_PYTHON" -m pip install --force-reinstall --no-index --find-links "$WHEELHOUSE" "$APP_WHEEL" >/dev/null
-"$VENV_PYTHON" -c 'import jordana_invoice, reportlab; from PIL import Image' >/dev/null
+"$VENV_PYTHON" -c 'import jordana_invoice, pypdf, reportlab; from PIL import Image' >/dev/null
 verify_installed_package_identity || fail "Staged package identity did not match the release manifest."
 replace_app_bundle
 VENV_PYTHON="$APP_DEST/Contents/Resources/runtime/venv/bin/python"

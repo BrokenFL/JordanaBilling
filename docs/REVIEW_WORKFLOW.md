@@ -296,6 +296,12 @@ Ambiguous but recognizable calendar titles (e.g. `Leah Grossman 630 38`, `Sage B
 
 Duplicate repair supports a sanitized dry-run, explicit apply, verified backup, idempotent application, and guarded reversal. Approved, invoiced, paid, audited, and raw-evidence records are protected. Reversal is refused after later edits make it unsafe.
 
+After **Confirm Client(s)** saves a previously unresolved client, the review
+screen refreshes the current candidate suggestions from the saved participants,
+billing party, rate rules, and shorthand evidence. Jordana should still inspect
+the refreshed duration, time category, service mode, billing treatment, and rate
+before approval; the app must not silently approve the row.
+
 Raw snapshot replay recovery is available in the app from the `Reconciliation`
 screen and in the CLI through `calendar-reconcile`. The app requires a month
 selection and a dry-run review before `Apply Safe Recovery` is enabled. Dry-run

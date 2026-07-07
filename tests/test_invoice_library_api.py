@@ -35,7 +35,9 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.db_path = self.root / "test.sqlite3"
         self.previous_invoice_root = os.environ.get("JORDANA_INVOICES_DIR")
+        self.previous_backup_dir = os.environ.get("JORDANA_BACKUP_DIR")
         os.environ["JORDANA_INVOICES_DIR"] = str(self.root / "Invoices")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root / "Backups")
         migrate_database(self.db_path)
         self.conn = connect(self.db_path)
         self.person = create_person(self.conn, {"first_name": "Pat", "last_name": "Client", "display_name": "Pat Client"})
@@ -60,6 +62,10 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
             os.environ.pop("JORDANA_INVOICES_DIR", None)
         else:
             os.environ["JORDANA_INVOICES_DIR"] = self.previous_invoice_root
+        if self.previous_backup_dir is None:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
+        else:
+            os.environ["JORDANA_BACKUP_DIR"] = self.previous_backup_dir
         self.temp.cleanup()
 
     def _handler(self, path, body=b""):
@@ -321,6 +327,92 @@ class InvoicePrintPreviewApiTests(unittest.TestCase):
         self.assertIn("status_totals", payload)
         self.assertEqual(payload["status_totals"]["draft"]["count"], 1)
 
+    def test_draft_packet_pdf_combines_selected_drafts(self):
+        first = self._draft([self._approved_session("packet1")])
+        second_session = self._approved_session("packet2", start_at="2026-06-16T10:00:00-04:00")
+        second = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [second_session["id"]],
+        })
+        before = self.conn.execute(
+            "SELECT invoice_id, status, revision, invoice_number, pdf_path, pdf_sha256 FROM invoices ORDER BY invoice_id"
+        ).fetchall()
+        body = json.dumps({
+            "invoice_ids": [
+                first["invoice"]["invoice_id"],
+                second["invoice"]["invoice_id"],
+            ]
+        }).encode("utf-8")
+
+        handler, captured = self._handler("/api/invoices/draft-packet-pdf", body)
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        headers = captured.get("headers", {})
+        after = self.conn.execute(
+            "SELECT invoice_id, status, revision, invoice_number, pdf_path, pdf_sha256 FROM invoices ORDER BY invoice_id"
+        ).fetchall()
+        self.assertEqual(captured.get("response_code"), 200)
+        self.assertTrue(handler.wfile.getvalue().startswith(b"%PDF"))
+        self.assertEqual(headers.get("Content-Type"), "application/pdf")
+        self.assertIn("Jordana_Draft_Invoice_Packet.pdf", headers.get("Content-Disposition", ""))
+        self.assertEqual([dict(row) for row in after], [dict(row) for row in before])
+
+    def test_draft_packet_pdf_rejects_finalized_invoice(self):
+        draft = self._draft([self._approved_session("packet-final")])
+        with patch(
+            "jordana_invoice.invoice_services.generate_invoice_pdf",
+            side_effect=lambda inv, lines, path, **kw: (
+                Path(path).parent.mkdir(parents=True, exist_ok=True),
+                Path(path).write_bytes(b"%PDF-1.4 fake content"),
+                "a" * 64,
+            )[-1],
+        ):
+            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        body = json.dumps({"invoice_ids": [draft["invoice"]["invoice_id"]]}).encode("utf-8")
+
+        handler, captured = self._handler("/api/invoices/draft-packet-pdf", body)
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        self.assertEqual(captured.get("status"), 400)
+        self.assertEqual(captured.get("payload", {}).get("error"), "Only draft invoices can be included in a draft packet.")
+
+    def test_backup_status_and_create_routes_use_verified_manifest(self):
+        backup_dir = self.root / "Backups"
+        backup_dir.mkdir()
+        unrelated = backup_dir / "other.backup-manual-20260707T000000Z.sqlite3.manifest.json"
+        unrelated.write_text(json.dumps({
+            "timestamp": "20260707T000000Z",
+            "source_db_path": str((self.root / "other.sqlite3").resolve()),
+            "backup_path": str(self.root / "Backups" / "other.sqlite3"),
+            "integrity_status": "ok",
+            "secondary_copy_status": "not_configured",
+        }), encoding="utf-8")
+
+        status_handler, status_captured = self._handler("/api/backups/status")
+        status_handler.conn = lambda: self.conn
+        status_handler.do_GET()
+
+        self.assertEqual(status_captured.get("status"), 200)
+        self.assertEqual(status_captured["payload"]["primary_backup_dir"], str(self.root / "Backups"))
+        self.assertEqual(status_captured["payload"]["last_backup_path"], "")
+
+        create_handler, create_captured = self._handler("/api/backups/create", b"{}")
+        create_handler.conn = lambda: self.conn
+        create_handler.do_POST()
+
+        payload = create_captured["payload"]
+        backup_path = Path(payload["backup_path"])
+        self.assertEqual(create_captured.get("status"), 200)
+        self.assertTrue(backup_path.exists())
+        self.assertTrue(backup_path.with_suffix(backup_path.suffix + ".manifest.json").exists())
+        self.assertEqual(payload["integrity_status"], "ok")
+        self.assertEqual(payload["last_backup_path"], str(backup_path))
+
 
 class InvoiceLibraryUiStaticTests(unittest.TestCase):
     def test_invoice_library_html_has_simplified_filter_controls(self):
@@ -339,7 +431,7 @@ class InvoiceLibraryUiStaticTests(unittest.TestCase):
 
     def test_invoice_library_html_has_enhanced_columns(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
-        self.assertIn("<th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th>", html)
+        self.assertIn("<th>Select</th><th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th>", html)
 
     def test_invoice_library_js_has_print_preview_and_pdf_buttons(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

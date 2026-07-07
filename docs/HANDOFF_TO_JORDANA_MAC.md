@@ -49,7 +49,7 @@ Required safeguards:
 
 1. Create a verified SQLite backup outside the repository.
 2. Run `PRAGMA integrity_check` against the backup.
-3. Record the current migration IDs through `017_relationship_filing_owner_target`.
+3. Record the current migration IDs through `018_delivery_contact_person`.
 4. Record row counts for critical operational tables.
 5. Calculate SHA-256 checksums for every private file being transferred.
 6. Keep Brooke's original database and backup unchanged until Jordana completes the June billing cycle.
@@ -229,9 +229,31 @@ Changing one concept must not silently convert the person into another role.
 
 ## Unresolved-Client Refresh
 
-An unknown client may initially show safe fallback values such as Standard 60. After the client identity is confirmed and saved, Jordana may need to refresh or reopen the session before the final duration, time category, and related defaults appear.
+An unknown client may initially show safe fallback values such as Standard 60.
+After the client identity is confirmed and saved, the app refreshes the current
+candidate suggestions from the saved client and billing context. Jordana should
+still verify the refreshed duration, time category, service mode, billing
+treatment, and rate before approval.
 
 Do not approve until the refreshed values are visible and correct.
+
+## Invoice Beta Controls
+
+Draft invoices can be edited inline for Bill To, File invoice under, invoice
+date, delivery method, and draft lines. Delivery edits default to this invoice
+only; choosing the billing-details scope updates the active billing party
+default for future drafts. Draft line edits update only the invoice line unless
+Jordana deliberately chooses the linked-session scope and supplies a correction
+reason.
+
+Finalization remains blocked while readiness issues are present. Missing billing
+email and mailing-address errors include direct fix actions that return to the
+same invoice after saving. Duplicate-billing warnings can open the linked
+approved session and return to the draft after re-approval.
+
+The Invoices screen can select visible draft invoices and print one draft
+packet PDF. Draft packets are for review only: they keep draft markings, do not
+assign invoice numbers, and do not mutate invoice state.
 
 ## What The Beta Does Not Automate
 

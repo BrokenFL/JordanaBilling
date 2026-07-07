@@ -120,6 +120,7 @@ const state = {
     billingMonthOptions: [],
     servicePeriodOptions: [],
     statusTotals: {draft: {count: 0, total_cents: 0}, finalized: {count: 0, total_cents: 0}},
+    selectedDraftInvoiceIds: new Set(),
     loaded: false
   },
   reconciliation: {
@@ -132,6 +133,7 @@ const state = {
 };
 state.accountOriginPersonId = null;
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
+const INVOICE_SESSION_RETURN_KEY = "invoiceSessionReturnContext";
 const BUSINESS_PROFILE_DEFAULTS = {
   business_name: "",
   provider_display_name: "",
@@ -695,7 +697,8 @@ function renderInspector(data) {
     <div class="actions">
       ${isSession && readiness.all_ready && !isFutureAppointment(s) ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
       ${isSession && readiness.all_ready && isFutureAppointment(s) ? '<button class="approve" id="approveBtn" disabled>Approve Session</button><div class="readonly-note" id="futureAppointmentNote">' + escapeHtml(futureAppointmentMessage(s)) + '</div>' : ""}
-      <button class="danger" id="excludeBtn">Exclude</button>
+      <button id="duplicateBtn">Mark Duplicate</button>
+      <button class="danger" id="excludeBtn">Exclude / Not Billable</button>
       <div class="reports-error" id="reviewActionError" role="alert" hidden></div>
     </div>
   `;
@@ -716,6 +719,7 @@ function wireInspector() {
   if ($("openPaidAtSessionReceiptBtn")) $("openPaidAtSessionReceiptBtn").onclick = () => openPaymentDetail($("openPaidAtSessionReceiptBtn").dataset.paymentId);
   if ($("saveSessionBtn")) $("saveSessionBtn").onclick = saveSessionSection;
   if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipSwitcher;
+  if ($("duplicateBtn")) $("duplicateBtn").onclick = confirmDuplicateAndNext;
   if ($("excludeBtn")) $("excludeBtn").onclick = excludeSelectedCandidate;
   [
     "billingTypeInput",
@@ -1303,7 +1307,7 @@ async function save(approve) {
     approvalState.submitting = true;
     approvalState.candidateId = state.selected;
     clearReviewActionError();
-    if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn"]);
+    if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn", "duplicateBtn"]);
   }
   await resolveTypedSelections();
   try {
@@ -1343,6 +1347,14 @@ async function save(approve) {
         showReviewWarning(updated.report_warning);
       }
       state.pendingSessionDraft = null;
+      const invoiceReturn = readInvoiceSessionReturnContext();
+      if (invoiceReturn && invoiceReturn.candidateId === approvalState.candidateId && invoiceReturn.invoiceId) {
+        clearInvoiceSessionReturnContext();
+        history.pushState({}, "", "/invoices");
+        await showInvoices();
+        await openInvoice(invoiceReturn.invoiceId);
+        showInvoiceSuccess("Session re-approved and invoice refreshed.");
+      }
       
       if (!document.getElementById("invoicesView").hidden) {
         await loadInvoices();
@@ -1514,7 +1526,7 @@ async function excludeSelectedCandidate() {
   excludeState.submitting = true;
   excludeState.candidateId = candidateId;
   clearReviewActionError();
-  if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn"]);
+    if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn", "duplicateBtn"]);
   try {
     await api(`/api/review/candidates/${candidateId}/mark`, {
       method: "POST",
@@ -2474,7 +2486,25 @@ async function sendSessionRowToReview(candidateId) {
   }
 }
 
-async function returnApprovedSessionToReview(candidateId, { refresh = null } = {}) {
+function persistInvoiceSessionReturnContext(context) {
+  if (!context || !context.invoiceId || !context.candidateId) return;
+  sessionStorage.setItem(INVOICE_SESSION_RETURN_KEY, JSON.stringify(context));
+}
+
+function readInvoiceSessionReturnContext() {
+  try {
+    const raw = sessionStorage.getItem(INVOICE_SESSION_RETURN_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearInvoiceSessionReturnContext() {
+  sessionStorage.removeItem(INVOICE_SESSION_RETURN_KEY);
+}
+
+async function returnApprovedSessionToReview(candidateId, { refresh = null, returnInvoiceId = null } = {}) {
   if (returnApprovedState.submitting) return;
   if (returnApprovedState.candidateId && returnApprovedState.candidateId !== candidateId) return;
   if (!getWriteToken()) {
@@ -2491,6 +2521,9 @@ async function returnApprovedSessionToReview(candidateId, { refresh = null } = {
     btn.textContent = "Returning...";
   });
   try {
+    if (returnInvoiceId) {
+      persistInvoiceSessionReturnContext({ candidateId, invoiceId: returnInvoiceId });
+    }
     await api(`/api/review/candidates/${candidateId}/return-to-review`, {
       method: "POST",
       body: JSON.stringify({ action_source: "review_ui" }),
@@ -3275,6 +3308,56 @@ async function loadSyncStatus() {
   renderSyncStatus(status);
 }
 
+function renderBackupStatus(status) {
+  if (!$("backupLastTime")) return;
+  $("backupLastTime").textContent = status.last_backup_time || "-";
+  $("backupIntegrity").textContent = status.integrity_status || "-";
+  $("backupSecondary").textContent = status.secondary_copy_status || "-";
+  $("backupPrimaryFolder").textContent = status.primary_backup_dir || "-";
+}
+
+async function loadBackupStatus() {
+  const status = await api("/api/backups/status");
+  renderBackupStatus(status);
+}
+
+async function createBackupNow() {
+  const message = $("backupMessage");
+  if (message) message.textContent = "";
+  const button = $("createBackupNowBtn");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating...";
+  }
+  try {
+    const status = await api("/api/backups/create", { method: "POST", body: "{}" });
+    renderBackupStatus(status);
+    if (message) {
+      message.className = "settings-message success";
+      message.textContent = "Backup created and verified.";
+    }
+  } catch (err) {
+    if (message) {
+      message.className = "settings-message";
+      message.textContent = sanitizeUiErrorMessage(err.message, "Could not create backup.");
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Create Backup Now";
+    }
+  }
+}
+
+async function openBackupFolderFromUi() {
+  try {
+    await api("/api/backups/open-folder", { method: "POST", body: "{}" });
+  } catch (err) {
+    const message = $("backupMessage");
+    if (message) message.textContent = sanitizeUiErrorMessage(err.message, "Could not open backup folder.");
+  }
+}
+
 async function runSyncNow() {
   if (state.syncRunning) return;
   setSyncRunning(true);
@@ -3282,6 +3365,7 @@ async function runSyncNow() {
   try {
     const result = await api("/api/sync/run", { method: "POST", body: JSON.stringify({}) });
     renderSyncStatus(result.status);
+    await loadBackupStatus();
     setSyncRunMessage(`Sync complete. Fetched ${result.rows_fetched} row(s); imported ${result.rows_imported} new row(s); skipped ${result.duplicate_snapshots_skipped || 0} duplicate snapshot(s); changed ${result.review_items_changed || 0} review item(s).`, true);
     await refreshDashboardStatus();
     if (!document.querySelector("[hidden]#calendarImportView")) await loadList();
@@ -3303,6 +3387,7 @@ async function showCalendarImport() {
   $("pageSubtitle").textContent = "Pull Shortcut snapshots already staged in Google Sheets";
   document.title = "Jordana Billing - Calendar Import";
   await loadSyncStatus();
+  await loadBackupStatus();
 }
 
 async function rebuildCalendarDataFromSheet() {
@@ -3314,6 +3399,7 @@ async function rebuildCalendarDataFromSheet() {
   try {
     const result = await api("/api/sync/rebuild", { method: "POST", body: JSON.stringify({ confirmed: true }) });
     renderSyncStatus(result.status);
+    await loadBackupStatus();
     $("syncRebuildMessage").className = "settings-message success";
     $("syncRebuildMessage").textContent = `Rebuild complete. Fetched ${result.rows_fetched} row(s); imported ${result.rows_imported} new row(s); skipped ${result.duplicate_snapshots_skipped || 0} duplicate snapshot(s).`;
     await refreshDashboardStatus();
@@ -3514,9 +3600,12 @@ function renderInvoiceLibrary() {
   const items = lib.items;
   const tbody = $("invoiceRows");
   renderInvoiceMonthOptions();
+  const visibleDraftIds = new Set(items.filter(row => row.status === "draft").map(row => row.invoice_id));
+  lib.selectedDraftInvoiceIds = new Set([...lib.selectedDraftInvoiceIds].filter(id => visibleDraftIds.has(id)));
   tbody.innerHTML = items.length
     ? items.map(row => `
       <tr data-invoice="${escapeAttr(row.invoice_id)}">
+        <td>${row.status === "draft" ? `<input type="checkbox" class="draft-invoice-select" data-draft-invoice-id="${escapeAttr(row.invoice_id)}" ${lib.selectedDraftInvoiceIds.has(row.invoice_id) ? "checked" : ""} aria-label="Select draft invoice">` : ""}</td>
         <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
         <td>${fmt(row.invoice_date)}</td>
         <td>${escapeHtml(invoiceServicePeriodLabel(row))}</td>
@@ -3530,7 +3619,18 @@ function renderInvoiceLibrary() {
         <td>${money(centString(row.balance_cents || 0))}</td>
         <td><button class="mini" data-open-invoice="${escapeAttr(row.invoice_id)}">Open</button></td>
       </tr>`).join("")
-    : `<tr><td colspan="12" class="readonly-note">No invoices found.</td></tr>`;
+    : `<tr><td colspan="13" class="readonly-note">No invoices found.</td></tr>`;
+  document.querySelectorAll("#invoiceRows .draft-invoice-select").forEach(input => {
+    input.onchange = (event) => {
+      event.stopPropagation();
+      const id = input.dataset.draftInvoiceId;
+      if (!id) return;
+      if (input.checked) lib.selectedDraftInvoiceIds.add(id);
+      else lib.selectedDraftInvoiceIds.delete(id);
+      renderDraftPacketMessage();
+    };
+    input.onclick = (event) => event.stopPropagation();
+  });
   document.querySelectorAll("#invoiceRows [data-open-invoice]").forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); openInvoice(btn.dataset.openInvoice); };
   });
@@ -3538,11 +3638,79 @@ function renderInvoiceLibrary() {
     row.onclick = () => openInvoice(row.dataset.invoice);
   });
   renderDraftMonthTotals();
+  renderDraftPacketMessage();
   const start = lib.offset + 1;
   const end = Math.min(lib.offset + lib.limit, lib.total);
   $("invoiceResultCount").textContent = lib.total === 0 ? "No results" : `Showing ${start}–${end} of ${lib.total}`;
   $("invoicePrevPage").disabled = lib.offset === 0;
   $("invoiceNextPage").disabled = lib.offset + lib.limit >= lib.total;
+}
+
+function renderDraftPacketMessage(message = "") {
+  const node = $("draftPacketMessage");
+  if (!node) return;
+  const count = state.invoiceLibrary.selectedDraftInvoiceIds.size;
+  node.textContent = message || (count ? `${count} draft invoice${count === 1 ? "" : "s"} selected.` : "");
+}
+
+function selectedDraftInvoiceIdsInTableOrder() {
+  const selected = state.invoiceLibrary.selectedDraftInvoiceIds;
+  return state.invoiceLibrary.items
+    .filter(row => row.status === "draft" && selected.has(row.invoice_id))
+    .map(row => row.invoice_id);
+}
+
+function selectAllVisibleDraftInvoices() {
+  state.invoiceLibrary.items.forEach(row => {
+    if (row.status === "draft") state.invoiceLibrary.selectedDraftInvoiceIds.add(row.invoice_id);
+  });
+  renderInvoiceLibrary();
+}
+
+function clearDraftInvoiceSelection() {
+  state.invoiceLibrary.selectedDraftInvoiceIds.clear();
+  renderInvoiceLibrary();
+}
+
+async function printDraftPacket() {
+  const ids = selectedDraftInvoiceIdsInTableOrder();
+  if (!ids.length) {
+    renderDraftPacketMessage("Select at least one draft invoice.");
+    return;
+  }
+  const selectedRows = state.invoiceLibrary.items.filter(row => state.invoiceLibrary.selectedDraftInvoiceIds.has(row.invoice_id));
+  if (selectedRows.some(row => row.status !== "draft")) {
+    renderDraftPacketMessage("Only draft invoices can be printed in a draft packet.");
+    return;
+  }
+  if (ids.length === 1) {
+    window.open(`/api/invoices/${encodeURIComponent(ids[0])}/draft-pdf`, "_blank");
+    return;
+  }
+  try {
+    const response = await fetch("/api/invoices/draft-packet-pdf", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Jordana-Write-Token": getWriteToken(),
+      },
+      body: JSON.stringify({ invoice_ids: ids }),
+    });
+    if (!response.ok) {
+      let message = "Could not create draft packet.";
+      try {
+        const json = await response.json();
+        message = json.error || message;
+      } catch {}
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (err) {
+    renderDraftPacketMessage(sanitizeUiErrorMessage(err.message, "Could not create draft packet."));
+  }
 }
 
 function renderInvoiceMonthOptions() {
@@ -3646,6 +3814,8 @@ function closeInvoiceWorkspace() {
 async function renderInvoiceEditor(data) {
   state.invoice = data;
   const i = data.invoice;
+  const parties = await api("/api/billing-parties?q=");
+  const billToOptions = parties.map(p => `<option value="${escapeAttr(p.billing_party_id)}" ${p.billing_party_id === i.bill_to_party_id ? "selected" : ""}>${fmt(p.billing_name)}</option>`).join("");
   const filing = data.filing_owner || {};
   const selectedFilingValue = filing.selected && filing.selected.owner_kind && filing.selected.owner_id
     ? `${filing.selected.owner_kind}:${filing.selected.owner_id}`
@@ -3669,8 +3839,14 @@ async function renderInvoiceEditor(data) {
     <button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button>
     <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
     <div class="field-grid">
+      <label class="field wide">Bill To<select id="editBillTo"><option value="">Select bill-to party</option>${billToOptions}</select><span class="help">Changing Bill To is allowed only when linked sessions already use that Bill To.</span></label>
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
+      <div class="field wide invoice-delivery-scope">
+        <label>Delivery Method scope</label>
+        <label class="checkbox-field"><input type="radio" name="editDeliveryScope" value="invoice_only" checked><span>This invoice only</span></label>
+        <label class="checkbox-field"><input type="radio" name="editDeliveryScope" value="billing_details"><span>Save to Billing Details going forward</span></label>
+      </div>
       ${filingControl}
     </div>
     <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
@@ -3699,7 +3875,8 @@ async function renderInvoiceEditor(data) {
 
   $("saveDraftChanges").onclick = async () => {
     const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
-    const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, lines})});
+    const selectedScope = document.querySelector('input[name="editDeliveryScope"]:checked')?.value || "invoice_only";
+    const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({bill_to_party_id:$("editBillTo").value, invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, delivery_method_scope:selectedScope, lines})});
     await renderInvoiceEditor(updated); await loadInvoices();
   };
 
@@ -3796,23 +3973,28 @@ function openLineEditModal(line, invoiceData) {
   amountInput.value = centString(line.line_amount_cents);
 
   const originalCents = line.line_amount_cents;
+  const originalDescription = line.description_snapshot || "";
 
-  const checkAmountChange = () => {
+  const checkCorrectionReason = () => {
     const amountStr = amountInput.value.trim().replace(/[$,]/g, "");
     const isValidAmount = /^\d+(\.\d{1,2})?$/.test(amountStr);
+    const selectedScope = document.querySelector('input[name="lineEditScope"]:checked')?.value || "invoice_line_only";
+    const descriptionChanged = descInput.value.trim() !== originalDescription;
     if (!isValidAmount) {
       reasonSection.style.display = "none";
       return;
     }
     const newCents = Math.round(parseFloat(amountStr) * 100);
-    if (newCents !== originalCents) {
+    if (newCents !== originalCents || (hasSession && selectedScope === "invoice_line_and_session" && descriptionChanged)) {
       reasonSection.style.display = "flex";
     } else {
       reasonSection.style.display = "none";
     }
   };
 
-  amountInput.addEventListener("input", checkAmountChange);
+  amountInput.addEventListener("input", checkCorrectionReason);
+  descInput.addEventListener("input", checkCorrectionReason);
+  document.querySelectorAll('input[name="lineEditScope"]').forEach(radio => radio.addEventListener("change", checkCorrectionReason));
 
   const closeAndRestore = () => {
     closeLineEditorModal();
@@ -3839,20 +4021,21 @@ function openLineEditModal(line, invoiceData) {
 
     const newCents = Math.round(parseFloat(amountStr) * 100);
     const amountChanged = (newCents !== originalCents);
+    const descriptionChanged = desc !== originalDescription;
 
     let reason = "";
     let scope = "invoice_line_only";
 
-    if (amountChanged) {
+    if (hasSession) {
+      const selectedScope = document.querySelector('input[name="lineEditScope"]:checked');
+      scope = selectedScope ? selectedScope.value : "invoice_line_only";
+    }
+
+    if (amountChanged || (hasSession && scope === "invoice_line_and_session" && descriptionChanged)) {
       reason = reasonTextarea.value.trim();
       if (!reason) {
-        showError("A correction reason is required when the amount changes.");
+        showError("A correction reason is required when the linked session is changed.");
         return;
-      }
-
-      if (hasSession) {
-        const selectedScope = document.querySelector('input[name="lineEditScope"]:checked');
-        scope = selectedScope ? selectedScope.value : "invoice_line_only";
       }
     }
 
@@ -4005,7 +4188,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const ready = readiness.ready;
   const readinessHtml = ready
     ? `<div class="settings-readiness ready">Ready to finalize — all checks passed.</div>`
-    : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul></div>`;
+    : `<div class="settings-readiness not-ready"><strong>Not ready to finalize.</strong> Fix the following before confirming:<ul>${readiness.errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join("")}</ul>${readinessFixActions(readiness.errors, i.invoice_id)}</div>`;
   const duplicateWarningsHtml = renderDuplicateBillingWarnings(preview.duplicate_warnings || []);
   const profile = preview.business_profile || {};
   const insState = insuranceState || {included: false, diagnosisCode: ""};
@@ -4048,6 +4231,14 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insFields = $("insuranceCodingFields");
   const insDiagnosisInput = $("insuranceDiagnosisCodeInput");
   const repreviewBtn = $("repreviewBtn");
+  document.querySelectorAll("#invoiceWorkspace .return-approved-session-btn").forEach(button => {
+    button.onclick = () => returnApprovedSessionToReview(button.dataset.cid, {
+      returnInvoiceId: button.dataset.returnInvoiceId || i.invoice_id,
+    });
+  });
+  document.querySelectorAll("#invoiceWorkspace .invoice-readiness-fix").forEach(button => {
+    button.onclick = () => openBillingDeliveryForInvoice(button.dataset.invoiceId || i.invoice_id, button.dataset.fix || "");
+  });
   backBtn.onclick = () => { state.finalizeInProgress = false; revokeFinalizationPreviewPdfUrl(); renderInvoiceEditor(preview); };
   if (insCheckbox) insCheckbox.onchange = () => {
     insFields.style.display = insCheckbox.checked ? "" : "none";
@@ -4145,6 +4336,41 @@ function renderFinalizationPreview(preview, insuranceState) {
   refreshFinalizationHtmlPreview();
 }
 
+function readinessFixActions(errors, invoiceId) {
+  const fields = new Set((errors || []).map(error => error.field));
+  const buttons = [];
+  if (fields.has("delivery_email")) {
+    buttons.push(`<button type="button" class="mini invoice-readiness-fix" data-fix="billing_email" data-invoice-id="${escapeAttr(invoiceId)}">Add Billing Email</button>`);
+  }
+  if (fields.has("delivery_address")) {
+    buttons.push(`<button type="button" class="mini invoice-readiness-fix" data-fix="mailing_address" data-invoice-id="${escapeAttr(invoiceId)}">Add Mailing Address</button>`);
+  }
+  return buttons.length ? `<div class="inline-actions">${buttons.join("")}</div>` : "";
+}
+
+async function openBillingDeliveryForInvoice(invoiceId, fixKind = "") {
+  persistInvoiceSessionReturnContext({ candidateId: "__invoice__", invoiceId });
+  const data = state.invoice?.invoice?.invoice_id === invoiceId ? state.invoice : await api(`/api/invoices/${invoiceId}`);
+  const party = data.billing_party || {};
+  const partyId = data.invoice?.bill_to_party_id || party.billing_party_id || "";
+  location.hash = "billing-relationships";
+  await showClients();
+  const rec = (billingDirState.records || []).find(row => row.billing_party_id === partyId || row.default_billing_party_id === partyId);
+  if (rec?.account_id) {
+    await openAccountRecord(rec.account_id);
+  } else if (party.person_id) {
+    await showClientsTab(party.person_id);
+    const editBtn = document.querySelector(`[data-edit-billing="${CSS.escape(partyId)}"]`);
+    if (editBtn) editBtn.click();
+  } else if (rec?.record_type === "organization" && rec.billing_party_id) {
+    await openOrganizationRecord(rec.billing_party_id);
+  }
+  requestAnimationFrame(() => {
+    const target = fixKind === "billing_email" ? $("bsfBillingEmail") : $("bsfAddress1");
+    if (target) target.focus();
+  });
+}
+
 function renderDuplicateBillingWarnings(warnings) {
   if (!Array.isArray(warnings) || warnings.length === 0) return "";
   const warningBlocks = warnings.map(warning => {
@@ -4155,13 +4381,14 @@ function renderDuplicateBillingWarnings(warnings) {
         <td>${fmt(session.participants || "Participants unresolved")}</td>
         <td>${fmt(session.duration_minutes)}</td>
         <td>${money(centString(session.amount_cents))}</td>
+        <td>${session.candidate_id ? `<button type="button" class="mini return-approved-session-btn" data-cid="${escapeAttr(session.candidate_id)}" data-return-invoice-id="${escapeAttr(state.invoice?.invoice?.invoice_id || "")}">Edit Session</button>` : ""}</td>
       </tr>
     `).join("");
     return `
       <div class="duplicate-warning-group">
         <div><strong>${fmt(warning.date)}</strong> ${fmt(warning.reason)}</div>
         <table class="review-table compact-table duplicate-warning-table">
-          <thead><tr><th>Date</th><th>Time</th><th>Participants</th><th>Minutes</th><th>Amount</th></tr></thead>
+          <thead><tr><th>Date</th><th>Time</th><th>Participants</th><th>Minutes</th><th>Amount</th><th>Action</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -4291,6 +4518,9 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
 }
 
 $("newInvoiceBtn").onclick = startInvoiceBuilder;
+$("selectAllDraftInvoices").onclick = selectAllVisibleDraftInvoices;
+$("clearDraftInvoiceSelection").onclick = clearDraftInvoiceSelection;
+$("printDraftPacketBtn").onclick = printDraftPacket;
 $("invoiceStatusFilter").onchange = () => { state.invoiceLibrary.offset = 0; loadInvoices(); };
 $("invoiceDraftMonthFilter").onchange = () => {
   state.invoiceLibrary.offset = 0;
@@ -6147,6 +6377,16 @@ async function saveBillingRelationship(accountId, editState, returnContext) {
       await selectCandidate(returnContext.candidateId);
       return;
     }
+    const invoiceReturn = readInvoiceSessionReturnContext();
+    if (invoiceReturn?.candidateId === "__invoice__" && invoiceReturn.invoiceId) {
+      clearInvoiceSessionReturnContext();
+      history.pushState({}, "", "/invoices");
+      await showInvoices();
+      const refreshed = await api(`/api/invoices/${invoiceReturn.invoiceId}/preview-finalize`, {method:"POST", body:JSON.stringify({})});
+      renderFinalizationPreview(refreshed, {included: false, diagnosisCode: ""});
+      showInvoiceSuccess("Billing delivery updated and invoice readiness refreshed.");
+      return;
+    }
     const originPersonId = state.accountOriginPersonId;
     if (originPersonId) {
       state.accountOriginPersonId = null;
@@ -6774,6 +7014,16 @@ function showBillingSetupForm(existing, defaultName) {
           body: JSON.stringify(payload)
         });
       }
+      const invoiceReturn = readInvoiceSessionReturnContext();
+      if (invoiceReturn?.candidateId === "__invoice__" && invoiceReturn.invoiceId) {
+        clearInvoiceSessionReturnContext();
+        history.pushState({}, "", "/invoices");
+        await showInvoices();
+        const refreshed = await api(`/api/invoices/${invoiceReturn.invoiceId}/preview-finalize`, {method:"POST", body:JSON.stringify({})});
+        renderFinalizationPreview(refreshed, {included: false, diagnosisCode: ""});
+        showInvoiceSuccess("Billing delivery updated and invoice readiness refreshed.");
+        return;
+      }
       await openPersonRecord(state.currentPersonId, { showAllSessions: state.personShowAllSessions });
       showBillingSetupMessage(isEdit ? "Billing setup updated." : "Billing setup added.", "success");
     } catch (err) {
@@ -6801,6 +7051,8 @@ $("newPersonBtn").onclick = async () => {
 };
 document.getElementById("syncNowBtn").onclick = runSyncNow;
 document.getElementById("syncRebuildBtn").onclick = rebuildCalendarDataFromSheet;
+document.getElementById("createBackupNowBtn").onclick = createBackupNow;
+document.getElementById("openBackupFolderBtn").onclick = openBackupFolderFromUi;
 document.getElementById("businessProfileForm").onsubmit = saveBusinessProfile;
 [
   "businessNameInput",

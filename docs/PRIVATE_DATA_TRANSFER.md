@@ -64,8 +64,10 @@ assets, or unencrypted cloud folders for live private data.
 ## Before Packaging
 
 1. Stop the local app.
-2. Create a SQLite backup from the operational database.
-3. Verify the backup with `PRAGMA integrity_check`.
+2. Create a SQLite backup from the operational database, preferably through the
+   app's manual backup control or `scripts/backup_db.sh`.
+3. Verify the backup with `PRAGMA integrity_check` and retain the generated
+   manifest showing `integrity_status: ok`.
 4. Record the database path and current migration IDs through the migration head.
 5. Record row counts for operational tables such as `people`, `sessions`,
    `billing_parties`, `client_accounts`, `invoices`, `invoice_line_items`,
@@ -103,7 +105,8 @@ copied into documentation, fixtures, screenshots, logs, examples, or Git.
 7. Run the release verification script from the release payload.
 8. Launch the app and confirm existing approved sessions, invoices, payments,
    receipts, relationships, and audit history are visible.
-9. Create a fresh private backup on the new Mac.
+9. Create a fresh private backup on the new Mac and confirm the backup manifest
+   reports `integrity_status: ok`.
 
 Do not clone the repository or run `scripts/setup_jordana_mac.sh` as the
 production handoff path. That retired script is a non-destructive stub, and a

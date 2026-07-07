@@ -168,7 +168,8 @@ For a transferred production database, also verify:
 4. Existing approved sessions, invoices, payments, and audit history are visible.
 5. Stored finalized PDFs and receipts open from their existing records.
 6. A manual calendar sync succeeds without duplicating snapshots or sessions.
-7. A fresh private backup is created on the new Mac.
+7. A fresh private backup is created on the new Mac and its manifest reports
+   `integrity_status: ok`.
 
 Do not run destructive reset scripts against the operational database.
 
@@ -180,6 +181,14 @@ The app uses one intelligent sync path:
 - successful cursor present: incremental sync
 - periodic in-app sync: incremental only
 - Advanced **Rebuild Calendar Data from Sheet**: recovery-only full reread with confirmation and a private database backup
+
+On the operational database, the app also creates verified backups before sync
+writes, rebuild apply, invoice finalization, invoice voiding, and manual backup
+requests. The default primary backup folder is
+`~/Library/Application Support/Jordana Billing/backups/`. A secondary copy is
+written to `JORDANA_SECONDARY_BACKUP_DIR` when configured, or to
+`~/Documents/Jordana Billing Private Backups/` when that folder already exists
+and is writable.
 
 The app does not launch the iPhone Shortcut. The Shortcut remains responsible for placing new Apple Calendar snapshots into Google Sheets.
 

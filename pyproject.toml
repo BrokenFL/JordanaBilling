@@ -5,11 +5,12 @@ description = "Local-first calendar snapshot importer and review workflow for Jo
 requires-python = ">=3.11"
 dependencies = [
   "Pillow>=10,<13",
+  "pypdf>=6,<7",
   "reportlab>=4.2,<5",
 ]
 
 [project.optional-dependencies]
-test = ["pypdf>=6,<7"]
+test = []
 
 [project.scripts]
 jordana-invoice = "jordana_invoice.cli:main"

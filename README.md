@@ -109,8 +109,11 @@ JORDANA_REPORTS_DIR=__PROJECT_DIR__/Reports
 JORDANA_INVOICES_DIR=Invoices
 JORDANA_RECEIPTS_DIR=Receipts
 JORDANA_PREFERRED_WORK_CALENDAR=Jordana Work
-# Optional backup directory. Defaults to ~/.jordana_invoice/backups if unset.
+# Optional primary backup directory. Defaults to ~/Library/Application Support/Jordana Billing/backups.
 JORDANA_BACKUP_DIR=
+# Optional secondary backup directory. If unset, the app uses
+# ~/Documents/Jordana Billing Private Backups only when that folder exists and is writable.
+JORDANA_SECONDARY_BACKUP_DIR=
 ```
 
 Then run:
@@ -292,6 +295,9 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - Ambiguous rows stay reviewable and reversible.
 - Calendar import and review commands do not generate invoices automatically.
 - Invoice staging/finalization, local PDF generation, immutable snapshots, payment ledger corrections, receipts, and optional invoice-specific insurance coding are implemented.
+- Draft invoice edits can update only the draft line, or deliberately update the linked approved session when Jordana supplies a correction reason.
+- Finalization remains blocked until readiness issues are fixed; the UI can route directly to missing billing email/address fixes and return to the invoice.
+- Local verified backups are created before operational sync writes, rebuilds, migrations, invoice finalization, invoice voiding, and manual backup requests.
 - No polished production dashboard is built yet.
 - Do not store clinical notes, psychotherapy notes, narrative diagnoses, symptoms, medical histories, treatment plans, session-content notes, treatment summaries, or clinical interpretations beyond the raw calendar evidence already imported.
 - Structured diagnosis codes may be stored only when Jordana intentionally enters or approves them for invoice-specific insurance billing or reimbursement documentation. They must never be inferred from calendar text, participant names, session descriptions, or other application data, should not appear on ordinary self-pay invoices, and real values must never be committed to GitHub, fixtures, screenshots, logs, demo data, examples, or documentation.

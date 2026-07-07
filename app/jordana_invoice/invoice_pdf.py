@@ -823,6 +823,30 @@ def generate_draft_pdf_bytes(
     )
 
 
+def generate_draft_packet_pdf_bytes(invoice_documents: list[tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]]) -> bytes:
+    """Combine multiple draft invoice PDFs into one in-memory packet.
+
+    The component PDFs are generated through the same draft renderer, so each
+    invoice remains visibly marked DRAFT and no invoice state is mutated.
+    """
+    if not invoice_documents:
+        raise ValueError("Select at least one draft invoice.")
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as error:
+        raise RuntimeError("Draft packet generation requires pypdf.") from error
+
+    writer = PdfWriter()
+    for invoice, lines, render_model in invoice_documents:
+        pdf_bytes = generate_draft_pdf_bytes(invoice, lines, render_model=render_model)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        for page in reader.pages:
+            writer.add_page(page)
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 def _build_pdf_footer(
     render: dict[str, Any],
     total_cents: int,

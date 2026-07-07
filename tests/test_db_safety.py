@@ -235,7 +235,7 @@ class AssertCsvImportSafeTests(unittest.TestCase):
             result = assert_csv_import_safe(conn, authorization=auth)
             self.assertEqual(result, auth.backup_path)
             # Only one backup file should exist.
-            backups = list(self.root.glob("*backup-migrate-*"))
+            backups = list(self.root.glob("*backup-migration-*.sqlite3"))
             self.assertEqual(len(backups), 1)
         finally:
             conn.close()
@@ -340,7 +340,7 @@ class ImportCsvServiceLayerGuardTests(unittest.TestCase):
         try:
             import_csv(conn, str(SAMPLE_CSV), operational_authorization=auth)
             # Exactly one backup should exist (from authorize, not from assert).
-            backups = list(self.root.glob("*backup-migrate-*"))
+            backups = list(self.root.glob("*backup-migration-*.sqlite3"))
             self.assertEqual(len(backups), 1)
         finally:
             conn.close()
@@ -795,7 +795,7 @@ class BackupBeforeMigrationTests(unittest.TestCase):
             conn.close()
 
         # Only one backup.
-        backups = list(self.root.glob("*backup-migrate-*"))
+        backups = list(self.root.glob("*backup-migration-*.sqlite3"))
         self.assertEqual(len(backups), 1)
 
 

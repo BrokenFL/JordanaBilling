@@ -172,6 +172,36 @@ class InvoiceLineEditingTests(unittest.TestCase):
         corr = self.conn.execute("SELECT * FROM invoice_line_item_corrections").fetchone()
         self.assertEqual(corr["correction_scope"], "invoice_line_and_session")
 
+    def test_edit_description_line_and_session_updates_session_with_audit(self):
+        """4. Description edits scoped to the approved session update session-facing fields."""
+        session = self.approved_session("desc_and_sess", amount="150.00")
+        draft = self.draft([session])
+        line = draft["lines"][0]
+
+        updated = update_invoice_line_item(
+            self.conn,
+            draft["invoice"]["invoice_id"],
+            line_id=line["invoice_line_item_id"],
+            description="Custom Billing Session",
+            amount_cents=15000,
+            amount_scope="invoice_line_and_session",
+            reason="Match invoice wording",
+            expected_revision=draft["invoice"]["revision"],
+        )
+
+        self.assertEqual(updated["lines"][0]["description_snapshot"], "Custom Billing Session")
+        session_row = self.conn.execute(
+            "SELECT billing_session_type, custom_service_description FROM sessions WHERE id = ?",
+            (session["id"],),
+        ).fetchone()
+        self.assertEqual(session_row["billing_session_type"], "custom")
+        self.assertEqual(session_row["custom_service_description"], "Custom Billing Session")
+        audit = self.conn.execute(
+            "SELECT action FROM audit_log WHERE entity_type = 'session' AND entity_id = ? AND action = ?",
+            (session["id"], "updated_from_draft_invoice_line"),
+        ).fetchone()
+        self.assertEqual(audit["action"], "updated_from_draft_invoice_line")
+
     def test_future_rate_rules_unmodified(self):
         """5. Future rate rules remain unchanged for both scopes."""
         session = self.approved_session("rate_rules_test", amount="150.00")

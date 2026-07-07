@@ -6,7 +6,16 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 ## Draft
 
-Drafts can add/remove eligible sessions, override delivery, and change dates. Totals use integer cents.
+Drafts can add/remove eligible sessions, change invoice dates, choose Bill To,
+choose File invoice under, and override delivery. Totals use integer cents.
+Changing Bill To on a draft is allowed only when every linked source session is
+already billed to that party; the draft editor does not silently rewrite linked
+session billing relationships.
+
+Delivery edits have an explicit scope:
+
+- **This invoice only**: changes the draft invoice delivery method without changing the billing party default.
+- **Billing details default**: updates the active billing party's preferred delivery method for future drafts as well as this draft.
 
 The draft editor displays invoice sessions in separate columns: Date,
 Participants, Session Type, Duration, and Rate. Date and Participants are not
@@ -23,17 +32,21 @@ The main Invoices screen exposes only Status and Service Period filters. Service
 Period options are generated from invoice service periods currently present in
 SQLite. The filtered invoice list sorts alphabetically by the Bill To/client
 first name and shows filtered Draft and Finalized invoice counts and totals.
+Draft rows can be selected and batch-printed into one draft packet PDF. The
+packet endpoint accepts only draft invoice IDs, marks every page as draft, and
+does not assign numbers or mutate invoice state.
 
 ### Line Item Editing
 
 Users can edit the description and line amount of draft invoices before finalization:
-- **Description Editing**: Editing a line description updates only that draft invoice line's description snapshot and does not affect the backing session description.
+- **Description Editing**: Editing a line description updates only that draft invoice line's description snapshot by default. For approved-session lines, Jordana can instead choose the linked-session scope, supply a correction reason, and update the approved session's invoice-facing service description.
 - **Amount/Rate Editing**: When changing a line amount, two correction scopes are available:
   1. **Invoice line only** (default): Updates only the line item's amount on this draft invoice. The backing session rate remains unmodified.
   2. **Invoice line and approved session**: Updates the line item's amount on this draft invoice, and also propagates the update to the backing session's approved rate and rate snapshot. (Only available for lines linked to an approved session).
-- **Validation**: Rejects empty descriptions, negative amounts, or values with more than two decimal places (fractional cents). A non-empty reason is required when the amount is modified.
+- **Review return flow**: When duplicate-billing readiness warnings point to an approved session, the UI can open that session for correction and return to the draft invoice after re-approval.
+- **Validation**: Rejects empty descriptions, negative amounts, or values with more than two decimal places (fractional cents). A non-empty reason is required when an amount is modified or when a description edit is applied to the linked approved session.
 - **Revision and Concurrency**: A successful edit increments the invoice revision number exactly once and recalculates totals. The update API requires `expected_revision` and rejects stale writes to prevent duplicate submission or overwrite conflicts.
-- **Audit Logging**: All edits write to the general `audit_log`. Edits that modify the line amount also write detailed correction records to `invoice_line_item_corrections`, storing the old/new values, the correction scope, and the user's correction reason.
+- **Audit Logging**: All edits write to the general `audit_log`. Edits that modify the line amount or deliberately update the linked approved session also write detailed correction records to `invoice_line_item_corrections`, storing the old/new values, the correction scope, and the user's correction reason. Linked-session edits also audit the session update.
 - **Immutability of Finalized/Voided Invoices**: Finalized and voided invoices cannot be edited. Attempts to modify them fail safely.
 
 ### Monthly Invoice Identity
@@ -137,7 +150,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, the formatted invoice date, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, and disables the finalize button while errors exist.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, the formatted invoice date, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, disables the finalize button while errors exist, and provides direct actions for missing billing email or mailing address that return to the same invoice after saving.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -160,7 +173,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
-Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. On the operational database, a verified private backup is created before finalization begins. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
 
 ### Optional Insurance Coding
 

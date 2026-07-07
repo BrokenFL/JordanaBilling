@@ -6,7 +6,7 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
-- **Migration head:** `017_relationship_filing_owner_target`
+- **Migration head:** `018_delivery_contact_person`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
 - **Current test release target:** `v0.1.0-test.15`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
@@ -72,6 +72,9 @@ This is not yet a final production declaration. Brooke should remain available d
 - Filing-owner selection and client/month folder organization
 - Filing owner supports organization, payer, covered client, or another explicitly selected active person
 - Draft filing-owner overrides do not rewrite relationship defaults
+- Draft Bill To, File invoice under, delivery scope, and line/session correction controls are inline in the invoice workspace
+- Draft packet PDF printing is available for selected draft invoices and is side-effect free
+- Finalization readiness errors can route to missing billing email/address fixes and return to the invoice
 - Prior unpaid balances and frozen account-summary snapshots
 - Optional invoice-specific insurance coding entered deliberately by Jordana
 - Void and reissue workflow
@@ -156,6 +159,8 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 18. **Invoice header presentation** — Draft previews, finalization previews, and finalized PDFs show the invoice header as `INVOICE`, an unlabeled uppercase short invoice date, and an unlabeled invoice number or draft placeholder. Billing Period is not displayed in the invoice header.
 19. **Payments period filtering** — The Payments screen now filters Outstanding, Paid, and All Payments by Invoice Period rather than invoice date. Outstanding and Paid invoice tables display Invoice Period, rows sort by Bill To/client first name, and paid-at-session posted payments appear in the Paid tab as session-payment rows without creating invoices or changing finalized invoice history.
 20. **Reports browser smoke** — `/reports` and `/api/reports` were verified in a real browser during release prep after the local debug session; report metadata loads and cards render.
+21. **Beta invoice polish** — Draft invoices can be batch-printed as a draft packet, edited inline for Bill To/File Under/delivery scope, and corrected back to linked approved sessions only with an explicit reason. Finalization repair actions return to the same invoice after missing billing contact details are saved.
+22. **Verified backup workflow** — App-launch daily backup, manual backup, migration backup, operational sync/rebuild backup, and finalization/void backup paths now use the verified backup module with manifests, retention, optional private-config copy, and optional secondary copy.
 
 ### Bug Fixes In test.12
 

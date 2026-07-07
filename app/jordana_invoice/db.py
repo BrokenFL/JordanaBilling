@@ -1062,57 +1062,30 @@ def _get_applied_migrations(conn: sqlite3.Connection) -> set[str]:
 
 
 def _backup_sqlite_database(source_path: Path, destination_path: Path) -> None:
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    from .backups import _sqlite_backup
 
-    source_conn = sqlite3.connect(
-        str(source_path),
-        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
-    )
-    destination_conn = sqlite3.connect(
-        str(destination_path),
-        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
-    )
-    try:
-        source_conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
-        destination_conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
-        source_conn.backup(destination_conn)
-        destination_conn.commit()
-    finally:
-        destination_conn.close()
-        source_conn.close()
+    _sqlite_backup(source_path, destination_path)
 
 
 def get_backup_dir() -> Path:
-    env_dir = os.environ.get("JORDANA_BACKUP_DIR")
-    if env_dir:
-        return Path(os.path.expanduser(env_dir))
-    return Path(os.path.expanduser("~/.jordana_invoice/backups"))
+    from .backups import primary_backup_dir
+
+    return primary_backup_dir()
 
 
 def _create_backup(db_path: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_dir = get_backup_dir()
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    backup_path = backup_dir / f"{db_path.stem}.backup-migrate-{timestamp}{db_path.suffix}"
-    # Handle same-second collisions by appending a counter.
-    counter = 1
-    while backup_path.exists():
-        backup_path = backup_dir / f"{db_path.stem}.backup-migrate-{timestamp}-{counter}{db_path.suffix}"
-        counter += 1
-    _backup_sqlite_database(db_path, backup_path)
-    return backup_path
+    from .backups import create_verified_backup
+
+    return create_verified_backup(db_path, reason="migration", allow_secondary=True).backup_path
 
 
 def _verify_backup(backup_path: Path) -> None:
+    from .backups import verify_sqlite_backup
+
     if not backup_path.exists():
         raise MigrationError(f"Backup file was not created: {backup_path}")
-    test_conn = sqlite3.connect(str(backup_path))
-    try:
-        result = test_conn.execute("PRAGMA integrity_check").fetchone()
-        if result[0] != "ok":
-            raise MigrationError(f"Backup integrity check failed: {backup_path}")
-    finally:
-        test_conn.close()
+    if verify_sqlite_backup(backup_path) != "ok":
+        raise MigrationError(f"Backup integrity check failed: {backup_path}")
 
 
 def _apply_migration_001(conn: sqlite3.Connection) -> None:

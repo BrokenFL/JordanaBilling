@@ -1271,14 +1271,17 @@ def parse_stage_invoices_request(payload: Any) -> StageInvoicesRequest:
 def parse_update_invoice_draft_request(payload: Any) -> UpdateInvoiceDraftRequest:
     """Parse POST /api/invoices/{id}.
 
-    Accepted fields: billing_period_start, billing_period_end, billing_month,
-    delivery_method, notes, supplement_sequence.
+    Accepted fields: bill_to_party_id, billing_period_start, billing_period_end,
+    billing_month, delivery_method, delivery_method_scope, notes,
+    supplement_sequence.
     """
     data = _require_object(payload)
     _optional_str(data, "billing_period_start")
     _optional_str(data, "billing_period_end")
     _optional_str(data, "billing_month")
+    _optional_str(data, "bill_to_party_id")
     _optional_str_choice(data, "delivery_method", _DELIVERY_METHODS)
+    _optional_str_choice(data, "delivery_method_scope", {"invoice_only", "billing_details"})
     _optional_str(data, "notes")
     _optional_int_not_bool(data, "supplement_sequence")
     return UpdateInvoiceDraftRequest(payload=data)
@@ -1288,14 +1291,15 @@ def parse_update_invoice_line_item_request(payload: Any) -> UpdateInvoiceLineIte
     """Parse POST /api/invoices/{id}/update-line.
 
     Required: invoice_line_item_id, description, amount_cents, amount_scope,
-    reason, expected_revision.
+    expected_revision. Reason is required by the service only when the edit
+    changes linked session-facing fields.
     """
     data = _require_object(payload)
     invoice_line_item_id = _required_str(data, "invoice_line_item_id")
     description = _required_str(data, "description")
     amount_cents = _required_int_not_bool(data, "amount_cents")
     amount_scope = _required_str(data, "amount_scope")
-    reason = _required_str(data, "reason")
+    reason = _optional_str(data, "reason") or ""
     expected_revision = _required_int_not_bool(data, "expected_revision")
     return UpdateInvoiceLineItemRequest(
         invoice_line_item_id=invoice_line_item_id,

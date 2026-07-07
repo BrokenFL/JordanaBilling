@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-017_relationship_filing_owner_target
+018_delivery_contact_person
 ```
 
 The registered migrations are:
@@ -31,6 +31,7 @@ The registered migrations are:
 15. `015_duplicate_repair_reversal_state` — reversible duplicate-repair state snapshots
 16. `016_late_cancellation_billing` — late-cancellation billing snapshots and scheduled-rate preservation
 17. `017_relationship_filing_owner_target` — relationship filing-owner kind/record targets for people or billing organizations
+18. `018_delivery_contact_person` — explicit delivery-contact person on billing parties
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 
@@ -41,13 +42,22 @@ Do not describe `001_base` as the current migration. It is the first migration i
 For an existing database with pending migrations it:
 
 1. acquires the database lock
-2. creates a timestamped SQLite backup
+2. creates a timestamped SQLite backup with a manifest
 3. verifies the backup with `PRAGMA integrity_check`
 4. applies pending migrations transactionally
 5. records each migration ID in `schema_migrations`
 6. restores the pre-migration database and raises `MigrationError` if migration fails
 
 When the database is already current, migration performs no backup and no schema writes.
+
+Operational sync writes, Sheet rebuild apply, invoice finalization, invoice
+voiding, migration, and manual backup requests use the same verified backup
+module. The default primary backup folder is
+`~/Library/Application Support/Jordana Billing/backups/`; `JORDANA_BACKUP_DIR`
+can override it. Secondary copies are written only to an explicitly configured
+`JORDANA_SECONDARY_BACKUP_DIR` or to an existing writable
+`~/Documents/Jordana Billing Private Backups/` folder. Protected/manual backups
+are exempt from retention cleanup.
 
 Migrations must remain:
 
@@ -134,6 +144,7 @@ The invoice schema supports:
 - filing-owner snapshots
 - prior-balance and account-summary snapshots
 - optional insurance-code snapshots
+- explicit delivery contact separate from payer identity
 - immutable finalized PDFs and invoice values
 - void and reissue rather than editing a finalized invoice
 

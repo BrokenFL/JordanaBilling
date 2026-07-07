@@ -15,7 +15,7 @@ from .csv_reports import refresh_reports_after_commit
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
 from .util import json_dumps, new_id, normalize_payment_status, now_iso
-from .db import DatabaseBusyError
+from .db import DatabaseBusyError, _get_db_path_from_conn, is_operational_db_path
 
 
 def init_db(_conn: sqlite3.Connection) -> None:
@@ -25,6 +25,15 @@ def init_db(_conn: sqlite3.Connection) -> None:
 
 DELIVERY_METHODS = {"email", "mail", "both", "unresolved"}
 INVOICE_STATUSES = {"draft", "finalized", "void"}
+
+
+def _backup_operational_database_before(conn: sqlite3.Connection, reason: str) -> None:
+    db_path = _get_db_path_from_conn(conn)
+    if db_path is None or not db_path.exists() or not is_operational_db_path(db_path):
+        return
+    from .backups import create_verified_backup
+
+    create_verified_backup(db_path, reason=reason)
 
 
 def _present_text(value: Any) -> str:
@@ -920,11 +929,11 @@ def list_invoice_records(
     }
 
 
-def get_invoice(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
+def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_delivery: bool = True) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     if not row:
         raise ValueError("Invoice was not found.")
-    if row["status"] == "draft":
+    if sync_draft_delivery and row["status"] == "draft":
         synchronize_draft_delivery_method(conn, invoice_id)
         row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     lines = invoice_line_rows(conn, invoice_id)
@@ -1241,7 +1250,31 @@ def update_invoice_draft(conn: sqlite3.Connection, invoice_id: str, data: dict[s
     try:
         method = data.get("delivery_method")
         if method is not None and method not in DELIVERY_METHODS: raise ValueError("Invalid delivery method.")
+        delivery_scope = str(data.get("delivery_method_scope") or "invoice_only").strip()
+        if delivery_scope not in {"invoice_only", "billing_details"}:
+            raise ValueError("Invalid delivery method scope.")
         fields = {key: data[key] for key in ("invoice_date", "billing_period_start", "billing_period_end", "delivery_method", "notes", "adjustment_cents") if key in data}
+        if "bill_to_party_id" in data:
+            bill_to_party_id = str(data.get("bill_to_party_id") or "").strip()
+            party = conn.execute(
+                "SELECT * FROM billing_parties WHERE billing_party_id = ? AND active = 1",
+                (bill_to_party_id,),
+            ).fetchone()
+            if not party:
+                raise ValueError("Select an active bill-to party.")
+            mismatch = conn.execute(
+                """
+                SELECT 1
+                FROM invoice_line_items li
+                JOIN sessions s ON s.id = li.source_session_id
+                WHERE li.invoice_id = ? AND COALESCE(s.billing_party_id, '') != ?
+                LIMIT 1
+                """,
+                (invoice_id, bill_to_party_id),
+            ).fetchone()
+            if mismatch:
+                raise ValueError("Bill To cannot change while draft lines are linked to sessions billed to another party.")
+            fields["bill_to_party_id"] = bill_to_party_id
         if "billing_period_start" in fields or "billing_period_end" in fields:
             row = conn.execute("SELECT billing_period_start, billing_period_end FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
             new_start = fields.get("billing_period_start", row["billing_period_start"])
@@ -1250,6 +1283,14 @@ def update_invoice_draft(conn: sqlite3.Connection, invoice_id: str, data: dict[s
         if fields:
             fields["updated_at"] = now_iso()
             conn.execute(f"UPDATE invoices SET {', '.join(f'{k} = ?' for k in fields)} WHERE invoice_id = ?", (*fields.values(), invoice_id))
+        if method in ("email", "mail", "both", "unresolved") and delivery_scope == "billing_details":
+            invoice = conn.execute("SELECT bill_to_party_id FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+            if not invoice or not invoice["bill_to_party_id"]:
+                raise ValueError("Bill-to party is missing or not found.")
+            conn.execute(
+                "UPDATE billing_parties SET preferred_delivery_method = ?, updated_at = ? WHERE billing_party_id = ?",
+                (method, now_iso(), invoice["bill_to_party_id"]),
+            )
         for index, item in enumerate(data.get("lines") or []):
             line_id = item.get("invoice_line_item_id")
             if not line_id: continue
@@ -1960,7 +2001,7 @@ def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> lis
         f"""
         SELECT li.invoice_line_item_id, li.service_date, li.participants_snapshot,
                li.duration_minutes, li.line_amount_cents, li.source_session_id,
-               s.start_at, s.end_at
+               s.start_at, s.end_at, s.candidate_id
         FROM invoice_line_items li
         LEFT JOIN sessions s ON s.id = li.source_session_id
         WHERE li.invoice_id = ?
@@ -1996,6 +2037,7 @@ def _duplicate_warning_line(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "invoice_line_item_id": row.get("invoice_line_item_id"),
         "source_session_id": row.get("source_session_id"),
+        "candidate_id": row.get("candidate_id"),
         "date": row.get("service_date") or "",
         "time": _time_label(row.get("start_at"), row.get("end_at")),
         "participants": row.get("participants_snapshot") or "",
@@ -2056,6 +2098,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         return get_invoice(conn, invoice_id)
     if existing["status"] != "draft":
         raise ValueError("Only a draft invoice can be finalized.")
+    _backup_operational_database_before(conn, "invoice_finalization")
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as error:
@@ -2153,6 +2196,7 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
 
 def void_invoice(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict[str, Any]:
     if not reason.strip(): raise ValueError("A void reason is required.")
+    _backup_operational_database_before(conn, "invoice_void")
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as error:
@@ -2281,15 +2325,16 @@ def update_invoice_line_item(
         old_description = line["description_snapshot"]
         old_amount_cents = line["line_amount_cents"]
         amount_changed = (amount_cents != old_amount_cents)
+        description_changed = description != (old_description or "")
 
-        if amount_changed:
+        if amount_changed or (description_changed and amount_scope == "invoice_line_and_session"):
             if not reason or not reason.strip():
-                raise ValueError("A correction reason is required when the amount changes.")
+                raise ValueError("A correction reason is required when the linked session is changed.")
             if amount_scope not in ("invoice_line_only", "invoice_line_and_session"):
                 raise ValueError("Invalid amount scope.")
 
         session_id = line["source_session_id"]
-        if amount_changed and amount_scope == "invoice_line_and_session":
+        if (amount_changed or description_changed) and amount_scope == "invoice_line_and_session":
             if not session_id:
                 raise ValueError("Session-update scope is only available for lines linked to a session.")
 
@@ -2303,13 +2348,31 @@ def update_invoice_line_item(
         )
 
         # Update backing session if applicable
-        if amount_changed and amount_scope == "invoice_line_and_session" and session_id:
+        if amount_scope == "invoice_line_and_session" and session_id and (amount_changed or description_changed):
+            session_updates = {
+                "updated_at": now,
+            }
+            if amount_changed:
+                session_updates["approved_rate_cents"] = amount_cents
+                session_updates["rate_cents_snapshot"] = amount_cents
+            if description_changed:
+                session_updates["billing_session_type"] = "custom"
+                session_updates["custom_service_description"] = description
             conn.execute(
-                """UPDATE sessions
-                   SET approved_rate_cents = ?, rate_cents_snapshot = ?
-                   WHERE id = ?""",
-                (amount_cents, amount_cents, session_id)
+                f"UPDATE sessions SET {', '.join(f'{k} = ?' for k in session_updates)} WHERE id = ?",
+                (*session_updates.values(), session_id),
             )
+            _audit(conn, "session", session_id, "updated_from_draft_invoice_line", {
+                "invoice_id": invoice_id,
+                "invoice_line_item_id": line_id,
+                "changed_fields": [
+                    field for field, changed in (
+                        ("approved_rate_cents", amount_changed),
+                        ("custom_service_description", description_changed),
+                    ) if changed
+                ],
+                "reason": reason.strip(),
+            })
 
         # Recalculate totals
         _recalculate(conn, invoice_id)
@@ -2321,7 +2384,7 @@ def update_invoice_line_item(
         )
 
         # Log correction record
-        if amount_changed:
+        if amount_changed or (description_changed and amount_scope == "invoice_line_and_session"):
             correction_id = new_id()
             conn.execute(
                 """INSERT INTO invoice_line_item_corrections (

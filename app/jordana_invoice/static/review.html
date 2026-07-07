@@ -246,6 +246,20 @@
               </div>
             </section>
             <section class="settings-card">
+              <h3>Backups</h3>
+              <div class="kv sync-status-grid">
+                <label>Last backup</label><span id="backupLastTime">-</span>
+                <label>Integrity</label><span id="backupIntegrity">-</span>
+                <label>Secondary copy</label><span id="backupSecondary">-</span>
+                <label>Primary folder</label><span id="backupPrimaryFolder">-</span>
+              </div>
+              <div class="settings-actions">
+                <button type="button" class="save" id="createBackupNowBtn">Create Backup Now</button>
+                <button type="button" id="openBackupFolderBtn">Open Backup Folder</button>
+                <div class="settings-message" id="backupMessage" aria-live="polite"></div>
+              </div>
+            </section>
+            <section class="settings-card">
               <h3>Advanced</h3>
               <p class="help">Rebuild Calendar Data from Sheet rereads all staged Sheet evidence, creates a private SQLite backup first, and preserves reviewed billing decisions.</p>
               <div class="settings-actions">
@@ -355,10 +369,16 @@
             <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value" id="invoiceOutstandingValue">$0.00</div><div class="summary-card-note">All finalized invoices</div></div>
           </div>
           <div id="draftMonthTotals" class="draft-month-summary" aria-live="polite"></div>
+          <div class="invoice-batch-toolbar" aria-label="Draft invoice packet tools">
+            <button type="button" id="selectAllDraftInvoices">Select All Drafts</button>
+            <button type="button" id="clearDraftInvoiceSelection">Clear</button>
+            <button type="button" id="printDraftPacketBtn" class="save">Print Draft Packet</button>
+            <span id="draftPacketMessage" class="settings-message" aria-live="polite"></span>
+          </div>
           <div class="invoice-layout">
             <section>
               <table class="review-table invoice-list-table">
-                <thead><tr><th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Select</th><th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr></thead>
                 <tbody id="invoiceRows"></tbody>
               </table>
               <footer class="pager">

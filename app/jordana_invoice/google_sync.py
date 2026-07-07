@@ -198,6 +198,12 @@ def sync_now(
 ) -> SyncResult:
     config = config or load_config()
     migrate_database(config.database_path)
+    if not dry_run:
+        from .backups import create_verified_backup
+        from .db import is_operational_db_path
+
+        if is_operational_db_path(config.database_path):
+            create_verified_backup(config.database_path, reason="sync_apply")
     conn = connect(config.database_path)
     return sync_with_connection(
         conn,
@@ -230,6 +236,12 @@ def sync_calendar_automatically(
     try:
         config = config or load_config()
         migrate_database(config.database_path)
+        if not dry_run:
+            from .backups import create_verified_backup
+            from .db import is_operational_db_path
+
+            if is_operational_db_path(config.database_path):
+                create_verified_backup(config.database_path, reason="sync_apply")
         conn = connect(config.database_path)
         try:
             initial = should_run_initial_full_sync(conn)
@@ -251,15 +263,15 @@ def rebuild_calendar_data_from_sheet(
     *,
     transport: Transport = default_transport,
 ) -> tuple[SyncResult, str]:
-    from .db import _create_backup, _verify_backup
+    from .backups import create_verified_backup
 
     migrate_database(config.database_path)
-    backup_path = _create_backup(Path(config.database_path))
-    _verify_backup(backup_path)
+    backup_path = create_verified_backup(Path(config.database_path), reason="sheet_rebuild").backup_path
     result = sync_with_process_lock(
         config,
         full=True,
         transport=transport,
+        backup_before_apply=False,
     )
     return result, str(backup_path)
 
@@ -271,6 +283,7 @@ def sync_with_process_lock(
     dry_run: bool = False,
     transport: Transport = default_transport,
     skip_if_running: bool = False,
+    backup_before_apply: bool = True,
 ) -> SyncResult:
     acquired = _SYNC_RUN_LOCK.acquire(blocking=False)
     if not acquired:
@@ -285,6 +298,12 @@ def sync_with_process_lock(
             )
         raise SyncAlreadyRunning("Calendar sync is already running.")
     try:
+        if backup_before_apply and not dry_run:
+            from .backups import create_verified_backup
+            from .db import is_operational_db_path
+
+            if is_operational_db_path(config.database_path):
+                create_verified_backup(config.database_path, reason="sync_apply")
         conn = connect(config.database_path)
         try:
             return sync_with_connection(

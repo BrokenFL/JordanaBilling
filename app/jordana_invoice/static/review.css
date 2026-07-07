@@ -417,6 +417,9 @@ tr.empty-row:hover { background: transparent; }
 .invoice-list-table { min-width: 1120px; table-layout: auto; }
 .invoice-list-table th, .invoice-list-table td { width: auto; text-align: left; }
 .invoice-list-table th, .invoice-list-table td { overflow-wrap: anywhere; }
+.invoice-batch-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 12px; }
+.invoice-batch-toolbar .settings-message { min-height: 0; margin-left: 4px; }
+.invoice-delivery-scope { display: flex; flex-direction: column; gap: 6px; }
 .unpaid-list-table { min-width: 880px; }
 .unpaid-list-table th:last-child,
 .unpaid-list-table td:last-child { white-space: nowrap; }

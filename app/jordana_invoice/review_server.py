@@ -103,7 +103,13 @@ from .invoice_services import (
     void_invoice,
 )
 from .invoice_rendering import build_print_preview_html, build_invoice_render_model
-from .invoice_pdf import generate_draft_pdf_bytes
+from .invoice_pdf import generate_draft_packet_pdf_bytes, generate_draft_pdf_bytes
+from .backups import (
+    backup_status,
+    create_verified_backup,
+    maybe_create_daily_launch_backup,
+    open_backup_folder,
+)
 from .financial_summary import get_financial_summary
 from .payment_services import (
     apply_available_funds,
@@ -361,6 +367,9 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Select which participant should receive this future rate.",
             "session_ids must be a list.",
             "Each session_id must be a non-empty string.",
+            "Select at least one draft invoice.",
+            "Every selected invoice id must be a non-empty string.",
+            "Only draft invoices can be included in a draft packet.",
             "Explicit finalization confirmation is required.",
             # People / Aliases / Merge
             "Person not found.",
@@ -373,9 +382,11 @@ def is_safe_validation_error(error: Exception) -> bool:
             # Invoices / Drafts / Finalization
             "Invoice was not found.",
             "Select an active bill-to party.",
+            "Bill To cannot change while draft lines are linked to sessions billed to another party.",
             "billing_month must be in YYYY-MM format.",
             "A valid billing period is required.",
             "Invalid delivery method.",
+            "Invalid delivery method scope.",
             "Session is already included in this draft.",
             "Source session was not found.",
             "All invoice sessions must use the selected bill-to party.",
@@ -388,6 +399,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Description must be non-empty.",
             "Amount must be non-negative.",
             "A correction reason is required when the amount changes.",
+            "A correction reason is required when the linked session is changed.",
             "Invalid amount scope.",
             "Session-update scope is only available for lines linked to a session.",
             "Line item does not belong to this invoice.",
@@ -735,6 +747,9 @@ def make_handler(
                 if parsed.path == "/api/sync/status":
                     self.send_json(sync_status_payload(self.conn(), sync_runtime))
                     return
+                if parsed.path == "/api/backups/status":
+                    self.send_json(backup_status(database_path))
+                    return
                 if parsed.path == "/api/service-catalog":
                     self.send_json(list_services(self.conn(), first(parse_qs(parsed.query), "include_inactive") == "1"))
                     return
@@ -953,6 +968,13 @@ def make_handler(
                             "message": message,
                         }
                     )
+                    return
+                if parsed.path == "/api/backups/create":
+                    result = create_verified_backup(database_path, reason="manual_backup", protected=True)
+                    self.send_json({"ok": True, **backup_status(database_path), "backup_path": str(result.backup_path)})
+                    return
+                if parsed.path == "/api/backups/open-folder":
+                    self.send_json(open_backup_folder())
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/print-preview"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
@@ -1221,6 +1243,21 @@ def make_handler(
                     self.send_json(
                         stage_approved_sessions_to_monthly_drafts(self.conn(), session_ids=session_ids)
                     )
+                    return
+                if parsed.path == "/api/invoices/draft-packet-pdf":
+                    invoice_ids = data.get("invoice_ids")
+                    if not isinstance(invoice_ids, list) or not invoice_ids:
+                        raise ValueError("Select at least one draft invoice.")
+                    if any(not isinstance(item, str) or not item.strip() for item in invoice_ids):
+                        raise ValueError("Every selected invoice id must be a non-empty string.")
+                    documents = []
+                    for invoice_id in invoice_ids:
+                        inv_data = get_invoice(self.conn(), invoice_id, sync_draft_delivery=False)
+                        if inv_data["invoice"]["status"] != "draft":
+                            raise ValueError("Only draft invoices can be included in a draft packet.")
+                        documents.append((inv_data["invoice"], inv_data["lines"], inv_data.get("render_model")))
+                    body = generate_draft_packet_pdf_bytes(documents)
+                    self.send_pdf(body, "Jordana_Draft_Invoice_Packet.pdf")
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/payments"):
                     invoice_id = parsed.path.strip("/").split("/")[2]
@@ -1713,6 +1750,10 @@ def serve(database_path: str, host: str = "127.0.0.1", port: int = 8765) -> None
         if error.backup_path:
             print(f"Backup preserved at: {error.backup_path}")
         raise SystemExit(1)
+    try:
+        maybe_create_daily_launch_backup(database_path)
+    except Exception as error:
+        print(f"Automatic launch backup failed: {error}")
     sync_runtime = CalendarSyncRuntime(database_path, transport=REVIEW_SYNC_TRANSPORT)
     server = ThreadingHTTPServer((host, port), make_handler(database_path, sync_runtime=sync_runtime))
     previous_handlers: dict[int, object] = {}

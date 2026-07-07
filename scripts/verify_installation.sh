@@ -37,6 +37,7 @@ import sqlite3
 from pathlib import Path
 
 import jordana_invoice
+import pypdf
 import reportlab
 from PIL import Image
 

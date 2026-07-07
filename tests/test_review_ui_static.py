@@ -1029,14 +1029,14 @@ for (const [args, expected] of cases) {
 
         self.assertIn('$("reviewOverlayContent")', js)
 
-    def test_review_overlay_footer_has_only_approve_and_exclude_actions(self):
+    def test_review_overlay_footer_has_approve_duplicate_and_exclude_actions(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn('id="approveBtn"', js)
+        self.assertIn('id="duplicateBtn"', js)
         self.assertIn('id="excludeBtn"', js)
         self.assertNotIn('id="saveNextBtn"', js)
         self.assertNotIn('id="prevSessionBtn"', js)
-        self.assertNotIn('id="duplicateBtn"', js)
         self.assertNotIn('id="personalBtn"', js)
 
     def test_unresolved_client_and_payer_lock_later_steps(self):
@@ -2246,7 +2246,7 @@ class ReviewApprovalTests(unittest.TestCase):
 
     def test_approval_disables_button_during_request(self):
         self.assertIn("approvalState.submitting = true;", self.save_fn)
-        self.assertIn('reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn"]);', self.save_fn)
+        self.assertIn('reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn", "duplicateBtn"]);', self.save_fn)
 
     def test_approval_closes_overlay_on_success(self):
         self.assertIn("completeReviewOverlayAction();", self.save_fn)
@@ -2416,8 +2416,8 @@ class ReviewLineEditingUiTests(unittest.TestCase):
         # Amount format and decimal places regex check
         self.assertIn("/^\\d+(\\.\\d{1,2})?$/", self.js)
         self.assertIn("Amount must be a non-negative number with at most 2 decimal places.", self.js)
-        # Correction reason validation on amount change
-        self.assertIn("A correction reason is required when the amount changes.", self.js)
+        # Correction reason validation on linked-session changes
+        self.assertIn("A correction reason is required when the linked session is changed.", self.js)
 
     def test_js_line_editor_success_and_failure_behaviors(self):
         # Verify saveBtn is disabled during request to prevent duplicate submissions

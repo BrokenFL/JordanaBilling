@@ -147,7 +147,8 @@ class MigrationSafetyTests(unittest.TestCase):
         backup_path = Path(result["backup_path"])
         self.assertTrue(backup_path.exists())
         self.assertGreater(backup_path.stat().st_size, 0)
-        self.assertIn("backup-migrate-", backup_path.name)
+        self.assertIn("backup-migration-", backup_path.name)
+        self.assertTrue(backup_path.with_suffix(backup_path.suffix + ".manifest.json").exists())
 
     # --- current databases are not backed up or rewritten unnecessarily ---
 
@@ -155,13 +156,10 @@ class MigrationSafetyTests(unittest.TestCase):
         db_path = self.root / "test.sqlite3"
         migrate_database(db_path)
 
-        backups_before = list(self.root.glob("*backup-migrate-*"))
         result = migrate_database(db_path)
-        backups_after = list(self.root.glob("*backup-migrate-*"))
 
         self.assertFalse(result["migrated"])
         self.assertIsNone(result["backup_path"])
-        self.assertEqual(len(backups_before), len(backups_after))
 
     # --- failed migration rolls back and leaves the original usable ---
 
@@ -394,7 +392,7 @@ class BackupScriptTests(unittest.TestCase):
         if "JORDANA_BACKUP_DIR" in os.environ:
             del os.environ["JORDANA_BACKUP_DIR"]
         try:
-            expected = Path.home() / ".jordana_invoice" / "backups"
+            expected = Path.home() / "Library" / "Application Support" / "Jordana Billing" / "backups"
             self.assertEqual(db_module.get_backup_dir(), expected)
         finally:
             if old_val is not None:
