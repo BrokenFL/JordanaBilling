@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.13 Release Notes
+# Jordana Billing v0.1.0-test.14 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.13` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.14` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.13-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.14-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.13
-- **Python package/application version:** 0.1.0.post13
+- **Release label:** v0.1.0-test.14
+- **Python package/application version:** 0.1.0.post14
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,20 +29,25 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post13` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post14` app wheel plus pinned production dependencies
 - **Unit tests and focused browser smoke:** required before publication
 - **Temporary-DB acceptance test:** required before publication when running the broader release checklist
 - **Privacy and Git safety checks:** required before publication
 
-## Bug Fixes In test.13
+## Bug Fixes In test.14
 
-1. **Paid-at-session approval after saved details** — Approval now reuses the saved paid-at-session amount, date, method, reference, and administrative note when the Session Details section is collapsed. This fixes the unexpected approval error without creating duplicate payments or changing finalized invoice history.
-2. **Invoices screen simplification** — The invoice library now exposes only Status and Service Period filters, lists service periods dynamically, shows filtered Draft and Finalized counts/totals, and sorts by Bill To/client first name.
-3. **Draft invoice table layout** — Draft invoice rows now separate Date and Participants and show Date, Participants, Session Type, Duration, and Rate as distinct columns.
-4. **Review raw calendar title** — Review queue uses the RAW CLIENT label and displays the original raw calendar event title, matching the Session evidence source without altering raw evidence.
-5. **Invoice header presentation** — Draft previews, finalization previews, finalized invoice views, and PDFs show the header as `INVOICE`, an unlabeled invoice date, and an unlabeled invoice number. Billing Period is removed from the invoice header.
-6. **Payments period filtering** — Outstanding, Paid, and All Payments now filter by invoice/service period, display Invoice Period instead of Invoice Date on invoice-payment tables, sort by Bill To/client first name, and include posted paid-at-session session payments in Paid.
-7. **Reports smoke verification** — `/reports` and `/api/reports` were verified in a real browser during release prep after a user-reported loading concern.
+1. **Static asset cache-busting** — CSS and JS assets are now served with mtime-based version query strings and `no-store` Cache-Control headers, preventing stale cached assets after updates.
+2. **Inactive payer record conflict fix** — The billing relationship directory no longer reports a false payer-record-conflict warning when an inactive billing party exists alongside an active one for the same person.
+3. **SELECT change-event handling** — Dropdown selects in the Review inspector and Rate Card now listen for `change` events in addition to `input` events via a shared `bindInputAndChange` helper, ensuring selections like billing type, duration, payment method, and attendance outcome are detected reliably.
+4. **Inline invoice workspace at laptop widths** — The invoice workspace renders inline within the invoices view at laptop widths instead of as a modal sheet, with smooth scroll-to-top on reveal and no backdrop overlay.
+5. **Paid-at-session Receipt button** — The paid-at-session summary in the Review inspector now includes a Receipt button that opens the payment detail view for the associated payment.
+
+## Bug Fixes Inherited from test.13
+
+1. **Paid-at-session approval after saved details** — Approval now reuses the saved paid-at-session amount, date, method, reference, and administrative note when the Session Details section is collapsed.
+2. **Invoice presentation** — Simplified invoice filters, separated draft columns, corrected invoice headers, and raw calendar titles in Review.
+3. **Payments workspace** — Invoice Period filtering, first-name sorting, and paid-at-session rows in Paid.
+4. **Reports smoke** — Reports route and API verified during release prep.
 
 ## Bug Fixes Inherited from test.12
 

@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `017_relationship_filing_owner_target`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.13`
+- **Current test release target:** `v0.1.0-test.14`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post13`
+- **Current package/application version:** `0.1.0.post14`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.12` is superseded by test.13 for installation and update testing
+- **Prior test release:** `v0.1.0-test.13` is superseded by test.14 for installation and update testing
 
 ## Architecture
 
@@ -107,17 +107,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.13 supersedes test.12):
+The current controlled-beta release target is (test.14 supersedes test.13):
 
 ```text
-JordanaBilling-v0.1.0-test.13-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.14-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.13`
-- Python package/application version: `0.1.0.post13`
+- Release label: `v0.1.0-test.14`
+- Python package/application version: `0.1.0.post14`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -127,9 +127,17 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post13` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post14` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Bug Fixes In test.14
+
+1. **Static asset cache-busting** — CSS and JS assets are now served with mtime-based version query strings and `no-store` Cache-Control headers, preventing stale cached assets after updates.
+2. **Inactive payer record conflict fix** — The billing relationship directory no longer reports a false payer-record-conflict warning when an inactive billing party exists alongside an active one for the same person.
+3. **SELECT change-event handling** — Dropdown selects in the Review inspector and Rate Card now listen for `change` events in addition to `input` events via a shared `bindInputAndChange` helper, ensuring selections like billing type, duration, payment method, and attendance outcome are detected reliably.
+4. **Inline invoice workspace at laptop widths** — The invoice workspace renders inline within the invoices view at laptop widths instead of as a modal sheet, with smooth scroll-to-top on reveal and no backdrop overlay.
+5. **Paid-at-session Receipt button** — The paid-at-session summary in the Review inspector now includes a Receipt button that opens the payment detail view for the associated payment.
 
 ### Bug Fixes In test.13
 
@@ -175,6 +183,8 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 5. **Report filtering** — client-facing session exports exclude unresolved and excluded rows; All Appointments remains the complete audit ledger.
 
 ### Prior Test Releases
+
+`v0.1.0-test.13` was built from commit `5436468`. test.14 supersedes test.13 for installation and update testing.
 
 `v0.1.0-test.11` was built from commit `7bcb8d3`. test.12 supersedes test.11 for installation and update testing.
 

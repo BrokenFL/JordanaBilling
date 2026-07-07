@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.13
+### Current Test Build — v0.1.0-test.14
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.13
-- **Python package/application version:** 0.1.0.post13
+- **Release label:** v0.1.0-test.14
+- **Python package/application version:** 0.1.0.post14
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,24 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post13` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post14` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.13 fixes paid-at-session approval after saving/collapsing the payment
-detail form, simplifies invoice filtering, updates invoice header presentation,
-balances the Review queue columns, and updates the Payments workspace to filter
-by invoice/service period while showing paid-at-session payments in the Paid tab.
+test.14 fixes static asset cache-busting, inactive payer record conflict
+warnings, SELECT change-event handling in Review and Rate Card, inline invoice
+workspace at laptop widths, and adds a Receipt button to the paid-at-session
+summary in the Review inspector.
+
+### Bug Fixes In test.14
+
+1. **Static asset cache-busting** — CSS and JS assets are served with mtime-based version query strings and `no-store` Cache-Control headers for all `.html`, `.css`, and `.js` responses.
+2. **Inactive payer record conflict fix** — `has_payer_record_conflict` now counts only active billing parties, preventing false conflict warnings from inactive payers.
+3. **SELECT change-event handling** — `bindInputAndChange` helper adds `change` event listeners to SELECT elements in the Review inspector and Rate Card alongside `input` events.
+4. **Inline invoice workspace at laptop widths** — Invoice workspace renders inline at laptop widths with no backdrop, no modal attributes, and smooth scroll-to-top.
+5. **Paid-at-session Receipt button** — Review inspector paid-at-session summary includes a Receipt button linking to the payment detail view.
 
 ### Bug Fixes In test.13
 
@@ -88,6 +96,8 @@ by invoice/service period while showing paid-at-session payments in the Paid tab
 
 ### Prior Test Builds
 
+`v0.1.0-test.13` was built from commit `5436468` with Python 3.14.x. test.14 supersedes test.13 for installation and update testing.
+
 `v0.1.0-test.12` was built from commit `d9fd342` with Python 3.14.x. test.13 supersedes test.12 for installation and update testing.
 
 `v0.1.0-test.11` was built from commit `7bcb8d3` with Python 3.14.4.
@@ -114,9 +124,9 @@ was rejected before installation and was not published. The correct
 replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
-The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, and
-test.12 builds remain historically accurate for the periods in which they were
-the current builds. test.13 supersedes test.12 for installation and
+The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
+and test.13 builds remain historically accurate for the periods in which they
+were the current builds. test.14 supersedes test.13 for installation and
 stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,

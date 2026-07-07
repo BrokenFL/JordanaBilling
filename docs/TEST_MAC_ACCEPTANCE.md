@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.13
+### Current Test Build — v0.1.0-test.14
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.13
-- **Python package/application version:** 0.1.0.post13
+- **Release label:** v0.1.0-test.14
+- **Python package/application version:** 0.1.0.post14
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,22 +40,22 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.13 supersedes test.12 for installation and update testing because it uses
+test.14 supersedes test.13 for installation and update testing because it uses
 a unique package version and verifies the exact installed runtime plus running
 server build ID before reporting success.
 
-### Bug Fixes In test.13
+### Bug Fixes In test.14
 
-1. **Paid-at-session approval** — saved paid-at-session payment details are reused during approval when the editor is collapsed.
-2. **Invoice presentation** — simplified invoice filters, separated draft columns, corrected invoice headers, and raw calendar titles in Review.
-3. **Payments workspace** — Invoice Period filtering, first-name sorting, and paid-at-session rows in Paid.
-4. **Reports smoke** — Reports route and API verified during release prep.
+1. **Static asset cache-busting** — CSS/JS versioned with mtime query strings and `no-store` headers.
+2. **Inactive payer conflict fix** — `has_payer_record_conflict` counts only active billing parties.
+3. **SELECT change-event handling** — `bindInputAndChange` adds `change` listeners to SELECT elements.
+4. **Inline invoice workspace** — Invoice workspace renders inline at laptop widths with smooth scroll.
+5. **Paid-at-session Receipt button** — Review inspector shows Receipt button for paid-at-session payments.
 
 ### Prior Test Builds
 
-`v0.1.0-test.7` was built from commit `179da1f` with Python 3.14.4 but was
-never published. It is superseded by test.9 as the current built and
-distributable controlled-beta release.
+`v0.1.0-test.13` was built from commit `5436468` with Python 3.14.4. test.14
+supersedes test.13 for installation and update testing.
 
 The prior installed-smoke baseline remains test.6 from commit `0dec58b`. That
 DMG was installed successfully on the brooketest account. Existing private
@@ -69,8 +69,8 @@ replacement was built from commit `0dec58b` using Python 3.14.4 in a
 clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, and test.8 builds remain historically
-accurate for the periods in which they were the current builds. test.13
-supersedes test.12 for installation and stale-runtime verification.
+accurate for the periods in which they were the current builds. test.14
+supersedes test.13 for installation and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
 cross-user port ownership, unrelated port conflict, missing-config,
