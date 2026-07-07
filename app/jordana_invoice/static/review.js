@@ -4356,18 +4356,22 @@ async function openBillingDeliveryForInvoice(invoiceId, fixKind = "") {
   location.hash = "billing-relationships";
   await showClients();
   const rec = (billingDirState.records || []).find(row => row.billing_party_id === partyId || row.default_billing_party_id === partyId);
-  if (rec?.account_id) {
-    await openAccountRecord(rec.account_id);
-  } else if (party.person_id) {
-    await showClientsTab(party.person_id);
-    const editBtn = document.querySelector(`[data-edit-billing="${CSS.escape(partyId)}"]`);
-    if (editBtn) editBtn.click();
+  if (rec?.account_id || (rec?.payer_person_id && ["self_pay", "third_party"].includes(rec.record_type))) {
+    await ensureAndOpenBillingRelationship(rec);
   } else if (rec?.record_type === "organization" && rec.billing_party_id) {
     await openOrganizationRecord(rec.billing_party_id);
+    $("orgEditBtn")?.click();
+  } else if (party.person_id) {
+    await showClientsTab(party.person_id);
   }
   requestAnimationFrame(() => {
-    const target = fixKind === "billing_email" ? $("bsfBillingEmail") : $("bsfAddress1");
-    if (target) target.focus();
+    const target = fixKind === "billing_email"
+      ? ($("editBillingEmail") || $("orgFormEmail") || $("bsfBillingEmail"))
+      : ($("editAddr1") || $("orgFormAddr1") || $("bsfAddress1"));
+    if (target) {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      target.focus();
+    }
   });
 }
 

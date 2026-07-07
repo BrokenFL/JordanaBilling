@@ -2874,6 +2874,33 @@ class DraftInvoicePreviewUiTests(unittest.TestCase):
         self.assertIn("window.open", handler)
 
 
+class InvoiceReadinessFixRoutingUiTests(unittest.TestCase):
+    """Invoice readiness delivery fixes should route to billing setup, not client info."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = self.js.index("async function openBillingDeliveryForInvoice")
+        end = self.js.index("function renderDuplicateBillingWarnings", start)
+        self.fn = self.js[start:end]
+
+    def test_delivery_fix_opens_billing_relationship_editor(self):
+        self.assertIn("location.hash = \"billing-relationships\"", self.fn)
+        self.assertIn("await ensureAndOpenBillingRelationship(rec);", self.fn)
+        self.assertNotIn("document.querySelector(`[data-edit-billing=", self.fn)
+
+    def test_delivery_fix_focuses_relationship_billing_fields(self):
+        self.assertIn("$(\"editBillingEmail\")", self.fn)
+        self.assertIn("$(\"editAddr1\")", self.fn)
+        self.assertIn("target.scrollIntoView", self.fn)
+        self.assertIn("target.focus()", self.fn)
+
+    def test_organization_fix_opens_edit_form_before_focus(self):
+        self.assertIn("await openOrganizationRecord(rec.billing_party_id);", self.fn)
+        self.assertIn("$(\"orgEditBtn\")?.click();", self.fn)
+        self.assertIn("$(\"orgFormEmail\")", self.fn)
+        self.assertIn("$(\"orgFormAddr1\")", self.fn)
+
+
 class StoredInvoicePreviewUiTests(unittest.TestCase):
     """Finalized and void invoice previews use frozen render model HTML plus stored PDF actions."""
 
