@@ -19,6 +19,7 @@ Covers:
 16. UI prevents duplicate submit and refreshes after save.
 17. Delivery contact options include unrelated people-directory records.
 """
+import os
 import re
 import tempfile
 import unittest
@@ -65,6 +66,8 @@ class DeliveryContactTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
         self.conn = connect(self.root / "test.db")
         migrate_database(self.root / "test.db")
         save_business_profile(self.conn, {
@@ -80,6 +83,10 @@ class DeliveryContactTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     def _make_org_payer(self, org_name="Brooke Biz"):

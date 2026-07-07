@@ -207,6 +207,9 @@ def cleanup_old_backups(folder: str | Path | None = None) -> int:
     manifests.sort(reverse=True)
     keep: set[Path] = set()
     keep.update(path for _, path, _ in manifests[:14])
+    if manifests:
+        newest_by_mtime = max(manifests, key=lambda m: m[1].stat().st_mtime if m[1].exists() else 0)
+        keep.add(newest_by_mtime[1])
     daily: set[str] = set()
     weekly: set[tuple[int, int]] = set()
     monthly: set[str] = set()

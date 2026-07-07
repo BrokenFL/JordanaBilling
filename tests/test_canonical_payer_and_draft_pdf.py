@@ -1,4 +1,5 @@
 """Focused regression tests for canonical payer profile and draft PDF preview."""
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -45,6 +46,8 @@ class CanonicalPayerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
         self.conn = connect(self.root / "test.sqlite3")
         migrate_database(self.root / "test.sqlite3")
         self.fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
@@ -60,6 +63,10 @@ class CanonicalPayerTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     # 1. Creating a self-pay payer relationship creates or uses one active person-linked billing-party record.
@@ -355,6 +362,8 @@ class DraftPdfPreviewTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
         self.conn = connect(self.root / "test.sqlite3")
         migrate_database(self.root / "test.sqlite3")
         self.person = create_person(self.conn, {"first_name": "Avery", "last_name": "Stone", "display_name": "Avery Stone"})
@@ -375,6 +384,10 @@ class DraftPdfPreviewTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     def _make_draft_invoice(self):
@@ -475,6 +488,8 @@ class InvoiceGroupingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
         self.conn = connect(self.root / "test.sqlite3")
         migrate_database(self.root / "test.sqlite3")
         self.fred = create_person(self.conn, {"first_name": "Fred", "last_name": "Colin", "display_name": "Fred Colin"})
@@ -496,6 +511,10 @@ class InvoiceGroupingTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     def _approve_session(self, key, title, day, party_id, person_ids):

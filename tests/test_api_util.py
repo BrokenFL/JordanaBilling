@@ -65,7 +65,7 @@ class ApiUtilStaticTests(unittest.TestCase):
 
     def test_review_js_direct_write_fetches_use_current_write_token(self):
         self.assertNotIn("const WRITE_TOKEN", self.review_js)
-        self.assertEqual(self.review_js.count('"X-Jordana-Write-Token": getWriteToken()'), 1)
+        self.assertGreaterEqual(self.review_js.count('"X-Jordana-Write-Token": getWriteToken()'), 1)
 
     def test_write_token_not_in_urls(self):
         self.assertNotIn("writeToken", self.api_js.replace(

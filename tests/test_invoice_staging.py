@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -35,6 +36,8 @@ class InvoiceStagingTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.db_path = self.root / "staging.sqlite3"
+        self._old_backup = os.environ.get("JORDANA_BACKUP_DIR")
+        os.environ["JORDANA_BACKUP_DIR"] = str(self.root)
         self.conn = connect(self.db_path)
         migrate_database(self.db_path)
         self.person = create_person(self.conn, {"first_name": "Avery", "last_name": "Stone", "display_name": "Avery Stone"})
@@ -61,6 +64,10 @@ class InvoiceStagingTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+        if self._old_backup is not None:
+            os.environ["JORDANA_BACKUP_DIR"] = self._old_backup
+        else:
+            os.environ.pop("JORDANA_BACKUP_DIR", None)
         self.temp.cleanup()
 
     def approved_session(self, key="one", title="Avery Stone | 60 | Office", day=15,

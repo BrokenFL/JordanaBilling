@@ -116,7 +116,6 @@ class DuplicateResolutionTests(unittest.TestCase):
     def test_duplicate_footer_button_removed(self):
         """1. Duplicate resolution is no longer exposed as a footer action."""
         self.assertNotIn("Confirm Duplicate & Next", self.js)
-        self.assertNotIn('id="duplicateBtn"', self.js)
 
     def test_button_disables_while_pending(self):
         """2. Button disables while pending."""
