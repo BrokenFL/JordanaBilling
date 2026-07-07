@@ -499,6 +499,41 @@ class BillingDirectoryTests(unittest.TestCase):
         self.assertEqual(matching[0]["account_id"], result["account_id"])
         self.assertEqual(matching[0]["record_type"], "third_party")
 
+    def test_inactive_payer_record_does_not_warn_as_multiple_active_bill_to_records(self):
+        fred = create_person(self.conn, {"display_name": "Fred Colin", "first_name": "Fred", "last_name": "Colin"})
+        active_payer = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "billing_party_type": "person",
+            "person_id": fred["person_id"],
+        })
+        inactive_payer = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "billing_party_type": "person",
+            "person_id": fred["person_id"],
+        })
+        self.conn.execute(
+            "UPDATE billing_parties SET active = 0 WHERE billing_party_id = ?",
+            (inactive_payer["billing_party_id"],),
+        )
+        self.conn.commit()
+        result = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": fred["person_id"],
+            "covered_client_ids": [fred["person_id"]],
+        })
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?",
+            (active_payer["billing_party_id"], result["account_id"]),
+        )
+        self.conn.commit()
+
+        records = list_billing_relationship_records(self.conn)
+        matching = [r for r in records if r["payer_person_id"] == fred["person_id"]]
+
+        self.assertEqual(len(matching), 1)
+        self.assertIn(inactive_payer["billing_party_id"], matching[0]["consolidated_billing_party_ids"])
+        self.assertFalse(matching[0]["has_payer_record_conflict"])
+
     def test_duplicate_diagnostic_reports_shadowed_implicit_rows(self):
         robin = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})
         payer = create_billing_party(self.conn, {

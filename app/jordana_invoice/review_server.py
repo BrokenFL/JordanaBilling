@@ -1656,7 +1656,7 @@ def make_handler(
                 body = path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
-            if path.name == "review.html":
+            if path.suffix in {".html", ".css", ".js"}:
                 self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self._apply_security_headers(nonce=nonce)
@@ -1665,12 +1665,22 @@ def make_handler(
 
         def render_review_html(self, path: Path, nonce: str) -> str:
             html = path.read_text(encoding="utf-8")
+            css_path = STATIC_DIR / "review.css"
+            js_path = STATIC_DIR / "review.js"
+            css_version = str(int(css_path.stat().st_mtime)) if css_path.exists() else "1"
+            js_version = str(int(js_path.stat().st_mtime)) if js_path.exists() else "1"
+            html = html.replace(
+                '<link rel="stylesheet" href="/static/review.css" />',
+                f'<link rel="stylesheet" href="/static/review.css?v={css_version}" />',
+                1,
+            )
             bootstrap = json.dumps({"writeToken": launch_write_token}, ensure_ascii=False)
             bootstrap = bootstrap.replace("</", "<\\/")
             bootstrap_script = f'<script nonce="{nonce}">window.__JORDANA_BOOTSTRAP__={bootstrap};</script>'
             marker = '<script src="/static/review.js"></script>'
             if marker in html:
-                return html.replace(marker, f"{bootstrap_script}\n    {marker}", 1)
+                versioned_script = f'<script src="/static/review.js?v={js_version}"></script>'
+                return html.replace(marker, f"{bootstrap_script}\n    {versioned_script}", 1)
             return f"{html}\n{bootstrap_script}\n"
 
         def send_csv(self, csv_text: str, filename: str) -> None:

@@ -203,6 +203,22 @@ for (const [input, expected] of cases) {
         self.assertIn('billable_status: "approved"', fn)
         self.assertNotIn('paymentStatus === "paid_at_session" ? "nonbillable"', fn)
 
+    def test_review_session_selects_listen_for_change_events(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function wireInspector()")
+        end = js.index("function syncSessionCustomFields", start)
+        fn = js[start:end]
+
+        self.assertIn("function bindInputAndChange(element, handler)", js)
+        self.assertIn('"billingTypeInput"', fn)
+        self.assertIn('"durationChoiceInput"', fn)
+        self.assertIn('"paymentInput"', fn)
+        self.assertIn('"paymentMethodInput"', fn)
+        self.assertIn('"attendanceOutcomeInput"', fn)
+        self.assertIn("bindInputAndChange(element, async () =>", fn)
+        self.assertIn('if (element.tagName === "SELECT") element.addEventListener("change", handler);', js)
+        self.assertNotIn("inline-select-open", js)
+
     def test_review_relationship_summary_opens_canonical_account_editor(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("async function openBillingRelationshipEditor()")
@@ -1085,12 +1101,44 @@ for (const [input, expected] of cases) {
         self.assertIn("applyMatchedRatePreview(preview)", js)
         self.assertIn('data-suggested-rate', js)
 
+    def test_rate_card_selects_listen_for_change_events(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index('["rateAmountInput","rateDurationChoice"')
+        end = js.index("async function loadRateRules", start)
+        block = js[start:end]
+
+        self.assertIn('"rateDurationChoice"', block)
+        self.assertIn('"rateBillingSessionType"', block)
+        self.assertIn('"rateAppointmentStatus"', block)
+        self.assertIn('"rateTimeCategory"', block)
+        self.assertIn("bindInputAndChange($(id), () =>", block)
+        self.assertIn('document.getElementById("rateAppliesSearch").addEventListener("input"', js)
+        self.assertIn('$("rateAppliesTo").addEventListener("change"', js)
+
     def test_invoice_workspace_uses_normal_page_scroll_at_laptop_widths(self):
         css = Path("app/jordana_invoice/static/review.css").read_text()
+        js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn("#invoicesView .invoice-workspace.responsive-sheet-active", css)
         self.assertIn("position: static;", css)
+        self.assertIn("max-height: none;", css)
+        self.assertIn("overflow: visible;", css)
         self.assertIn("#invoicesView .invoice-builder > .actions", css)
+        self.assertIn("function isInlineInvoiceWorkspace(panel)", js)
+        self.assertIn('panel.id === "invoiceWorkspace"', js)
+        self.assertIn('document.body.classList.remove("responsive-sheet-open");', js)
+        self.assertIn('panel.removeAttribute("aria-modal");', js)
+        self.assertIn("function revealInlineInvoiceWorkspace()", js)
+        self.assertIn('panel.scrollIntoView({block: "start", behavior: "smooth"});', js)
+        self.assertGreaterEqual(js.count("revealInlineInvoiceWorkspace();"), 5)
+
+    def test_review_server_versions_static_assets_and_disables_ui_cache(self):
+        server = Path("app/jordana_invoice/review_server.py").read_text()
+
+        self.assertIn('path.suffix in {".html", ".css", ".js"}', server)
+        self.assertIn('self.send_header("Cache-Control", "no-store")', server)
+        self.assertIn('review.css?v={css_version}', server)
+        self.assertIn('review.js?v={js_version}', server)
 
     def test_settings_screen_uses_existing_business_profile_api_and_defaults(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
@@ -2648,6 +2696,16 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("|| pendingSessionDraft.payment_date", js)
         self.assertIn("|| pendingSessionDraft.payment_method", js)
         self.assertIn("state.pendingSessionDraft = null;", js)
+
+    def test_paid_at_session_session_summary_links_to_receipt_actions(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        css = Path("app/jordana_invoice/static/review.css").read_text()
+
+        self.assertIn("const paidAtSessionReceiptAction = paidAtSessionPayment?.payment_id", js)
+        self.assertIn('id="openPaidAtSessionReceiptBtn"', js)
+        self.assertIn('data-payment-id="${escapeAttr(paidAtSessionPayment.payment_id)}"', js)
+        self.assertIn("openPaymentDetail($(\"openPaidAtSessionReceiptBtn\").dataset.paymentId)", js)
+        self.assertIn(".payment-confirmation { display: flex;", css)
 
     def test_sessions_table_header_uses_payment_handling(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()

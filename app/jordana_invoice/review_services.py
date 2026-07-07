@@ -7031,11 +7031,14 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         # Merge covered people from all billing parties and account members
         all_covered: set[str] = set()
         all_bp_ids: list[str] = []
+        active_bp_ids: list[str] = []
         all_account_ids: list[str] = []
         all_session_ids: set[str] = set()
         latest_date = None
         for p in parties:
             all_bp_ids.append(p["billing_party_id"])
+            if p["billing_party_active"]:
+                active_bp_ids.append(p["billing_party_id"])
             for cid in (p["covered_person_ids_raw"] or "").split(","):
                 if cid:
                     all_covered.add(cid)
@@ -7106,7 +7109,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 "account_type": link["account_type"] if link else None,
                 "consolidated_billing_party_ids": all_bp_ids,
                 "consolidated_account_ids": all_account_ids,
-                "has_payer_record_conflict": len(parties) > 1,
+                "has_payer_record_conflict": len(set(active_bp_ids)) > 1,
                 "has_exact_active_duplicate": any(
                     aid in duplicate_account_ids for aid in all_account_ids
                 ),

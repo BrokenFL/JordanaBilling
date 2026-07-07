@@ -140,6 +140,13 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v) => v ? escapeHtml(v) : "-";
 const money = (v) => v ? `$${v}` : "—";
 const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
+
+function bindInputAndChange(element, handler) {
+  if (!element) return;
+  element.addEventListener("input", handler);
+  if (element.tagName === "SELECT") element.addEventListener("change", handler);
+}
+
 const responsiveSheetQuery = window.matchMedia("(max-width: 1800px)");
 const responsiveSheetState = {
   activePanel: null,
@@ -189,6 +196,30 @@ function setResponsiveSheetBackgroundState(panel) {
   responsiveSheetState.inerted = inertTargets;
 }
 
+function isInlineInvoiceWorkspace(panel) {
+  return Boolean(
+    panel &&
+    panel.id === "invoiceWorkspace" &&
+    $("invoicesView") &&
+    $("invoicesView").contains(panel) &&
+    responsiveSheetQuery.matches
+  );
+}
+
+function revealInlineInvoiceWorkspace() {
+  const panel = $("invoiceWorkspace");
+  const invoicesView = $("invoicesView");
+  if (!panel || !invoicesView || invoicesView.hidden || !responsiveSheetQuery.matches || !panel.classList.contains("responsive-sheet-active")) return;
+  getWorkspaceBackdrop().hidden = true;
+  document.body.classList.remove("responsive-sheet-open");
+  clearResponsiveSheetBackgroundState();
+  panel.removeAttribute("role");
+  panel.removeAttribute("aria-modal");
+  window.requestAnimationFrame(() => {
+    panel.scrollIntoView({block: "start", behavior: "smooth"});
+  });
+}
+
 function ensureResponsiveSheetHeader(panel) {
   const close = panel?.querySelector(".side-panel-close");
   if (!panel || !close || close.closest(".responsive-sheet-header")) return;
@@ -219,6 +250,14 @@ function updateResponsiveSheetMode() {
     backdrop.hidden = true;
     document.body.classList.remove("responsive-sheet-open");
     clearResponsiveSheetBackgroundState();
+    return;
+  }
+  if (isInlineInvoiceWorkspace(panel)) {
+    backdrop.hidden = true;
+    document.body.classList.remove("responsive-sheet-open");
+    clearResponsiveSheetBackgroundState();
+    panel.removeAttribute("role");
+    panel.removeAttribute("aria-modal");
     return;
   }
   if (responsiveSheetQuery.matches) {
@@ -500,8 +539,11 @@ function renderInspector(data) {
   const paidAtSessionAmount = paidAtSessionPayment ? centString(paidAtSessionPayment.amount_cents) : currentRate;
   const paidAtSessionDate = paidAtSessionPayment?.received_at || s.session_date || (s.start_at ? s.start_at.substring(0, 10) : "");
   const paidAtSessionMethod = paidAtSessionPayment?.method || "";
+  const paidAtSessionReceiptAction = paidAtSessionPayment?.payment_id
+    ? `<button type="button" class="mini" id="openPaidAtSessionReceiptBtn" data-payment-id="${escapeAttr(paidAtSessionPayment.payment_id)}">Receipt</button>`
+    : "";
   const paidAtSessionSummary = s.payment_status === "paid_at_session"
-    ? `<div class="payment-confirmation">Paid at session${paidAtSessionPayment ? `: ${money(centString(paidAtSessionPayment.amount_cents))} on ${fmt(paidAtSessionPayment.received_at)} by ${escapeHtml(paymentMethodLabel(paidAtSessionPayment.method))}` : ""}</div>`
+    ? `<div class="payment-confirmation"><span>Paid at session${paidAtSessionPayment ? `: ${money(centString(paidAtSessionPayment.amount_cents))} on ${fmt(paidAtSessionPayment.received_at)} by ${escapeHtml(paymentMethodLabel(paidAtSessionPayment.method))}` : ""}</span>${paidAtSessionReceiptAction}</div>`
     : "";
   const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
   const overlayContent = $("reviewOverlayContent");
@@ -642,6 +684,7 @@ function wireInspector() {
   if ($("changeClientsBtn")) $("changeClientsBtn").onclick = () => { state.editSteps.clients = true; markDirty("relationship"); renderInspector(state.detail); };
   if ($("saveBillingBtn")) $("saveBillingBtn").onclick = saveBillingSection;
   if ($("changeSessionBtn")) $("changeSessionBtn").onclick = () => { state.editSteps.session = true; markDirty("session"); renderInspector(state.detail); };
+  if ($("openPaidAtSessionReceiptBtn")) $("openPaidAtSessionReceiptBtn").onclick = () => openPaymentDetail($("openPaidAtSessionReceiptBtn").dataset.paymentId);
   if ($("saveSessionBtn")) $("saveSessionBtn").onclick = saveSessionSection;
   if ($("editBillingRelationship")) $("editBillingRelationship").onclick = openBillingRelationshipEditor;
   if ($("excludeBtn")) $("excludeBtn").onclick = excludeSelectedCandidate;
@@ -663,13 +706,13 @@ function wireInspector() {
     "paymentNoteInput"
   ].forEach(id => {
     const element = $(id);
-    if (element) element.addEventListener("input", async () => {
+    bindInputAndChange(element, async () => {
       markDirty("session");
       syncSessionCustomFields();
       await updateSessionRatePreview();
     });
   });
-  if ($("billToClientSelect")) $("billToClientSelect").addEventListener("input", () => markDirty("billing"));
+  bindInputAndChange($("billToClientSelect"), () => markDirty("billing"));
   if ($("attendanceOutcomeInput")) $("attendanceOutcomeInput").addEventListener("change", () => {
     const session = state.detail?.session;
     if (!session) return;
@@ -3495,6 +3538,7 @@ async function startInvoiceBuilder() {
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
+  revealInlineInvoiceWorkspace();
   ["draftBillTo","draftPeriodStart","draftPeriodEnd"].forEach(id => $(id).onchange = loadEligibleInvoiceSessions);
   $("draftBillTo").onchange = () => {
     const pid = $("draftBillTo").value;
@@ -3580,6 +3624,7 @@ async function renderInvoiceEditor(data) {
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
+  revealInlineInvoiceWorkspace();
 
   document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
     const row = button.closest("tr");
@@ -3836,6 +3881,7 @@ async function showAddSessionsToDraft(data) {
     <div class="actions"><button id="confirmAddSessions" class="save" ${eligible.length ? "" : "disabled"}>Add Selected</button><button id="cancelAddSessions">Return to Draft</button></div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
+  revealInlineInvoiceWorkspace();
   $("cancelAddSessions").onclick = () => renderInvoiceEditor(data);
   $("confirmAddSessions").onclick = async () => {
     const sessionIds = [...document.querySelectorAll("#invoiceWorkspace input:checked")].map(input => input.value);
@@ -3938,6 +3984,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const backBtn = $("backToDraftBtn");
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
+  revealInlineInvoiceWorkspace();
   const errorDiv = $("finalizeError");
   const insCheckbox = $("insuranceCodingCheckbox");
   const insFields = $("insuranceCodingFields");
@@ -4109,6 +4156,7 @@ function renderInvoicePreview(data) {
     <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
+  revealInlineInvoiceWorkspace();
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
   if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
@@ -4247,9 +4295,8 @@ document.getElementById("rateAppliesSearch").addEventListener("input", debounce(
   state.rateCard.scopeResults = rows;
   renderRateScopeResults();
 }, 160));
-
 ["rateAmountInput","rateDurationChoice","rateCustomDurationMinutes","rateBillingSessionType","rateCustomDescription","rateCustomCode","rateAppointmentStatus","rateTimeCategory","rateEffectiveFrom"].forEach(id => {
-  $(id).addEventListener("input", () => {
+  bindInputAndChange($(id), () => {
     syncRateCardCustomFields();
     renderRateRulePreview();
   });
