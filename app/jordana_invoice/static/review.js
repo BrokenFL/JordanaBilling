@@ -2071,9 +2071,14 @@ function closePaymentWorkspace() {
   closeResponsiveSheet("unpaidWorkspace");
   state.unpaid.selectedInvoiceId = null;
   const workspace = $("unpaidWorkspace");
-  if (workspace) workspace.innerHTML = `<div class="empty-state">Select an invoice to view payment details.</div>`;
+  if (workspace) workspace.innerHTML = `<div class="empty-state">Use Record Payment on an outstanding invoice to enter a payment.</div>`;
   const firstRow = document.querySelector("#unpaidRows tr[data-invoice-id]");
   if (firstRow) firstRow.focus?.();
+}
+
+async function openDirectInvoicePayment(invoiceId, focusReturnEl = null) {
+  closePaymentWorkspace();
+  await openPaymentOverlay(invoiceId, focusReturnEl);
 }
 
 async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selectedInvoiceId) {
@@ -2087,16 +2092,9 @@ async function loadOutstandingInvoices(selectedInvoiceId = state.unpaid.selected
     $("unpaidWorkspace").innerHTML = `<div class="empty-state">No outstanding finalized invoices.</div>`;
     return;
   }
-  if (responsiveSheetQuery.matches && !selectedInvoiceId) {
-    state.unpaid.selectedInvoiceId = null;
-    $("unpaidWorkspace").innerHTML = `<div class="empty-state">Select an outstanding invoice to review payment history.</div>`;
-    closeResponsiveSheet("unpaidWorkspace");
-    return;
-  }
-  const nextId = state.unpaid.items.some(item => item.invoice_id === selectedInvoiceId)
-    ? selectedInvoiceId
-    : state.unpaid.items[0].invoice_id;
-  await openOutstandingInvoice(nextId, { preserveFocus: true });
+  state.unpaid.selectedInvoiceId = null;
+  $("unpaidWorkspace").innerHTML = `<div class="empty-state">Use Record Payment on an outstanding invoice to enter a payment.</div>`;
+  closeResponsiveSheet("unpaidWorkspace");
 }
 
 function renderOutstandingInvoices(items) {
@@ -2119,13 +2117,13 @@ function renderOutstandingInvoices(items) {
   document.querySelectorAll("#unpaidRows tr[data-invoice-id]").forEach(row => {
     row.addEventListener("click", (event) => {
       if (event.target.closest("button")) return;
-      openOutstandingInvoice(row.dataset.invoiceId);
+      openDirectInvoicePayment(row.dataset.invoiceId, row);
     });
   });
   document.querySelectorAll(".record-payment-btn").forEach(button => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      openPaymentOverlay(button.dataset.recordPayment, button);
+      openDirectInvoicePayment(button.dataset.recordPayment, button);
     });
   });
 }
@@ -2180,7 +2178,7 @@ function renderOutstandingInvoiceWorkspace(data) {
     </div>
   `;
   if ($("closePaymentPanel")) $("closePaymentPanel").onclick = closePaymentWorkspace;
-  $("workspaceRecordPayment").onclick = (event) => openPaymentOverlay(invoice.invoice_id, event.currentTarget);
+  $("workspaceRecordPayment").onclick = (event) => openDirectInvoicePayment(invoice.invoice_id, event.currentTarget);
   activateResponsiveSheet("unpaidWorkspace", closePaymentWorkspace);
 }
 
@@ -2260,7 +2258,7 @@ async function submitInvoicePayment(invoice) {
       body: JSON.stringify(payload)
     });
     closePaymentOverlay();
-    await loadOutstandingInvoices(invoice.invoice_id);
+    await loadOutstandingInvoices(null);
     showUnpaidSuccess("Payment recorded successfully.");
   } catch (err) {
     state.unpaid.submitting = false;

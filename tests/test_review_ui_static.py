@@ -146,7 +146,7 @@ for (const [input, expected] of cases) {
         self.assertIn('submitBtn.disabled = true;', js)
         self.assertIn('cancelBtn.disabled = true;', js)
         self.assertIn('closePaymentOverlay();', js)
-        self.assertIn('await loadOutstandingInvoices(invoice.invoice_id);', js)
+        self.assertIn('await loadOutstandingInvoices(null);', js)
         self.assertIn('showUnpaidSuccess("Payment recorded successfully.");', js)
         self.assertIn('message.textContent = sanitizeUiErrorMessage(err.message, "Payment could not be recorded.");', js)
 
@@ -504,15 +504,15 @@ for (const [args, expected] of cases) {
         self.assertIn('id="closePaymentPanel"', js)
         self.assertIn('activateResponsiveSheet("unpaidWorkspace", closePaymentWorkspace)', js)
 
-    def test_payments_do_not_auto_open_detail_in_responsive_overlay_mode(self):
+    def test_payments_do_not_auto_open_detail_before_recording(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("async function loadOutstandingInvoices")
         end = js.index("function renderOutstandingInvoices", start)
         loader = js[start:end]
 
-        self.assertIn("responsiveSheetQuery.matches && !selectedInvoiceId", loader)
-        self.assertIn("Select an outstanding invoice to review payment history.", loader)
+        self.assertIn("Use Record Payment on an outstanding invoice to enter a payment.", loader)
         self.assertIn('closeResponsiveSheet("unpaidWorkspace")', loader)
+        self.assertNotIn("openOutstandingInvoice", loader)
 
     def test_all_panels_have_close_handlers(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -2750,6 +2750,25 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         self.assertIn("async function openPaymentDetail(", js)
         self.assertIn("async function openPaidInvoice(", js)
         self.assertIn("state.payments.activeTab", js)
+
+    def test_record_payment_from_invoice_goes_directly_to_payment_modal(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("async function openDirectInvoicePayment")
+        end = js.index("async function loadOutstandingInvoices", start)
+        helper = js[start:end]
+        self.assertIn("closePaymentWorkspace();", helper)
+        self.assertIn("await openPaymentOverlay(invoiceId, focusReturnEl);", helper)
+
+        render_start = js.index("function renderOutstandingInvoices")
+        render_end = js.index("async function openOutstandingInvoice", render_start)
+        render_block = js[render_start:render_end]
+        self.assertIn("openDirectInvoicePayment(row.dataset.invoiceId, row)", render_block)
+        self.assertIn("openDirectInvoicePayment(button.dataset.recordPayment, button)", render_block)
+
+        workspace_start = js.index("function renderOutstandingInvoiceWorkspace")
+        workspace_end = js.index("function closePaymentOverlay", workspace_start)
+        workspace_block = js[workspace_start:workspace_end]
+        self.assertIn("openDirectInvoicePayment(invoice.invoice_id, event.currentTarget)", workspace_block)
 
     def test_payments_paid_invoices_table_columns(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
