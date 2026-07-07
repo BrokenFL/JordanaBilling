@@ -959,6 +959,7 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
     if invoice["status"] in ("finalized", "void") and invoice.get("pdf_path"):
         version = invoice.get("pdf_sha256") or invoice.get("updated_at") or invoice_id
         invoice["final_pdf_url"] = f"/api/invoices/{invoice_id}/final-pdf?v={version}"
+    bill_to_options = _draft_bill_to_options(conn, invoice_id, invoice) if invoice["status"] == "draft" else []
 
     # 1. Parse and validate as_finalized_summary snapshot if finalized
     as_finalized_summary = None
@@ -1000,6 +1001,7 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
         "lines": line_dicts,
         "business_profile": profile,
         "billing_party": party,
+        "bill_to_options": bill_to_options,
         "filing_owner": filing,
         "as_finalized_summary": as_finalized_summary,
         "current_status": current_status,
@@ -1011,6 +1013,39 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
             account_summary=effective_summary,
         ),
     }
+
+
+def _draft_bill_to_options(conn: sqlite3.Connection, invoice_id: str, invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    linked_rows = conn.execute(
+        """
+        SELECT DISTINCT bp.*
+        FROM invoice_line_items li
+        JOIN sessions s ON s.id = li.source_session_id
+        JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id
+        WHERE li.invoice_id = ? AND bp.active = 1
+        ORDER BY LOWER(bp.billing_name), bp.billing_party_id
+        """,
+        (invoice_id,),
+    ).fetchall()
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    current_id = invoice.get("bill_to_party_id")
+    if current_id:
+        current = conn.execute(
+            "SELECT * FROM billing_parties WHERE billing_party_id = ?",
+            (current_id,),
+        ).fetchone()
+        if current:
+            options.append(dict(current))
+            seen.add(current["billing_party_id"])
+
+    for row in linked_rows:
+        if row["billing_party_id"] in seen:
+            continue
+        options.append(dict(row))
+        seen.add(row["billing_party_id"])
+    return options
 
 
 def eligible_sessions(

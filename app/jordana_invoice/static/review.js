@@ -3814,7 +3814,9 @@ function closeInvoiceWorkspace() {
 async function renderInvoiceEditor(data) {
   state.invoice = data;
   const i = data.invoice;
-  const parties = await api("/api/billing-parties?q=");
+  const parties = (data.bill_to_options && data.bill_to_options.length)
+    ? data.bill_to_options
+    : (data.billing_party ? [data.billing_party] : []);
   const billToOptions = parties.map(p => `<option value="${escapeAttr(p.billing_party_id)}" ${p.billing_party_id === i.bill_to_party_id ? "selected" : ""}>${fmt(p.billing_name)}</option>`).join("");
   const filing = data.filing_owner || {};
   const selectedFilingValue = filing.selected && filing.selected.owner_kind && filing.selected.owner_id
@@ -3839,7 +3841,7 @@ async function renderInvoiceEditor(data) {
     <button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button>
     <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
     <div class="field-grid">
-      <label class="field wide">Bill To<select id="editBillTo"><option value="">Select bill-to party</option>${billToOptions}</select><span class="help">Changing Bill To is allowed only when linked sessions already use that Bill To.</span></label>
+      <label class="field wide">Bill To<select id="editBillTo"><option value="">Select bill-to party</option>${billToOptions}</select><span class="help">Only Bill To choices already tied to this draft's linked sessions are shown.</span></label>
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
       <div class="field wide invoice-delivery-scope">

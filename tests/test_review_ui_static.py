@@ -2489,6 +2489,24 @@ class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
         self.assertIn("remove-line", container_block)
 
 
+class DraftInvoiceBillToOptionsUiTests(unittest.TestCase):
+    """Draft invoice Bill To dropdown must not list every billing party."""
+
+    def setUp(self):
+        self.js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        self.fn = self.js[start:end]
+
+    def test_draft_editor_uses_invoice_scoped_bill_to_options(self):
+        self.assertIn("data.bill_to_options", self.fn)
+        self.assertIn("data.billing_party ? [data.billing_party] : []", self.fn)
+        self.assertNotIn('/api/billing-parties?q=', self.fn)
+
+    def test_draft_editor_help_describes_limited_bill_to_choices(self):
+        self.assertIn("Only Bill To choices already tied to this draft", self.fn)
+
+
 class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
     """Change 2: Review and Finalize must open a real preview step before finalization."""
 

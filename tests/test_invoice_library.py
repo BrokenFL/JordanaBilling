@@ -259,6 +259,32 @@ class InvoiceLibraryTests(unittest.TestCase):
         self.assertIn("payment_status", data["invoice"])
         self.assertEqual(data["invoice"]["payment_status"], "unpaid")
 
+    def test_get_invoice_bill_to_options_exclude_unrelated_clients(self):
+        s = self.approved_session("btoptions")
+        _other_person, other_party = self.other_party("Casey", "Unrelated")
+        draft = self.draft([s])
+
+        data = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+
+        option_ids = [party["billing_party_id"] for party in data["bill_to_options"]]
+        self.assertEqual(option_ids, [self.party["billing_party_id"]])
+        self.assertNotIn(other_party["billing_party_id"], option_ids)
+
+    def test_get_invoice_bill_to_options_include_linked_session_party(self):
+        s = self.approved_session("btmoved")
+        _other_person, other_party = self.other_party("Drew", "Payer")
+        draft = self.draft([s])
+        self.conn.execute(
+            "UPDATE sessions SET billing_party_id = ? WHERE id = ?",
+            (other_party["billing_party_id"], s["id"]),
+        )
+        self.conn.commit()
+
+        data = get_invoice(self.conn, draft["invoice"]["invoice_id"])
+
+        option_ids = [party["billing_party_id"] for party in data["bill_to_options"]]
+        self.assertEqual(option_ids, [self.party["billing_party_id"], other_party["billing_party_id"]])
+
     def test_print_preview_html_contains_draft_watermark(self):
         s = self.approved_session("preview")
         draft = self.draft([s])
