@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.17
+### Current Test Build — v0.1.0-test.18
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.17
-- **Python package/application version:** 0.1.0.post17
+- **Release label:** v0.1.0-test.18
+- **Python package/application version:** 0.1.0.post18
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,15 +36,22 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post17` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post18` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.17 fixes stale archived relationship links, erroneous relationship deletion,
-service-period invoice lists, draft invoice return-to-review, draft deletion,
-invoice PDF footer removal, and customer-facing recipient label cleanup.
+test.18 fixes the approved-session Edit Session recovery path and refreshes
+existing draft invoice line snapshots when an edited session is reapproved.
+It inherits the test.17 billing relationship, draft deletion, service-period
+invoice list, PDF footer, and recipient-label cleanup fixes.
+
+### Bug Fixes In test.18
+
+1. **Approved-session Edit Session recovery** — `Edit Session` from an unfinalized draft invoice can return an approved session to Review and remove its draft line. If a prior interrupted edit already left the session in Review while the draft line remained, the same action now cleans up the stale draft line instead of erroring.
+2. **Draft invoice snapshot refresh** — Reapproving an edited session refreshes existing draft invoice lines from the current approved session values so draft invoices do not keep stale amount, duration, participant, service, appointment-treatment, or description snapshots.
+3. **Supplied-database regression check** — The Fred Colin June 8 path was verified against the supplied Jordana backup using a temporary copy only.
 
 ### Bug Fixes In test.17
 
@@ -113,7 +120,7 @@ invoice PDF footer removal, and customer-facing recipient label cleanup.
 
 ### Prior Test Builds
 
-`v0.1.0-test.15` was built from the prior controlled-beta release. test.17 supersedes test.15 for installation and update testing.
+`v0.1.0-test.15` was built from the prior controlled-beta release. test.18 supersedes test.15 for installation and update testing.
 
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.x. test.15 supersedes test.14 for installation and update testing.
 
@@ -147,7 +154,7 @@ clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
 and test.14 builds remain historically accurate for the periods in which they
-were the current builds. test.17 supersedes test.15 for installation and
+were the current builds. test.18 supersedes test.15 for installation and
 stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,

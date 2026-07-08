@@ -244,6 +244,47 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertIsNotNone(audit)
         self.assertIn("Correct Bill To before billing", audit["details"])
 
+    def test_return_session_already_in_review_cleans_up_stale_draft_line(self):
+        _, payer, approved = self._approved_return_fixture()
+        session_id = approved["session"]["id"]
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": payer["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [session_id],
+        })
+        self.conn.execute(
+            "UPDATE sessions SET review_status = 'needs_review', billable_status = 'proposed' WHERE id = ?",
+            (session_id,),
+        )
+        self.conn.execute(
+            "UPDATE calendar_event_candidates SET review_status = 'needs_review' WHERE id = ?",
+            (self.candidate_id,),
+        )
+        self.conn.commit()
+
+        result = return_approved_session_to_review(self.conn, self.candidate_id, reason="Continue edit")
+
+        self.assertTrue(result["already_in_review"])
+        self.assertEqual(result["session"]["review_status"], "needs_review")
+        self.assertEqual(result["draft_invoice_ids_removed"], [draft["invoice"]["invoice_id"]])
+        self.assertIsNone(self.conn.execute(
+            "SELECT 1 FROM invoice_line_items WHERE source_session_id = ?",
+            (session_id,),
+        ).fetchone())
+        refreshed_draft = self.conn.execute(
+            "SELECT total_cents FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(refreshed_draft["total_cents"], 0)
+        audit = self.conn.execute(
+            "SELECT details FROM audit_log WHERE entity_type = 'session' AND entity_id = ? AND action = 'draft_invoice_line_removed_for_review'",
+            (session_id,),
+        ).fetchone()
+        self.assertIsNotNone(audit)
+        self.assertIn("Continue edit", audit["details"])
+
     def test_return_approved_session_removes_only_selected_draft_line(self):
         fred, payer, approved = self._approved_return_fixture()
         first_session_id = approved["session"]["id"]

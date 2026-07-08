@@ -1217,15 +1217,8 @@ def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
 def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite3.Row | dict[str, Any], order: int) -> None:
     """Insert a single invoice line item from a session, reusing existing snapshot logic."""
     session_id = session["id"]
-    catalog = learn_service(conn, session["service_mode"] or "Other")
-    participants = _participant_names(conn, session_id)
-    service_name = catalog["display_name"]
-    description = _service_description(session, service_name)
-    amount = session["rate_cents_snapshot"] if session["rate_cents_snapshot"] is not None else session["approved_rate_cents"]
+    values = _line_item_snapshot_values(conn, session)
     now = now_iso()
-    billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
-    custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
-    custom_code = session["custom_service_code"] if "custom_service_code" in session.keys() else None
     conn.execute(
         """INSERT INTO invoice_line_items (
           invoice_line_item_id, invoice_id, source_session_id, sort_order, service_date,
@@ -1235,13 +1228,64 @@ def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite
           custom_service_description_snapshot, custom_service_code_snapshot, quantity,
           unit_amount_cents, line_amount_cents, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
-        (new_id(), invoice_id, session_id, order, session["session_date"], participants,
-         catalog["service_catalog_id"], service_name, billing_type, session["time_category"],
-         session["appointment_status"], session["billing_treatment"],
-         session["scheduled_rate_cents_snapshot"] if "scheduled_rate_cents_snapshot" in session.keys() else None,
-         session["approved_duration_minutes"] or session["duration_minutes"],
-         description, custom_desc, custom_code, amount, amount, now, now),
+        (
+            new_id(), invoice_id, session_id, order,
+            values["service_date"], values["participants_snapshot"],
+            values["service_catalog_id"], values["service_name_snapshot"],
+            values["billing_session_type_snapshot"], values["time_category_snapshot"],
+            values["appointment_status_snapshot"], values["billing_treatment_snapshot"],
+            values["scheduled_rate_cents_snapshot"], values["duration_minutes"],
+            values["description_snapshot"], values["custom_service_description_snapshot"],
+            values["custom_service_code_snapshot"], values["unit_amount_cents"],
+            values["line_amount_cents"], now, now,
+        ),
     )
+
+
+def _line_item_snapshot_values(conn: sqlite3.Connection, session: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    session_id = session["id"]
+    catalog = learn_service(conn, session["service_mode"] or "Other")
+    participants = _participant_names(conn, session_id)
+    service_name = catalog["display_name"]
+    description = _service_description(session, service_name)
+    amount = session["rate_cents_snapshot"] if session["rate_cents_snapshot"] is not None else session["approved_rate_cents"]
+    billing_type = session["billing_session_type"] if "billing_session_type" in session.keys() else None
+    custom_desc = session["custom_service_description"] if "custom_service_description" in session.keys() else None
+    custom_code = session["custom_service_code"] if "custom_service_code" in session.keys() else None
+    return {
+        "service_date": session["session_date"],
+        "participants_snapshot": participants,
+        "service_catalog_id": catalog["service_catalog_id"],
+        "service_name_snapshot": service_name,
+        "billing_session_type_snapshot": billing_type,
+        "time_category_snapshot": session["time_category"],
+        "appointment_status_snapshot": session["appointment_status"],
+        "billing_treatment_snapshot": session["billing_treatment"],
+        "scheduled_rate_cents_snapshot": session["scheduled_rate_cents_snapshot"] if "scheduled_rate_cents_snapshot" in session.keys() else None,
+        "duration_minutes": session["approved_duration_minutes"] or session["duration_minutes"],
+        "description_snapshot": description,
+        "custom_service_description_snapshot": custom_desc,
+        "custom_service_code_snapshot": custom_code,
+        "unit_amount_cents": amount,
+        "line_amount_cents": amount,
+    }
+
+
+def _refresh_draft_line_from_session(
+    conn: sqlite3.Connection,
+    line: sqlite3.Row,
+    session: sqlite3.Row | dict[str, Any],
+) -> bool:
+    values = _line_item_snapshot_values(conn, session)
+    changed = any(line[key] != value for key, value in values.items())
+    if not changed:
+        return False
+    assignments = ", ".join(f"{key} = ?" for key in values)
+    conn.execute(
+        f"UPDATE invoice_line_items SET {assignments}, updated_at = ? WHERE invoice_line_item_id = ?",
+        (*values.values(), now_iso(), line["invoice_line_item_id"]),
+    )
+    return True
 
 
 def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids: list[str]) -> dict[str, Any]:
@@ -1610,6 +1654,7 @@ def stage_approved_sessions_to_monthly_drafts(
         "drafts_reused": 0,
         "sessions_staged": 0,
         "sessions_already_staged": 0,
+        "sessions_refreshed": 0,
         "sessions_moved": 0,
         "sessions_removed_ineligible": 0,
         "sessions_skipped": [],
@@ -1755,6 +1800,9 @@ def stage_approved_sessions_to_monthly_drafts(
                             result["sessions_skipped"].append({
                                 "session_id": session["id"], "reasons": reasons,
                             })
+                            draft_changed = True
+                        elif _refresh_draft_line_from_session(conn, line, session):
+                            result["sessions_refreshed"] += 1
                             draft_changed = True
 
             # --- Find eligible sessions for this (party, month) ---

@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.17 Release Notes
+# Jordana Billing v0.1.0-test.18 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.17` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.18` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.17-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.18-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.17
-- **Python package/application version:** 0.1.0.post17
+- **Release label:** v0.1.0-test.18
+- **Python package/application version:** 0.1.0.post18
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,16 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post17` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post18` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.17
+## Bug Fixes In test.18
+
+1. **Approved-session Edit Session recovery** — `Edit Session` from an unfinalized draft invoice can return an approved session to Review and remove its draft invoice line. If a prior interrupted edit already left the session in Review while the draft line remained, the same action now cleans up that stale draft line instead of erroring.
+2. **Draft invoice snapshot refresh** — Reapproving an edited session now refreshes existing draft invoice lines from the current approved session values. Draft invoices no longer keep stale amount, duration, participant, service, appointment-treatment, or description snapshots when the source session is corrected before finalization.
+3. **Fred Colin June 8 regression coverage** — The release was checked against the supplied Jordana database backup using a temporary copy. The June 8 Fred Colin draft-invoice edit path returns to Review and restages with refreshed draft values.
+
+## Bug Fixes Inherited from test.17
 
 1. **Brett Barakett / Peter Grossman billing cleanup** — Changing Bill To now detaches stale archived Billing Relationship account links when the selected billing party no longer matches that relationship. Archived account links no longer block invoice staging when the session has an explicit valid Bill To.
 2. **Erroneous Billing Relationship deletion** — Mistaken archived relationships can be deleted when they have no protected account-specific billing history. Stale unfinalized session links and relationship-specific aliases are cleaned up safely; finalized invoices, payments, receipts, and true protected history still force archive.

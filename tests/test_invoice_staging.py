@@ -227,6 +227,49 @@ class InvoiceStagingTests(unittest.TestCase):
         draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
         self.assertEqual(self.count_lines(draft["invoice_id"]), 2)
 
+    def test_rerun_staging_refreshes_changed_draft_line_snapshots(self):
+        session = self.approved_session("s-refresh", day=10)
+        stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        before = self.conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+            (draft["invoice_id"], session["id"]),
+        ).fetchone()
+        self.assertEqual(before["duration_minutes"], 60)
+        self.assertEqual(before["line_amount_cents"], 15000)
+
+        self.conn.execute(
+            """
+            UPDATE sessions
+            SET approved_duration_minutes = 90,
+                duration_minutes = 90,
+                approved_rate_cents = 22500,
+                rate_cents_snapshot = 22500,
+                updated_at = '2026-05-10T12:00:00Z'
+            WHERE id = ?
+            """,
+            (session["id"],),
+        )
+        self.conn.commit()
+
+        result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+
+        after = self.conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+            (draft["invoice_id"], session["id"]),
+        ).fetchone()
+        refreshed_draft = self.conn.execute(
+            "SELECT total_cents FROM invoices WHERE invoice_id = ?",
+            (draft["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(result["sessions_staged"], 0)
+        self.assertEqual(result["sessions_already_staged"], 1)
+        self.assertEqual(result["sessions_refreshed"], 1)
+        self.assertEqual(after["duration_minutes"], 90)
+        self.assertEqual(after["unit_amount_cents"], 22500)
+        self.assertEqual(after["line_amount_cents"], 22500)
+        self.assertEqual(refreshed_draft["total_cents"], 22500)
+
     # 5. Repeated approval history does not affect staging idempotency
     def test_repeated_approval_history_idempotent(self):
         session = self.approved_session("s1", day=10)

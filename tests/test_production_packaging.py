@@ -129,7 +129,7 @@ class ProductionPackagingContractTest(unittest.TestCase):
     def test_release_uses_unique_package_version_for_next_beta(self) -> None:
         installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
         pyproject = (PROJECT_DIR / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('version = "0.1.0.post17"', pyproject)
+        self.assertIn('version = "0.1.0.post18"', pyproject)
         self.assertNotIn("jordana-invoice==0.1.0", installer)
         self.assertIn("PACKAGE_VERSION", installer)
 

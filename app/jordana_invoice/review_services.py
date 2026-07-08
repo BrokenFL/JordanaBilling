@@ -1623,15 +1623,6 @@ def return_approved_session_to_review(
     session = conn.execute("SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
     if not session:
         raise ValueError("No session found for this candidate.")
-    if session["review_status"] != "approved":
-        raise ValueError("Only approved sessions can be returned to Review with this action.")
-
-    blockers = approved_session_return_blockers(conn, session["id"])
-    if blockers:
-        raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
-
-    now = now_iso()
-    prior_status = session["review_status"]
     draft_invoice_ids = [
         row["invoice_id"]
         for row in conn.execute(
@@ -1645,6 +1636,24 @@ def return_approved_session_to_review(
             (session["id"],),
         ).fetchall()
     ]
+    if session["review_status"] != "approved":
+        if session["review_status"] in {"needs_review", "pending"} and draft_invoice_ids:
+            return _cleanup_draft_invoice_lines_for_review(
+                conn,
+                session,
+                candidate_id,
+                draft_invoice_ids,
+                reason=audit_reason,
+                action_source=action_source,
+            )
+        raise ValueError("Only approved sessions can be returned to Review with this action.")
+
+    blockers = approved_session_return_blockers(conn, session["id"])
+    if blockers:
+        raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
+
+    now = now_iso()
+    prior_status = session["review_status"]
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
@@ -1713,6 +1722,86 @@ def return_approved_session_to_review(
     result = get_review_candidate(conn, candidate_id)
     result["returned_to_review"] = True
     result["draft_invoice_ids_removed"] = draft_invoice_ids
+    if report_warning:
+        result["report_warning"] = report_warning
+    return result
+
+
+def _cleanup_draft_invoice_lines_for_review(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row,
+    candidate_id: str,
+    draft_invoice_ids: list[str],
+    *,
+    reason: str,
+    action_source: str,
+) -> dict[str, Any]:
+    """Remove stale draft invoice lines when a session is already back in review."""
+    blockers = approved_session_return_blockers(conn, session["id"])
+    if blockers:
+        raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
+
+    now = now_iso()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            DELETE FROM invoice_line_items
+            WHERE source_session_id = ?
+              AND invoice_id IN (SELECT invoice_id FROM invoices WHERE status = 'draft')
+            """,
+            (session["id"],),
+        )
+        for invoice_id in draft_invoice_ids:
+            _recalculate_draft_invoice_totals(conn, invoice_id)
+            conn.execute(
+                "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                (now, invoice_id),
+            )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'needs_review',
+                billable_status = 'proposed',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, session["id"]),
+        )
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'client_session',
+                review_status = 'needs_review',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, candidate_id),
+        )
+        record_audit(
+            conn,
+            "session",
+            session["id"],
+            "draft_invoice_line_removed_for_review",
+            {
+                "candidate_id": candidate_id,
+                "prior_status": session["review_status"],
+                "new_status": "needs_review",
+                "reason": reason,
+                "action_source": text(action_source) or "review_ui",
+                "draft_invoice_ids": draft_invoice_ids,
+            },
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    report_warning = refresh_reports_after_commit(conn)
+    result = get_review_candidate(conn, candidate_id)
+    result["returned_to_review"] = session["review_status"] == "approved"
+    result["draft_invoice_ids_removed"] = draft_invoice_ids
+    result["already_in_review"] = True
     if report_warning:
         result["report_warning"] = report_warning
     return result

@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.17
+### Current Test Build — v0.1.0-test.18
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.17
-- **Python package/application version:** 0.1.0.post17
+- **Release label:** v0.1.0-test.18
+- **Python package/application version:** 0.1.0.post18
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,15 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.17 supersedes test.15 for installation and update testing because it uses
-a unique package version and verifies the exact installed runtime plus running
-server build ID before reporting success.
+test.18 supersedes test.17 for installation and update testing because it fixes
+the approved-session Edit Session recovery path and refreshes existing draft
+invoice line snapshots after edited sessions are reapproved.
+
+### Bug Fixes In test.18
+
+1. **Approved-session Edit Session recovery** — `Edit Session` from an unfinalized draft invoice can return an approved session to Review and remove its draft line. If an interrupted prior edit already left the session in Review while the draft line remained, the same action cleans up the stale draft line instead of erroring.
+2. **Draft invoice snapshot refresh** — reapproving an edited session refreshes existing draft invoice lines from the current approved session values, preventing stale amount, duration, participant, service, appointment-treatment, or description values from remaining on draft invoices.
+3. **Fred Colin June 8 regression check** — the supplied Jordana backup was checked with a temporary copy to verify this path.
 
 ### Bug Fixes In test.17
 
@@ -71,7 +77,7 @@ server build ID before reporting success.
 
 ### Prior Test Builds
 
-`v0.1.0-test.15` is superseded by test.17 for installation and update testing.
+`v0.1.0-test.17` is superseded by test.18 for installation and update testing.
 
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.4. test.15
 supersedes test.14 for installation and update testing.
@@ -92,7 +98,7 @@ clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
 test.13, and test.14 builds remain historically accurate for the periods in
-which they were the current builds. test.17 supersedes test.15 for installation
+which they were the current builds. test.18 supersedes test.15 for installation
 and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,
