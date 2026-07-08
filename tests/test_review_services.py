@@ -775,6 +775,43 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(saved["readiness"]["billing_party_source"], "session")
         self.assertIsNone(saved["account"])
 
+    def test_saving_different_bill_to_detaches_archived_relationship_account(self):
+        person = create_person(self.conn, "Fred Smith")
+        account = create_account(self.conn, "Old Shared Billing", "household")
+        old_payer = create_billing_party(self.conn, {"billing_name": "Old Payer", "billing_party_type": "organization"})
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ?, active = 0 WHERE account_id = ?",
+            (old_payer["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        save_relationship_section(
+            self.conn,
+            self.candidate_id,
+            {
+                "participants": [{"person_id": person["person_id"], "display_name": "Fred Smith", "is_primary": True}],
+                "account_id": account["account_id"],
+            },
+        )
+        new_payer = create_billing_party(
+            self.conn,
+            {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]},
+        )
+
+        saved = save_billing_section(
+            self.conn,
+            self.candidate_id,
+            {"billing_party_id": new_payer["billing_party_id"]},
+        )
+
+        session = self.conn.execute(
+            "SELECT account_id, billing_party_id FROM sessions WHERE candidate_id = ?",
+            (self.candidate_id,),
+        ).fetchone()
+        self.assertIsNone(session["account_id"])
+        self.assertEqual(session["billing_party_id"], new_payer["billing_party_id"])
+        self.assertIsNone(saved["account"])
+        self.assertEqual(saved["effective_billing_party"]["billing_party_id"], new_payer["billing_party_id"])
+
     def test_one_participant_with_exactly_one_active_billing_record_is_suggested(self):
         person = create_person(self.conn, "Fred Smith")
         payer = create_billing_party(self.conn, {"billing_name": "Fred Smith", "billing_party_type": "person", "person_id": person["person_id"]})

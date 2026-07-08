@@ -1116,7 +1116,8 @@ def get_payment_detail_view(conn: sqlite3.Connection, payment_id: str) -> dict[s
         if alloc.get("invoice_line_item_id"):
             row = conn.execute(
                 """
-                SELECT i.invoice_id, i.invoice_number, bp.billing_name AS bill_to_name
+                SELECT i.invoice_id, i.invoice_number, i.billing_month, i.billing_period_start,
+                       i.billing_period_end, bp.billing_name AS bill_to_name
                 FROM invoice_line_items li
                 JOIN invoices i ON i.invoice_id = li.invoice_id
                 JOIN billing_parties bp ON bp.billing_party_id = i.bill_to_party_id
@@ -1128,6 +1129,8 @@ def get_payment_detail_view(conn: sqlite3.Connection, payment_id: str) -> dict[s
                 invoice_info = {
                     "invoice_id": row["invoice_id"],
                     "invoice_number": row["invoice_number"],
+                    "invoice_period": _invoice_period_key(row),
+                    "invoice_period_display": _invoice_period_display(row),
                     "bill_to_name": row["bill_to_name"],
                 }
         allocations.append({

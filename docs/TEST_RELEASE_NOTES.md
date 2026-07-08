@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.15 Release Notes
+# Jordana Billing v0.1.0-test.17 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.15` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.17` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.15-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.17-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.15
-- **Python package/application version:** 0.1.0.post15
+- **Release label:** v0.1.0-test.17
+- **Python package/application version:** 0.1.0.post17
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,46 +29,27 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post15` app wheel plus pinned production dependencies
-- **Unit tests and focused browser smoke:** required before publication
-- **Temporary-DB acceptance test:** required before publication when running the broader release checklist
-- **Privacy and Git safety checks:** required before publication
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post17` app wheel plus pinned production dependencies
+- **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.15
+## Bug Fixes In test.17
 
-1. **Review self-pay switch** — The Review Bill To section now includes a direct Self pay action for single-client sessions. It saves the client as Bill To and detaches the stale session-level Billing Relationship/account link so an archived or deleted shared relationship does not keep shadowing the review item.
-2. **Billing Relationship switcher** — Change payer or shared billing now opens the relationship wizard from Review instead of trapping the user in the old relationship record.
-3. **Structured person selection** — Billing Relationship payer, recipient, delivery-contact, and covered-client searches now show explicit Select/Add/Remove buttons so typed matches are easier to choose reliably.
-4. **Covered-client edit refresh** — Adding or removing a covered client from a Billing Relationship refreshes the originating Review candidate before returning, preventing removed names from lingering in the Review tab.
-5. **Last-name-first list labels** — Invoice, payment, client, and Billing Relationship list views show person names as Last, First while the Review queue remains date-driven.
+1. **Brett Barakett / Peter Grossman billing cleanup** — Changing Bill To now detaches stale archived Billing Relationship account links when the selected billing party no longer matches that relationship. Archived account links no longer block invoice staging when the session has an explicit valid Bill To.
+2. **Erroneous Billing Relationship deletion** — Mistaken archived relationships can be deleted when they have no protected account-specific billing history. Stale unfinalized session links and relationship-specific aliases are cleaned up safely; finalized invoices, payments, receipts, and true protected history still force archive.
+3. **Invoice lists show service period only** — Invoice, client, organization, and payment list surfaces now show the service period, such as `June 2026`, instead of invoice number and invoice date. The invoice number/date remain stored internally and on the actual invoice document.
+4. **Draft invoice Edit Session workflow** — Draft invoice line editing now routes linked sessions back to Review through `Edit Session`, removing the draft line and recalculating totals instead of using the old limited line editor.
+5. **Draft invoice deletion** — True draft invoices can be deleted from the draft editor. This removes draft line items without deleting the underlying sessions. Finalized invoices remain void-only.
+6. **Invoice PDF footer removal** — Repeated page footers and page-number footer labels were removed from invoice PDFs.
+7. **Recipient block cleanup** — Customer-facing invoice and receipt recipient blocks no longer display `Via Email` or `Via Mail`; they show only the recipient name plus applicable address and email details.
+8. **Billing Relationship ordering and display** — Billing Relationships sort by payer last name and first name, and inactive archived account members no longer leak into active payer rows.
 
-## Bug Fixes In test.14
+## Bug Fixes Inherited from test.15
 
-1. **Static asset cache-busting** — CSS and JS assets are now served with mtime-based version query strings and `no-store` Cache-Control headers, preventing stale cached assets after updates.
-2. **Inactive payer record conflict fix** — The billing relationship directory no longer reports a false payer-record-conflict warning when an inactive billing party exists alongside an active one for the same person.
-3. **SELECT change-event handling** — Dropdown selects in the Review inspector and Rate Card now listen for `change` events in addition to `input` events via a shared `bindInputAndChange` helper, ensuring selections like billing type, duration, payment method, and attendance outcome are detected reliably.
-4. **Inline invoice workspace at laptop widths** — The invoice workspace renders inline within the invoices view at laptop widths instead of as a modal sheet, with smooth scroll-to-top on reveal and no backdrop overlay.
-5. **Paid-at-session Receipt button** — The paid-at-session summary in the Review inspector now includes a Receipt button that opens the payment detail view for the associated payment.
-
-## Bug Fixes Inherited from test.13
-
-1. **Paid-at-session approval after saved details** — Approval now reuses the saved paid-at-session amount, date, method, reference, and administrative note when the Session Details section is collapsed.
-2. **Invoice presentation** — Simplified invoice filters, separated draft columns, corrected invoice headers, and raw calendar titles in Review.
-3. **Payments workspace** — Invoice Period filtering, first-name sorting, and paid-at-session rows in Paid.
-4. **Reports smoke** — Reports route and API verified during release prep.
-
-## Bug Fixes Inherited from test.12
-
-1. **Duplicate Billing Relationships display suppression** — One visible active row per actual Billing Relationship. Canonical active account wins; implicit/session-derived fallback rows are suppressed while Edit and canonical `account_id` are preserved. No live data merge is performed.
-
-## Bug Fixes Inherited from test.11
-
-1. **Weekday column** — Review queue shows short weekday abbreviation.
-2. **Weekend/evening rate matching** — Manually selected weekend/evening session type propagates `time_category` to rate suggestion.
-3. **Edit Session** — Eligible approved sessions return to Review without a reason prompt; draft line removed and total recalculated atomically.
-4. **Billing Relationship delete/archive** — Unused relationships delete; history-protected relationships archive.
-5. **Self-pay Edit and canonical relationship access** — Self-pay rows open the canonical account editor consistently.
-6. **Write-token messaging and SSL blank-env handling** — User-facing auth expiry and blank certificate env handling are hardened.
+1. **Review self-pay switch** — Review can switch a single-client session to Self pay and detach the stale session-level Billing Relationship/account link.
+2. **Billing Relationship switcher** — Change payer or shared billing opens the relationship wizard from Review.
+3. **Structured person selection** — Billing Relationship searches show explicit Select/Add/Remove actions.
+4. **Covered-client edit refresh** — Covered-client changes refresh the originating Review candidate before returning.
+5. **Last-name-first list labels** — Invoice, payment, client, and Billing Relationship list views show person names as Last, First while Review stays date-driven.
 
 ## Installation Notes
 

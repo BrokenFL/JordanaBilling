@@ -160,35 +160,23 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertAlmostEqual(float(page.mediabox.width), PAGE_W, delta=1)
         self.assertAlmostEqual(float(page.mediabox.height), PAGE_H, delta=1)
 
-    def test_left_margin_via_footer_position(self):
-        """Footer 'Invoice ...' is drawn at leftMargin on canvas — verifiable."""
+    def test_page_footer_invoice_label_is_not_drawn(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
         path = self._generate_pdf()
         reader = PdfReader(path)
-        snips = []
-        reader.pages[0].extract_text(visitor_text=lambda t, cm, tm, fd, fs: snips.append((t, tm[4])) if t and t.strip() else None)
-        footer = [s for s in snips if s[0].startswith("Invoice 2026")]
-        self.assertTrue(footer, "Footer 'Invoice ...' not found")
-        self.assertAlmostEqual(footer[0][1], MARGIN_PT, delta=4)
+        text = reader.pages[0].extract_text() or ""
+        self.assertNotIn("Invoice 2026-0042", text)
 
-    def test_right_margin_via_footer_position(self):
-        """Footer 'Page N' is right-aligned at pageWidth - rightMargin."""
+    def test_page_footer_number_is_not_drawn(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
         path = self._generate_pdf()
         reader = PdfReader(path)
-        snips = []
-        reader.pages[0].extract_text(visitor_text=lambda t, cm, tm, fd, fs: snips.append((t, tm[4], fs)) if t and t.strip() else None)
-        page_snips = [s for s in snips if s[0].startswith("Page ")]
-        self.assertTrue(page_snips, "Footer 'Page N' not found")
-        # drawRightString places the right edge at PAGE_W - MARGIN_PT = 576
-        # pypdf returns the left edge of the text, so estimate right edge
-        s = page_snips[0]
-        approx_right = s[1] + len(s[0]) * s[2] * 0.35
-        self.assertLessEqual(approx_right, PAGE_W - MARGIN_PT + 4)
+        text = reader.pages[0].extract_text() or ""
+        self.assertNotIn("Page 1", text)
 
     # --- 2. Column widths sum exactly to content width ---
 
@@ -372,9 +360,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         path = self._generate_pdf(lines=_multi_page_lines())
         self.assertGreater(len(PdfReader(path).pages), 1)
 
-    # --- 8. Footer/page numbering behavior remains ---
+    # --- 8. Page footer/page numbering behavior remains hidden ---
 
-    def test_footer_invoice_number_on_every_page(self):
+    def test_footer_invoice_number_not_repeated_on_pages(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
@@ -383,9 +371,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertGreater(len(reader.pages), 1)
         for page in reader.pages:
             text = page.extract_text() or ""
-            self.assertIn("Invoice 2026-0042", text)
+            self.assertNotIn("Invoice 2026-0042", text)
 
-    def test_page_numbering_increments(self):
+    def test_page_numbering_is_not_drawn(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
@@ -394,7 +382,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertGreater(len(reader.pages), 1)
         for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
-            self.assertIn(f"Page {i + 1}", text)
+            self.assertNotIn(f"Page {i + 1}", text)
 
     def test_total_and_payment_only_on_last_page(self):
         if not _has_pdf_deps():
@@ -510,7 +498,9 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertIn("Alexandria Montgomery-Sterling Family Account", text)
         self.assertIn("Apartment 12B", text)
         self.assertIn("Example Harbor, FL 00000", text)
-        self.assertIn("Via Email: billing.long-client@example.test", text)
+        self.assertIn("billing.long-client@example.test", text)
+        self.assertNotIn("Via Email:", text)
+        self.assertNotIn("Via Mail:", text)
         self.assertIn("TOTAL DUE", text)
 
     def test_delivery_line_absent_when_email_not_available(self):
@@ -895,9 +885,11 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         final_text = self._extract_pdf_text(final_bytes)
         for s in ["Alexandria Montgomery-Sterling Family Account" if "Alexandria" in invoice.get("bill_to_name_snapshot", "") else "Avery Stone",
                   "Apartment 12B", "Example Harbor, FL 00000",
-                  "Via Email: billing.long-client@example.test"]:
+                  "billing.long-client@example.test"]:
             self.assertIn(s, draft_text)
             self.assertIn(s, final_text)
+        self.assertNotIn("Via Email:", draft_text)
+        self.assertNotIn("Via Email:", final_text)
 
     def test_right_invoice_block_is_present_across_all_bill_to_sizes(self):
         if not _has_pdf_deps():

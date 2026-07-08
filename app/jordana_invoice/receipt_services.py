@@ -219,7 +219,7 @@ def _build_receipt_snapshot(
             party["billing_postal_code"],
         ))
     if delivery in {"email", "both"} and party["billing_email"]:
-        bill_to_lines.append(f"Via Email: {party['billing_email']}")
+        bill_to_lines.append(party["billing_email"])
 
     return {
         "snapshot_version": 1,

@@ -87,6 +87,7 @@ from .review_services import (
 from .invoice_services import (
     add_sessions_to_draft,
     create_invoice_draft,
+    delete_invoice_draft,
     eligible_sessions,
     finalize_invoice,
     get_business_profile,
@@ -1360,6 +1361,9 @@ def make_handler(
                     if action == "remove-line":
                         req = parse_remove_line_from_draft_request(data)
                         self.send_json(remove_line_from_draft(self.conn(), invoice_id, req.invoice_line_item_id))
+                        return
+                    if action == "delete-draft":
+                        self.send_json(delete_invoice_draft(self.conn(), invoice_id))
                         return
                     if action == "preview-finalize":
                         req = parse_preview_finalize_request(data)

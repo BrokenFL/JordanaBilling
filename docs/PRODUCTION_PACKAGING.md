@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.15
+### Current Test Build — v0.1.0-test.17
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.15
-- **Python package/application version:** 0.1.0.post15
+- **Release label:** v0.1.0-test.17
+- **Python package/application version:** 0.1.0.post17
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,17 +36,25 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post15` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post17` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.15 fixes the Review self-pay switch away from stale Billing Relationships,
-opens the Billing Relationship wizard for payer changes, makes person-selection
-results explicit with Select/Add/Remove buttons, refreshes the Review candidate
-after covered-client edits, and shows person names as Last, First in list views
-outside the date-driven Review queue.
+test.17 fixes stale archived relationship links, erroneous relationship deletion,
+service-period invoice lists, draft invoice return-to-review, draft deletion,
+invoice PDF footer removal, and customer-facing recipient label cleanup.
+
+### Bug Fixes In test.17
+
+1. **Brett Barakett / Peter Grossman billing cleanup** — Changing Bill To detaches stale archived Billing Relationship account links when the selected billing party no longer matches that relationship. Archived account links no longer block invoice staging when the session has an explicit valid Bill To.
+2. **Erroneous Billing Relationship deletion** — Mistaken archived relationships can be deleted when they have no protected account-specific billing history. Stale unfinalized session links and relationship-specific aliases are cleaned up safely; finalized invoices, payments, receipts, and true protected history still force archive.
+3. **Service-period invoice lists** — Invoice, client, organization, and payment list surfaces show the service period rather than invoice number/date. Invoice number/date remain stored internally and on the invoice document.
+4. **Draft invoice Review workflow** — Draft invoice line editing routes linked sessions back to Review through `Edit Session`; the old limited line editor is no longer used.
+5. **Draft invoice deletion** — True draft invoices can be deleted from the draft editor, removing draft line items without deleting underlying sessions.
+6. **Customer-facing invoice cleanup** — Invoice PDF footers/page-number footer labels are removed, and recipient blocks no longer show `Via Email` or `Via Mail`.
+7. **Billing Relationship ordering and display** — Billing Relationships sort by payer last name and first name, and inactive archived account members no longer leak into active payer rows.
 
 ### Bug Fixes In test.15
 
@@ -105,6 +113,8 @@ outside the date-driven Review queue.
 
 ### Prior Test Builds
 
+`v0.1.0-test.15` was built from the prior controlled-beta release. test.17 supersedes test.15 for installation and update testing.
+
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.x. test.15 supersedes test.14 for installation and update testing.
 
 `v0.1.0-test.13` was built from commit `5436468` with Python 3.14.x. test.14 supersedes test.13 for installation and update testing.
@@ -137,7 +147,7 @@ clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
 and test.14 builds remain historically accurate for the periods in which they
-were the current builds. test.15 supersedes test.14 for installation and
+were the current builds. test.17 supersedes test.15 for installation and
 stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,

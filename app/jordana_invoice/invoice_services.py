@@ -258,7 +258,7 @@ def _invoice_line_order_sql() -> str:
 def invoice_line_rows(conn: sqlite3.Connection, invoice_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         f"""
-        SELECT li.*, s.start_at AS source_start_at
+        SELECT li.*, s.start_at AS source_start_at, s.candidate_id AS candidate_id
         FROM invoice_line_items li
         LEFT JOIN sessions s ON s.id = li.source_session_id
         WHERE li.invoice_id = ?
@@ -1095,10 +1095,6 @@ def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row
     count = conn.execute("SELECT COUNT(*) FROM session_participants WHERE session_id = ?", (s["id"],)).fetchone()[0]
     if not count: reasons.append("Participants are not confirmed")
     if not s.get("billing_party_id"): reasons.append("Bill-to party is not confirmed")
-    if s.get("account_id"):
-        account = conn.execute("SELECT active FROM client_accounts WHERE account_id = ?", (s["account_id"],)).fetchone()
-        if account and not int(account["active"] or 0):
-            reasons.append("Billing relationship is archived")
     if s.get("approved_rate_cents") is None and s.get("rate_cents_snapshot") is None: reasons.append("Approved charged amount is missing")
     amount = s.get("rate_cents_snapshot") if s.get("rate_cents_snapshot") is not None else s.get("approved_rate_cents")
     if amount is not None and int(amount) < 0: reasons.append("Approved amount cannot be negative")
@@ -1362,6 +1358,65 @@ def remove_line_from_draft(conn: sqlite3.Connection, invoice_id: str, line_id: s
         raise
     result = get_invoice(conn, invoice_id)
     warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
+
+
+def delete_invoice_draft(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
+    """Delete an unfinalized draft invoice and its draft line items."""
+    invoice = _draft(conn, invoice_id)
+    blockers: list[str] = []
+    if invoice["invoice_number"] or invoice["finalized_at"] or invoice["voided_at"]:
+        blockers.append("invoice has finalized numbering or lifecycle history")
+    if invoice["pdf_path"] or invoice["pdf_sha256"]:
+        blockers.append("invoice has a stored PDF")
+    if conn.execute(
+        """
+        SELECT 1
+        FROM payment_allocations pa
+        JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+        WHERE li.invoice_id = ?
+        LIMIT 1
+        """,
+        (invoice_id,),
+    ).fetchone():
+        blockers.append("payment allocations are tied to this draft")
+    if blockers:
+        raise ValueError("Draft invoice cannot be deleted: " + "; ".join(blockers))
+
+    line_count = conn.execute(
+        "SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = ?",
+        (invoice_id,),
+    ).fetchone()[0]
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM invoice_line_items WHERE invoice_id = ?", (invoice_id,))
+        conn.execute("DELETE FROM invoices WHERE invoice_id = ? AND status = 'draft'", (invoice_id,))
+        _audit(
+            conn,
+            "invoice",
+            invoice_id,
+            "draft_deleted",
+            {
+                "bill_to_party_id": invoice["bill_to_party_id"],
+                "billing_month": invoice["billing_month"],
+                "total_cents": invoice["total_cents"],
+                "line_count": line_count,
+            },
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    warning = refresh_reports_after_commit(conn)
+    result = {
+        "ok": True,
+        "action": "deleted",
+        "invoice_id": invoice_id,
+        "line_count": line_count,
+        "message": "Draft invoice deleted.",
+    }
     if warning:
         result["report_warning"] = warning
     return result

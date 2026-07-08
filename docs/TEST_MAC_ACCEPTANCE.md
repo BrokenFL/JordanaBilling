@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.15
+### Current Test Build — v0.1.0-test.17
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.15
-- **Python package/application version:** 0.1.0.post15
+- **Release label:** v0.1.0-test.17
+- **Python package/application version:** 0.1.0.post17
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,18 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.15 supersedes test.14 for installation and update testing because it uses
+test.17 supersedes test.15 for installation and update testing because it uses
 a unique package version and verifies the exact installed runtime plus running
 server build ID before reporting success.
+
+### Bug Fixes In test.17
+
+1. **Brett/Peter billing cleanup** — stale archived Billing Relationship account links are detached when Bill To is corrected.
+2. **Erroneous relationship deletion** — mistaken archived relationships can be deleted when they have no protected account-specific billing history.
+3. **Service-period invoice lists** — invoice and payment list surfaces show service period instead of invoice number/date.
+4. **Edit Session from drafts** — draft invoice lines route linked sessions back to Review instead of using the old limited line editor.
+5. **Draft deletion and invoice cleanup** — true draft invoices can be deleted, PDF footers are removed, and recipient blocks no longer show `Via Email` or `Via Mail`.
+6. **Billing Relationship ordering** — relationship rows sort by payer last name and first name.
 
 ### Bug Fixes In test.15
 
@@ -61,6 +70,8 @@ server build ID before reporting success.
 5. **Paid-at-session Receipt button** — Review inspector shows Receipt button for paid-at-session payments.
 
 ### Prior Test Builds
+
+`v0.1.0-test.15` is superseded by test.17 for installation and update testing.
 
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.4. test.15
 supersedes test.14 for installation and update testing.
@@ -81,7 +92,7 @@ clean temporary clone outside the Documents directory.
 
 The prior test.5, test.6, test.7, test.8, test.9, test.10, test.11, test.12,
 test.13, and test.14 builds remain historically accurate for the periods in
-which they were the current builds. test.15 supersedes test.14 for installation
+which they were the current builds. test.17 supersedes test.15 for installation
 and stale-runtime verification.
 
 The full clean-Mac acceptance evidence record (restart, duplicate launch,

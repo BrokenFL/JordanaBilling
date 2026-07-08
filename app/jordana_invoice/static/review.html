@@ -378,7 +378,7 @@
           <div class="invoice-layout">
             <section>
               <table class="review-table invoice-list-table">
-                <thead><tr><th>Select</th><th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Select</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr></thead>
                 <tbody id="invoiceRows"></tbody>
               </table>
               <footer class="pager">
@@ -413,7 +413,7 @@
             <div class="invoice-layout">
               <section>
                 <table class="review-table invoice-list-table unpaid-list-table">
-                  <thead><tr><th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Period</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Status</th><th>Service Period</th><th>Bill To</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead>
                   <tbody id="unpaidRows"></tbody>
                 </table>
               </section>
@@ -422,13 +422,13 @@
           </div>
           <div class="payments-panel" id="paymentsPaidPanel" hidden>
             <table class="review-table paid-invoices-table">
-              <thead><tr><th>Invoice Number</th><th>Bill To</th><th>Invoice Period</th><th>Total</th><th>Paid Date</th><th>Payment Method</th><th>Status</th><th>Open</th></tr></thead>
+              <thead><tr><th>Service Period</th><th>Bill To</th><th>Total</th><th>Paid Date</th><th>Payment Method</th><th>Status</th><th>Open</th></tr></thead>
               <tbody id="paidRows"></tbody>
             </table>
           </div>
           <div class="payments-panel" id="paymentsAllPaymentsPanel" hidden>
             <table class="review-table all-payments-table">
-              <thead><tr><th>Payment Date</th><th>Bill To</th><th>Invoice Number</th><th>Method</th><th>Reference</th><th>Received From</th><th>Amount Applied</th><th>Status</th><th>Open</th></tr></thead>
+              <thead><tr><th>Payment Date</th><th>Bill To</th><th>Service Period</th><th>Method</th><th>Reference</th><th>Received From</th><th>Amount Applied</th><th>Status</th><th>Open</th></tr></thead>
               <tbody id="allPaymentsRows"></tbody>
             </table>
           </div>

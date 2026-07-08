@@ -612,7 +612,9 @@ class StaleDraftDeliverySyncTests(unittest.TestCase):
         self.assertEqual(preview["invoice"]["delivery_method"], "email")
         render = preview["render_model"]
         bill_to_text = " ".join(render.get("bill_to_lines", []))
-        self.assertIn("Via Email:", bill_to_text)
+        self.assertIn("sync@example.test", bill_to_text)
+        self.assertNotIn("Via Email:", bill_to_text)
+        self.assertNotIn("Via Mail:", bill_to_text)
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_revision_increments_exactly_once(self, fake_pdf):

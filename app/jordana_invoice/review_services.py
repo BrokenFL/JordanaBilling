@@ -1364,7 +1364,22 @@ def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: d
             billing_party_id = created["billing_party_id"]
     if billing_party_id:
         now = now_iso()
-        if payload.get("detach_account"):
+        should_detach_account = bool(payload.get("detach_account"))
+        if session["account_id"] and not should_detach_account:
+            account = conn.execute(
+                "SELECT active, default_billing_party_id FROM client_accounts WHERE account_id = ?",
+                (session["account_id"],),
+            ).fetchone()
+            if (
+                not account
+                or not int(account["active"] or 0)
+                or (
+                    account["default_billing_party_id"]
+                    and account["default_billing_party_id"] != billing_party_id
+                )
+            ):
+                should_detach_account = True
+        if should_detach_account:
             conn.execute(
                 "UPDATE sessions SET account_id = NULL, updated_at = ? WHERE id = ?",
                 (now, session["id"]),
@@ -3092,19 +3107,66 @@ def delete_or_archive_billing_relationship(conn: sqlite3.Connection, account_id:
         raise ValueError("Account not found.")
 
     billing_party_id = account["default_billing_party_id"]
+    detached_stale_session_ids: list[str] = []
+    if not int(account["active"] or 0):
+        detachable_rows = conn.execute(
+            """
+            SELECT s.id
+            FROM sessions s
+            WHERE s.account_id = ?
+              AND (
+                s.billing_party_id IS NULL
+                OR ? IS NULL
+                OR s.billing_party_id != ?
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM invoice_line_items li
+                JOIN invoices i ON i.invoice_id = li.invoice_id
+                WHERE li.source_session_id = s.id
+                  AND i.status IN ('finalized', 'void')
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM payments p
+                WHERE p.source_session_id = s.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM payment_allocations pa
+                WHERE pa.session_id = s.id
+                  AND pa.status = 'active'
+              )
+            """,
+            (account_id, billing_party_id, billing_party_id),
+        ).fetchall()
+        detached_stale_session_ids = [row["id"] for row in detachable_rows]
+        if detached_stale_session_ids:
+            _begin_immediate(conn)
+            try:
+                now = now_iso()
+                conn.executemany(
+                    "UPDATE sessions SET account_id = NULL, updated_at = ? WHERE id = ?",
+                    [(now, session_id) for session_id in detached_stale_session_ids],
+                )
+                record_audit(
+                    conn,
+                    "client_account",
+                    account_id,
+                    "detached_stale_session_relationship_links",
+                    {"session_count": len(detached_stale_session_ids)},
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    alias_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM calendar_aliases WHERE account_id = ?",
+        (account_id,),
+    ).fetchone()["c"]
     checks: list[tuple[str, str, tuple[Any, ...]]] = [
         ("session history", "SELECT 1 FROM sessions WHERE account_id = ? LIMIT 1", (account_id,)),
         ("relationship-specific rates", "SELECT 1 FROM rate_rules WHERE client_account_id = ? LIMIT 1", (account_id,)),
-        ("calendar aliases", "SELECT 1 FROM calendar_aliases WHERE account_id = ? LIMIT 1", (account_id,)),
     ]
-    if billing_party_id:
-        checks.extend(
-            [
-                ("approved sessions", "SELECT 1 FROM sessions WHERE billing_party_id = ? AND review_status = 'approved' LIMIT 1", (billing_party_id,)),
-                ("invoices", "SELECT 1 FROM invoices WHERE bill_to_party_id = ? LIMIT 1", (billing_party_id,)),
-                ("payments", "SELECT 1 FROM payments WHERE billing_party_id = ? LIMIT 1", (billing_party_id,)),
-            ]
-        )
     protected_reasons = [
         label for label, sql, params in checks if conn.execute(sql, params).fetchone()
     ]
@@ -3124,6 +3186,7 @@ def delete_or_archive_billing_relationship(conn: sqlite3.Connection, account_id:
     _begin_immediate(conn)
     try:
         _delete_billing_relationship_key(conn, account_id)
+        conn.execute("DELETE FROM calendar_aliases WHERE account_id = ?", (account_id,))
         conn.execute("DELETE FROM account_members WHERE account_id = ?", (account_id,))
         conn.execute("DELETE FROM client_accounts WHERE account_id = ?", (account_id,))
         record_audit(
@@ -3131,7 +3194,7 @@ def delete_or_archive_billing_relationship(conn: sqlite3.Connection, account_id:
             "client_account",
             account_id,
             "deleted_unused_billing_relationship",
-            {"account_name": account["account_name"]},
+            {"account_name": account["account_name"], "calendar_alias_count": int(alias_count or 0)},
         )
         conn.commit()
     except Exception:
@@ -3143,6 +3206,8 @@ def delete_or_archive_billing_relationship(conn: sqlite3.Connection, account_id:
         "account_id": account_id,
         "message": "Unused billing relationship deleted.",
         "protected_reasons": [],
+        "detached_stale_session_count": len(detached_stale_session_ids),
+        "deleted_calendar_alias_count": int(alias_count or 0),
     }
 
 
@@ -4835,12 +4900,19 @@ def get_organization_billing_record(conn: sqlite3.Connection, billing_party_id: 
             WHERE sp2.session_id = s.id
           ) AS participant_names,
           (
-            SELECT i.invoice_number
+            SELECT i.billing_month
             FROM invoice_line_items li
             JOIN invoices i ON i.invoice_id = li.invoice_id
             WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
             LIMIT 1
-          ) AS invoice_number,
+          ) AS billing_month,
+          (
+            SELECT i.billing_period_start
+            FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
+            LIMIT 1
+          ) AS billing_period_start,
           (
             SELECT i.invoice_id
             FROM invoice_line_items li
@@ -7067,6 +7139,8 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
                 latest_date = d
             links = account_links.get(p["billing_party_id"], [])
             for link in links:
+                if not link["account_active"]:
+                    continue
                 all_account_ids.append(link["account_id"])
                 for mid in account_member_map.get(link["account_id"], []):
                     all_covered.add(mid)
@@ -7097,7 +7171,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         else:
             record_type = "self_pay"
 
-        links = account_links.get(canonical_id, [])
+        links = [link for link in account_links.get(canonical_id, []) if link["account_active"]]
         link = links[0] if links else None
         record_active = bool(canonical["billing_party_active"])
         if link:
@@ -7248,6 +7322,19 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         )
 
     def sort_key(r: dict[str, Any]) -> tuple:
+        last = text(r.get("payer_last_name")).lower()
+        first = text(r.get("payer_first_name")).lower()
+        if not last and (r.get("covered_people") or []):
+            primary = sorted(
+                r.get("covered_people") or [],
+                key=lambda person: (
+                    text(person.get("last_name")).lower() or text(person.get("display_name")).lower(),
+                    text(person.get("first_name")).lower(),
+                    text(person.get("display_name")).lower(),
+                ),
+            )[0]
+            last = text(primary.get("last_name")).lower() or text(primary.get("display_name")).lower()
+            first = text(primary.get("first_name")).lower()
         display = (
             r.get("payer_display_name")
             or r.get("organization_name")
@@ -7255,7 +7342,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
             or r.get("account_name")
             or ""
         )
-        return (0 if r["active"] else 1, display.lower(), r["record_id"])
+        return (0 if r["active"] else 1, last or display.lower(), first, display.lower(), r["record_id"])
 
     records.sort(key=sort_key)
     return records

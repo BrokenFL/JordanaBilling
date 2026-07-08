@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `018_delivery_contact_person`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.15`
+- **Current test release target:** `v0.1.0-test.17`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post15`
+- **Current package/application version:** `0.1.0.post17`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.14` is superseded by test.15 for installation and update testing
+- **Prior test release:** `v0.1.0-test.15` is superseded by test.17 for installation and update testing
 
 ## Architecture
 
@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.15 supersedes test.14):
+The current controlled-beta release target is (test.17 supersedes test.15):
 
 ```text
-JordanaBilling-v0.1.0-test.15-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.17-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.15`
-- Python package/application version: `0.1.0.post15`
+- Release label: `v0.1.0-test.17`
+- Python package/application version: `0.1.0.post17`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,9 +130,19 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post15` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post17` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Bug Fixes In test.17
+
+1. **Brett Barakett / Peter Grossman billing cleanup** — Changing Bill To detaches stale archived Billing Relationship account links when the selected billing party no longer matches that relationship. Archived account links no longer block invoice staging when the session has an explicit valid Bill To.
+2. **Erroneous Billing Relationship deletion** — Mistaken archived relationships can be deleted when they have no protected account-specific billing history. Stale unfinalized session links and relationship-specific aliases are cleaned up safely; finalized invoices, payments, receipts, and true protected history still force archive.
+3. **Service-period invoice lists** — Invoice, client, organization, and payment list surfaces show the service period rather than invoice number/date. Invoice number/date remain stored internally and on the invoice document.
+4. **Draft invoice Review workflow** — Draft invoice line editing routes linked sessions back to Review through `Edit Session`; the old limited line editor is no longer used.
+5. **Draft invoice deletion** — True draft invoices can be deleted from the draft editor, removing draft line items without deleting underlying sessions.
+6. **Customer-facing invoice cleanup** — Invoice PDF footers/page-number footer labels are removed, and recipient blocks no longer show `Via Email` or `Via Mail`.
+7. **Billing Relationship ordering and display** — Billing Relationships sort by payer last name and first name, and inactive archived account members no longer leak into active payer rows.
 
 ### Bug Fixes In test.15
 

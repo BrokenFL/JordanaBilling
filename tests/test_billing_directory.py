@@ -20,6 +20,7 @@ from jordana_invoice.review_services import (
     save_billing_section,
     save_relationship_section,
     setup_billing_relationship,
+    delete_or_archive_billing_relationship,
 )
 
 
@@ -326,26 +327,33 @@ class BillingDirectoryTests(unittest.TestCase):
         self.assertEqual(accounts[0]["account_name"], "Test Household")
 
     def test_sorting_active_before_inactive_then_alphabetical(self):
-        zoe = create_person(self.conn, {"display_name": "Zoe Active", "first_name": "Zoe", "last_name": "Active"})
+        zoe = create_person(self.conn, {"display_name": "Zoe Baker", "first_name": "Zoe", "last_name": "Baker"})
         amy = create_person(self.conn, {"display_name": "Amy Inactive", "first_name": "Amy", "last_name": "Inactive"})
+        nora = create_person(self.conn, {"display_name": "Nora Adams", "first_name": "Nora", "last_name": "Adams"})
         zoe_payer = create_billing_party(self.conn, {
-            "billing_name": "Zoe Active", "billing_party_type": "person", "person_id": zoe["person_id"],
+            "billing_name": "Zoe Baker", "billing_party_type": "person", "person_id": zoe["person_id"],
         })
         amy_payer = create_billing_party(self.conn, {
             "billing_name": "Amy Inactive", "billing_party_type": "person", "person_id": amy["person_id"],
         })
-        self._import_and_approve("snap-zoe", "Zoe Active 6", [zoe["person_id"]], zoe_payer["billing_party_id"])
+        nora_payer = create_billing_party(self.conn, {
+            "billing_name": "Nora Adams", "billing_party_type": "person", "person_id": nora["person_id"],
+        })
+        self._import_and_approve("snap-zoe", "Zoe Baker 6", [zoe["person_id"]], zoe_payer["billing_party_id"])
         self._import_and_approve("snap-amy", "Amy Inactive 6", [amy["person_id"]], amy_payer["billing_party_id"],
                                  start="2026-06-18T18:00:00-04:00")
+        self._import_and_approve("snap-nora", "Nora Adams 6", [nora["person_id"]], nora_payer["billing_party_id"],
+                                 start="2026-06-19T18:00:00-04:00")
         self.conn.execute("UPDATE billing_parties SET active = 0 WHERE billing_party_id = ?", (amy_payer["billing_party_id"],))
         self.conn.commit()
 
         records = list_billing_relationship_records(self.conn)
         bp_records = [r for r in records if r["record_type"] in ("self_pay", "third_party")]
         self.assertTrue(bp_records[0]["active"])
-        self.assertFalse(bp_records[1]["active"])
-        self.assertEqual(bp_records[0]["payer_display_name"], "Zoe Active")
-        self.assertEqual(bp_records[1]["payer_display_name"], "Amy Inactive")
+        self.assertTrue(bp_records[1]["active"])
+        self.assertFalse(bp_records[2]["active"])
+        self.assertEqual([bp_records[0]["payer_display_name"], bp_records[1]["payer_display_name"]], ["Nora Adams", "Zoe Baker"])
+        self.assertEqual(bp_records[2]["payer_display_name"], "Amy Inactive")
 
     def test_self_pay_payer_also_paying_for_other_classified_as_third_party(self):
         robin = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})
@@ -476,6 +484,102 @@ class BillingDirectoryTests(unittest.TestCase):
         active_records = [r for r in list_billing_relationship_records(self.conn) if r["active"]]
 
         self.assertFalse(any(r["account_id"] == result["account_id"] for r in active_records))
+
+    def test_archived_relationship_members_do_not_merge_into_active_payer_record(self):
+        peter = create_person(self.conn, {"display_name": "Peter Grossman", "first_name": "Peter", "last_name": "Grossman"})
+        brett = create_person(self.conn, {"display_name": "Brett Barakett", "first_name": "Brett", "last_name": "Barakett"})
+        peter_party = create_billing_party(self.conn, {
+            "billing_name": "Peter Grossman",
+            "billing_party_type": "person",
+            "person_id": peter["person_id"],
+        })
+        old_relationship = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": peter["person_id"],
+            "covered_client_ids": [brett["person_id"]],
+        })
+        self.conn.execute("UPDATE client_accounts SET active = 0 WHERE account_id = ?", (old_relationship["account_id"],))
+        self.conn.commit()
+        self._import_and_approve("snap-peter", "Peter Grossman 6", [peter["person_id"]], peter_party["billing_party_id"])
+
+        rec = self._find_record(list_billing_relationship_records(self.conn), peter_party["billing_party_id"])
+
+        self.assertEqual(rec["payer_display_name"], "Peter Grossman")
+        self.assertEqual([p["display_name"] for p in rec["covered_people"]], ["Peter Grossman"])
+        self.assertNotIn(brett["person_id"], [p["person_id"] for p in rec["covered_people"]])
+
+    def test_deleting_archived_relationship_detaches_stale_unfinalized_session_link(self):
+        peter = create_person(self.conn, {"display_name": "Peter Grossman", "first_name": "Peter", "last_name": "Grossman"})
+        brett = create_person(self.conn, {"display_name": "Brett Barakett", "first_name": "Brett", "last_name": "Barakett"})
+        brett_party = create_billing_party(self.conn, {
+            "billing_name": "Brett Barakett",
+            "billing_party_type": "person",
+            "person_id": brett["person_id"],
+        })
+        old_relationship = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": peter["person_id"],
+            "covered_client_ids": [brett["person_id"]],
+        })
+        candidate_id = self._import_and_approve(
+            "snap-brett",
+            "Brett Barakett 6",
+            [brett["person_id"]],
+            brett_party["billing_party_id"],
+        )
+        session_id = self.conn.execute("SELECT id FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()["id"]
+        self.conn.execute(
+            "UPDATE sessions SET account_id = ? WHERE id = ?",
+            (old_relationship["account_id"], session_id),
+        )
+        self.conn.execute("UPDATE client_accounts SET active = 0 WHERE account_id = ?", (old_relationship["account_id"],))
+        self.conn.commit()
+
+        result = delete_or_archive_billing_relationship(self.conn, old_relationship["account_id"])
+        session = self.conn.execute("SELECT account_id, billing_party_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+
+        self.assertEqual(result["action"], "deleted")
+        self.assertEqual(result["detached_stale_session_count"], 1)
+        self.assertIsNone(session["account_id"])
+        self.assertEqual(session["billing_party_id"], brett_party["billing_party_id"])
+
+    def test_deleting_unused_relationship_ignores_unrelated_payer_history(self):
+        peter = create_person(self.conn, {"display_name": "Peter Grossman", "first_name": "Peter", "last_name": "Grossman"})
+        brett = create_person(self.conn, {"display_name": "Brett Barakett", "first_name": "Brett", "last_name": "Barakett"})
+        peter_party = create_billing_party(self.conn, {
+            "billing_name": "Peter Grossman",
+            "billing_party_type": "person",
+            "person_id": peter["person_id"],
+        })
+        self._import_and_approve("snap-peter-history", "Peter Grossman 6", [peter["person_id"]], peter_party["billing_party_id"])
+        old_relationship = setup_billing_relationship(self.conn, {
+            "payer_kind": "client",
+            "payer_person_id": peter["person_id"],
+            "covered_client_ids": [brett["person_id"]],
+        })
+        self.conn.execute(
+            """
+            INSERT INTO calendar_aliases (
+              alias_id, raw_alias, normalized_alias, account_id, classification,
+              confidence, approved_by_user, created_at, updated_at
+            ) VALUES (
+              'alias-old-peter-brett', 'Brett Barakett', 'brett barakett', ?, 'client',
+              1.0, 1, '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z'
+            )
+            """,
+            (old_relationship["account_id"],),
+        )
+        self.conn.execute("UPDATE client_accounts SET active = 0 WHERE account_id = ?", (old_relationship["account_id"],))
+        self.conn.commit()
+
+        result = delete_or_archive_billing_relationship(self.conn, old_relationship["account_id"])
+        account_count = self.conn.execute("SELECT COUNT(*) AS c FROM client_accounts WHERE account_id = ?", (old_relationship["account_id"],)).fetchone()["c"]
+        alias_count = self.conn.execute("SELECT COUNT(*) AS c FROM calendar_aliases WHERE account_id = ?", (old_relationship["account_id"],)).fetchone()["c"]
+
+        self.assertEqual(result["action"], "deleted")
+        self.assertEqual(result["deleted_calendar_alias_count"], 1)
+        self.assertEqual(account_count, 0)
+        self.assertEqual(alias_count, 0)
 
     def test_shared_relationship_does_not_emit_self_pay_account_fallback(self):
         lou = create_person(self.conn, {"display_name": "Lou Yeager", "first_name": "Lou", "last_name": "Yeager"})

@@ -249,14 +249,6 @@ def _generate_invoice_pdf_bytes(
     def para(value: Any, style=body):
         return Paragraph(_escape(value), style)
 
-    def page(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("Times-Roman", 8)
-        canvas.setFillColor(colors.HexColor("#64748B"))
-        canvas.drawString(doc.leftMargin, 0.42 * inch, page_footer_label)
-        canvas.drawRightString(letter[0] - doc.rightMargin, 0.42 * inch, f"Page {doc.page}")
-        canvas.restoreState()
-
     doc = SimpleDocTemplate(
         buf, pagesize=letter, rightMargin=0.50 * inch, leftMargin=0.50 * inch,
         topMargin=0.50 * inch, bottomMargin=0.55 * inch, title=doc_title,
@@ -292,7 +284,7 @@ def _generate_invoice_pdf_bytes(
     )
     footer.extend(_build_insurance_coding_flowables(render, small))
     story.append(KeepTogether(footer))
-    doc.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=_times_canvasmaker)
+    doc.build(story, canvasmaker=_times_canvasmaker)
     pdf_bytes = buf.getvalue()
     buf.close()
     if not pdf_bytes:

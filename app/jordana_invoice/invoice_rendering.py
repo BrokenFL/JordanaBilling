@@ -269,7 +269,7 @@ def build_invoice_render_model(
     if delivery_method in {"mail", "both"}:
         bill_to_lines.extend(bill_to_address_lines)
     if delivery_method in {"email", "both"} and bill_to_email:
-        bill_to_lines.append(f"Via Email: {bill_to_email}")
+        bill_to_lines.append(bill_to_email)
     bill_to_lines = [value for value in bill_to_lines if value]
 
     payee_name = str(invoice.get("payee_name_snapshot") or profile.get("payee_name") or "").strip()

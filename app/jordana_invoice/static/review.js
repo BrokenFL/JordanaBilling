@@ -354,7 +354,9 @@ function monthLabelFromDate(value) {
 }
 function invoiceServicePeriodLabel(invoice) {
   return monthLabelFromYearMonth(invoice?.billing_month)
+    || monthLabelFromYearMonth(invoice?.invoice_period)
     || monthLabelFromDate(invoice?.billing_period_start)
+    || invoice?.invoice_period_display
     || "—";
 }
 function shortWeekday(value) {
@@ -2103,16 +2105,15 @@ function renderOutstandingInvoices(items) {
     ? items.map(item => `
       <tr data-invoice-id="${escapeAttr(item.invoice_id)}" class="${state.unpaid.selectedInvoiceId === item.invoice_id ? "selected" : ""}">
         <td><span class="status-pill ${escapeAttr(item.payment_status)}">${escapeHtml(paymentStatusLabel(item.payment_status))}</span></td>
-        <td>${fmt(item.invoice_number)}</td>
+        <td>${fmt(item.invoice_period_display || invoiceServicePeriodLabel(item))}</td>
         <td>${fmt(billToListName(item))}</td>
-        <td>${fmt(item.invoice_period_display)}</td>
         <td>${money(centString(item.total_cents))}</td>
         <td>${money(centString(item.paid_cents))}</td>
         <td>${money(centString(item.balance_cents))}</td>
         <td><button class="review-btn record-payment-btn" data-record-payment="${escapeAttr(item.invoice_id)}">Record Payment</button></td>
       </tr>
     `).join("")
-    : '<tr class="empty-row"><td colspan="8">No outstanding finalized invoices.</td></tr>';
+    : '<tr class="empty-row"><td colspan="7">No outstanding finalized invoices.</td></tr>';
 
   document.querySelectorAll("#unpaidRows tr[data-invoice-id]").forEach(row => {
     row.addEventListener("click", (event) => {
@@ -2149,8 +2150,8 @@ function renderOutstandingInvoiceWorkspace(data) {
       <button type="button" class="side-panel-close" id="closePaymentPanel">Close</button>
       <div class="payment-panel-header">
         <div>
-          <h3>${fmt(invoice.invoice_number)}</h3>
-          <div class="help">${fmt(billToListName(invoice))} • Invoice date ${fmt(invoice.invoice_date)}</div>
+          <h3>${fmt(invoice.invoice_period_display || invoiceServicePeriodLabel(invoice))}</h3>
+          <div class="help">${fmt(billToListName(invoice))}</div>
         </div>
         <button class="save" id="workspaceRecordPayment">Record Payment</button>
       </div>
@@ -2201,7 +2202,7 @@ async function openPaymentOverlay(invoiceId, focusReturnEl = null) {
     <form id="paymentForm">
       <div class="payment-form-grid">
         <label class="field">Bill To<input value="${escapeAttr(invoice.bill_to_display_name || "")}" readonly /></label>
-        <label class="field">Invoice Number<input value="${escapeAttr(invoice.invoice_number || "")}" readonly /></label>
+        <label class="field">Service Period<input value="${escapeAttr(invoice.invoice_period_display || invoiceServicePeriodLabel(invoice))}" readonly /></label>
         <label class="field">Outstanding Balance<input value="${escapeAttr(money(centString(invoice.balance_cents)))}" readonly /></label>
         <label class="field">Payment Date<input id="paymentDateInput" type="date" value="${escapeAttr(new Date().toISOString().slice(0, 10))}" required /></label>
         <label class="field">Amount Received<input id="paymentAmountInput" value="${escapeAttr(centString(invoice.balance_cents))}" required /></label>
@@ -2830,9 +2831,8 @@ function renderPaidInvoices(items) {
   tbody.innerHTML = items.length
     ? items.map(item => `
       <tr data-invoice-id="${escapeAttr(item.invoice_id || "")}" data-payment-id="${escapeAttr(item.payment_id || "")}">
-        <td><span class="primary">${fmt(item.invoice_number)}</span></td>
+        <td><span class="primary">${fmt(item.invoice_period_display || invoiceServicePeriodLabel(item))}</span></td>
         <td>${fmt(billToListName(item))}</td>
-        <td>${fmt(item.invoice_period_display)}</td>
         <td>${money(centString(item.total_cents))}</td>
         <td>${fmt(item.paid_date)}</td>
         <td>${escapeHtml(paymentMethodLabel(item.payment_method))}</td>
@@ -2842,7 +2842,7 @@ function renderPaidInvoices(items) {
           : `<button class="mini" data-open-paid-invoice="${escapeAttr(item.invoice_id)}">Open</button>`}</td>
       </tr>
     `).join("")
-    : '<tr class="empty-row"><td colspan="8">No paid invoices.</td></tr>';
+    : '<tr class="empty-row"><td colspan="7">No paid invoices.</td></tr>';
   document.querySelectorAll("#paidRows [data-open-paid-invoice]").forEach(btn => {
     btn.onclick = () => openPaidInvoice(btn.dataset.openPaidInvoice);
   });
@@ -2867,8 +2867,8 @@ async function openPaidInvoice(invoiceId) {
       <button type="button" class="side-panel-close" id="closePaymentPanel">Close</button>
       <div class="payment-panel-header">
         <div>
-          <h3>${fmt(invoice.invoice_number)}</h3>
-          <div class="help">${fmt(billToListName(invoice))} • Invoice date ${fmt(invoice.invoice_date)}</div>
+          <h3>${fmt(invoice.invoice_period_display || invoiceServicePeriodLabel(invoice))}</h3>
+          <div class="help">${fmt(billToListName(invoice))}</div>
         </div>
       </div>
       <div class="payment-panel-summary">
@@ -2926,7 +2926,7 @@ function renderAllPayments(items) {
       <tr data-payment-id="${escapeAttr(item.payment_id)}">
         <td>${fmt(item.received_at)}</td>
         <td>${fmt(billToListName(item, "bill_to_name"))}</td>
-        <td>${fmt(item.invoice_numbers)}</td>
+        <td>${fmt(item.invoice_period_display || "—")}</td>
         <td>${escapeHtml(paymentMethodLabel(item.method))}</td>
         <td>${fmt(item.reference_number)}</td>
         <td>${fmt(item.received_from_name)}</td>
@@ -2982,7 +2982,7 @@ async function openPaymentDetail(paymentId) {
     <tr>
       <td>${money(centString(a.amount_cents))}</td>
       <td><span class="status-pill ${escapeAttr(a.status)}">${escapeHtml(a.status === "active" ? "Active" : "Reversed")}</span></td>
-      <td>${a.invoice_info ? fmt(a.invoice_info.invoice_number) : "—"}</td>
+      <td>${a.invoice_info ? fmt(a.invoice_info.invoice_period_display || invoiceServicePeriodLabel(a.invoice_info)) : "—"}</td>
       <td>${a.invoice_info ? fmt(a.invoice_info.bill_to_name) : "—"}</td>
       <td>${a.reversed_at ? fmt(a.reversed_at) : "—"}</td>
       <td>${a.reversal_reason ? escapeHtml(a.reversal_reason) : "—"}</td>
@@ -3604,9 +3604,7 @@ function renderInvoiceLibrary() {
     ? items.map(row => `
       <tr data-invoice="${escapeAttr(row.invoice_id)}">
         <td>${row.status === "draft" ? `<input type="checkbox" class="draft-invoice-select" data-draft-invoice-id="${escapeAttr(row.invoice_id)}" ${lib.selectedDraftInvoiceIds.has(row.invoice_id) ? "checked" : ""} aria-label="Select draft invoice">` : ""}</td>
-        <td><span class="primary">${fmt(row.invoice_number || "Draft")}</span></td>
-        <td>${fmt(row.invoice_date)}</td>
-        <td>${escapeHtml(invoiceServicePeriodLabel(row))}</td>
+        <td><span class="primary">${escapeHtml(invoiceServicePeriodLabel(row))}</span></td>
         <td>${fmt(billToListName({...row, current_bill_to_name: row.bill_to_name_snapshot || row.current_bill_to_name}, "current_bill_to_name"))}</td>
         <td>${fmt(row.filing_owner_display || "—")}</td>
         <td>${escapeHtml(row.participants_display || "—")}</td>
@@ -3617,7 +3615,7 @@ function renderInvoiceLibrary() {
         <td>${money(centString(row.balance_cents || 0))}</td>
         <td><button class="mini" data-open-invoice="${escapeAttr(row.invoice_id)}">Open</button></td>
       </tr>`).join("")
-    : `<tr><td colspan="13" class="readonly-note">No invoices found.</td></tr>`;
+    : `<tr><td colspan="11" class="readonly-note">No invoices found.</td></tr>`;
   document.querySelectorAll("#invoiceRows .draft-invoice-select").forEach(input => {
     input.onchange = (event) => {
       event.stopPropagation();
@@ -3849,22 +3847,21 @@ async function renderInvoiceEditor(data) {
       </div>
       ${filingControl}
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions"><button class="edit-line secondary" type="button">Edit</button><button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
+    <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-candidate-id="${escapeAttr(line.candidate_id || "")}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions">${line.candidate_id ? `<button class="return-approved-session-btn edit-line secondary" data-cid="${escapeAttr(line.candidate_id)}" data-return-invoice-id="${escapeAttr(i.invoice_id)}" type="button">Edit Session</button>` : ""}<button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <section class="invoice-html-preview-panel" aria-label="Draft invoice preview">
       ${renderCanonicalInvoicePreview(data.render_model)}
     </section>
-    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><a class="button-link" id="openDraftPdfPreview" href="/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf" target="_blank" rel="noopener">Open Exact PDF</a><a class="button-link" id="downloadDraftPdfPreview" href="/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf" download>Download PDF</a><button id="printPreviewBtn">Print Exact PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button></div>
+    <div class="actions"><button id="saveDraftChanges" class="save">Save Draft</button><button id="addDraftSessions">Add Sessions</button><a class="button-link" id="openDraftPdfPreview" href="/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf" target="_blank" rel="noopener">Open Exact PDF</a><a class="button-link" id="downloadDraftPdfPreview" href="/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf" download>Download PDF</a><button id="printPreviewBtn">Print Exact PDF</button><button id="reviewFinalizeBtn" class="approve">Review and Finalize</button><button id="deleteDraftInvoiceBtn" class="danger" type="button">Delete Draft</button></div>
   </div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
   revealInlineInvoiceWorkspace();
 
-  document.querySelectorAll(".edit-line").forEach(button => button.onclick = () => {
-    const row = button.closest("tr");
-    const lineId = row.dataset.line;
-    const line = data.lines.find(l => l.invoice_line_item_id === lineId);
-    openLineEditModal(line, data);
+  document.querySelectorAll("#invoiceWorkspace .return-approved-session-btn").forEach(button => {
+    button.onclick = () => returnApprovedSessionToReview(button.dataset.cid, {
+      returnInvoiceId: button.dataset.returnInvoiceId || i.invoice_id,
+    });
   });
 
   document.querySelectorAll(".remove-line").forEach(button => button.onclick = async () => {
@@ -3881,6 +3878,17 @@ async function renderInvoiceEditor(data) {
   };
 
   $("addDraftSessions").onclick = () => showAddSessionsToDraft(data);
+  $("deleteDraftInvoiceBtn").onclick = async () => {
+    const lineCount = data.lines ? data.lines.length : 0;
+    const message = lineCount
+      ? `Delete this draft invoice and remove its ${lineCount} draft line${lineCount === 1 ? "" : "s"}? Sessions will remain in Review/Approved status and can be invoiced again if eligible.`
+      : "Delete this empty draft invoice?";
+    if (!confirm(message)) return;
+    await api(`/api/invoices/${i.invoice_id}/delete-draft`, {method:"POST", body:"{}"});
+    closeInvoiceWorkspace();
+    await loadInvoices();
+    showReviewSuccess("Draft invoice deleted.");
+  };
   if ($("filingOwnerSelect")) $("filingOwnerSelect").onchange = async () => {
     const value = $("filingOwnerSelect").value;
     const [kind, ...idParts] = value.split(":");
@@ -3902,212 +3910,6 @@ async function renderInvoiceEditor(data) {
 
   $("printPreviewBtn").onclick = () => window.open(`/api/invoices/${encodeURIComponent(i.invoice_id)}/draft-pdf`, "_blank");
   // /print-preview HTML endpoint remains available as a fallback.
-}
-
-
-function openLineEditModal(line, invoiceData) {
-  const originatingBtn = document.activeElement;
-  closeLineEditorModal();
-
-  const overlay = document.createElement("div");
-  overlay.id = "lineEditorModalOverlay";
-  overlay.className = "billing-modal-overlay";
-
-  const hasSession = !!line.source_session_id;
-
-  overlay.innerHTML = `
-    <div class="billing-modal line-editor-modal" id="lineEditorModal" role="dialog" aria-modal="true" aria-labelledby="lineEditorModalTitle">
-      <h3 id="lineEditorModalTitle">Edit Invoice Line</h3>
-      <p class="modal-instruction">Modify the description or amount for this draft invoice line.</p>
-      
-      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
-        <div class="modal-error" id="lineEditorError" role="alert" style="color: var(--red); font-size: 13px; display: none;"></div>
-        
-        <div style="display: flex; flex-direction: column; gap: 4px;">
-          <label style="font-size: 12px; color: var(--muted); font-weight: bold;">Description</label>
-          <input type="text" id="lineEditDescription" style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px;" required />
-        </div>
-        
-        <div style="display: flex; flex-direction: column; gap: 4px;">
-          <label style="font-size: 12px; color: var(--muted); font-weight: bold;">Amount ($)</label>
-          <input type="text" id="lineEditAmount" style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px;" required />
-        </div>
-        
-        <div id="lineEditScopeSection" style="display: ${hasSession ? 'block' : 'none'}; flex-direction: column; gap: 4px;">
-          <label style="font-size: 12px; color: var(--muted); font-weight: bold;">Correction Scope</label>
-          <div style="display: flex; gap: 16px; font-size: 13px; margin-top: 4px;">
-            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="radio" name="lineEditScope" value="invoice_line_only" checked /> Invoice line only
-            </label>
-            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="radio" name="lineEditScope" value="invoice_line_and_session" /> Invoice line and approved session
-            </label>
-          </div>
-        </div>
-        
-        <div id="lineEditReasonSection" style="display: none; flex-direction: column; gap: 4px;">
-          <label for="lineEditReason" style="font-size: 12px; color: var(--muted); font-weight: bold;">Correction Reason (required)</label>
-          <textarea id="lineEditReason" placeholder="Enter reason for changing the amount..." style="padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; min-height: 60px; resize: vertical;"></textarea>
-        </div>
-      </div>
-      
-      <div class="modal-actions" style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
-        <button type="button" class="save" id="lineEditorSave">Save Changes</button>
-        <button type="button" class="modal-cancel" id="lineEditorCancel">Cancel</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-  document.body.style.overflow = "hidden";
-
-  const descInput = document.getElementById("lineEditDescription");
-  const amountInput = document.getElementById("lineEditAmount");
-  const reasonTextarea = document.getElementById("lineEditReason");
-  const reasonSection = document.getElementById("lineEditReasonSection");
-  const errorDisplay = document.getElementById("lineEditorError");
-  const saveBtn = document.getElementById("lineEditorSave");
-  const cancelBtn = document.getElementById("lineEditorCancel");
-
-  descInput.value = line.description_snapshot;
-  amountInput.value = centString(line.line_amount_cents);
-
-  const originalCents = line.line_amount_cents;
-  const originalDescription = line.description_snapshot || "";
-
-  const checkCorrectionReason = () => {
-    const amountStr = amountInput.value.trim().replace(/[$,]/g, "");
-    const isValidAmount = /^\d+(\.\d{1,2})?$/.test(amountStr);
-    const selectedScope = document.querySelector('input[name="lineEditScope"]:checked')?.value || "invoice_line_only";
-    const descriptionChanged = descInput.value.trim() !== originalDescription;
-    if (!isValidAmount) {
-      reasonSection.style.display = "none";
-      return;
-    }
-    const newCents = Math.round(parseFloat(amountStr) * 100);
-    if (newCents !== originalCents || (hasSession && selectedScope === "invoice_line_and_session" && descriptionChanged)) {
-      reasonSection.style.display = "flex";
-    } else {
-      reasonSection.style.display = "none";
-    }
-  };
-
-  amountInput.addEventListener("input", checkCorrectionReason);
-  descInput.addEventListener("input", checkCorrectionReason);
-  document.querySelectorAll('input[name="lineEditScope"]').forEach(radio => radio.addEventListener("change", checkCorrectionReason));
-
-  const closeAndRestore = () => {
-    closeLineEditorModal();
-    if (originatingBtn) originatingBtn.focus();
-  };
-
-  cancelBtn.onclick = closeAndRestore;
-
-  saveBtn.onclick = async () => {
-    errorDisplay.style.display = "none";
-    errorDisplay.textContent = "";
-
-    const desc = descInput.value.trim();
-    if (!desc) {
-      showError("Description must be non-empty.");
-      return;
-    }
-
-    const amountStr = amountInput.value.trim().replace(/[$,]/g, "");
-    if (!/^\d+(\.\d{1,2})?$/.test(amountStr)) {
-      showError("Amount must be a non-negative number with at most 2 decimal places.");
-      return;
-    }
-
-    const newCents = Math.round(parseFloat(amountStr) * 100);
-    const amountChanged = (newCents !== originalCents);
-    const descriptionChanged = desc !== originalDescription;
-
-    let reason = "";
-    let scope = "invoice_line_only";
-
-    if (hasSession) {
-      const selectedScope = document.querySelector('input[name="lineEditScope"]:checked');
-      scope = selectedScope ? selectedScope.value : "invoice_line_only";
-    }
-
-    if (amountChanged || (hasSession && scope === "invoice_line_and_session" && descriptionChanged)) {
-      reason = reasonTextarea.value.trim();
-      if (!reason) {
-        showError("A correction reason is required when the linked session is changed.");
-        return;
-      }
-    }
-
-    saveBtn.disabled = true;
-    cancelBtn.disabled = true;
-    descInput.disabled = true;
-    amountInput.disabled = true;
-    reasonTextarea.disabled = true;
-    document.querySelectorAll('input[name="lineEditScope"]').forEach(r => r.disabled = true);
-
-    try {
-      const payload = {
-        invoice_line_item_id: line.invoice_line_item_id,
-        description: desc,
-        amount_cents: newCents,
-        amount_scope: scope,
-        reason: reason,
-        expected_revision: invoiceData.invoice.revision
-      };
-
-      const updated = await api(`/api/invoices/${invoiceData.invoice.invoice_id}/update-line`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      closeLineEditorModal();
-      showReviewSuccess("Invoice line updated successfully.");
-
-      await loadInvoices();
-      await renderInvoiceEditor(updated);
-
-      const editBtn = document.querySelector(`#invoiceWorkspace tr[data-line="${escapeAttr(line.invoice_line_item_id)}"] .edit-line`);
-      if (editBtn) editBtn.focus();
-      else if (originatingBtn) originatingBtn.focus();
-
-    } catch (err) {
-      saveBtn.disabled = false;
-      cancelBtn.disabled = false;
-      descInput.disabled = false;
-      amountInput.disabled = false;
-      reasonTextarea.disabled = false;
-      document.querySelectorAll('input[name="lineEditScope"]').forEach(r => r.disabled = false);
-
-      showError(err.message || "An unexpected error occurred.");
-    }
-  };
-
-  function showError(msg) {
-    errorDisplay.textContent = msg;
-    errorDisplay.style.display = "block";
-  }
-
-  descInput.focus();
-  document.addEventListener("keydown", lineEditorModalTrapKeydown);
-}
-
-function closeLineEditorModal() {
-  const overlay = document.getElementById("lineEditorModalOverlay");
-  if (overlay) {
-    overlay.remove();
-  }
-  document.body.style.overflow = "";
-  document.removeEventListener("keydown", lineEditorModalTrapKeydown);
-}
-
-function lineEditorModalTrapKeydown(e) {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    const cancelBtn = document.getElementById("lineEditorCancel");
-    if (cancelBtn) cancelBtn.click();
-  }
 }
 
 
@@ -5253,7 +5055,7 @@ async function openOrganizationRecord(billingPartyId) {
   const sessionsHtml = (data.sessions || []).length
     ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Time Category</th><th>Stored Rate</th><th>Review Status</th><th>Invoice</th><th>Open in Review</th></tr></thead><tbody>
         ${(data.sessions || []).map(s => {
-          const invLabel = s.invoice_id ? (s.invoice_number || "Draft invoice") : "—";
+          const invLabel = s.invoice_id ? invoiceServicePeriodLabel(s) : "—";
           return `<tr>
             <td>${fmt(s.session_date)}</td>
             <td>${escapeHtml(s.participant_names || "—")}</td>
@@ -5270,11 +5072,9 @@ async function openOrganizationRecord(billingPartyId) {
     : `<span class="readonly-note">No sessions billed to this organization yet.</span>`;
 
   const invoicesHtml = (data.invoices || []).length
-    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Status</th><th>Total</th><th>Balance</th><th>Open</th></tr></thead><tbody>
+    ? `<div class="org-table-scroll"><table class="org-table"><thead><tr><th>Service Period</th><th>Status</th><th>Total</th><th>Balance</th><th>Open</th></tr></thead><tbody>
         ${(data.invoices || []).map(inv => `<tr>
-          <td>${escapeHtml(inv.invoice_number || "—")}</td>
           <td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>
-          <td>${fmt(inv.invoice_date)}</td>
           <td><span class="status-pill ${escapeAttr(inv.status)}">${escapeHtml(orgInvoiceStatusLabel(inv.status))}</span></td>
           <td>${money(centString(inv.total_cents))}</td>
           <td>${money(centString(inv.balance_cents))}</td>
@@ -6579,9 +6379,7 @@ async function openPersonRecord(personId, options = {}) {
 
   const invoiceRowsHtml = invoices.length
     ? invoices.map(inv => `<tr data-invoice-id="${escapeAttr(inv.invoice_id)}">
-        <td><span class="primary">${fmt(inv.invoice_number || "Draft")}</span></td>
-        <td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>
-        <td>${fmt(inv.invoice_date)}</td>
+        <td><span class="primary">${escapeHtml(invoiceServicePeriodLabel(inv))}</span></td>
         <td>${fmt(billToListName(inv, "bill_to_name"))}</td>
         <td><span class="status-pill ${escapeAttr(inv.status)}">${fmt(inv.status)}</span></td>
         <td><span class="status-pill ${escapeAttr(inv.payment_status || "unpaid")}">${escapeHtml(paymentStatusLabel(inv.payment_status || "unpaid"))}</span></td>
@@ -6590,7 +6388,7 @@ async function openPersonRecord(personId, options = {}) {
         <td>${money(centString(inv.balance_cents))}</td>
         <td><button class="mini" data-open-invoice="${escapeAttr(inv.invoice_id)}">Open</button></td>
       </tr>`).join("")
-    : `<tr><td colspan="10" class="readonly-note">No invoices yet.</td></tr>`;
+    : `<tr><td colspan="8" class="readonly-note">No invoices yet.</td></tr>`;
 
   $("personRecordView").innerHTML = `
     ${state.returnCandidate ? `<a href="#" class="return-link" id="returnFromPerson">← Return to ${escapeHtml(state.detail?.session?.raw_calendar_title || "")} — ${escapeHtml(state.detail?.session?.session_date || "")}</a>` : ""}
@@ -6641,7 +6439,7 @@ async function openPersonRecord(personId, options = {}) {
         <h3>Invoices</h3>
         <div class="table-scroll-wrap">
           <table class="review-table client-invoices-table">
-            <thead><tr><th>Invoice Number</th><th>Billing Period</th><th>Issue Date</th><th>Bill To</th><th>Invoice Status</th><th>Payment Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Open</th></tr></thead>
+            <thead><tr><th>Service Period</th><th>Bill To</th><th>Invoice Status</th><th>Payment Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Open</th></tr></thead>
             <tbody>${invoiceRowsHtml}</tbody>
           </table>
         </div>

@@ -16,7 +16,7 @@ from jordana_invoice.invoice_services import (
     stage_approved_sessions_to_monthly_drafts,
     void_invoice,
 )
-from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
+from jordana_invoice.review_services import approve_candidate, create_account, create_billing_party, create_person
 from jordana_invoice.util import normalize_payment_status, stable_hash
 
 
@@ -138,6 +138,32 @@ class InvoiceStagingTests(unittest.TestCase):
             "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
             (party_id, billing_month),
         ).fetchone()
+
+    def test_explicit_bill_to_stages_even_when_old_relationship_account_is_archived(self):
+        old_account = create_account(self.conn, "Old Shared Billing", "household")
+        old_payer = create_billing_party(self.conn, {
+            "billing_name": "Old Payer",
+            "billing_party_type": "organization",
+            "preferred_delivery_method": "email",
+        })
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ?, active = 0 WHERE account_id = ?",
+            (old_payer["billing_party_id"], old_account["account_id"]),
+        )
+        session = self.approved_session("archived-account", day=18, party_id=self.party["billing_party_id"])
+        self.conn.execute(
+            "UPDATE sessions SET account_id = ? WHERE id = ?",
+            (old_account["account_id"], session["id"]),
+        )
+        self.conn.commit()
+
+        result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        self.assertIsNotNone(draft)
+        self.assertEqual(result["sessions_staged"], 1)
+        self.assertEqual(self.count_lines(draft["invoice_id"]), 1)
+        self.assertFalse(any("Billing relationship is archived" in row["reasons"] for row in result["sessions_skipped"]))
 
     # 1. Eligible approved session creates one monthly draft
     def test_eligible_session_creates_one_monthly_draft(self):

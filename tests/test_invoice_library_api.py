@@ -431,7 +431,8 @@ class InvoiceLibraryUiStaticTests(unittest.TestCase):
 
     def test_invoice_library_html_has_enhanced_columns(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
-        self.assertIn("<th>Select</th><th>Number</th><th>Invoice Date</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th>", html)
+        self.assertIn("<th>Select</th><th>Service Period</th><th>Bill To</th><th>File Under</th><th>Participants</th><th>Status</th><th>Payment</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th>", html)
+        self.assertNotIn("<th>Number</th><th>Invoice Date</th>", html)
 
     def test_invoice_library_js_has_print_preview_and_pdf_buttons(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

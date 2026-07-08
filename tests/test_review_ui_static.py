@@ -31,8 +31,8 @@ for (const [input, expected] of cases) {
     def test_invoice_tables_use_shared_service_period_helper(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         self.assertIn("function invoiceServicePeriodLabel(invoice)", js)
-        self.assertEqual(js.count("invoiceServicePeriodLabel("), 4)
-        self.assertIn("<td>${escapeHtml(invoiceServicePeriodLabel(row))}</td>", js)
+        self.assertGreaterEqual(js.count("invoiceServicePeriodLabel("), 4)
+        self.assertIn("<td><span class=\"primary\">${escapeHtml(invoiceServicePeriodLabel(row))}</span></td>", js)
         self.assertIn("<td>${escapeHtml(invoiceServicePeriodLabel(inv))}</td>", js)
         self.assertNotIn("${fmt(row.billing_period_start)} – ${fmt(row.billing_period_end)}", js)
         self.assertNotIn("${fmt(inv.billing_period_start)} – ${fmt(inv.billing_period_end)}", js)
@@ -116,7 +116,8 @@ for (const [input, expected] of cases) {
 
         self.assertIn("Payments", html)
         self.assertIn('id="paymentsPeriodFilter"', html)
-        self.assertIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Period</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
+        self.assertIn("<th>Status</th><th>Service Period</th><th>Bill To</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
+        self.assertNotIn("<th>Status</th><th>Invoice Number</th>", html)
         self.assertNotIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th>", html)
         self.assertIn('id="unpaidRows"', html)
         self.assertIn('id="unpaidWorkspace"', html)
@@ -134,7 +135,8 @@ for (const [input, expected] of cases) {
         self.assertIn('$("pageTitle").textContent = "Payments";', js)
         self.assertIn('Record Payment', js)
         self.assertIn('Bill To<input', js)
-        self.assertIn('Invoice Number<input', js)
+        self.assertIn('Service Period<input', js)
+        self.assertNotIn('Invoice Number<input', js)
         self.assertIn('Outstanding Balance<input', js)
         self.assertIn('Payment Date<input', js)
         self.assertIn('Amount Received<input', js)
@@ -529,7 +531,7 @@ for (const [args, expected] of cases) {
     def test_invoice_editor_uses_connected_filing_owner_targets(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         start = js.index("async function renderInvoiceEditor")
-        end = js.index("function openLineEditModal", start)
+        end = js.index("async function showAddSessionsToDraft", start)
         editor = js[start:end]
 
         self.assertIn("filing.eligible_owners", editor)
@@ -865,9 +867,9 @@ for (const [args, expected] of cases) {
         person_record = js[start:end]
 
         self.assertIn("client-invoices-table", person_record)
-        self.assertIn("<th>Invoice Number</th>", person_record)
-        self.assertIn("<th>Billing Period</th>", person_record)
-        self.assertIn("<th>Issue Date</th>", person_record)
+        self.assertIn("<th>Service Period</th>", person_record)
+        self.assertNotIn("<th>Invoice Number</th>", person_record)
+        self.assertNotIn("<th>Issue Date</th>", person_record)
         self.assertIn("<th>Bill To</th>", person_record)
         self.assertIn("<th>Invoice Status</th>", person_record)
         self.assertIn("<th>Payment Status</th>", person_record)
@@ -1941,7 +1943,7 @@ class OrganizationPanelUiTests(unittest.TestCase):
 
     def test_draft_invoice_fallback_renders(self):
         org_js = self._org_js()
-        self.assertIn("Draft invoice", org_js)
+        self.assertIn('draft: "Draft"', org_js)
 
     def test_open_in_review_uses_existing_navigation(self):
         org_js = self._org_js()
@@ -1953,8 +1955,10 @@ class OrganizationPanelUiTests(unittest.TestCase):
 
     def test_invoices_table_renders(self):
         org_js = self._org_js()
-        for header in ["Invoice Number", "Billing Period", "Issue Date", "Status", "Total", "Balance"]:
+        for header in ["Service Period", "Status", "Total", "Balance"]:
             self.assertIn(header, org_js)
+        self.assertNotIn("Invoice Number", org_js)
+        self.assertNotIn("Issue Date", org_js)
 
     def test_invoices_empty_state(self):
         org_js = self._org_js()
@@ -2399,38 +2403,27 @@ class ReviewLineEditingUiTests(unittest.TestCase):
         self.js = Path("app/jordana_invoice/static/review.js").read_text()
         self.css = Path("app/jordana_invoice/static/review.css").read_text()
 
-    def test_js_defines_open_line_edit_modal(self):
-        self.assertIn("function openLineEditModal", self.js)
+    def test_js_removes_invoice_line_modal_editor(self):
+        self.assertNotIn("function openLineEditModal", self.js)
+        self.assertNotIn("lineEditorModal", self.js)
 
-    def test_js_line_editor_modal_elements_and_defaults(self):
-        # Verify scope default to invoice_line_only
-        self.assertIn('name="lineEditScope" value="invoice_line_only" checked', self.js)
-        # Verify alternative option invoice_line_and_session exists
-        self.assertIn('name="lineEditScope" value="invoice_line_and_session"', self.js)
-        # Verify scope selection displays conditionally based on session association
-        self.assertIn('display: ${hasSession ? \'block\' : \'none\'}', self.js)
+    def test_invoice_line_edit_routes_to_review(self):
+        self.assertIn("Edit Session", self.js)
+        self.assertIn("returnApprovedSessionToReview(button.dataset.cid", self.js)
+        self.assertIn("data-return-invoice-id", self.js)
 
-    def test_js_line_editor_save_validations(self):
-        # Description non-empty check
-        self.assertIn("Description must be non-empty.", self.js)
-        # Amount format and decimal places regex check
-        self.assertIn("/^\\d+(\\.\\d{1,2})?$/", self.js)
-        self.assertIn("Amount must be a non-negative number with at most 2 decimal places.", self.js)
-        # Correction reason validation on linked-session changes
-        self.assertIn("A correction reason is required when the linked session is changed.", self.js)
+    def test_draft_invoice_can_be_deleted_from_editor(self):
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("async function showAddSessionsToDraft", start)
+        section = self.js[start:end]
+        self.assertIn("Delete Draft", section)
+        self.assertIn("/delete-draft", section)
+        self.assertIn("closeInvoiceWorkspace();", section)
 
-    def test_js_line_editor_success_and_failure_behaviors(self):
-        # Verify saveBtn is disabled during request to prevent duplicate submissions
-        self.assertIn("saveBtn.disabled = true", self.js)
-
-        # Verify success path closes editor and reloads workspace
-        self.assertIn("closeLineEditorModal()", self.js)
-        self.assertIn("await loadInvoices()", self.js)
-        self.assertIn("await renderInvoiceEditor(updated)", self.js)
-        self.assertIn("Invoice line updated successfully.", self.js)
-
-        # Verify failure path keeps editor open (closeLineEditorModal is NOT in catch block) and re-enables saveBtn
-        self.assertIn("saveBtn.disabled = false", self.js)
+    def test_invoice_line_modal_update_endpoint_not_used_by_ui(self):
+        start = self.js.index("async function renderInvoiceEditor")
+        end = self.js.index("async function showAddSessionsToDraft", start)
+        self.assertNotIn("/update-line", self.js[start:end])
 
 
 class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
@@ -2442,7 +2435,7 @@ class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
 
     def test_edit_and_delete_wrapped_in_line_item_actions_div(self):
         start = self.js.index("async function renderInvoiceEditor")
-        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        end = self.js.index("async function showAddSessionsToDraft", start)
         section = self.js[start:end]
         self.assertIn("line-item-actions", section)
         self.assertIn("edit-line", section)
@@ -2450,7 +2443,7 @@ class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
 
     def test_edit_button_comes_before_delete_in_container(self):
         start = self.js.index("async function renderInvoiceEditor")
-        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        end = self.js.index("async function showAddSessionsToDraft", start)
         section = self.js[start:end]
         edit_idx = section.index("edit-line")
         remove_idx = section.index("remove-line")
@@ -2458,9 +2451,9 @@ class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
 
     def test_both_buttons_have_type_button(self):
         start = self.js.index("async function renderInvoiceEditor")
-        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        end = self.js.index("async function showAddSessionsToDraft", start)
         section = self.js[start:end]
-        self.assertIn('class="edit-line secondary" type="button"', section)
+        self.assertIn('type="button">Edit Session</button>', section)
         self.assertIn('class="remove-line danger" type="button"', section)
 
     def test_css_defines_line_item_actions_as_flex(self):
@@ -2475,12 +2468,12 @@ class InvoiceLineItemActionsLayoutTests(unittest.TestCase):
         self.assertIn(".line-item-actions button", self.css)
 
     def test_edit_and_delete_handlers_preserved(self):
-        self.assertIn('document.querySelectorAll(".edit-line").forEach', self.js)
+        self.assertIn('document.querySelectorAll("#invoiceWorkspace .return-approved-session-btn").forEach', self.js)
         self.assertIn('document.querySelectorAll(".remove-line").forEach', self.js)
 
     def test_buttons_are_inside_line_item_actions_div(self):
         start = self.js.index("async function renderInvoiceEditor")
-        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        end = self.js.index("async function showAddSessionsToDraft", start)
         section = self.js[start:end]
         container_start = section.index("line-item-actions")
         container_end = section.index("</div>", container_start)
@@ -2495,7 +2488,7 @@ class DraftInvoiceBillToOptionsUiTests(unittest.TestCase):
     def setUp(self):
         self.js = Path("app/jordana_invoice/static/review.js").read_text()
         start = self.js.index("async function renderInvoiceEditor")
-        end = self.js.index("document.querySelectorAll(\".edit-line\")", start)
+        end = self.js.index("async function showAddSessionsToDraft", start)
         self.fn = self.js[start:end]
 
     def test_draft_editor_uses_invoice_scoped_bill_to_options(self):
@@ -2774,7 +2767,7 @@ class InvoiceFinalizationPreviewUiTests(unittest.TestCase):
         html = Path("app/jordana_invoice/static/review.html").read_text()
 
         self.assertIn("paid-invoices-table", html)
-        self.assertIn("<th>Invoice Period</th>", html)
+        self.assertIn("<th>Service Period</th>", html)
         self.assertNotIn("<th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th>", html)
         self.assertIn("<th>Paid Date</th>", html)
         self.assertIn("<th>Payment Method</th>", html)
@@ -2896,7 +2889,7 @@ class DraftInvoicePreviewUiTests(unittest.TestCase):
     def setUp(self):
         self.js = Path("app/jordana_invoice/static/review.js").read_text()
         start = self.js.index("async function renderInvoiceEditor(")
-        end = self.js.index("function openLineEditModal(", start)
+        end = self.js.index("async function showAddSessionsToDraft", start)
         self.fn = self.js[start:end]
 
     def test_draft_preview_renders_canonical_html(self):

@@ -11,6 +11,7 @@ from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_services import (
     add_sessions_to_draft,
     create_invoice_draft,
+    delete_invoice_draft,
     eligible_sessions,
     finalize_invoice,
     get_invoice,
@@ -152,6 +153,69 @@ class InvoiceLifecycleTests(unittest.TestCase):
         removed = remove_line_from_draft(self.conn, draft["invoice"]["invoice_id"], line_to_remove["invoice_line_item_id"])
         self.assertEqual(removed["invoice"]["total_cents"], 12500)
 
+    def test_delete_empty_draft_invoice(self):
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [],
+        })
+
+        result = delete_invoice_draft(self.conn, draft["invoice"]["invoice_id"])
+        invoice = self.conn.execute(
+            "SELECT 1 FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+
+        self.assertEqual(result["action"], "deleted")
+        self.assertEqual(result["line_count"], 0)
+        self.assertIsNone(invoice)
+
+    def test_delete_draft_invoice_removes_draft_lines_without_changing_session(self):
+        session = self.approved_session("delete-draft", amount="125.00")
+        draft = self.draft([session])
+
+        result = delete_invoice_draft(self.conn, draft["invoice"]["invoice_id"])
+        session_after = self.conn.execute(
+            "SELECT review_status, billing_party_id FROM sessions WHERE id = ?",
+            (session["id"],),
+        ).fetchone()
+        line = self.conn.execute(
+            "SELECT 1 FROM invoice_line_items WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+
+        self.assertEqual(result["line_count"], 1)
+        self.assertIsNone(line)
+        self.assertEqual(session_after["review_status"], "approved")
+        self.assertEqual(session_after["billing_party_id"], self.party["billing_party_id"])
+
+    def test_delete_draft_invoice_blocks_payment_allocation(self):
+        session = self.approved_session("delete-draft-paid", amount="125.00")
+        draft = self.draft([session])
+        line_id = draft["lines"][0]["invoice_line_item_id"]
+        self.conn.execute(
+            """INSERT INTO payments (
+              payment_id, billing_party_id, amount_cents, received_at, method, status,
+              source_type, created_at, updated_at
+            ) VALUES ('pay-delete-block', ?, 12500, '2026-06-30', 'check', 'posted',
+              'manual', '2026-06-30T12:00:00Z', '2026-06-30T12:00:00Z')""",
+            (self.party["billing_party_id"],),
+        )
+        self.conn.execute(
+            """INSERT INTO payment_allocations (
+              allocation_id, payment_id, session_id, invoice_line_item_id, amount_cents,
+              status, created_at, updated_at
+            ) VALUES ('alloc-delete-block', 'pay-delete-block', ?, ?, 12500,
+              'active', '2026-06-30T12:00:00Z', '2026-06-30T12:00:00Z')""",
+            (session["id"], line_id),
+        )
+        self.conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "payment allocations"):
+            delete_invoice_draft(self.conn, draft["invoice"]["invoice_id"])
+
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_finalization_freezes_snapshots_numbers_and_prevents_edits(self, fake_pdf):
         fake_pdf.return_value = "a" * 64
@@ -204,7 +268,7 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertEqual(path.name, "Invoice_2026-0001.pdf")
         self.assertEqual(len(final["invoice"]["pdf_sha256"]), 64)
 
-    def test_multi_page_pdf_repeats_headers_and_keeps_footer_on_final_page(self):
+    def test_multi_page_pdf_repeats_headers_and_omits_page_footer(self):
         try:
             from PIL import Image
             from pypdf import PdfReader
@@ -237,6 +301,8 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertIn("Or pay via Zelle:", texts[-1])
         self.assertIn("demo-zelle@example.test", texts[-1])
         self.assertNotIn("Please send payment to:", texts[-1])
+        self.assertNotIn("Invoice 2026-0042", "\n".join(texts))
+        self.assertNotIn("Page 1", "\n".join(texts))
         self.assertNotIn(str(logo), "\n".join(texts))
 
 
