@@ -901,7 +901,23 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 ---
 
-## 14. Application Lifecycle
+## 14. Diagnostics
+
+### POST /api/diagnostics/report-issue
+
+- **Handler**: inline in `do_POST`
+- **Service**: `create_issue_report(conn, area, description, ui_state, frontend_events)`
+- **Accepted fields**: `area`, optional `description`, optional `ui_state` object, optional `frontend_events` list
+- **Success status**: 200
+- **Success response**: `{ ok: true, filename, saved_to, report, report_text }`
+- **DB tables**: none mutated; reads aggregate counts and migration metadata only, then writes a local sanitized JSON report under `Reports/Diagnostics/`
+- **Idempotent**: no — each request creates a timestamped report file
+- **Safety**: write-token protected; does not include client names, clinical information, raw calendar titles, invoice PDFs, the live SQLite database, credentials, or full local paths in the report body
+- **Existing tests**: `test_diagnostics.py`
+
+---
+
+## 15. Application Lifecycle
 
 ### POST /api/app/quit
 
@@ -981,9 +997,10 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 | 57 | POST | /api/reports/generate | write_reports | Reports |
 | 58 | POST | /api/calendar-reconcile/dry-run | calendar_reconciliation_report | Calendar Reconciliation |
 | 59 | POST | /api/calendar-reconcile/apply | calendar_reconciliation_report | Calendar Reconciliation |
-| 60 | POST | /api/app/quit | server shutdown scheduler | Application Lifecycle |
+| 60 | POST | /api/diagnostics/report-issue | create_issue_report | Diagnostics |
+| 61 | POST | /api/app/quit | server shutdown scheduler | Application Lifecycle |
 
-**Total write endpoints: 60** (including read-only POSTs that use POST for complex body acceptance)
+**Total write endpoints: 61** (including read-only POSTs that use POST for complex body acceptance)
 
 ---
 

@@ -189,6 +189,11 @@ from .request_validation import (
     parse_sync_run_request,
     parse_sync_rebuild_request,
 )
+from .diagnostics import (
+    create_issue_report,
+    record_event as record_diagnostic_event,
+    record_http_event,
+)
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -302,8 +307,22 @@ class CalendarSyncRuntime:
                     skip_if_running=True,
                 )
             self._record_error("")
+            record_diagnostic_event(
+                "calendar_sync",
+                "automatic_sync_completed",
+                path="/api/sync/run",
+                status=200,
+            )
         except Exception as error:
             self._record_error(str(error))
+            record_diagnostic_event(
+                "calendar_sync",
+                "automatic_sync_error",
+                severity="error",
+                path="/api/sync/run",
+                status=503,
+                message=sanitize_sync_error(str(error)),
+            )
         finally:
             self._set_running(False)
 
@@ -643,6 +662,18 @@ def make_handler(
                 if parsed.path == "/api/build-info":
                     self.send_json({"ok": True, **current_build_info()})
                     return
+                if parsed.path == "/api/diagnostics/areas":
+                    self.send_json({
+                        "areas": [
+                            {"value": "review", "label": "Review"},
+                            {"value": "billing_relationships", "label": "Billing Relationships"},
+                            {"value": "invoices", "label": "Invoices"},
+                            {"value": "payments", "label": "Payments"},
+                            {"value": "calendar_sync", "label": "Calendar Sync"},
+                            {"value": "other", "label": "Other"},
+                        ]
+                    })
+                    return
                 if parsed.path == "/api/status":
                     self.send_json(dashboard_status(self.conn()))
                     return
@@ -969,6 +1000,16 @@ def make_handler(
                             "message": message,
                         }
                     )
+                    return
+                if parsed.path == "/api/diagnostics/report-issue":
+                    result = create_issue_report(
+                        self.conn(),
+                        area=data.get("area") or "other",
+                        description=data.get("description") or "",
+                        ui_state=data.get("ui_state") if isinstance(data.get("ui_state"), dict) else {},
+                        frontend_events=data.get("frontend_events") if isinstance(data.get("frontend_events"), list) else [],
+                    )
+                    self.send_json(result)
                     return
                 if parsed.path == "/api/backups/create":
                     result = create_verified_backup(database_path, reason="manual_backup", protected=True)
@@ -1673,6 +1714,7 @@ def make_handler(
             super().end_headers()
 
         def send_json(self, payload: object, status: int = 200) -> None:
+            record_http_event(getattr(self, "command", ""), getattr(self, "path", ""), status, payload)
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")

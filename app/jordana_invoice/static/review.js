@@ -129,7 +129,12 @@ const state = {
     running: false,
     applying: false
   },
-  quitting: false
+  quitting: false,
+  diagnostics: {
+    events: [],
+    reportText: "",
+    filename: ""
+  }
 };
 state.accountOriginPersonId = null;
 const RETURN_CONTEXT_KEY = "reviewBillingReturnContext";
@@ -166,6 +171,46 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v) => v ? escapeHtml(v) : "-";
 const money = (v) => v ? `$${v}` : "—";
 const fmtDateTime = (v) => v ? new Date(v).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "-";
+
+function diagnosticAreaForPath(path) {
+  const clean = String(path || "").split("?")[0];
+  if (clean.startsWith("/api/review")) return "review";
+  if (clean.startsWith("/api/billing-relationships") || clean.startsWith("/api/accounts") || clean.startsWith("/api/billing-parties")) return "billing_relationships";
+  if (clean.startsWith("/api/invoices")) return "invoices";
+  if (clean.startsWith("/api/payments")) return "payments";
+  if (clean.startsWith("/api/sync") || clean.startsWith("/api/calendar-reconcile")) return "calendar_sync";
+  return "other";
+}
+
+function diagnosticRouteTemplate(path) {
+  return String(path || "")
+    .split("?")[0]
+    .replace(/\/([0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}|[0-9a-fA-F]{32,}|[A-Za-z0-9_-]{20,})(?=\/|$)/g, "/{id}");
+}
+
+function recordDiagnosticEvent(event, { area = "other", severity = "info", route = "", status = null, message = "" } = {}) {
+  state.diagnostics.events.push({
+    timestamp: new Date().toISOString(),
+    area,
+    event,
+    severity,
+    route: route ? diagnosticRouteTemplate(route) : "",
+    status: Number.isInteger(status) ? status : null,
+    message: sanitizeUiErrorMessage(message, "")
+  });
+  if (state.diagnostics.events.length > 120) state.diagnostics.events.splice(0, state.diagnostics.events.length - 120);
+}
+
+window.addEventListener("jordana:api-diagnostic", event => {
+  const detail = event.detail || {};
+  recordDiagnosticEvent(detail.event || "api_response", {
+    area: detail.area || diagnosticAreaForPath(detail.route || ""),
+    severity: detail.severity || "info",
+    route: detail.route || "",
+    status: detail.status,
+    message: detail.message || ""
+  });
+});
 
 function bindInputAndChange(element, handler) {
   if (!element) return;
@@ -1505,6 +1550,7 @@ function clearReviewActionError() {
 }
 
 function showReviewActionError(message) {
+  recordDiagnosticEvent("ui_error", { area: currentDiagnosticArea(), severity: "error", message });
   const box = $("reviewActionError");
   if (!box) {
     alert(message);
@@ -1889,11 +1935,15 @@ document.getElementById("settingsNav").onclick = (event) => {
   location.hash = "settings";
   showSettings();
 };
+document.getElementById("reportIssueBtn").onclick = () => openReportIssueDialog();
 document.getElementById("quitAppBtn").onclick = () => quitApplication();
 document.getElementById("reviewNav").onclick = () => {
   location.hash = "";
   showReviewWorkbench();
 };
+document.getElementById("reportIssueForm").addEventListener("submit", createIssueReport);
+document.getElementById("copyIssueReportBtn").addEventListener("click", copyIssueReport);
+document.getElementById("exportIssueReportBtn").addEventListener("click", exportIssueReport);
 
 function showQuitStatus(message, isError = false) {
   const node = $("quitStatus");
@@ -1991,6 +2041,13 @@ const reviewOverlayCtrl = createOverlay({
   bodyLock: false
 });
 
+const reportIssueOverlayCtrl = createOverlay({
+  overlay: "reportIssueOverlay",
+  closeBtn: "reportIssueClose",
+  firstFocusSelector: "select, textarea, button",
+  bodyLock: true
+});
+
 function openReviewOverlay() {
   if (!reviewOverlayCtrl) return;
   reviewOverlayCtrl.open({});
@@ -2037,6 +2094,7 @@ function showReviewSuccess(message) {
 }
 
 function showReviewWarning(message) {
+  recordDiagnosticEvent("ui_warning", { area: currentDiagnosticArea(), severity: "warning", message });
   const workbench = $("reviewWorkbench");
   if (!workbench) return;
   const banner = document.createElement("div");
@@ -2045,6 +2103,143 @@ function showReviewWarning(message) {
   banner.setAttribute("role", "status");
   workbench.prepend(banner);
   setTimeout(() => { if (document.body.contains(banner)) banner.remove(); }, 8000);
+}
+
+function currentDiagnosticArea() {
+  const screen = $("pageTitle")?.textContent || "";
+  if (screen.includes("Billing Relationships")) return "billing_relationships";
+  if (screen.includes("Invoice")) return "invoices";
+  if (screen.includes("Payment")) return "payments";
+  if (screen.includes("Calendar") || screen.includes("Reconciliation")) return "calendar_sync";
+  if (screen.includes("Review")) return "review";
+  return "other";
+}
+
+function collectDiagnosticUiState() {
+  return {
+    current_screen: $("pageTitle")?.textContent || document.title || "",
+    path: diagnosticRouteTemplate(location.pathname),
+    hash: diagnosticRouteTemplate(location.hash || ""),
+    review_filters: {
+      status: $("statusFilter")?.value || "",
+      session_type: $("serviceFilter")?.value || "",
+      calendar: $("calendarFilter")?.value || "",
+      search_active: Boolean(($("searchBox")?.value || "").trim())
+    },
+    invoice_filters: {
+      status: state.invoiceLibrary.status || "",
+      billing_month: state.invoiceLibrary.billingMonth || "",
+      search_active: Boolean((state.invoiceLibrary.search || "").trim())
+    },
+    payment_filters: {
+      tab: state.payments.activeTab || "",
+      billing_month: state.payments.billingMonth || ""
+    },
+    session_filters: {
+      date_range: $("sessionsDateFilter")?.value || "",
+      review_status: $("sessionsReviewStatusFilter")?.value || "",
+      payment_status: $("sessionsPaymentStatusFilter")?.value || ""
+    },
+    selected_candidate_present: Boolean(state.selected),
+    selected_invoice_present: Boolean(state.invoice),
+    selected_payment_present: Boolean(state.payments.selectedPaymentId || state.unpaid.selectedInvoiceId),
+    selected_person_present: Boolean(state.currentPersonId),
+    selected_account_present: Boolean(state.account),
+    overlay_open: Boolean(!$("reviewOverlay")?.hidden || !$("paymentOverlay")?.hidden || !$("paymentDetailOverlay")?.hidden),
+    dirty_fields_count: state.dirty.size
+  };
+}
+
+function setReportIssueStatus(message, kind = "") {
+  const status = $("reportIssueStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", kind === "error");
+  status.classList.toggle("success", kind === "success");
+}
+
+function openReportIssueDialog() {
+  const area = $("reportIssueArea");
+  if (area) area.value = currentDiagnosticArea();
+  if ($("reportIssueDescription")) $("reportIssueDescription").value = "";
+  state.diagnostics.reportText = "";
+  state.diagnostics.filename = "";
+  setReportIssueStatus("");
+  ["copyIssueReportBtn", "exportIssueReportBtn"].forEach(id => {
+    const btn = $(id);
+    if (btn) btn.disabled = true;
+  });
+  reportIssueOverlayCtrl?.open({});
+  recordDiagnosticEvent("report_issue_opened", { area: currentDiagnosticArea() });
+}
+
+async function createIssueReport(event) {
+  event.preventDefault();
+  const button = $("createIssueReportBtn");
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Creating...";
+  setReportIssueStatus("Creating local diagnostic report...");
+  try {
+    const payload = {
+      area: $("reportIssueArea")?.value || "other",
+      description: $("reportIssueDescription")?.value || "",
+      ui_state: collectDiagnosticUiState(),
+      frontend_events: state.diagnostics.events.slice(-80)
+    };
+    const result = await api("/api/diagnostics/report-issue", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    state.diagnostics.reportText = result.report_text || "";
+    state.diagnostics.filename = result.filename || "issue-report.json";
+    setReportIssueStatus(`Saved ${state.diagnostics.filename}`, "success");
+    ["copyIssueReportBtn", "exportIssueReportBtn"].forEach(id => {
+      const btn = $(id);
+      if (btn) btn.disabled = !state.diagnostics.reportText;
+    });
+    recordDiagnosticEvent("report_issue_created", { area: payload.area });
+  } catch (error) {
+    const message = sanitizeUiErrorMessage(error.message, "Could not create diagnostic report.");
+    setReportIssueStatus(message, "error");
+    recordDiagnosticEvent("report_issue_error", { area: "other", severity: "error", message });
+  } finally {
+    button.disabled = false;
+    button.textContent = "Create Report";
+  }
+}
+
+async function copyIssueReport() {
+  if (!state.diagnostics.reportText) return;
+  try {
+    await navigator.clipboard.writeText(state.diagnostics.reportText);
+    setReportIssueStatus(`Copied ${state.diagnostics.filename || "report"}.`, "success");
+  } catch {
+    const scratch = document.createElement("textarea");
+    scratch.value = state.diagnostics.reportText;
+    scratch.setAttribute("readonly", "readonly");
+    scratch.style.position = "fixed";
+    scratch.style.left = "-9999px";
+    document.body.appendChild(scratch);
+    scratch.select();
+    const ok = document.execCommand("copy");
+    scratch.remove();
+    setReportIssueStatus(ok ? `Copied ${state.diagnostics.filename || "report"}.` : "Copy failed.", ok ? "success" : "error");
+  }
+}
+
+function exportIssueReport() {
+  if (!state.diagnostics.reportText) return;
+  const blob = new Blob([state.diagnostics.reportText], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = state.diagnostics.filename || "issue-report.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setReportIssueStatus(`Exported ${state.diagnostics.filename || "report"}.`, "success");
 }
 
 function showInvoiceSuccess(message) {
@@ -6909,6 +7104,7 @@ if (location.pathname === "/unpaid" || location.pathname === "/payments") showPa
 if (location.pathname === "/reports") showReports();
 window.addEventListener("hashchange", () => {
   const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  recordDiagnosticEvent("route_changed", { area: currentDiagnosticArea(), route: hash || location.pathname });
   if (hash.startsWith("people/")) {
     const personId = hash.split("/")[1];
     if (personId) showPersonRecordPage(personId);

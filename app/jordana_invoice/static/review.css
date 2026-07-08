@@ -45,6 +45,7 @@ nav button {
   border: 0; background: transparent; width: 100%; text-align: left;
 }
 nav a.active, nav a:hover, nav button:hover { background: #1761b7; }
+nav button.nav-report { border: 1px solid rgba(255,255,255,0.18); justify-content: center; }
 nav button.nav-quit { margin-top: 8px; border: 1px solid rgba(255,255,255,0.28); justify-content: center; }
 .count { background: var(--red); padding: 2px 7px; border-radius: 999px; font-size: 12px; }
 .db-status { margin-top: auto; color: #e8f2ff; line-height: 1.35; font-weight: 650; font-size: 13px; }
@@ -1177,6 +1178,35 @@ body.responsive-sheet-open {
   display: flex; flex-wrap: wrap; gap: 8px;
 }
 .review-overlay-content .actions button { min-height: 38px; }
+.report-issue-modal { max-width: 620px; }
+.report-issue-form { display: grid; gap: 14px; }
+.report-issue-form textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 92px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  font: inherit;
+}
+.report-issue-status {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.report-issue-status.error { color: var(--red); font-weight: 700; }
+.report-issue-status.success { color: var(--green); font-weight: 700; }
+.report-issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.report-issue-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+}
+.report-issue-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .checkbox-field { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .checkbox-field input { min-height: auto; width: 16px; height: 16px; }
 

@@ -23,6 +23,7 @@
           <a href="/reports" id="reportsNav">Reports</a>
           <a href="/payments" id="paymentsNav">Payments</a>
           <a href="#" id="settingsNav">Settings</a>
+          <button type="button" id="reportIssueBtn" class="nav-report">Report Issue</button>
           <button type="button" id="quitAppBtn" class="nav-quit">Quit</button>
         </nav>
         <div class="db-status"><span></span>Database<br />Connected</div>
@@ -119,6 +120,40 @@
               <button id="paymentDetailOverlayClose" class="review-overlay-close-btn" type="button">Close</button>
             </div>
             <div id="paymentDetailOverlayContent" class="review-overlay-content"></div>
+          </div>
+        </div>
+
+        <div id="reportIssueOverlay" class="review-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="reportIssueTitle">
+          <div class="review-overlay-modal report-issue-modal">
+            <div class="review-overlay-header">
+              <h2 id="reportIssueTitle">Report Issue</h2>
+              <button id="reportIssueClose" class="review-overlay-close-btn" type="button">Close</button>
+            </div>
+            <div class="review-overlay-content">
+              <form id="reportIssueForm" class="report-issue-form">
+                <label class="field">
+                  Area
+                  <select id="reportIssueArea" required>
+                    <option value="review">Review</option>
+                    <option value="billing_relationships">Billing Relationships</option>
+                    <option value="invoices">Invoices</option>
+                    <option value="payments">Payments</option>
+                    <option value="calendar_sync">Calendar Sync</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  Short description
+                  <textarea id="reportIssueDescription" rows="4" maxlength="500" placeholder="Optional"></textarea>
+                </label>
+                <div id="reportIssueStatus" class="report-issue-status" role="status"></div>
+                <div class="report-issue-actions">
+                  <button type="submit" id="createIssueReportBtn" class="save">Create Report</button>
+                  <button type="button" id="copyIssueReportBtn" disabled>Copy Report</button>
+                  <button type="button" id="exportIssueReportBtn" disabled>Export Report</button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
 

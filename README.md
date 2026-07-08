@@ -47,6 +47,7 @@ This is not a general multi-user billing platform. It is implemented and tested 
 - Transaction-safe numbering and immutable invoice snapshots
 - Local multi-page PDF generation
 - Shared invoice/payment financial summaries for draft value, monthly finalized invoices, monthly payment receipts, and outstanding balance
+- Local sanitized Report Issue diagnostic bundles for focused support
 
 ## Quick Start
 
@@ -317,6 +318,7 @@ The generated demo DB is ignored by Git and explicitly marked as demo mode, caus
 - `app/jordana_invoice/static/` - local review UI.
 - `launchd/` and `scripts/` - hourly macOS sync agent installer and remover.
 - `docs/` - pipeline, shorthand, data model, and handoff notes.
+- `docs/DIAGNOSTICS.md` - sanitized Report Issue workflow and diagnostic bundle contract.
 - `scripts/build_release.sh` - builds the versioned production DMG artifact with pinned dependencies, an offline wheelhouse, release manifest, and checksummed DMG.
 - `scripts/build_setup_wizard.sh` - builds the native no-Terminal setup app for the DMG.
 - `scripts/install_release.sh` - one-time production installer copied into release artifacts.
