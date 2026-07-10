@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
@@ -55,15 +56,24 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.conn.close()
         self.temp.cleanup()
 
-    def import_complete_run(self, run_id, captured_at, *, future_rows, past_window, future_window):
+    def import_complete_run(
+        self,
+        run_id,
+        captured_at,
+        *,
+        future_rows,
+        past_window,
+        future_window,
+        explicit_windows=True,
+    ):
         rows = [
             raw_row(
                 f"{run_id}-past-anchor",
                 run_id=run_id,
                 capture_window="past_3_days",
                 captured_at=captured_at,
-                window_start=past_window[0],
-                window_end=past_window[1],
+                window_start=past_window[0] if explicit_windows else "",
+                window_end=past_window[1] if explicit_windows else "",
                 event_id=f"{run_id}-past-anchor",
                 title="Past Anchor | 60 | Phone",
                 start_at=past_window[0].replace("T00:00:00", "T12:00:00"),
@@ -75,8 +85,8 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
                 run_id=run_id,
                 capture_window="next_7_days",
                 captured_at=captured_at,
-                window_start=future_window[0],
-                window_end=future_window[1],
+                window_start=future_window[0] if explicit_windows else "",
+                window_end=future_window[1] if explicit_windows else "",
                 event_id=event_id,
                 title=title,
                 start_at=start_at,
@@ -139,6 +149,34 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.assertEqual(row["billable_status"], "excluded")
         self.assertEqual(row["reconciliation_status"], "removed_from_newest_covering_snapshot")
         self.assertEqual(row["hidden_from_review"], 1)
+
+    def test_blank_production_window_bounds_use_canonical_capture_window_coverage(self):
+        self.import_complete_run(
+            "older",
+            "2026-07-03T12:00:00.000Z",
+            future_rows=[("older-janet", "janet-old", "Janet Hershaft | 60 | Phone", self.old_start)],
+            past_window=("2026-06-30T00:00:00-04:00", "2026-07-03T23:59:59-04:00"),
+            future_window=("2026-07-03T00:00:00-04:00", "2026-07-10T23:59:59-04:00"),
+            explicit_windows=False,
+        )
+        self.import_complete_run(
+            "newer",
+            "2026-07-08T12:00:00.000Z",
+            future_rows=[("newer-moved", "janet-new", "Janet Hershaft | 60 | Phone", "2026-07-10T17:00:00-04:00")],
+            past_window=("2026-07-05T00:00:00-04:00", "2026-07-08T23:59:59-04:00"),
+            future_window=("2026-07-08T00:00:00-04:00", "2026-07-15T23:59:59-04:00"),
+            explicit_windows=False,
+        )
+
+        row = self.candidate_and_session()
+        self.assertEqual(row["candidate_status"], "excluded")
+        self.assertEqual(row["session_status"], "excluded")
+
+    def test_no_new_row_sync_runs_pending_snapshot_reconciliation(self):
+        with patch("jordana_invoice.importer.suppress_pending_events_missing_from_newest_covering_snapshot") as reconcile:
+            import_rows(self.conn, [], "empty-incremental-sync")
+
+        reconcile.assert_called_once_with(self.conn)
 
     def test_non_covering_newer_snapshot_does_not_suppress_older_event(self):
         old_start = "2026-07-08T17:00:00-04:00"

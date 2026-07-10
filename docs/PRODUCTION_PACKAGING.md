@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.19
+### Current Test Build — v0.1.0-test.20
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.19
-- **Python package/application version:** 0.1.0.post19
+- **Release label:** v0.1.0-test.20
+- **Python package/application version:** 0.1.0.post20
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,15 +36,20 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post19` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post20` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.19 adds sanitized Report Issue diagnostics and reconciles pending calendar
-candidates against newer complete covering snapshots. It inherits the test.18
-invoice-edit recovery and draft-snapshot refresh fixes.
+test.20 makes calendar reconciliation work with the current Shortcut feed's
+blank explicit-boundary fields and reruns it after a no-new-rows sync. It
+inherits the test.19 diagnostics and baseline reconciliation changes.
+
+### Bug Fixes In test.20
+
+1. **Blank-boundary calendar reconciliation** — canonical capture labels plus capture timestamps supply definite inclusive coverage when the Shortcut does not send explicit bounds; unknown labels remain non-covering.
+2. **Upgrade/no-new-rows reconciliation** — an empty incremental sync rechecks pending derived records against preserved raw evidence, allowing an upgrade to suppress already-imported removed appointments safely.
 
 ### Bug Fixes In test.19
 

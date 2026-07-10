@@ -180,6 +180,10 @@ def import_rows(
             "UPDATE import_runs SET status = ?, notes = ? WHERE id = ?",
             ("no_new_rows", "No new raw snapshots were inserted.", import_run_id),
         )
+        # A release upgrade can add reconciliation logic after the raw evidence
+        # has already arrived. Recheck pending derived records even on an empty
+        # incremental sync; raw evidence remains read-only.
+        suppress_pending_events_missing_from_newest_covering_snapshot(conn)
 
     if commit:
         conn.commit()
@@ -829,7 +833,48 @@ def snapshot_batch_coverage(rows: list[sqlite3.Row]) -> set[str]:
             # ISO calendar arithmetic is deliberately local-date based; capture
             # windows are calendar-date boundaries, not elapsed-time intervals.
             current = (date.fromisoformat(current) + timedelta(days=1)).isoformat()
-    return coverage
+    if coverage:
+        return coverage
+
+    # The production Shortcut currently leaves explicit window boundaries blank
+    # even though it supplies a canonical window label and capture timestamp.
+    # Those labels have fixed inclusive date semantics, so they are still
+    # definite coverage evidence. Unknown/legacy labels remain non-covering.
+    capture_windows = {text(row["capture_window"]) for row in rows if text(row["capture_window"])}
+    if len(capture_windows) != 1:
+        return set()
+    capture_window = next(iter(capture_windows))
+    if capture_window == "backfill_2026_06_01_through_2026_06_14":
+        return dates_inclusive("2026-06-01", "2026-06-14")
+
+    capture_dates = {snapshot_date(row["captured_at"]) for row in rows}
+    capture_dates.discard(None)
+    if len(capture_dates) != 1:
+        return set()
+    captured_on = date.fromisoformat(next(iter(capture_dates)))
+    offsets = {
+        "past_3_days": (-3, 0),
+        "past_7_days": (-7, 0),
+        "next_7_days": (0, 7),
+        "next_2_days": (0, 2),
+    }.get(capture_window)
+    if not offsets:
+        return set()
+    start_offset, end_offset = offsets
+    return dates_inclusive(
+        (captured_on + timedelta(days=start_offset)).isoformat(),
+        (captured_on + timedelta(days=end_offset)).isoformat(),
+    )
+
+
+def dates_inclusive(start_date: str, end_date: str) -> set[str]:
+    dates: set[str] = set()
+    current = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    while current <= end:
+        dates.add(current.isoformat())
+        current += timedelta(days=1)
+    return dates
 
 
 def snapshot_date(value: object) -> str | None:

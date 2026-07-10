@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.19
+### Current Test Build — v0.1.0-test.20
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.19
-- **Python package/application version:** 0.1.0.post19
+- **Release label:** v0.1.0-test.20
+- **Python package/application version:** 0.1.0.post20
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,14 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.19 supersedes test.18 for installation and update testing because it adds
-sanitized Report Issue diagnostics and calendar snapshot reconciliation for
-pending review items.
+test.20 supersedes test.19 for installation and update testing because it
+reconciles pending review items even when the Shortcut leaves explicit window
+bounds blank or a post-upgrade sync has no new raw rows.
+
+### Bug Fixes In test.20
+
+1. **Blank-boundary calendar reconciliation** — canonical capture labels and timestamps provide the documented inclusive date coverage when explicit bounds are blank; unknown labels remain non-covering.
+2. **Upgrade/no-new-rows reconciliation** — an empty incremental sync rechecks preserved raw evidence and can suppress already-imported removed occurrences without touching raw snapshots or approved sessions.
 
 ### Bug Fixes In test.19
 
@@ -82,7 +87,7 @@ pending review items.
 
 ### Prior Test Builds
 
-`v0.1.0-test.18` is superseded by test.19 for installation and update testing.
+`v0.1.0-test.19` is superseded by test.20 for installation and update testing.
 
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.4. test.15
 supersedes test.14 for installation and update testing.
