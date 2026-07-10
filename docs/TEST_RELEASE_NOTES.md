@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.21 Release Notes
+# Jordana Billing v0.1.0-test.22 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.21` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.22` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.21-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.22-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.21
-- **Python package/application version:** 0.1.0.post21
+- **Release label:** v0.1.0-test.22
+- **Python package/application version:** 0.1.0.post22
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,16 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post21` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post22` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.21
+## Bug Fixes In test.22
+
+1. **Confirmed client rate reconciliation** — Calendar sync preserves confirmed UUID-backed participants on unapproved sessions and evaluates the rate card with client, participant-combination, and billing-relationship scope before the global standard rate.
+2. **Upgrade/no-new-rows rate reconciliation** — An incremental sync with no new raw snapshots refreshes stale pending rate suggestions. Raw evidence and approved charges remain unchanged.
+3. **Automatic-match rate refresh** — Exact-name and approved-alias client matching immediately refreshes the pending session's suggested rate.
+
+## Bug Fixes Inherited from test.21
 
 1. **Review-after-session safeguard preserved** — Future sessions remain hidden from the actionable Review Queue and cannot be approved until their scheduled end time passes.
 2. **Ended-only removal reconciliation** — Calendar absence can suppress only an unapproved appointment whose end time has passed; future and same-day appointments remain available for a later capture.

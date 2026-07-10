@@ -455,6 +455,46 @@ class RateCardDefaultTests(unittest.TestCase):
         self.assertEqual(detail["session"]["suggested_rate_cents"], 50000)
         self.assertEqual(detail["session"]["rate_source"], "person_exception")
 
+    def test_resync_preserves_confirmed_client_and_person_specific_rate(self):
+        person = create_person(self.conn, {"first_name": "Elli", "last_name": "Yeager", "display_name": "Elli Yeager"})
+        self._create_default_rule()
+        self._create_rate_rule(
+            amount=500,
+            duration_minutes=60,
+            billing_session_type="psychotherapy",
+            applies_to="person",
+            person_id=person["person_id"],
+        )
+        first = raw_row("snap-elli-first", "Elli Yeager 6")
+        first["calendar_event_id"] = "elli-stable-event"
+        first["event_fingerprint"] = "elli-stable-fingerprint"
+        import_rows(self.conn, [first], "test")
+        candidate_id = next(
+            row["candidate_id"]
+            for row in list_review_candidates(self.conn)["items"]
+            if row["raw_title"] == "Elli Yeager 6"
+        )
+        saved = save_relationship_section(
+            self.conn,
+            candidate_id,
+            {"participants": [{"person_id": person["person_id"], "display_name": "Elli Yeager", "is_primary": True}]},
+        )
+        self.assertEqual(saved["session"]["suggested_rate_cents"], 50000)
+
+        second = raw_row("snap-elli-second", "Elli Yeager 6")
+        second["calendar_event_id"] = "elli-stable-event"
+        second["event_fingerprint"] = "elli-stable-fingerprint"
+        import_rows(self.conn, [second], "test")
+
+        refreshed = get_review_candidate(self.conn, candidate_id)
+        self.assertEqual(refreshed["session"]["suggested_rate_cents"], 50000)
+        self.assertEqual(refreshed["session"]["rate_source"], "person_exception")
+        self.assertEqual([p["person_id"] for p in refreshed["participants"]], [person["person_id"]])
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0],
+            2,
+        )
+
     def test_participant_combination_rule_overrides_default(self):
         # "Bobsey and Fred 630 60" → multi-person but still client_session
         candidate_id = self.import_one("snap-joint", "Bobsey and Fred 630 60")

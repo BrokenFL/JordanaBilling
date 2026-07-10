@@ -9,6 +9,7 @@ from jordana_invoice.review_services import (
     create_account,
     create_billing_party,
     create_person,
+    create_rate_rule_from_payload,
     get_review_candidate,
     list_review_candidates,
     save_relationship_section,
@@ -76,6 +77,38 @@ class AutoLinkExactNameTests(unittest.TestCase):
         person = self.conn.execute("SELECT * FROM people WHERE display_name = 'Robin Rivers'").fetchone()
         self.assertEqual(sp["person_id"], person["person_id"])
         self.assertEqual(count(self.conn, "people"), 1)
+
+    def test_auto_link_refreshes_person_specific_rate_suggestion(self):
+        cid = self._import_one("snap-rate-match", "Robin Rivers 6")
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "350",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "effective_from": "2026-01-01",
+            },
+        )
+        person = create_person(self.conn, {"first_name": "Robin", "last_name": "Rivers", "display_name": "Robin Rivers"})
+        create_rate_rule_from_payload(
+            self.conn,
+            {
+                "amount": "500",
+                "duration_minutes": "60",
+                "billing_session_type": "psychotherapy",
+                "time_category": "standard",
+                "person_id": person["person_id"],
+                "effective_from": "2026-01-01",
+            },
+        )
+
+        apply_smart_prefill(self.conn)
+
+        detail = get_review_candidate(self.conn, cid)
+        self.assertEqual(detail["participants"][0]["person_id"], person["person_id"])
+        self.assertEqual(detail["session"]["suggested_rate_cents"], 50000)
+        self.assertEqual(detail["session"]["rate_source"], "person_exception")
 
     def test_matching_is_case_insensitive(self):
         cid = self._import_one("snap-2", "Robin Rivers 6")

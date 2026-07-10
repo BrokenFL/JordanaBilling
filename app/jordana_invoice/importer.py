@@ -185,6 +185,12 @@ def import_rows(
         # incremental sync; raw evidence remains read-only.
         suppress_pending_events_missing_from_newest_covering_snapshot(conn)
 
+    # Rate suggestions are derived operational state. Reconcile every pending
+    # session even when an incremental sync has no new raw rows, so an upgrade
+    # corrects stale global suggestions without touching approved charges or
+    # preserved calendar evidence.
+    reconcile_unapproved_session_rate_suggestions(conn)
+
     if commit:
         conn.commit()
     return import_run_id
@@ -1741,6 +1747,104 @@ def maybe_create_source_change_warning(
     audit(conn, "review_item", review_item_id, "source_change_warning_created", {"old_title": old_title, "new_title": new_title})
 
 
+def confirmed_rate_context(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row | None,
+) -> dict[str, object]:
+    """Return the UUID-backed rate scope already confirmed for a session."""
+    if not session:
+        return {}
+    participants = conn.execute(
+        """
+        SELECT person_id, is_primary
+        FROM session_participants
+        WHERE session_id = ?
+          AND person_id IS NOT NULL
+        ORDER BY is_primary DESC, session_participant_id
+        """,
+        (session["id"],),
+    ).fetchall()
+    participant_person_ids = [row["person_id"] for row in participants]
+    return {
+        "account_id": session["account_id"],
+        "person_id": participant_person_ids[0] if participant_person_ids else None,
+        "participant_person_ids": participant_person_ids,
+    }
+
+
+def has_confirmed_participants(conn: sqlite3.Connection, session_id: str) -> bool:
+    return bool(
+        conn.execute(
+            """
+            SELECT 1
+            FROM session_participants
+            WHERE session_id = ?
+              AND person_id IS NOT NULL
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+    )
+
+
+def reconcile_unapproved_session_rate_suggestions(conn: sqlite3.Connection) -> int:
+    """Refresh pending rate suggestions using already-confirmed rate scope."""
+    sessions = conn.execute(
+        """
+        SELECT *
+        FROM sessions
+        WHERE review_status NOT IN ('approved', 'excluded')
+        """
+    ).fetchall()
+    changed = 0
+    for session in sessions:
+        duration = session["approved_duration_minutes"] or session["duration_minutes"]
+        rate = suggest_rate(
+            conn,
+            session_date=session["session_date"] or text(session["start_at"])[:10],
+            duration_minutes=duration,
+            billing_session_type=session["billing_session_type"],
+            appointment_status=session["appointment_status"],
+            custom_service_description=session["custom_service_description"],
+            custom_service_code=session["custom_service_code"],
+            service_mode=session["service_mode"],
+            rate_group=session["rate_group"],
+            time_category=session["time_category"],
+            **confirmed_rate_context(conn, session),
+        )
+        rate_needs_review = 1 if rate.rate_needs_review and session["approved_rate_cents"] is None else 0
+        current = (
+            session["suggested_rate_cents"],
+            session["rate_rule_id"],
+            session["rate_source"],
+            session["rate_needs_review"],
+        )
+        next_values = (
+            rate.suggested_rate_cents,
+            rate.rate_rule_id,
+            rate.rate_source,
+            rate_needs_review,
+        )
+        if current == next_values:
+            continue
+        conn.execute(
+            """
+            UPDATE sessions
+            SET suggested_rate_cents = ?,
+                rate_rule_id = ?,
+                rate_source = ?,
+                rate_needs_review = ?,
+                rate_override_reason = COALESCE(rate_override_reason, ?),
+                updated_at = ?
+            WHERE id = ?
+              AND review_status NOT IN ('approved', 'excluded')
+            """,
+            (*next_values, rate.explanation, now_iso(), session["id"]),
+        )
+        changed += 1
+    return changed
+
+
 def maybe_insert_session(
     conn: sqlite3.Connection,
     candidate_id: str,
@@ -1753,6 +1857,10 @@ def maybe_insert_session(
         return False
     now = now_iso()
     session_date = result.proposed_start_at[:10]
+    existing = conn.execute(
+        "SELECT * FROM sessions WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
     rate = suggest_rate(
         conn,
         session_date=session_date,
@@ -1762,13 +1870,10 @@ def maybe_insert_session(
         service_mode=result.service_mode,
         rate_group=result.rate_group,
         time_category=result.time_category,
+        **confirmed_rate_context(conn, existing),
     )
     unresolved_fields = unresolved_fields_for_session(result, rate.rate_needs_review)
     review_status = review_status_for_parse(result, rate.rate_needs_review)
-    existing = conn.execute(
-        "SELECT * FROM sessions WHERE candidate_id = ?",
-        (candidate_id,),
-    ).fetchone()
     candidate = conn.execute(
         """
         SELECT calendar_disposition, calendar_is_preferred_work, hidden_from_review
@@ -1885,8 +1990,12 @@ def maybe_insert_session(
                 existing["id"],
             ),
         )
-        conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
-        insert_session_participants(conn, existing["id"], result)
+        # Calendar snapshots remain evidence, not authority over a client
+        # identity Jordana has already confirmed.  Preserve UUID-backed
+        # participants and only replace parser-proposed, unresolved rows.
+        if not has_confirmed_participants(conn, existing["id"]):
+            conn.execute("DELETE FROM session_participants WHERE session_id = ?", (existing["id"],))
+            insert_session_participants(conn, existing["id"], result)
         maybe_insert_review_item(conn, candidate_id, existing["id"], result, unresolved_fields, review_status)
         audit(conn, "session", existing["id"], "updated_from_calendar_snapshot", result.as_dict())
         return True

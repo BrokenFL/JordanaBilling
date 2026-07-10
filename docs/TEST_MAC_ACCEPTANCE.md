@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.21
+### Current Test Build — v0.1.0-test.22
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.21
-- **Python package/application version:** 0.1.0.post21
+- **Release label:** v0.1.0-test.22
+- **Python package/application version:** 0.1.0.post22
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,15 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.21 supersedes test.20 for installation and update testing because it keeps
-future appointments out of Review while ensuring only ended, truly absent
-appointments are removed.
+test.22 supersedes test.21 for installation and update testing because it keeps
+future appointments out of Review while ensuring pending sessions use the
+correct confirmed-client rate-card suggestion.
+
+### Bug Fixes In test.22
+
+1. **Confirmed-client rate reconciliation** — calendar sync preserves confirmed client identity on pending sessions and uses that identity for rate-card precedence.
+2. **Upgrade/no-new-rows rate reconciliation** — installing the release corrects stale pending global-rate suggestions even before the next new calendar row arrives.
+3. **Automatic-match rate refresh** — exact-name and approved-alias matching immediately applies the matching pending rate-card suggestion.
 
 ### Bug Fixes In test.21
 

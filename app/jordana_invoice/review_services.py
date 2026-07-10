@@ -4685,6 +4685,7 @@ def apply_smart_prefill(conn: sqlite3.Connection) -> int:
         """
     ).fetchall()
     updated = 0
+    refreshed_candidate_ids: set[str] = set()
     for session in rows:
         aliases = aliases_for_session(conn, session)
         if not aliases:
@@ -4697,6 +4698,7 @@ def apply_smart_prefill(conn: sqlite3.Connection) -> int:
                 (alias["account_id"], now, session["id"]),
             )
             updated += 1
+            refreshed_candidate_ids.add(session["candidate_id"])
         if alias["person_id"]:
             participant_exists = conn.execute(
                 """
@@ -4735,6 +4737,7 @@ def apply_smart_prefill(conn: sqlite3.Connection) -> int:
                     ),
                 )
                 updated += 1
+                refreshed_candidate_ids.add(session["candidate_id"])
         account_id = alias["account_id"] or session["account_id"]
         if account_id and not session["billing_party_id"]:
             account = conn.execute(
@@ -4747,17 +4750,22 @@ def apply_smart_prefill(conn: sqlite3.Connection) -> int:
                     (account["default_billing_party_id"], now, session["id"]),
                 )
                 updated += 1
+                refreshed_candidate_ids.add(session["candidate_id"])
 
-    updated += _auto_link_exact_name_participants(conn)
+    auto_linked, auto_linked_candidate_ids = _auto_link_exact_name_participants(conn)
+    updated += auto_linked
+    refreshed_candidate_ids.update(auto_linked_candidate_ids)
+    for candidate_id in sorted(refreshed_candidate_ids):
+        refresh_candidate_suggestions(conn, candidate_id)
     if updated:
         conn.commit()
     return updated
 
 
-def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> int:
+def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> tuple[int, set[str]]:
     null_participants = conn.execute(
         """
-        SELECT sp.*, s.review_status, s.account_id, s.billing_party_id
+        SELECT sp.*, s.candidate_id, s.review_status, s.account_id, s.billing_party_id
         FROM session_participants sp
         JOIN sessions s ON s.id = sp.session_id
         WHERE sp.person_id IS NULL
@@ -4765,6 +4773,7 @@ def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> int:
         """
     ).fetchall()
     linked = 0
+    candidate_ids: set[str] = set()
     for sp in null_participants:
         name = text(sp["participant_name"])
         if not name:
@@ -4790,6 +4799,7 @@ def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> int:
             },
         )
         linked += 1
+        candidate_ids.add(sp["candidate_id"])
 
         session_billing_party_id = sp["billing_party_id"]
         if session_billing_party_id:
@@ -4836,7 +4846,7 @@ def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> int:
                     "person_id": person["person_id"],
                 },
             )
-    return linked
+    return linked, candidate_ids
 
 
 def aliases_for_session(conn: sqlite3.Connection, session: sqlite3.Row) -> list[sqlite3.Row]:

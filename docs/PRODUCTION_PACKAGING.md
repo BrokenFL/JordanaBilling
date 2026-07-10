@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.21
+### Current Test Build — v0.1.0-test.22
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.21
-- **Python package/application version:** 0.1.0.post21
+- **Release label:** v0.1.0-test.22
+- **Python package/application version:** 0.1.0.post22
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,14 +36,20 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post21` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post22` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.21 preserves the review-after-session safeguard while correcting calendar
-reconciliation for ended appointments and overlapping capture windows.
+test.22 preserves the review-after-session safeguard and corrects pending-rate
+reconciliation for confirmed clients during sync and automatic name matching.
+
+### Bug Fixes In test.22
+
+1. **Confirmed client rate reconciliation** — pending sessions retain confirmed UUID-backed participants across calendar snapshots and use client-specific, participant-combination, or billing-relationship rate rules before the global default.
+2. **Upgrade/no-new-rows rate reconciliation** — an empty incremental sync refreshes pending rate suggestions from the confirmed rate scope, without changing raw calendar evidence or approved charges.
+3. **Automatic-match rate refresh** — automatic exact-name and approved-alias matching immediately refreshes the pending rate suggestion.
 
 ### Bug Fixes In test.21
 
