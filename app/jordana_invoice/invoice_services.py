@@ -1870,13 +1870,25 @@ def stage_approved_sessions_to_monthly_drafts(
                     draft_changed = True
 
             if draft_id and draft_changed:
-                _recalculate(conn, draft_id)
-                conn.execute(
-                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
-                    (now_iso(), draft_id),
-                )
-                _audit(conn, "invoice", draft_id, "staging_reconciled",
-                       {"billing_month": billing_month})
+                remaining_lines = conn.execute(
+                    "SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = ?",
+                    (draft_id,),
+                ).fetchone()[0]
+                if remaining_lines == 0:
+                    # A paid-at-session or otherwise ineligible session can
+                    # remove the final draft line.  Keep its payment/receipt
+                    # history, but do not leave a misleading $0 invoice.
+                    conn.execute("DELETE FROM invoices WHERE invoice_id = ? AND status = 'draft'", (draft_id,))
+                    _audit(conn, "invoice", draft_id, "empty_draft_removed_by_staging",
+                           {"billing_month": billing_month})
+                else:
+                    _recalculate(conn, draft_id)
+                    conn.execute(
+                        "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                        (now_iso(), draft_id),
+                    )
+                    _audit(conn, "invoice", draft_id, "staging_reconciled",
+                           {"billing_month": billing_month})
 
             conn.commit()
         except Exception as error:
