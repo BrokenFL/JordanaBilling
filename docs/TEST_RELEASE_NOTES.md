@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.18 Release Notes
+# Jordana Billing v0.1.0-test.19 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.18` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.19` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.18-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.19-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.18
-- **Python package/application version:** 0.1.0.post18
+- **Release label:** v0.1.0-test.19
+- **Python package/application version:** 0.1.0.post19
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,15 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post18` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post19` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.18
+## Bug Fixes In test.19
+
+1. **Report Issue diagnostics** — The Review app can create a sanitized local diagnostics bundle for a reported error. It captures only operational build/schema/request context and deliberately excludes client names, clinical content, raw calendar data, invoices, receipts, logs, and the live database.
+2. **Calendar snapshot reconciliation** — A pending calendar candidate is excluded when the newest complete, successful raw snapshot batch that explicitly covers its appointment date omits it. Raw snapshot evidence remains untouched; incomplete, failed, malformed, non-covering, and approved records are protected.
+
+## Bug Fixes Inherited from test.18
 
 1. **Approved-session Edit Session recovery** — `Edit Session` from an unfinalized draft invoice can return an approved session to Review and remove its draft invoice line. If a prior interrupted edit already left the session in Review while the draft line remained, the same action now cleans up that stale draft line instead of erroring.
 2. **Draft invoice snapshot refresh** — Reapproving an edited session now refreshes existing draft invoice lines from the current approved session values. Draft invoices no longer keep stale amount, duration, participant, service, appointment-treatment, or description snapshots when the source session is corrected before finalization.

@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.18
+### Current Test Build — v0.1.0-test.19
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.18
-- **Python package/application version:** 0.1.0.post18
+- **Release label:** v0.1.0-test.19
+- **Python package/application version:** 0.1.0.post19
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,20 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post18` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post19` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.18 fixes the approved-session Edit Session recovery path and refreshes
-existing draft invoice line snapshots when an edited session is reapproved.
-It inherits the test.17 billing relationship, draft deletion, service-period
-invoice list, PDF footer, and recipient-label cleanup fixes.
+test.19 adds sanitized Report Issue diagnostics and reconciles pending calendar
+candidates against newer complete covering snapshots. It inherits the test.18
+invoice-edit recovery and draft-snapshot refresh fixes.
+
+### Bug Fixes In test.19
+
+1. **Report Issue diagnostics** — Review can create a sanitized local support bundle containing operational build/schema/request context only; it excludes client names, clinical content, raw calendar data, invoices, receipts, logs, and the live database.
+2. **Calendar snapshot reconciliation** — Pending candidates omitted by the newest complete successful raw snapshot batch that explicitly covers their appointment date are excluded from normal review. Raw evidence and approved sessions remain untouched.
 
 ### Bug Fixes In test.18
 

@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `018_delivery_contact_person`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.18`
+- **Current test release target:** `v0.1.0-test.19`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post18`
+- **Current package/application version:** `0.1.0.post19`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.15` is superseded by test.18 for installation and update testing
+- **Prior test release:** `v0.1.0-test.18` is superseded by test.19 for installation and update testing
 
 ## Architecture
 
@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.18 supersedes test.15):
+The current controlled-beta release target is (test.19 supersedes test.18):
 
 ```text
-JordanaBilling-v0.1.0-test.18-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.19-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.18`
-- Python package/application version: `0.1.0.post18`
+- Release label: `v0.1.0-test.19`
+- Python package/application version: `0.1.0.post19`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,9 +130,14 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post18` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post19` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Bug Fixes In test.19
+
+1. **Sanitized Report Issue diagnostics** — Review can create a local support bundle with operational build/schema/request context while excluding client names, clinical content, raw calendar data, invoices, receipts, logs, and the live database.
+2. **Calendar snapshot reconciliation** — Pending candidates are excluded when the newest complete successful raw snapshot batch that explicitly covers their appointment date omits them. Raw evidence and approved sessions remain unchanged.
 
 ### Bug Fixes In test.18
 

@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.18
+### Current Test Build — v0.1.0-test.19
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.18
-- **Python package/application version:** 0.1.0.post18
+- **Release label:** v0.1.0-test.19
+- **Python package/application version:** 0.1.0.post19
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,14 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.18 supersedes test.17 for installation and update testing because it fixes
-the approved-session Edit Session recovery path and refreshes existing draft
-invoice line snapshots after edited sessions are reapproved.
+test.19 supersedes test.18 for installation and update testing because it adds
+sanitized Report Issue diagnostics and calendar snapshot reconciliation for
+pending review items.
+
+### Bug Fixes In test.19
+
+1. **Report Issue diagnostics** — Review creates a sanitized local diagnostics bundle without client names, clinical content, raw calendar data, invoices, receipts, logs, or the live database.
+2. **Calendar snapshot reconciliation** — An unapproved event omitted by the newest complete successful snapshot batch that explicitly covers its appointment date is excluded from normal review. Raw evidence and approved sessions remain unchanged.
 
 ### Bug Fixes In test.18
 
@@ -77,7 +82,7 @@ invoice line snapshots after edited sessions are reapproved.
 
 ### Prior Test Builds
 
-`v0.1.0-test.17` is superseded by test.18 for installation and update testing.
+`v0.1.0-test.18` is superseded by test.19 for installation and update testing.
 
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.4. test.15
 supersedes test.14 for installation and update testing.
