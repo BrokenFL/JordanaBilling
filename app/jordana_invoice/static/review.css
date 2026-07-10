@@ -129,6 +129,12 @@ tr:hover { background: #f8fbff; }
 .day-cell { font-weight: 700; color: #31415a; }
 .review-btn { padding: 4px 14px; font-size: 12px; min-height: 28px; border-radius: 6px; background: var(--blue); color: white; border: none; }
 .review-btn:hover { background: #1a5bb5; }
+.person-search-results { margin-top: 6px; border: 1px solid var(--line); border-radius: 7px; background: white; overflow: hidden; max-width: 420px; }
+.person-search-result { width: 100%; min-height: 34px; display: flex; justify-content: space-between; align-items: center; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 7px 10px; text-align: left; }
+.person-search-result:last-child { border-bottom: 0; }
+.person-search-result:hover { background: var(--soft); }
+.person-search-result small { color: var(--muted); font-weight: 700; }
+.person-search-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
 tr.empty-row td { text-align: center; color: var(--muted); padding: 32px 0; cursor: default; }
 tr.empty-row:hover { background: transparent; }
 .dot { width: 12px; height: 12px; display: inline-block; border-radius: 50%; }

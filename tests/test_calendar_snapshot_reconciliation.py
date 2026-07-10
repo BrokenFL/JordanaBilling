@@ -151,6 +151,23 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.assertEqual(row["reconciliation_status"], "removed_from_newest_covering_snapshot")
         self.assertEqual(row["hidden_from_review"], 1)
 
+    def test_opening_review_reconciles_an_ended_omission_without_new_sync_rows(self):
+        with patch("jordana_invoice.importer.appointment_has_ended", return_value=False):
+            self.import_old_event()
+            self.import_complete_run(
+                "newer",
+                "2026-07-08T12:00:00.000Z",
+                future_rows=[("newer-moved", "janet-new", "Janet Hershaft | 60 | Phone", "2026-07-10T17:00:00-04:00")],
+                past_window=("2026-07-05T00:00:00-04:00", "2026-07-08T23:59:59-04:00"),
+                future_window=("2026-07-08T00:00:00-04:00", "2026-07-15T23:59:59-04:00"),
+            )
+        self.assertNotEqual(self.candidate_and_session()["candidate_status"], "excluded")
+
+        with patch("jordana_invoice.importer.appointment_has_ended", return_value=True):
+            list_review_candidates(self.conn)
+
+        self.assertEqual(self.candidate_and_session()["candidate_status"], "excluded")
+
     def test_blank_production_window_bounds_use_canonical_capture_window_coverage(self):
         self.import_complete_run(
             "older",

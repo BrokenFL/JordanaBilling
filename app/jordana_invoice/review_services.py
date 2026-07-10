@@ -428,6 +428,12 @@ def list_review_candidates(
     limit: int = 25,
     offset: int = 0,
 ) -> dict[str, Any]:
+    # A complete snapshot can already prove that an ended pending appointment
+    # was removed, even when no new Sheet rows arrive after its end time.
+    from .importer import suppress_pending_events_missing_from_newest_covering_snapshot
+
+    if suppress_pending_events_missing_from_newest_covering_snapshot(conn):
+        conn.commit()
     filters = []
     params: list[Any] = []
     if query:
@@ -1294,6 +1300,8 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
     now = now_iso()
     account_id = payload.get("account_id") or None
     participants = payload.get("participants", [])
+    if "participants" in payload and not participants:
+        raise ValueError("Add or select at least one client before confirming Client(s).")
     primary_person_id = payload.get("primary_person_id")
     if account_id:
         conn.execute("UPDATE sessions SET account_id = ?, updated_at = ? WHERE id = ?", (account_id, now, session["id"]))
@@ -1545,6 +1553,28 @@ def mark_candidate(
     conn.commit()
     refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
+
+
+def archive_already_classified_personal_admin(conn: sqlite3.Connection) -> dict[str, int]:
+    """Archive only clearly classified non-client records, never approved work."""
+    rows = conn.execute(
+        """
+        SELECT c.id, c.classification
+        FROM calendar_event_candidates c
+        LEFT JOIN sessions s ON s.candidate_id = c.id
+        WHERE c.classification IN ('personal', 'administrative')
+          AND c.review_status NOT IN ('approved', 'excluded')
+          AND COALESCE(s.review_status, '') != 'approved'
+        """
+    ).fetchall()
+    for row in rows:
+        mark_candidate(
+            conn,
+            row["id"],
+            classification=row["classification"],
+            reason="Archived from the Personal/Admin cleanup action.",
+        )
+    return {"archived": len(rows)}
 
 
 def restore_candidate(
@@ -2481,6 +2511,14 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
         raise ValueError("Person not found.")
     old_name = existing["display_name"]
     display_name = text(data.get("display_name") or old_name)
+    same_name_people = [
+        row for row in find_active_people_by_exact_normalized_name(conn, display_name)
+        if row["person_id"] != person_id
+    ]
+    if same_name_people:
+        raise ValueError(
+            "An active client with this name already exists. Use that client or resolve the duplicate explicitly."
+        )
     first_name = text(data.get("first_name") or split_name(display_name)[0])
     last_name = text(data.get("last_name") or split_name(display_name)[1])
     preferred_name = text(data.get("preferred_name") or first_name)
@@ -2587,6 +2625,20 @@ def merge_people(
     duplicate = conn.execute("SELECT * FROM people WHERE person_id = ?", (duplicate_person_id,)).fetchone()
     if not survivor or not duplicate:
         raise ValueError("Both people must exist before merging.")
+    approved_reference = conn.execute(
+        """
+        SELECT 1
+        FROM session_participants sp
+        JOIN sessions s ON s.id = sp.session_id
+        WHERE sp.person_id = ? AND s.review_status = 'approved'
+        LIMIT 1
+        """,
+        (duplicate_person_id,),
+    ).fetchone()
+    if approved_reference:
+        raise ValueError(
+            "This duplicate is referenced by an approved session and cannot be merged automatically. Archive the duplicate relationship and use the correction workflow."
+        )
     now = now_iso()
     conn.execute(
         "UPDATE session_participants SET person_id = ? WHERE person_id = ?",
@@ -4361,19 +4413,26 @@ def proposed_participants_from_candidate(
 
 
 def participants_were_explicitly_saved(conn: sqlite3.Connection, session_id: str) -> bool:
-    row = conn.execute(
+    rows = conn.execute(
         """
-        SELECT 1
+        SELECT details
         FROM audit_log
         WHERE entity_type = 'session'
           AND entity_id = ?
           AND action IN ('relationship_section_saved', 'interpretation_saved')
-          AND details LIKE '%"participants"%'
-        LIMIT 1
         """,
         (session_id,),
-    ).fetchone()
-    return bool(row)
+    ).fetchall()
+    for row in rows:
+        try:
+            details = json.loads(text(row["details"]))
+        except json.JSONDecodeError:
+            continue
+        payload = details.get("payload") if isinstance(details, dict) else None
+        participants = payload.get("participants") if isinstance(payload, dict) else None
+        if isinstance(participants, list) and participants:
+            return True
+    return False
 
 
 def resolve_confirmed_participant_person(

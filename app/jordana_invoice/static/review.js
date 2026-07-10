@@ -655,8 +655,8 @@ function renderInspector(data) {
       ${readiness.clients_ready && !clientsEditing
         ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${state.participants.map(p => fmt(p.display_name || p.participant_name)).join(", ")}</div></div>`
         : `<div class="chips" id="participantChips"></div>
-           <div class="combobox"><input id="personInput" placeholder="Search or add a client..." list="peopleList"><button class="mini" id="addPerson">+</button></div>
-           <datalist id="peopleList"></datalist>
+           <div class="combobox"><input id="personInput" placeholder="Search or add a client..."><button class="mini" id="addPerson">+</button></div>
+           <div id="personSearchResults" class="person-search-results" hidden></div>
            <div id="personWarning"></div>
            <div id="personEditor" class="drawer" hidden></div>`}
       <div class="inline-actions">
@@ -755,7 +755,7 @@ function renderInspector(data) {
 }
 
 function wireInspector() {
-  if ($("personInput")) $("personInput").addEventListener("input", debounce(async e => fillDatalist("peopleList", await api(`/api/people?q=${encodeURIComponent(e.target.value)}`), "display_name"), 160));
+  if ($("personInput")) $("personInput").addEventListener("input", debounce(e => showPersonSearchResults(e.target.value), 160));
   if ($("addPerson")) $("addPerson").onclick = createPersonFromInput;
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
   if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = saveRelationshipSection;
@@ -1126,12 +1126,39 @@ async function createPersonFromInput() {
     markDirty("relationship");
     return;
   }
-  const person = exact;
+  selectExistingPerson(exact);
+}
+
+function selectExistingPerson(person) {
   replaceMatchingProposedParticipant(person);
   $("personInput").value = "";
   renderParticipantChips();
   renderRelationshipEditor(state.detail);
   markDirty("relationship");
+}
+
+async function showPersonSearchResults(value) {
+  const results = $("personSearchResults");
+  const query = String(value || "").trim();
+  if (!results) return;
+  if (!query) {
+    results.hidden = true;
+    results.innerHTML = "";
+    return;
+  }
+  const rows = await api(`/api/people?q=${encodeURIComponent(query)}`);
+  if (!$("personInput") || $("personInput").value.trim() !== query) return;
+  results.innerHTML = rows.slice(0, 8).map(person => `
+    <button type="button" class="person-search-result" data-person-id="${escapeAttr(person.person_id)}">
+      <span>${escapeHtml(person.display_name)}</span><small>${escapeHtml(person.person_code || "Client")}</small>
+    </button>`).join("") || `<div class="person-search-empty">No existing client found. Use + to add this as a new client.</div>`;
+  results.hidden = false;
+  results.querySelectorAll(".person-search-result").forEach(button => {
+    button.onclick = () => {
+      const person = rows.find(row => row.person_id === button.dataset.personId);
+      if (person) selectExistingPerson(person);
+    };
+  });
 }
 
 async function createAccountFromInput() {
@@ -1258,7 +1285,12 @@ async function openBillingRelationshipEditor() {
 }
 
 async function saveRelationshipSection() {
+  const personField = $("personInput");
+  if (personField && personField.value.trim()) await createPersonFromInput();
   await resolveTypedSelections();
+  if (!collectParticipants().length) {
+    throw new Error("Add or select at least one client before confirming Client(s).");
+  }
   const sessionDraft = collectSessionDraftValues();
   const updated = await api(`/api/review/candidates/${state.selected}/save-relationship`, {
     method: "POST",
@@ -4542,6 +4574,16 @@ $("invoiceNextPage").onclick = () => {
 $("sessionsPrevPage").onclick = () => {
   state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
   loadSessions();
+};
+$("archivePersonalAdminBtn").onclick = async () => {
+  if (!confirm("Archive all currently pending items already classified as Personal or Administrative? Unresolved client work and approved sessions are not changed.")) return;
+  try {
+    const result = await api("/api/review/archive-personal-admin", { method: "POST", body: JSON.stringify({}) });
+    await loadSessions();
+    alert(`${result.archived || 0} Personal/Admin item(s) archived. You can return an item to Review from Sessions if needed.`);
+  } catch (err) {
+    alert(sanitizeUiErrorMessage(err.message, "Could not archive Personal/Admin items."));
+  }
 };
 $("sessionsNextPage").onclick = () => {
   state.sessions.offset += state.sessions.limit;

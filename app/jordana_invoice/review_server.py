@@ -29,6 +29,7 @@ from .google_sync import (
 )
 from .review_services import (
     add_account_member,
+    archive_already_classified_personal_admin,
     analyze_billing_relationship_duplicates,
     approve_candidate,
     BillingPartyNotFoundError,
@@ -693,6 +694,9 @@ def make_handler(
                             offset=int(first(query, "offset") or 0),
                         )
                     )
+                    return
+                if parsed.path == "/api/review/archive-personal-admin":
+                    self.send_json(archive_already_classified_personal_admin(self.conn()))
                     return
                 if parsed.path.startswith("/api/review/candidates/"):
                     candidate_id = parsed.path.rsplit("/", 1)[-1]

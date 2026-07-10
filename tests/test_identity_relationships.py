@@ -13,6 +13,7 @@ from jordana_invoice.review_services import (
     list_review_candidates,
     mark_candidate,
     merge_people,
+    save_relationship_section,
     similar_people,
     update_person,
 )
@@ -66,6 +67,19 @@ class IdentityRelationshipTests(unittest.TestCase):
         self.assertEqual(alias["person_id"], fred["person_id"])
         self.assertGreater(count(self.conn, "audit_log"), 0)
 
+    def test_renaming_to_an_active_client_name_is_rejected(self):
+        existing = create_person(self.conn, "Fred Colin")
+        other = create_person(self.conn, "Frederick Cole")
+
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            update_person(self.conn, other["person_id"], {"display_name": " Fred   Colin "})
+
+        self.assertEqual(
+            self.conn.execute("SELECT display_name FROM people WHERE person_id = ?", (other["person_id"],)).fetchone()["display_name"],
+            "Frederick Cole",
+        )
+        self.assertEqual(count(self.conn, "people"), 2)
+
     def test_duplicate_warning_finds_fred_for_fred_colin(self):
         create_person(self.conn, "Fred")
         matches = similar_people(self.conn, "Fred Colin")
@@ -77,18 +91,13 @@ class IdentityRelationshipTests(unittest.TestCase):
         fred_colin = create_person(self.conn, "Fred Colin")
         account = create_account(self.conn, "Fred Household", "household")
         payer = create_billing_party(self.conn, {"billing_name": "Fred Colin", "person_id": fred_colin["person_id"]})
-        approve_candidate(
+        save_relationship_section(
             self.conn,
             candidate_id,
             {
                 "participants": [{"person_id": fred["person_id"], "display_name": "Fred", "is_primary": True}],
                 "account_id": account["account_id"],
                 "billing_party_id": payer["billing_party_id"],
-                "approved_duration_minutes": 60,
-                "service_mode": "office",
-                "time_category": "evening",
-                "approved_rate": "150.00",
-                "payment_status": "unpaid",
             },
         )
         merge_people(self.conn, fred_colin["person_id"], fred["person_id"], "same human")
@@ -96,6 +105,17 @@ class IdentityRelationshipTests(unittest.TestCase):
         duplicate = self.conn.execute("SELECT active_status FROM people WHERE person_id = ?", (fred["person_id"],)).fetchone()
         self.assertEqual(participant["person_id"], fred_colin["person_id"])
         self.assertEqual(duplicate["active_status"], "merged")
+
+    def test_merge_people_does_not_rewrite_approved_session_identity(self):
+        candidate_id = self.import_one()
+        survivor = create_person(self.conn, "Fred Colin")
+        duplicate = create_person(self.conn, "Frederick Colin")
+        save_relationship_section(self.conn, candidate_id, {"participants": [{"person_id": duplicate["person_id"], "display_name": duplicate["display_name"]}]})
+        self.conn.execute("UPDATE sessions SET review_status = 'approved' WHERE candidate_id = ?", (candidate_id,))
+        self.conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "approved session"):
+            merge_people(self.conn, survivor["person_id"], duplicate["person_id"], "duplicate")
 
     def test_smart_prefill_after_approved_alias(self):
         candidate_id = self.import_one(key="snap-1")
