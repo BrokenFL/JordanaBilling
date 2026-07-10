@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.20 Release Notes
+# Jordana Billing v0.1.0-test.21 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.20` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.21` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.20-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.21-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.20
-- **Python package/application version:** 0.1.0.post20
+- **Release label:** v0.1.0-test.21
+- **Python package/application version:** 0.1.0.post21
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,16 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post20` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post21` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.20
+## Bug Fixes In test.21
+
+1. **Review-after-session safeguard preserved** — Future sessions remain hidden from the actionable Review Queue and cannot be approved until their scheduled end time passes.
+2. **Ended-only removal reconciliation** — Calendar absence can suppress only an unapproved appointment whose end time has passed; future and same-day appointments remain available for a later capture.
+3. **Overlapping-batch presence protection** — When the current run's past and future windows overlap, an event present in either covering batch remains active. It is removed only when absent from every current covering batch.
+
+## Bug Fixes Inherited from test.20
 
 1. **Blank-boundary calendar reconciliation** — Calendar snapshot reconciliation now derives the documented inclusive date range from `captured_at` plus a canonical `past_3_days`, `past_7_days`, `next_7_days`, or `next_2_days` label when the Shortcut leaves explicit boundaries blank. Unknown labels remain non-covering.
 2. **Upgrade/no-new-rows reconciliation** — An incremental sync with no new raw rows now rechecks pending candidates against preserved evidence, so a newly installed release can suppress already-imported removed occurrences without modifying raw snapshots.

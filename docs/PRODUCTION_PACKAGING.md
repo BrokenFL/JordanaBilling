@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.20
+### Current Test Build — v0.1.0-test.21
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.20
-- **Python package/application version:** 0.1.0.post20
+- **Release label:** v0.1.0-test.21
+- **Python package/application version:** 0.1.0.post21
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,15 +36,20 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post20` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post21` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.20 makes calendar reconciliation work with the current Shortcut feed's
-blank explicit-boundary fields and reruns it after a no-new-rows sync. It
-inherits the test.19 diagnostics and baseline reconciliation changes.
+test.21 preserves the review-after-session safeguard while correcting calendar
+reconciliation for ended appointments and overlapping capture windows.
+
+### Bug Fixes In test.21
+
+1. **Review-after-session safeguard preserved** — future sessions are hidden from actionable Review and cannot be approved until they end.
+2. **Ended-only removal reconciliation** — a missing event can be excluded only after its scheduled end; future and same-day appointments await a later capture.
+3. **Overlapping-batch presence protection** — presence in either current past/future batch keeps an event active.
 
 ### Bug Fixes In test.20
 

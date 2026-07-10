@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
+from jordana_invoice.review_services import approve_candidate, list_review_candidates
 
 
 def raw_row(
@@ -171,6 +172,95 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         row = self.candidate_and_session()
         self.assertEqual(row["candidate_status"], "excluded")
         self.assertEqual(row["session_status"], "excluded")
+
+    def test_overlapping_newest_run_keeps_event_present_in_either_covering_batch(self):
+        self.import_old_event()
+        self.import_complete_run(
+            "newer",
+            "2026-07-09T12:00:00.000Z",
+            future_rows=[("newer-janet", "janet-old", "Janet Hershaft | 60 | Phone", self.old_start)],
+            past_window=("2026-07-06T00:00:00-04:00", "2026-07-09T23:59:59-04:00"),
+            future_window=("2026-07-09T00:00:00-04:00", "2026-07-16T23:59:59-04:00"),
+            explicit_windows=False,
+        )
+
+        row = self.candidate_and_session()
+        self.assertNotEqual(row["candidate_status"], "excluded")
+        self.assertNotEqual(row["session_status"], "excluded")
+
+    def test_future_appointment_absent_from_newer_snapshot_remains_pending(self):
+        future_start = "2099-07-09T17:00:00-04:00"
+        self.import_complete_run(
+            "older",
+            "2099-07-03T12:00:00.000Z",
+            future_rows=[("older-future", "future-old", "Future Client | 60 | Phone", future_start)],
+            past_window=("2099-06-30T00:00:00-04:00", "2099-07-03T23:59:59-04:00"),
+            future_window=("2099-07-03T00:00:00-04:00", "2099-07-10T23:59:59-04:00"),
+            explicit_windows=False,
+        )
+        self.import_complete_run(
+            "newer",
+            "2099-07-08T12:00:00.000Z",
+            future_rows=[("newer-other", "future-new", "Other Client | 60 | Phone", "2099-07-10T17:00:00-04:00")],
+            past_window=("2099-07-05T00:00:00-04:00", "2099-07-08T23:59:59-04:00"),
+            future_window=("2099-07-08T00:00:00-04:00", "2099-07-15T23:59:59-04:00"),
+            explicit_windows=False,
+        )
+
+        row = self.candidate_and_session("Future Client | 60 | Phone")
+        self.assertNotEqual(row["candidate_status"], "excluded")
+        self.assertNotEqual(row["session_status"], "excluded")
+
+    def test_review_queue_hides_future_sessions_and_approval_rejects_them(self):
+        future_start = "2099-07-09T17:00:00-04:00"
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "future-review",
+                    run_id="future-review",
+                    capture_window="next_7_days",
+                    captured_at="2099-07-03T12:00:00.000Z",
+                    window_start="2099-07-03T00:00:00-04:00",
+                    window_end="2099-07-10T23:59:59-04:00",
+                    event_id="future-review",
+                    title="Future Client | 60 | Phone",
+                    start_at=future_start,
+                )
+            ],
+            "test",
+        )
+        candidate_id = self.candidate_and_session("Future Client | 60 | Phone")["candidate_id"]
+
+        self.assertFalse(
+            any(item["candidate_id"] == candidate_id for item in list_review_candidates(self.conn)["items"])
+        )
+        with self.assertRaisesRegex(ValueError, "can be approved after"):
+            approve_candidate(self.conn, candidate_id, {})
+
+    def test_review_queue_shows_session_after_its_end_time(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "past-review",
+                    run_id="past-review",
+                    capture_window="past_3_days",
+                    captured_at="2020-07-10T12:00:00.000Z",
+                    window_start="2020-07-07T00:00:00-04:00",
+                    window_end="2020-07-10T23:59:59-04:00",
+                    event_id="past-review",
+                    title="Past Client | 60 | Phone",
+                    start_at="2020-07-09T17:00:00-04:00",
+                )
+            ],
+            "test",
+        )
+        candidate_id = self.candidate_and_session("Past Client | 60 | Phone")["candidate_id"]
+
+        self.assertTrue(
+            any(item["candidate_id"] == candidate_id for item in list_review_candidates(self.conn)["items"])
+        )
 
     def test_no_new_row_sync_runs_pending_snapshot_reconciliation(self):
         with patch("jordana_invoice.importer.suppress_pending_events_missing_from_newest_covering_snapshot") as reconcile:

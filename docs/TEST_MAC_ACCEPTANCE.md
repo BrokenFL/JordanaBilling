@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.20
+### Current Test Build — v0.1.0-test.21
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.20
-- **Python package/application version:** 0.1.0.post20
+- **Release label:** v0.1.0-test.21
+- **Python package/application version:** 0.1.0.post21
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,15 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.20 supersedes test.19 for installation and update testing because it
-reconciles pending review items even when the Shortcut leaves explicit window
-bounds blank or a post-upgrade sync has no new raw rows.
+test.21 supersedes test.20 for installation and update testing because it keeps
+future appointments out of Review while ensuring only ended, truly absent
+appointments are removed.
+
+### Bug Fixes In test.21
+
+1. **Review-after-session safeguard preserved** — future sessions stay out of the actionable Review Queue and approval remains blocked until their end time.
+2. **Ended-only removal reconciliation** — absent future/same-day appointments stay available for a later capture; only ended pending appointments can be excluded.
+3. **Overlapping-batch presence protection** — an event present in either overlapping current batch remains active.
 
 ### Bug Fixes In test.20
 
@@ -87,7 +93,7 @@ bounds blank or a post-upgrade sync has no new raw rows.
 
 ### Prior Test Builds
 
-`v0.1.0-test.19` is superseded by test.20 for installation and update testing.
+`v0.1.0-test.20` is superseded by test.21 for installation and update testing.
 
 `v0.1.0-test.14` was built from commit `e31e0e2` with Python 3.14.4. test.15
 supersedes test.14 for installation and update testing.

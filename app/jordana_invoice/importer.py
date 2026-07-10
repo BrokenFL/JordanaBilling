@@ -5,7 +5,7 @@ import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -736,12 +736,13 @@ def collapse_raw_snapshot_rows(
 def suppress_pending_events_missing_from_newest_covering_snapshot(
     conn: sqlite3.Connection,
 ) -> int:
-    """Exclude pending events omitted by the newest complete covering snapshot.
+    """Exclude ended pending events omitted by the newest complete capture run.
 
     Raw snapshot rows remain append-only evidence.  A missing event is only
-    operationally meaningful when another event row proves a newer, complete
-    capture run covered that appointment date.  Partial, failed, malformed, and
-    non-covering batches therefore cannot suppress anything.
+    operationally meaningful only after its scheduled end, when the newest
+    complete capture run omits it from every batch that covers that date.
+    Partial, failed, malformed, non-covering, future, and approved records
+    therefore cannot suppress anything.
     """
     newest_covering_batches = newest_complete_covering_batches(conn)
     if not newest_covering_batches:
@@ -750,7 +751,9 @@ def suppress_pending_events_missing_from_newest_covering_snapshot(
     candidates = conn.execute(
         """
         SELECT c.id, c.candidate_key, c.start_at, c.proposed_start_at,
-               c.latest_raw_snapshot_id
+               c.latest_raw_snapshot_id,
+               c.end_at AS candidate_end_at,
+               s.end_at AS session_end_at
         FROM calendar_event_candidates c
         LEFT JOIN sessions s ON s.candidate_id = c.id
         WHERE c.classification = 'client_session'
@@ -763,22 +766,35 @@ def suppress_pending_events_missing_from_newest_covering_snapshot(
         appointment_date = snapshot_date(candidate["proposed_start_at"] or candidate["start_at"])
         if not appointment_date:
             continue
-        batch = newest_covering_batches.get(appointment_date)
-        if not batch:
+        if not appointment_has_ended(candidate["session_end_at"] or candidate["candidate_end_at"]):
             continue
-        if candidate_is_present_in_snapshot_batch(conn, candidate, batch):
+        batches = newest_covering_batches.get(appointment_date)
+        if not batches:
             continue
-        suppress_pending_candidate_for_missing_snapshot(conn, candidate["id"], batch)
+        if candidate_is_present_in_snapshot_batches(conn, candidate, batches):
+            continue
+        suppress_pending_candidate_for_missing_snapshot(conn, candidate["id"], batches)
         suppressed += 1
     return suppressed
 
 
-def newest_complete_covering_batches(conn: sqlite3.Connection) -> dict[str, tuple[str, str]]:
-    """Return the newest proven-complete snapshot batch for each covered date.
+def appointment_has_ended(value: object) -> bool:
+    try:
+        end_at = datetime.fromisoformat(text(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if end_at.tzinfo is None:
+        return False
+    return end_at.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+
+
+def newest_complete_covering_batches(conn: sqlite3.Connection) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Return every newest-run batch that proves coverage for each date.
 
     Coverage boundaries are retained inside ``raw_json`` because the original
     Sheet columns are intentionally preserved verbatim.  A batch without both
-    valid boundaries is not evidence of coverage.
+    valid boundaries (or a canonical label/timestamp fallback) is not evidence
+    of coverage. A current event in either overlapping batch keeps it active.
     """
     rows = conn.execute(
         """
@@ -798,22 +814,34 @@ def newest_complete_covering_batches(conn: sqlite3.Connection) -> dict[str, tupl
         run_is_successful[run_id] = run_is_successful.get(run_id, True) and row["import_status"] == "imported"
         batch_rows[(run_id, capture_window)].append(row)
 
-    covering_batches: dict[str, tuple[tuple[str, str, str], tuple[str, str]]] = {}
+    run_rank: dict[str, tuple[str, str, str]] = defaultdict(lambda: ("", "", ""))
+    for row in rows:
+        run_id = text(row["run_id"])
+        run_rank[run_id] = max(
+            run_rank[run_id],
+            (text(row["captured_at"]), text(row["ingested_at"]), text(row["id"])),
+        )
+
+    covering_by_run_and_date: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
     for (run_id, capture_window), batch in batch_rows.items():
         if not run_is_successful.get(run_id) or not completed_run_windows(run_windows[run_id]):
             continue
         coverage = snapshot_batch_coverage(batch)
         if not coverage:
             continue
-        captured_at = max(
-            (text(row["captured_at"]), text(row["ingested_at"]), text(row["id"]))
-            for row in batch
-        )
         for appointment_date in coverage:
-            prior = covering_batches.get(appointment_date)
-            if prior is None or captured_at > prior[0]:
-                covering_batches[appointment_date] = (captured_at, (run_id, capture_window))
-    return {appointment_date: batch for appointment_date, (_, batch) in covering_batches.items()}
+            covering_by_run_and_date[(run_id, appointment_date)].append((run_id, capture_window))
+
+    newest_covering_batches: dict[str, tuple[tuple[str, str, str], tuple[tuple[str, str], ...]]] = {}
+    for (run_id, appointment_date), batches in covering_by_run_and_date.items():
+        rank = run_rank[run_id]
+        prior = newest_covering_batches.get(appointment_date)
+        if prior is None or rank > prior[0]:
+            newest_covering_batches[appointment_date] = (rank, tuple(batches))
+    return {
+        appointment_date: batches
+        for appointment_date, (_, batches) in newest_covering_batches.items()
+    }
 
 
 def snapshot_batch_coverage(rows: list[sqlite3.Row]) -> set[str]:
@@ -887,6 +915,17 @@ def snapshot_date(value: object) -> str | None:
         return None
 
 
+def candidate_is_present_in_snapshot_batches(
+    conn: sqlite3.Connection,
+    candidate: sqlite3.Row,
+    batches: tuple[tuple[str, str], ...],
+) -> bool:
+    return any(
+        candidate_is_present_in_snapshot_batch(conn, candidate, batch)
+        for batch in batches
+    )
+
+
 def candidate_is_present_in_snapshot_batch(
     conn: sqlite3.Connection,
     candidate: sqlite3.Row,
@@ -921,11 +960,12 @@ def candidate_is_present_in_snapshot_batch(
 def suppress_pending_candidate_for_missing_snapshot(
     conn: sqlite3.Connection,
     candidate_id: str,
-    batch: tuple[str, str],
+    batches: tuple[tuple[str, str], ...],
 ) -> None:
-    run_id, capture_window = batch
+    run_id = batches[0][0]
+    capture_windows = sorted({capture_window for _, capture_window in batches})
     now = now_iso()
-    reason = "Absent from the newest complete calendar snapshot that covers this appointment date."
+    reason = "Absent from every newest complete calendar snapshot batch that covers this completed appointment."
     conn.execute(
         """
         UPDATE calendar_event_candidates
@@ -969,7 +1009,7 @@ def suppress_pending_candidate_for_missing_snapshot(
         {
             "reason": reason,
             "newest_covering_run_id": run_id,
-            "newest_covering_capture_window": capture_window,
+            "newest_covering_capture_windows": capture_windows,
         },
     )
 
