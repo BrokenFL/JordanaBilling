@@ -1283,7 +1283,11 @@ for (const [args, expected] of cases) {
         self.assertIn('location.hash = "sessions";', js)
         self.assertIn('await api(`/api/sessions?${params}`)', js)
         self.assertIn('state.sessions.offset = 0;', js)
-        self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0 }', js)
+        self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0, selectedIds: new Set() }', js)
+        self.assertIn('id="sessionsArchiveFilter"', html)
+        self.assertIn('id="archiveSelectedSessionsBtn"', html)
+        self.assertIn('id="restoreSelectedSessionsBtn"', html)
+        self.assertIn('class="session-row-checkbox"', js)
         self.assertIn('Read-only appointment ledger', js)
         self.assertNotIn('saveSessions', js)
 

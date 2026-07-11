@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.22 Release Notes
+# Jordana Billing v0.1.0-test.26 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.22` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.26` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.22-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.26-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.22
-- **Python package/application version:** 0.1.0.post22
+- **Release label:** v0.1.0-test.26
+- **Python package/application version:** 0.1.0.post26
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,27 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post22` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post26` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.22
+## Reliability Improvements In test.26
+
+1. **Calendar freshness warning** — A global warning appears when no successful sync exists, the timestamp cannot be verified, or the newest successful calendar sync is more than 18 hours old. It clears after a successful sync refreshes dashboard status.
+2. **Persistent sanitized error history** — Up to 200 warning/error fingerprints survive app restarts in a permission-restricted rotating JSONL file. Only timestamps, route templates, status codes, exception types, and safe source signatures persist; messages, client data, calendar text, database content, and full paths are excluded.
+3. **Sessions inbox archive** — Sessions supports checkboxes, select-all-visible, bulk archive, Current/Archived/All filters, and bulk restore. Archiving changes only ledger visibility and never changes approval, classification, rates, payments, invoices, or raw evidence.
+4. **Stronger support reports** — Reports includes an on-demand sanitized Diagnostics JSON download with system health, database quick-check, sync health, and privacy-safe failure signatures.
+
+## Bug Fixes Inherited from test.25
+
+1. **Safe review reconciliation** — Review refresh uses an authenticated write endpoint for ended calendar reconciliation; GET endpoints remain read-only while removed appointments are still suppressed before the queue is displayed.
+2. **Existing-client selection** — Review search returns and displays stable client codes, searches by name or code, and excludes archived clients so same-name records can be distinguished reliably.
+3. **Guarded duplicate archival** — Unused duplicate clients can be archived without deletion, but only after sessions and active billing relationships are reassigned. Approved identities are never rewritten.
+4. **Billing Relationship inactive visibility** — Inactive person-linked accounts remain available in the Inactive directory without leaking their members into the active payer record.
+5. **Joint-rate safety** — A partially resolved multi-client session cannot receive one confirmed participant's solo rate exception prematurely.
+6. **Personal/Admin cleanup** — Bulk Personal/Admin archive is an authenticated, transactional write operation that leaves approved sessions unchanged.
+7. **Paid-at-session invoice cleanup** — Empty zero-dollar invoice drafts are removed after paid-at-session staging while payment and receipt evidence remains intact.
+
+## Bug Fixes Inherited from test.22
 
 1. **Confirmed client rate reconciliation** — Calendar sync preserves confirmed UUID-backed participants on unapproved sessions and evaluates the rate card with client, participant-combination, and billing-relationship scope before the global standard rate.
 2. **Upgrade/no-new-rows rate reconciliation** — An incremental sync with no new raw snapshots refreshes stale pending rate suggestions. Raw evidence and approved charges remain unchanged.

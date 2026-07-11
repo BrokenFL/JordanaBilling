@@ -171,9 +171,11 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
     demo = conn.execute(
         "SELECT metadata_value FROM app_metadata WHERE metadata_key = 'demo_mode'"
     ).fetchone()
+    freshness = calendar_freshness_status(last_sync["last_success_at"] if last_sync else "")
     return {
         "demo_mode": bool(demo and demo["metadata_value"].lower() == "true"),
         "last_sync": last_sync["last_success_at"] if last_sync else "",
+        **freshness,
         "needs_review": sum(
             counts.get(status, 0)
             for status in REVIEW_ACTIONABLE_STATUSES
@@ -181,6 +183,39 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "ready_to_approve": counts.get("ready_for_approval", 0),
         "approved_this_month": counts.get("approved", 0),
         "personal_admin": int(personal_admin),
+    }
+
+
+def calendar_freshness_status(last_success_at: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """Return a warning after 18 hours without a successful calendar sync."""
+    if not last_success_at:
+        return {
+            "calendar_sync_stale": True,
+            "calendar_sync_age_hours": None,
+            "calendar_sync_warning": "Calendar has not completed a successful sync yet. Review may not reflect recent changes.",
+        }
+    try:
+        parsed = datetime.fromisoformat(str(last_success_at).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        reference = now or datetime.now(ZoneInfo("UTC"))
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=ZoneInfo("UTC"))
+        age_hours = max(0.0, (reference.astimezone(ZoneInfo("UTC")) - parsed.astimezone(ZoneInfo("UTC"))).total_seconds() / 3600)
+    except (TypeError, ValueError):
+        return {
+            "calendar_sync_stale": True,
+            "calendar_sync_age_hours": None,
+            "calendar_sync_warning": "The latest calendar sync time could not be verified. Review may not reflect recent changes.",
+        }
+    stale = age_hours > 18
+    return {
+        "calendar_sync_stale": stale,
+        "calendar_sync_age_hours": round(age_hours, 1),
+        "calendar_sync_warning": (
+            f"Calendar has not synced successfully in {int(age_hours)} hours. Review may not reflect recent cancellations or schedule changes."
+            if stale else ""
+        ),
     }
 
 
@@ -538,6 +573,7 @@ def list_sessions_ledger(
     date_range: str = "rolling_30",
     review_status: str = "",
     payment_status: str = "",
+    archive_status: str = "active",
     limit: int = 30,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -549,9 +585,56 @@ def list_sessions_ledger(
         date_range=date_range,
         review_status=review_status,
         payment_status=payment_status,
+        archive_status=archive_status,
         limit=limit,
         offset=offset,
     )
+
+
+def set_sessions_archive_state(
+    conn: sqlite3.Connection,
+    candidate_ids: list[str],
+    *,
+    archived: bool,
+) -> dict[str, int]:
+    """Hide or restore ledger rows without changing review or billing state."""
+    init_db(conn)
+    ids = list(dict.fromkeys(text(value).strip() for value in candidate_ids if text(value).strip()))
+    if not ids:
+        raise ValueError("Select at least one session row.")
+    if len(ids) > 250:
+        raise ValueError("Select no more than 250 session rows at a time.")
+    placeholders = ",".join("?" for _ in ids)
+    existing = {
+        row["id"]
+        for row in conn.execute(
+            f"SELECT id FROM calendar_event_candidates WHERE id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+    }
+    if len(existing) != len(ids):
+        raise ValueError("One or more selected session rows no longer exist. Refresh and try again.")
+    now = now_iso()
+    conn.execute(
+        f"""
+        UPDATE calendar_event_candidates
+        SET sessions_archived_at = ?,
+            sessions_archive_reason = ?,
+            updated_at = ?
+        WHERE id IN ({placeholders})
+        """,
+        (
+            now if archived else None,
+            "Archived from Sessions inbox." if archived else None,
+            now,
+            *ids,
+        ),
+    )
+    action = "archived_from_sessions" if archived else "restored_to_sessions"
+    for candidate_id in ids:
+        record_audit(conn, "calendar_event_candidate", candidate_id, action, {})
+    conn.commit()
+    return {"updated": len(ids)}
 
 
 def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[str, Any]:
@@ -1294,6 +1377,8 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
     now = now_iso()
     account_id = payload.get("account_id") or None
     participants = payload.get("participants", [])
+    if "participants" in payload and not participants:
+        raise ValueError("Add or select at least one client before confirming Client(s).")
     primary_person_id = payload.get("primary_person_id")
     if account_id:
         conn.execute("UPDATE sessions SET account_id = ?, updated_at = ? WHERE id = ?", (account_id, now, session["id"]))
@@ -1545,6 +1630,69 @@ def mark_candidate(
     conn.commit()
     refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
+
+
+def archive_already_classified_personal_admin(conn: sqlite3.Connection) -> dict[str, int]:
+    """Archive only clearly classified non-client records, never approved work."""
+    init_db(conn)
+    rows = conn.execute(
+        """
+        SELECT c.id, c.classification
+        FROM calendar_event_candidates c
+        LEFT JOIN sessions s ON s.candidate_id = c.id
+        WHERE c.classification IN ('personal', 'administrative')
+          AND c.review_status NOT IN ('approved', 'excluded')
+          AND COALESCE(s.review_status, '') != 'approved'
+        """
+    ).fetchall()
+    now = now_iso()
+    try:
+        for row in rows:
+            candidate_id = row["id"]
+            session = conn.execute(
+                "SELECT id FROM sessions WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+            conn.execute(
+                """
+                UPDATE calendar_event_candidates
+                SET review_status = 'excluded', updated_at = ?
+                WHERE id = ?
+                """,
+                (now, candidate_id),
+            )
+            if session:
+                conn.execute(
+                    """
+                    UPDATE sessions
+                    SET review_status = 'excluded', billable_status = 'excluded',
+                        payment_status = 'unpaid', updated_at = ?
+                    WHERE id = ? AND review_status != 'approved'
+                    """,
+                    (now, session["id"]),
+                )
+            add_review_item(
+                conn,
+                candidate_id,
+                session["id"] if session else None,
+                "excluded",
+                [],
+                ["Archived from the Personal/Admin cleanup action."],
+            )
+            record_audit(
+                conn,
+                "calendar_event_candidate",
+                candidate_id,
+                f"marked_{row['classification']}",
+                {"reason": "Archived from the Personal/Admin cleanup action."},
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    if rows:
+        refresh_reports_after_commit(conn)
+    return {"archived": len(rows)}
 
 
 def restore_candidate(
@@ -2089,7 +2237,19 @@ def promote_candidate_to_review(
 
 
 def search_people(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
-    rows = search_table(conn, "people", "person_id", "display_name", query)
+    init_db(conn)
+    like = f"%{query}%"
+    rows = [dict(row) for row in conn.execute(
+        """
+        SELECT person_id, display_name, person_code
+        FROM people
+        WHERE active = 1
+          AND (display_name LIKE ? OR COALESCE(person_code, '') LIKE ?)
+        ORDER BY display_name, person_code
+        LIMIT 20
+        """,
+        (like, like),
+    ).fetchall()]
     similar = similar_people(conn, query)
     seen = {row["person_id"] for row in rows}
     for row in similar:
@@ -2097,6 +2257,68 @@ def search_people(conn: sqlite3.Connection, query: str = "") -> list[dict[str, A
             row["similar_match"] = True
             rows.append(row)
     return rows
+
+
+def archive_person(conn: sqlite3.Connection, person_id: str, reason: str = "") -> dict[str, Any]:
+    """Archive an unused duplicate client without rewriting historical identity."""
+    init_db(conn)
+    person = conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone()
+    if not person:
+        raise ValueError("Client not found.")
+    if not person["active"]:
+        return dict(person)
+
+    session_reference = conn.execute(
+        """
+        SELECT s.review_status
+        FROM session_participants sp
+        JOIN sessions s ON s.id = sp.session_id
+        WHERE sp.person_id = ?
+          AND s.review_status != 'excluded'
+        LIMIT 1
+        """,
+        (person_id,),
+    ).fetchone()
+    if session_reference:
+        raise ValueError(
+            "Reassign or exclude this client's sessions before archiving the duplicate. "
+            "Approved session identities are never changed automatically."
+        )
+    active_relationship = conn.execute(
+        """
+        SELECT 1
+        FROM account_members am
+        JOIN client_accounts ca ON ca.account_id = am.account_id
+        WHERE am.person_id = ? AND ca.active = 1
+        UNION ALL
+        SELECT 1 FROM billing_parties
+        WHERE person_id = ? AND active = 1
+        LIMIT 1
+        """,
+        (person_id, person_id),
+    ).fetchone()
+    if active_relationship:
+        raise ValueError("Archive this client's active billing relationship before archiving the duplicate client.")
+
+    now = now_iso()
+    conn.execute(
+        """
+        UPDATE people
+        SET active = 0, active_status = 'archived',
+            merge_note = ?, updated_at = ?
+        WHERE person_id = ?
+        """,
+        (text(reason).strip() or "Archived unused duplicate client.", now, person_id),
+    )
+    record_audit(
+        conn,
+        "person",
+        person_id,
+        "archived",
+        {"reason": text(reason).strip() or "Archived unused duplicate client."},
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
 
 
 def list_people_records(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
@@ -2481,6 +2703,14 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
         raise ValueError("Person not found.")
     old_name = existing["display_name"]
     display_name = text(data.get("display_name") or old_name)
+    same_name_people = [
+        row for row in find_active_people_by_exact_normalized_name(conn, display_name)
+        if row["person_id"] != person_id
+    ]
+    if same_name_people:
+        raise ValueError(
+            "An active client with this name already exists. Use that client or resolve the duplicate explicitly."
+        )
     first_name = text(data.get("first_name") or split_name(display_name)[0])
     last_name = text(data.get("last_name") or split_name(display_name)[1])
     preferred_name = text(data.get("preferred_name") or first_name)
@@ -2587,6 +2817,20 @@ def merge_people(
     duplicate = conn.execute("SELECT * FROM people WHERE person_id = ?", (duplicate_person_id,)).fetchone()
     if not survivor or not duplicate:
         raise ValueError("Both people must exist before merging.")
+    approved_reference = conn.execute(
+        """
+        SELECT 1
+        FROM session_participants sp
+        JOIN sessions s ON s.id = sp.session_id
+        WHERE sp.person_id = ? AND s.review_status = 'approved'
+        LIMIT 1
+        """,
+        (duplicate_person_id,),
+    ).fetchone()
+    if approved_reference:
+        raise ValueError(
+            "This duplicate is referenced by an approved session and cannot be merged automatically. Archive the duplicate relationship and use the correction workflow."
+        )
     now = now_iso()
     conn.execute(
         "UPDATE session_participants SET person_id = ? WHERE person_id = ?",
@@ -4361,19 +4605,26 @@ def proposed_participants_from_candidate(
 
 
 def participants_were_explicitly_saved(conn: sqlite3.Connection, session_id: str) -> bool:
-    row = conn.execute(
+    rows = conn.execute(
         """
-        SELECT 1
+        SELECT details
         FROM audit_log
         WHERE entity_type = 'session'
           AND entity_id = ?
           AND action IN ('relationship_section_saved', 'interpretation_saved')
-          AND details LIKE '%"participants"%'
-        LIMIT 1
         """,
         (session_id,),
-    ).fetchone()
-    return bool(row)
+    ).fetchall()
+    for row in rows:
+        try:
+            details = json.loads(text(row["details"]))
+        except json.JSONDecodeError:
+            continue
+        payload = details.get("payload") if isinstance(details, dict) else None
+        participants = payload.get("participants") if isinstance(payload, dict) else None
+        if isinstance(participants, list) and participants:
+            return True
+    return False
 
 
 def resolve_confirmed_participant_person(
@@ -7270,7 +7521,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         else:
             record_type = "self_pay"
 
-        links = [link for link in account_links.get(canonical_id, []) if link["account_active"]]
+        links = [item for item in account_links.get(canonical_id, []) if item["account_active"]]
         link = links[0] if links else None
         record_active = bool(canonical["billing_party_active"])
         if link:
@@ -7380,9 +7631,9 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     ).fetchall()
 
     for row in acct_rows:
-        if row["default_billing_party_id"]:
+        if row["default_billing_party_id"] and row["account_active"]:
             continue
-        if row["account_id"] in person_linked_account_ids:
+        if row["account_id"] in person_linked_account_ids and row["account_active"]:
             continue
         member_ids = [
             mid for mid in (row["member_ids_raw"] or "").split(",") if mid

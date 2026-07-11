@@ -29,6 +29,8 @@ from .google_sync import (
 )
 from .review_services import (
     add_account_member,
+    archive_already_classified_personal_admin,
+    archive_person,
     analyze_billing_relationship_duplicates,
     approve_candidate,
     BillingPartyNotFoundError,
@@ -72,6 +74,7 @@ from .review_services import (
     save_person_section,
     save_relationship_section,
     save_session_draft,
+    set_sessions_archive_state,
     search_accounts,
     search_billing_parties,
     search_organization_billing_parties,
@@ -192,6 +195,7 @@ from .request_validation import (
 from .diagnostics import (
     create_issue_report,
     record_event as record_diagnostic_event,
+    record_exception as record_diagnostic_exception,
     record_http_event,
 )
 
@@ -642,6 +646,11 @@ def make_handler(
             else:
                 status = default_status
                 msg = "An unexpected error occurred."
+                record_diagnostic_exception(
+                    error,
+                    method=getattr(self, "command", ""),
+                    path=getattr(self, "path", ""),
+                )
             self.send_json({"ok": False, "error": msg}, status=status)
 
         def do_GET(self) -> None:
@@ -771,6 +780,7 @@ def make_handler(
                             date_range=first(query, "date_range") or "rolling_30",
                             review_status=first(query, "review_status"),
                             payment_status=first(query, "payment_status"),
+                            archive_status=first(query, "archive_status") or "active",
                             limit=int(first(query, "limit") or 30),
                             offset=int(first(query, "offset") or 0),
                         )
@@ -1094,6 +1104,29 @@ def make_handler(
                     req = parse_create_person_request(data)
                     self.send_json(create_person(self.conn(), req.to_payload()))
                     return
+                if parsed.path == "/api/review/archive-personal-admin":
+                    self.send_json(archive_already_classified_personal_admin(self.conn()))
+                    return
+                if parsed.path == "/api/sessions/archive":
+                    candidate_ids = data.get("candidate_ids")
+                    if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
+                        raise ValueError("candidate_ids must be a list of session row IDs.")
+                    self.send_json(set_sessions_archive_state(self.conn(), candidate_ids, archived=True))
+                    return
+                if parsed.path == "/api/sessions/restore-archive":
+                    candidate_ids = data.get("candidate_ids")
+                    if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
+                        raise ValueError("candidate_ids must be a list of session row IDs.")
+                    self.send_json(set_sessions_archive_state(self.conn(), candidate_ids, archived=False))
+                    return
+                if parsed.path == "/api/review/reconcile-calendar":
+                    from .importer import suppress_pending_events_missing_from_newest_covering_snapshot
+
+                    conn = self.conn()
+                    changed = suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    conn.commit()
+                    self.send_json({"reconciled": changed})
+                    return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/aliases"):
                     person_id = parsed.path.strip("/").split("/")[2]
                     req = parse_save_person_alias_request(data)
@@ -1118,6 +1151,10 @@ def make_handler(
                             req.reason,
                         )
                     )
+                    return
+                if parsed.path.startswith("/api/people/") and parsed.path.endswith("/archive"):
+                    person_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(archive_person(self.conn(), person_id, data.get("reason") or ""))
                     return
                 if parsed.path.startswith("/api/people/"):
                     person_id = parsed.path.rsplit("/", 1)[-1]

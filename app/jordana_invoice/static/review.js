@@ -71,7 +71,7 @@ const state = {
   detail: null,
   invoice: null,
   eligibleSessions: [],
-  sessions: { items: [], offset: 0, limit: 30, total: 0 },
+  sessions: { items: [], offset: 0, limit: 30, total: 0, selectedIds: new Set() },
   editSteps: { clients: false, session: false },
   settingsSaving: false,
   syncRunning: false,
@@ -514,6 +514,7 @@ async function loadList() {
     limit: state.limit,
     offset: state.offset
   });
+  await api("/api/review/reconcile-calendar", { method: "POST", body: "{}" });
   const data = await api(`/api/review/candidates?${params}`);
   state.items = data.items;
   renderStatus(data.status);
@@ -529,6 +530,11 @@ function renderStatus(s) {
   $("readyApprove").textContent = s.ready_to_approve;
   $("approvedMonth").textContent = s.approved_this_month;
   $("personalAdmin").textContent = s.personal_admin;
+  const freshnessWarning = $("calendarFreshnessWarning");
+  if (freshnessWarning) {
+    freshnessWarning.textContent = s.calendar_sync_warning || "";
+    freshnessWarning.hidden = !s.calendar_sync_stale;
+  }
 }
 
 async function refreshDashboardStatus() {
@@ -655,8 +661,8 @@ function renderInspector(data) {
       ${readiness.clients_ready && !clientsEditing
         ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${state.participants.map(p => fmt(p.display_name || p.participant_name)).join(", ")}</div></div>`
         : `<div class="chips" id="participantChips"></div>
-           <div class="combobox"><input id="personInput" placeholder="Search or add a client..." list="peopleList"><button class="mini" id="addPerson">+</button></div>
-           <datalist id="peopleList"></datalist>
+           <div class="combobox"><input id="personInput" placeholder="Search or add a client..."><button class="mini" id="addPerson">+</button></div>
+           <div id="personSearchResults" class="person-search-results" hidden></div>
            <div id="personWarning"></div>
            <div id="personEditor" class="drawer" hidden></div>`}
       <div class="inline-actions">
@@ -755,7 +761,7 @@ function renderInspector(data) {
 }
 
 function wireInspector() {
-  if ($("personInput")) $("personInput").addEventListener("input", debounce(async e => fillDatalist("peopleList", await api(`/api/people?q=${encodeURIComponent(e.target.value)}`), "display_name"), 160));
+  if ($("personInput")) $("personInput").addEventListener("input", debounce(e => showPersonSearchResults(e.target.value), 160));
   if ($("addPerson")) $("addPerson").onclick = createPersonFromInput;
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
   if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = saveRelationshipSection;
@@ -1126,12 +1132,39 @@ async function createPersonFromInput() {
     markDirty("relationship");
     return;
   }
-  const person = exact;
+  selectExistingPerson(exact);
+}
+
+function selectExistingPerson(person) {
   replaceMatchingProposedParticipant(person);
   $("personInput").value = "";
   renderParticipantChips();
   renderRelationshipEditor(state.detail);
   markDirty("relationship");
+}
+
+async function showPersonSearchResults(value) {
+  const results = $("personSearchResults");
+  const query = String(value || "").trim();
+  if (!results) return;
+  if (!query) {
+    results.hidden = true;
+    results.innerHTML = "";
+    return;
+  }
+  const rows = await api(`/api/people?q=${encodeURIComponent(query)}`);
+  if (!$("personInput") || $("personInput").value.trim() !== query) return;
+  results.innerHTML = rows.slice(0, 8).map(person => `
+    <button type="button" class="person-search-result" data-person-id="${escapeAttr(person.person_id)}">
+      <span>${escapeHtml(person.display_name)}</span><small>${escapeHtml(person.person_code || "Client")}</small>
+    </button>`).join("") || `<div class="person-search-empty">No existing client found. Use + to add this as a new client.</div>`;
+  results.hidden = false;
+  results.querySelectorAll(".person-search-result").forEach(button => {
+    button.onclick = () => {
+      const person = rows.find(row => row.person_id === button.dataset.personId);
+      if (person) selectExistingPerson(person);
+    };
+  });
 }
 
 async function createAccountFromInput() {
@@ -1146,6 +1179,7 @@ function showPersonEditor(index) {
   const p = state.participants[index];
   const split = splitDisplayName(p.display_name || p.participant_name || "");
   const mergeButton = !p.is_proposed && p.person_id ? '<button id="mergePersonBtn">Merge...</button>' : "";
+  const archiveButton = !p.is_proposed && p.person_id ? '<button id="archivePersonBtn" class="danger">Archive Duplicate</button>' : "";
   $("personEditor").hidden = false;
   $("personEditor").innerHTML = `
     <h4>Edit Client</h4>
@@ -1155,7 +1189,7 @@ function showPersonEditor(index) {
       <label class="field">Email<input id="editPersonEmail" value="${escapeAttr(p.billing_email || "")}"></label>
       <label class="field">Phone<input id="editPersonPhone" value="${escapeAttr(p.billing_phone || "")}"></label>
     </div>
-    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}</div>
+    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}${archiveButton}</div>
   `;
   $("savePersonEdit").onclick = async () => {
     const first = $("editPersonFirst").value.trim();
@@ -1200,6 +1234,21 @@ function showPersonEditor(index) {
     $("personEditor").hidden = true;
     renderParticipantChips();
     markSaved("relationship", "Client merged");
+  };
+  if ($("archivePersonBtn")) $("archivePersonBtn").onclick = async () => {
+    if (!confirm(`Archive ${p.display_name} as an unused duplicate? This will not rewrite approved sessions or delete evidence.`)) return;
+    try {
+      await api(`/api/people/${p.person_id}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Archived unused duplicate from review UI" })
+      });
+      state.participants.splice(index, 1);
+      $("personEditor").hidden = true;
+      renderParticipantChips();
+      markDirty("relationship");
+    } catch (err) {
+      alert(sanitizeUiErrorMessage(err.message, "Could not archive this duplicate client."));
+    }
   };
 }
 
@@ -1258,7 +1307,12 @@ async function openBillingRelationshipEditor() {
 }
 
 async function saveRelationshipSection() {
+  const personField = $("personInput");
+  if (personField && personField.value.trim()) await createPersonFromInput();
   await resolveTypedSelections();
+  if (!collectParticipants().length) {
+    throw new Error("Add or select at least one client before confirming Client(s).");
+  }
   const sessionDraft = collectSessionDraftValues();
   const updated = await api(`/api/review/candidates/${state.selected}/save-relationship`, {
     method: "POST",
@@ -2242,6 +2296,20 @@ function exportIssueReport() {
   setReportIssueStatus(`Exported ${state.diagnostics.filename || "report"}.`, "success");
 }
 
+function downloadDiagnosticReport(result) {
+  const text = result?.report_text || "";
+  if (!text) throw new Error("The diagnostic report was empty.");
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = result.filename || "jordana-support-diagnostics.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function showInvoiceSuccess(message) {
   const view = $("invoicesView");
   if (!view) return;
@@ -2627,6 +2695,7 @@ function renderSessions(rows, total) {
       actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button></td>`;
     return `
     <tr>
+      <td><input type="checkbox" class="session-row-checkbox" data-cid="${escapeAttr(row.candidate_id)}" aria-label="Select ${escapeAttr(row.calendar_title || row.date || "session row")}" ${state.sessions.selectedIds.has(row.candidate_id) ? "checked" : ""}></td>
       <td>${fmt(row.date)}</td>
       <td>${fmt(row.time)}</td>
       <td><span class="primary">${fmt(row.client_participants)}</span></td>
@@ -2637,7 +2706,13 @@ function renderSessions(rows, total) {
       <td>${fmt(row.review_status)}</td>
       ${actionCell}
     </tr>`;
-  }).join("") || `<tr><td colspan="9" class="readonly-note">No appointments found.</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="readonly-note">No appointments found.</td></tr>`;
+  $("sessionsRows").querySelectorAll(".session-row-checkbox").forEach(box => {
+    box.onchange = () => {
+      if (box.checked) state.sessions.selectedIds.add(box.dataset.cid);
+      else state.sessions.selectedIds.delete(box.dataset.cid);
+    };
+  });
   $("sessionsRows").querySelectorAll(".restore-session-btn").forEach(btn => {
     btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
   });
@@ -2752,11 +2827,33 @@ async function loadSessions() {
     date_range: $("sessionsDateFilter").value,
     review_status: $("sessionsReviewStatusFilter").value,
     payment_status: $("sessionsPaymentStatusFilter").value,
+    archive_status: $("sessionsArchiveFilter").value,
     limit: state.sessions.limit,
     offset: state.sessions.offset
   });
   const data = await api(`/api/sessions?${params}`);
+  state.sessions.selectedIds.clear();
+  const archivedView = $("sessionsArchiveFilter").value === "archived";
+  $("archiveSelectedSessionsBtn").hidden = archivedView;
+  $("restoreSelectedSessionsBtn").hidden = !archivedView;
   renderSessions(data.items, data.total);
+}
+
+async function updateSelectedSessionsArchive(archived) {
+  const candidateIds = [...state.sessions.selectedIds];
+  if (!candidateIds.length) return alert("Select at least one row first.");
+  const verb = archived ? "archive" : "restore";
+  if (!confirm(`${archived ? "Archive" : "Restore"} ${candidateIds.length} selected session row(s)? This changes only the Sessions view.`)) return;
+  try {
+    await api(`/api/sessions/${archived ? "archive" : "restore-archive"}`, {
+      method: "POST",
+      body: JSON.stringify({ candidate_ids: candidateIds })
+    });
+    state.sessions.selectedIds.clear();
+    await loadSessions();
+  } catch (err) {
+    alert(sanitizeUiErrorMessage(err.message, `Could not ${verb} the selected session rows.`));
+  }
 }
 
 async function showSessions() {
@@ -3398,6 +3495,7 @@ async function loadReports() {
   const yearSelect = $("reportsYearSelect");
   const generateBtn = $("generateReportsBtn");
   const message = $("reportsRefreshMessage");
+  const diagnosticsBtn = $("downloadSupportDiagnosticsBtn");
   errBox.hidden = true;
   if (message) {
     message.textContent = "";
@@ -3435,6 +3533,33 @@ async function loadReports() {
       window.location.href = `/api/reports/download?type=${type}&year=${year}`;
     };
   });
+  if (diagnosticsBtn) diagnosticsBtn.onclick = async () => {
+    if (diagnosticsBtn.disabled) return;
+    diagnosticsBtn.disabled = true;
+    diagnosticsBtn.textContent = "Creating...";
+    try {
+      const result = await api("/api/diagnostics/report-issue", {
+        method: "POST",
+        body: JSON.stringify({
+          area: currentDiagnosticArea(),
+          description: "On-demand support diagnostics from Reports.",
+          ui_state: collectDiagnosticUiState(),
+          frontend_events: state.diagnostics.events.slice(-80)
+        })
+      });
+      downloadDiagnosticReport(result);
+      if (message) {
+        message.textContent = `Downloaded ${result.filename || "support diagnostics"}.`;
+        message.className = "settings-message success";
+      }
+    } catch (err) {
+      errBox.textContent = sanitizeUiErrorMessage(err.message, "Unable to create support diagnostics.");
+      errBox.hidden = false;
+    } finally {
+      diagnosticsBtn.disabled = false;
+      diagnosticsBtn.textContent = "Download Diagnostics JSON";
+    }
+  };
   if (generateBtn) {
     generateBtn.onclick = async () => {
       if (generateBtn.disabled) return;
@@ -4535,7 +4660,7 @@ $("invoiceNextPage").onclick = () => {
   const lib = state.invoiceLibrary;
   if (lib.offset + lib.limit < lib.total) { lib.offset += lib.limit; loadInvoices(); }
 };
-["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter"].forEach(id => $(id).addEventListener("input", () => {
+["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter","sessionsArchiveFilter"].forEach(id => $(id).addEventListener("input", () => {
   state.sessions.offset = 0;
   loadSessions();
 }));
@@ -4543,6 +4668,16 @@ $("sessionsPrevPage").onclick = () => {
   state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
   loadSessions();
 };
+$("selectAllSessionsBtn").onclick = () => {
+  state.sessions.items.forEach(row => state.sessions.selectedIds.add(row.candidate_id));
+  renderSessions(state.sessions.items, state.sessions.total);
+};
+$("clearSessionSelectionBtn").onclick = () => {
+  state.sessions.selectedIds.clear();
+  renderSessions(state.sessions.items, state.sessions.total);
+};
+$("archiveSelectedSessionsBtn").onclick = () => updateSelectedSessionsArchive(true);
+$("restoreSelectedSessionsBtn").onclick = () => updateSelectedSessionsArchive(false);
 $("sessionsNextPage").onclick = () => {
   state.sessions.offset += state.sessions.limit;
   loadSessions();
@@ -6680,6 +6815,7 @@ async function openPersonRecord(personId, options = {}) {
           <div class="compact-list">${data.aliases.map(a => `<div class="compact-list-item"><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${escapeAttr(a.alias_id)}" data-raw-alias="${escapeAttr(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
           <h4>Audit History</h4>
           <div class="compact-list">${(data.audit || []).map(entry => `<div class="compact-list-item"><span>${fmt(entry.created_at)} • ${escapeHtml(entry.action || "")}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
+          ${data.person.active ? `<h4>Duplicate Cleanup</h4><div class="readonly-note">Archive is available only after sessions and active billing relationships have been reassigned. Historical evidence is retained.</div><div class="record-actions"><button id="archivePersonRecord" class="danger">Archive Unused Duplicate</button></div>` : ""}
         </div>
       </details>
     </div>
@@ -6713,6 +6849,19 @@ async function openPersonRecord(personId, options = {}) {
     };
   });
   if ($("toggleAllSessions")) $("toggleAllSessions").onclick = async () => openPersonRecord(personId, { showAllSessions: !showAllSessions });
+  if ($("archivePersonRecord")) $("archivePersonRecord").onclick = async () => {
+    if (!confirm(`Archive ${data.person.display_name} as an unused duplicate? No records will be deleted.`)) return;
+    try {
+      await api(`/api/people/${personId}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Archived unused duplicate from client record" })
+      });
+      location.hash = "people";
+      await showPeople();
+    } catch (err) {
+      alert(sanitizeUiErrorMessage(err.message, "Could not archive this duplicate client."));
+    }
+  };
   $("savePersonRecord").onclick = async () => {
     await api(`/api/people/${personId}`, { method: "POST", body: JSON.stringify({
       first_name: $("recordFirstName").value,

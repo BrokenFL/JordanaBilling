@@ -334,8 +334,12 @@ Client Sessions reports.
 
 The Review Queue offers Needs Review, Approved, and Excluded filters. Needs Review excludes approved and excluded records.
 
-The Sessions workspace is a read-only ledger. Its review-status filter is
-intentionally limited to `All` and `Needs Classification`. Eligible
+The Sessions workspace is a read-only ledger with a separate inbox-style archive
+state. Jordana may select any visible rows, archive them from the default Current
+view, inspect them under Archived, and restore them later. This changes only
+Sessions visibility: review status, classification, approval, rate, payment,
+invoice links, and raw calendar evidence remain unchanged. The review-status
+filter is intentionally limited to `All` and `Needs Classification`. Eligible
 candidate-only records may be sent to review, and excluded sessions may be
 returned to review. Approved or invoiced records are not silently reopened.
 
