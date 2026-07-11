@@ -428,12 +428,6 @@ def list_review_candidates(
     limit: int = 25,
     offset: int = 0,
 ) -> dict[str, Any]:
-    # A complete snapshot can already prove that an ended pending appointment
-    # was removed, even when no new Sheet rows arrive after its end time.
-    from .importer import suppress_pending_events_missing_from_newest_covering_snapshot
-
-    if suppress_pending_events_missing_from_newest_covering_snapshot(conn):
-        conn.commit()
     filters = []
     params: list[Any] = []
     if query:
@@ -1557,6 +1551,7 @@ def mark_candidate(
 
 def archive_already_classified_personal_admin(conn: sqlite3.Connection) -> dict[str, int]:
     """Archive only clearly classified non-client records, never approved work."""
+    init_db(conn)
     rows = conn.execute(
         """
         SELECT c.id, c.classification
@@ -1567,13 +1562,53 @@ def archive_already_classified_personal_admin(conn: sqlite3.Connection) -> dict[
           AND COALESCE(s.review_status, '') != 'approved'
         """
     ).fetchall()
-    for row in rows:
-        mark_candidate(
-            conn,
-            row["id"],
-            classification=row["classification"],
-            reason="Archived from the Personal/Admin cleanup action.",
-        )
+    now = now_iso()
+    try:
+        for row in rows:
+            candidate_id = row["id"]
+            session = conn.execute(
+                "SELECT id FROM sessions WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+            conn.execute(
+                """
+                UPDATE calendar_event_candidates
+                SET review_status = 'excluded', updated_at = ?
+                WHERE id = ?
+                """,
+                (now, candidate_id),
+            )
+            if session:
+                conn.execute(
+                    """
+                    UPDATE sessions
+                    SET review_status = 'excluded', billable_status = 'excluded',
+                        payment_status = 'unpaid', updated_at = ?
+                    WHERE id = ? AND review_status != 'approved'
+                    """,
+                    (now, session["id"]),
+                )
+            add_review_item(
+                conn,
+                candidate_id,
+                session["id"] if session else None,
+                "excluded",
+                [],
+                ["Archived from the Personal/Admin cleanup action."],
+            )
+            record_audit(
+                conn,
+                "calendar_event_candidate",
+                candidate_id,
+                f"marked_{row['classification']}",
+                {"reason": "Archived from the Personal/Admin cleanup action."},
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    if rows:
+        refresh_reports_after_commit(conn)
     return {"archived": len(rows)}
 
 
@@ -2119,7 +2154,19 @@ def promote_candidate_to_review(
 
 
 def search_people(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
-    rows = search_table(conn, "people", "person_id", "display_name", query)
+    init_db(conn)
+    like = f"%{query}%"
+    rows = [dict(row) for row in conn.execute(
+        """
+        SELECT person_id, display_name, person_code
+        FROM people
+        WHERE active = 1
+          AND (display_name LIKE ? OR COALESCE(person_code, '') LIKE ?)
+        ORDER BY display_name, person_code
+        LIMIT 20
+        """,
+        (like, like),
+    ).fetchall()]
     similar = similar_people(conn, query)
     seen = {row["person_id"] for row in rows}
     for row in similar:
@@ -2127,6 +2174,68 @@ def search_people(conn: sqlite3.Connection, query: str = "") -> list[dict[str, A
             row["similar_match"] = True
             rows.append(row)
     return rows
+
+
+def archive_person(conn: sqlite3.Connection, person_id: str, reason: str = "") -> dict[str, Any]:
+    """Archive an unused duplicate client without rewriting historical identity."""
+    init_db(conn)
+    person = conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone()
+    if not person:
+        raise ValueError("Client not found.")
+    if not person["active"]:
+        return dict(person)
+
+    session_reference = conn.execute(
+        """
+        SELECT s.review_status
+        FROM session_participants sp
+        JOIN sessions s ON s.id = sp.session_id
+        WHERE sp.person_id = ?
+          AND s.review_status != 'excluded'
+        LIMIT 1
+        """,
+        (person_id,),
+    ).fetchone()
+    if session_reference:
+        raise ValueError(
+            "Reassign or exclude this client's sessions before archiving the duplicate. "
+            "Approved session identities are never changed automatically."
+        )
+    active_relationship = conn.execute(
+        """
+        SELECT 1
+        FROM account_members am
+        JOIN client_accounts ca ON ca.account_id = am.account_id
+        WHERE am.person_id = ? AND ca.active = 1
+        UNION ALL
+        SELECT 1 FROM billing_parties
+        WHERE person_id = ? AND active = 1
+        LIMIT 1
+        """,
+        (person_id, person_id),
+    ).fetchone()
+    if active_relationship:
+        raise ValueError("Archive this client's active billing relationship before archiving the duplicate client.")
+
+    now = now_iso()
+    conn.execute(
+        """
+        UPDATE people
+        SET active = 0, active_status = 'archived',
+            merge_note = ?, updated_at = ?
+        WHERE person_id = ?
+        """,
+        (text(reason).strip() or "Archived unused duplicate client.", now, person_id),
+    )
+    record_audit(
+        conn,
+        "person",
+        person_id,
+        "archived",
+        {"reason": text(reason).strip() or "Archived unused duplicate client."},
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
 
 
 def list_people_records(conn: sqlite3.Connection, query: str = "") -> list[dict[str, Any]]:
@@ -7329,7 +7438,7 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
         else:
             record_type = "self_pay"
 
-        links = [link for link in account_links.get(canonical_id, []) if link["account_active"]]
+        links = [item for item in account_links.get(canonical_id, []) if item["account_active"]]
         link = links[0] if links else None
         record_active = bool(canonical["billing_party_active"])
         if link:
@@ -7439,9 +7548,9 @@ def list_billing_relationship_records(conn: sqlite3.Connection) -> list[dict[str
     ).fetchall()
 
     for row in acct_rows:
-        if row["default_billing_party_id"]:
+        if row["default_billing_party_id"] and row["account_active"]:
             continue
-        if row["account_id"] in person_linked_account_ids:
+        if row["account_id"] in person_linked_account_ids and row["account_active"]:
             continue
         member_ids = [
             mid for mid in (row["member_ids_raw"] or "").split(",") if mid

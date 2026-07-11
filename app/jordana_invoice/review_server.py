@@ -30,6 +30,7 @@ from .google_sync import (
 from .review_services import (
     add_account_member,
     archive_already_classified_personal_admin,
+    archive_person,
     analyze_billing_relationship_duplicates,
     approve_candidate,
     BillingPartyNotFoundError,
@@ -695,9 +696,6 @@ def make_handler(
                         )
                     )
                     return
-                if parsed.path == "/api/review/archive-personal-admin":
-                    self.send_json(archive_already_classified_personal_admin(self.conn()))
-                    return
                 if parsed.path.startswith("/api/review/candidates/"):
                     candidate_id = parsed.path.rsplit("/", 1)[-1]
                     self.send_json(get_review_candidate(self.conn(), candidate_id))
@@ -1098,6 +1096,17 @@ def make_handler(
                     req = parse_create_person_request(data)
                     self.send_json(create_person(self.conn(), req.to_payload()))
                     return
+                if parsed.path == "/api/review/archive-personal-admin":
+                    self.send_json(archive_already_classified_personal_admin(self.conn()))
+                    return
+                if parsed.path == "/api/review/reconcile-calendar":
+                    from .importer import suppress_pending_events_missing_from_newest_covering_snapshot
+
+                    conn = self.conn()
+                    changed = suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    conn.commit()
+                    self.send_json({"reconciled": changed})
+                    return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/aliases"):
                     person_id = parsed.path.strip("/").split("/")[2]
                     req = parse_save_person_alias_request(data)
@@ -1122,6 +1131,10 @@ def make_handler(
                             req.reason,
                         )
                     )
+                    return
+                if parsed.path.startswith("/api/people/") and parsed.path.endswith("/archive"):
+                    person_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(archive_person(self.conn(), person_id, data.get("reason") or ""))
                     return
                 if parsed.path.startswith("/api/people/"):
                     person_id = parsed.path.rsplit("/", 1)[-1]

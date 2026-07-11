@@ -4,7 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jordana_invoice.db import connect, init_db
-from jordana_invoice.importer import import_rows
+from jordana_invoice.importer import (
+    import_rows,
+    suppress_pending_events_missing_from_newest_covering_snapshot,
+)
 from jordana_invoice.review_services import approve_candidate, list_review_candidates
 
 
@@ -151,7 +154,7 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.assertEqual(row["reconciliation_status"], "removed_from_newest_covering_snapshot")
         self.assertEqual(row["hidden_from_review"], 1)
 
-    def test_opening_review_reconciles_an_ended_omission_without_new_sync_rows(self):
+    def test_protected_review_reconciliation_handles_an_ended_omission_without_new_sync_rows(self):
         with patch("jordana_invoice.importer.appointment_has_ended", return_value=False):
             self.import_old_event()
             self.import_complete_run(
@@ -164,7 +167,8 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.assertNotEqual(self.candidate_and_session()["candidate_status"], "excluded")
 
         with patch("jordana_invoice.importer.appointment_has_ended", return_value=True):
-            list_review_candidates(self.conn)
+            suppress_pending_events_missing_from_newest_covering_snapshot(self.conn)
+            self.conn.commit()
 
         self.assertEqual(self.candidate_and_session()["candidate_status"], "excluded")
 

@@ -514,6 +514,7 @@ async function loadList() {
     limit: state.limit,
     offset: state.offset
   });
+  await api("/api/review/reconcile-calendar", { method: "POST", body: "{}" });
   const data = await api(`/api/review/candidates?${params}`);
   state.items = data.items;
   renderStatus(data.status);
@@ -1173,6 +1174,7 @@ function showPersonEditor(index) {
   const p = state.participants[index];
   const split = splitDisplayName(p.display_name || p.participant_name || "");
   const mergeButton = !p.is_proposed && p.person_id ? '<button id="mergePersonBtn">Merge...</button>' : "";
+  const archiveButton = !p.is_proposed && p.person_id ? '<button id="archivePersonBtn" class="danger">Archive Duplicate</button>' : "";
   $("personEditor").hidden = false;
   $("personEditor").innerHTML = `
     <h4>Edit Client</h4>
@@ -1182,7 +1184,7 @@ function showPersonEditor(index) {
       <label class="field">Email<input id="editPersonEmail" value="${escapeAttr(p.billing_email || "")}"></label>
       <label class="field">Phone<input id="editPersonPhone" value="${escapeAttr(p.billing_phone || "")}"></label>
     </div>
-    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}</div>
+    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}${archiveButton}</div>
   `;
   $("savePersonEdit").onclick = async () => {
     const first = $("editPersonFirst").value.trim();
@@ -1227,6 +1229,21 @@ function showPersonEditor(index) {
     $("personEditor").hidden = true;
     renderParticipantChips();
     markSaved("relationship", "Client merged");
+  };
+  if ($("archivePersonBtn")) $("archivePersonBtn").onclick = async () => {
+    if (!confirm(`Archive ${p.display_name} as an unused duplicate? This will not rewrite approved sessions or delete evidence.`)) return;
+    try {
+      await api(`/api/people/${p.person_id}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Archived unused duplicate from review UI" })
+      });
+      state.participants.splice(index, 1);
+      $("personEditor").hidden = true;
+      renderParticipantChips();
+      markDirty("relationship");
+    } catch (err) {
+      alert(sanitizeUiErrorMessage(err.message, "Could not archive this duplicate client."));
+    }
   };
 }
 
@@ -6722,6 +6739,7 @@ async function openPersonRecord(personId, options = {}) {
           <div class="compact-list">${data.aliases.map(a => `<div class="compact-list-item"><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${escapeAttr(a.alias_id)}" data-raw-alias="${escapeAttr(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
           <h4>Audit History</h4>
           <div class="compact-list">${(data.audit || []).map(entry => `<div class="compact-list-item"><span>${fmt(entry.created_at)} • ${escapeHtml(entry.action || "")}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
+          ${data.person.active ? `<h4>Duplicate Cleanup</h4><div class="readonly-note">Archive is available only after sessions and active billing relationships have been reassigned. Historical evidence is retained.</div><div class="record-actions"><button id="archivePersonRecord" class="danger">Archive Unused Duplicate</button></div>` : ""}
         </div>
       </details>
     </div>
@@ -6755,6 +6773,19 @@ async function openPersonRecord(personId, options = {}) {
     };
   });
   if ($("toggleAllSessions")) $("toggleAllSessions").onclick = async () => openPersonRecord(personId, { showAllSessions: !showAllSessions });
+  if ($("archivePersonRecord")) $("archivePersonRecord").onclick = async () => {
+    if (!confirm(`Archive ${data.person.display_name} as an unused duplicate? No records will be deleted.`)) return;
+    try {
+      await api(`/api/people/${personId}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Archived unused duplicate from client record" })
+      });
+      location.hash = "people";
+      await showPeople();
+    } catch (err) {
+      alert(sanitizeUiErrorMessage(err.message, "Could not archive this duplicate client."));
+    }
+  };
   $("savePersonRecord").onclick = async () => {
     await api(`/api/people/${personId}`, { method: "POST", body: JSON.stringify({
       first_name: $("recordFirstName").value,
