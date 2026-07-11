@@ -71,7 +71,7 @@ const state = {
   detail: null,
   invoice: null,
   eligibleSessions: [],
-  sessions: { items: [], offset: 0, limit: 30, total: 0 },
+  sessions: { items: [], offset: 0, limit: 30, total: 0, selectedIds: new Set() },
   editSteps: { clients: false, session: false },
   settingsSaving: false,
   syncRunning: false,
@@ -530,6 +530,11 @@ function renderStatus(s) {
   $("readyApprove").textContent = s.ready_to_approve;
   $("approvedMonth").textContent = s.approved_this_month;
   $("personalAdmin").textContent = s.personal_admin;
+  const freshnessWarning = $("calendarFreshnessWarning");
+  if (freshnessWarning) {
+    freshnessWarning.textContent = s.calendar_sync_warning || "";
+    freshnessWarning.hidden = !s.calendar_sync_stale;
+  }
 }
 
 async function refreshDashboardStatus() {
@@ -2291,6 +2296,20 @@ function exportIssueReport() {
   setReportIssueStatus(`Exported ${state.diagnostics.filename || "report"}.`, "success");
 }
 
+function downloadDiagnosticReport(result) {
+  const text = result?.report_text || "";
+  if (!text) throw new Error("The diagnostic report was empty.");
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = result.filename || "jordana-support-diagnostics.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function showInvoiceSuccess(message) {
   const view = $("invoicesView");
   if (!view) return;
@@ -2676,6 +2695,7 @@ function renderSessions(rows, total) {
       actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button></td>`;
     return `
     <tr>
+      <td><input type="checkbox" class="session-row-checkbox" data-cid="${escapeAttr(row.candidate_id)}" aria-label="Select ${escapeAttr(row.calendar_title || row.date || "session row")}" ${state.sessions.selectedIds.has(row.candidate_id) ? "checked" : ""}></td>
       <td>${fmt(row.date)}</td>
       <td>${fmt(row.time)}</td>
       <td><span class="primary">${fmt(row.client_participants)}</span></td>
@@ -2686,7 +2706,13 @@ function renderSessions(rows, total) {
       <td>${fmt(row.review_status)}</td>
       ${actionCell}
     </tr>`;
-  }).join("") || `<tr><td colspan="9" class="readonly-note">No appointments found.</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="readonly-note">No appointments found.</td></tr>`;
+  $("sessionsRows").querySelectorAll(".session-row-checkbox").forEach(box => {
+    box.onchange = () => {
+      if (box.checked) state.sessions.selectedIds.add(box.dataset.cid);
+      else state.sessions.selectedIds.delete(box.dataset.cid);
+    };
+  });
   $("sessionsRows").querySelectorAll(".restore-session-btn").forEach(btn => {
     btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
   });
@@ -2801,11 +2827,33 @@ async function loadSessions() {
     date_range: $("sessionsDateFilter").value,
     review_status: $("sessionsReviewStatusFilter").value,
     payment_status: $("sessionsPaymentStatusFilter").value,
+    archive_status: $("sessionsArchiveFilter").value,
     limit: state.sessions.limit,
     offset: state.sessions.offset
   });
   const data = await api(`/api/sessions?${params}`);
+  state.sessions.selectedIds.clear();
+  const archivedView = $("sessionsArchiveFilter").value === "archived";
+  $("archiveSelectedSessionsBtn").hidden = archivedView;
+  $("restoreSelectedSessionsBtn").hidden = !archivedView;
   renderSessions(data.items, data.total);
+}
+
+async function updateSelectedSessionsArchive(archived) {
+  const candidateIds = [...state.sessions.selectedIds];
+  if (!candidateIds.length) return alert("Select at least one row first.");
+  const verb = archived ? "archive" : "restore";
+  if (!confirm(`${archived ? "Archive" : "Restore"} ${candidateIds.length} selected session row(s)? This changes only the Sessions view.`)) return;
+  try {
+    await api(`/api/sessions/${archived ? "archive" : "restore-archive"}`, {
+      method: "POST",
+      body: JSON.stringify({ candidate_ids: candidateIds })
+    });
+    state.sessions.selectedIds.clear();
+    await loadSessions();
+  } catch (err) {
+    alert(sanitizeUiErrorMessage(err.message, `Could not ${verb} the selected session rows.`));
+  }
 }
 
 async function showSessions() {
@@ -3447,6 +3495,7 @@ async function loadReports() {
   const yearSelect = $("reportsYearSelect");
   const generateBtn = $("generateReportsBtn");
   const message = $("reportsRefreshMessage");
+  const diagnosticsBtn = $("downloadSupportDiagnosticsBtn");
   errBox.hidden = true;
   if (message) {
     message.textContent = "";
@@ -3484,6 +3533,33 @@ async function loadReports() {
       window.location.href = `/api/reports/download?type=${type}&year=${year}`;
     };
   });
+  if (diagnosticsBtn) diagnosticsBtn.onclick = async () => {
+    if (diagnosticsBtn.disabled) return;
+    diagnosticsBtn.disabled = true;
+    diagnosticsBtn.textContent = "Creating...";
+    try {
+      const result = await api("/api/diagnostics/report-issue", {
+        method: "POST",
+        body: JSON.stringify({
+          area: currentDiagnosticArea(),
+          description: "On-demand support diagnostics from Reports.",
+          ui_state: collectDiagnosticUiState(),
+          frontend_events: state.diagnostics.events.slice(-80)
+        })
+      });
+      downloadDiagnosticReport(result);
+      if (message) {
+        message.textContent = `Downloaded ${result.filename || "support diagnostics"}.`;
+        message.className = "settings-message success";
+      }
+    } catch (err) {
+      errBox.textContent = sanitizeUiErrorMessage(err.message, "Unable to create support diagnostics.");
+      errBox.hidden = false;
+    } finally {
+      diagnosticsBtn.disabled = false;
+      diagnosticsBtn.textContent = "Download Diagnostics JSON";
+    }
+  };
   if (generateBtn) {
     generateBtn.onclick = async () => {
       if (generateBtn.disabled) return;
@@ -4584,7 +4660,7 @@ $("invoiceNextPage").onclick = () => {
   const lib = state.invoiceLibrary;
   if (lib.offset + lib.limit < lib.total) { lib.offset += lib.limit; loadInvoices(); }
 };
-["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter"].forEach(id => $(id).addEventListener("input", () => {
+["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter","sessionsArchiveFilter"].forEach(id => $(id).addEventListener("input", () => {
   state.sessions.offset = 0;
   loadSessions();
 }));
@@ -4592,16 +4668,16 @@ $("sessionsPrevPage").onclick = () => {
   state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
   loadSessions();
 };
-$("archivePersonalAdminBtn").onclick = async () => {
-  if (!confirm("Archive all currently pending items already classified as Personal or Administrative? Unresolved client work and approved sessions are not changed.")) return;
-  try {
-    const result = await api("/api/review/archive-personal-admin", { method: "POST", body: JSON.stringify({}) });
-    await loadSessions();
-    alert(`${result.archived || 0} Personal/Admin item(s) archived. You can return an item to Review from Sessions if needed.`);
-  } catch (err) {
-    alert(sanitizeUiErrorMessage(err.message, "Could not archive Personal/Admin items."));
-  }
+$("selectAllSessionsBtn").onclick = () => {
+  state.sessions.items.forEach(row => state.sessions.selectedIds.add(row.candidate_id));
+  renderSessions(state.sessions.items, state.sessions.total);
 };
+$("clearSessionSelectionBtn").onclick = () => {
+  state.sessions.selectedIds.clear();
+  renderSessions(state.sessions.items, state.sessions.total);
+};
+$("archiveSelectedSessionsBtn").onclick = () => updateSelectedSessionsArchive(true);
+$("restoreSelectedSessionsBtn").onclick = () => updateSelectedSessionsArchive(false);
 $("sessionsNextPage").onclick = () => {
   state.sessions.offset += state.sessions.limit;
   loadSessions();

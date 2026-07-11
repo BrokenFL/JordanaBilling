@@ -171,9 +171,11 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
     demo = conn.execute(
         "SELECT metadata_value FROM app_metadata WHERE metadata_key = 'demo_mode'"
     ).fetchone()
+    freshness = calendar_freshness_status(last_sync["last_success_at"] if last_sync else "")
     return {
         "demo_mode": bool(demo and demo["metadata_value"].lower() == "true"),
         "last_sync": last_sync["last_success_at"] if last_sync else "",
+        **freshness,
         "needs_review": sum(
             counts.get(status, 0)
             for status in REVIEW_ACTIONABLE_STATUSES
@@ -181,6 +183,39 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "ready_to_approve": counts.get("ready_for_approval", 0),
         "approved_this_month": counts.get("approved", 0),
         "personal_admin": int(personal_admin),
+    }
+
+
+def calendar_freshness_status(last_success_at: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """Return a warning after 18 hours without a successful calendar sync."""
+    if not last_success_at:
+        return {
+            "calendar_sync_stale": True,
+            "calendar_sync_age_hours": None,
+            "calendar_sync_warning": "Calendar has not completed a successful sync yet. Review may not reflect recent changes.",
+        }
+    try:
+        parsed = datetime.fromisoformat(str(last_success_at).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        reference = now or datetime.now(ZoneInfo("UTC"))
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=ZoneInfo("UTC"))
+        age_hours = max(0.0, (reference.astimezone(ZoneInfo("UTC")) - parsed.astimezone(ZoneInfo("UTC"))).total_seconds() / 3600)
+    except (TypeError, ValueError):
+        return {
+            "calendar_sync_stale": True,
+            "calendar_sync_age_hours": None,
+            "calendar_sync_warning": "The latest calendar sync time could not be verified. Review may not reflect recent changes.",
+        }
+    stale = age_hours > 18
+    return {
+        "calendar_sync_stale": stale,
+        "calendar_sync_age_hours": round(age_hours, 1),
+        "calendar_sync_warning": (
+            f"Calendar has not synced successfully in {int(age_hours)} hours. Review may not reflect recent cancellations or schedule changes."
+            if stale else ""
+        ),
     }
 
 
@@ -538,6 +573,7 @@ def list_sessions_ledger(
     date_range: str = "rolling_30",
     review_status: str = "",
     payment_status: str = "",
+    archive_status: str = "active",
     limit: int = 30,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -549,9 +585,56 @@ def list_sessions_ledger(
         date_range=date_range,
         review_status=review_status,
         payment_status=payment_status,
+        archive_status=archive_status,
         limit=limit,
         offset=offset,
     )
+
+
+def set_sessions_archive_state(
+    conn: sqlite3.Connection,
+    candidate_ids: list[str],
+    *,
+    archived: bool,
+) -> dict[str, int]:
+    """Hide or restore ledger rows without changing review or billing state."""
+    init_db(conn)
+    ids = list(dict.fromkeys(text(value).strip() for value in candidate_ids if text(value).strip()))
+    if not ids:
+        raise ValueError("Select at least one session row.")
+    if len(ids) > 250:
+        raise ValueError("Select no more than 250 session rows at a time.")
+    placeholders = ",".join("?" for _ in ids)
+    existing = {
+        row["id"]
+        for row in conn.execute(
+            f"SELECT id FROM calendar_event_candidates WHERE id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+    }
+    if len(existing) != len(ids):
+        raise ValueError("One or more selected session rows no longer exist. Refresh and try again.")
+    now = now_iso()
+    conn.execute(
+        f"""
+        UPDATE calendar_event_candidates
+        SET sessions_archived_at = ?,
+            sessions_archive_reason = ?,
+            updated_at = ?
+        WHERE id IN ({placeholders})
+        """,
+        (
+            now if archived else None,
+            "Archived from Sessions inbox." if archived else None,
+            now,
+            *ids,
+        ),
+    )
+    action = "archived_from_sessions" if archived else "restored_to_sessions"
+    for candidate_id in ids:
+        record_audit(conn, "calendar_event_candidate", candidate_id, action, {})
+    conn.commit()
+    return {"updated": len(ids)}
 
 
 def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[str, Any]:

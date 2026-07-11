@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.25
+### Current Test Build — v0.1.0-test.26
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.25
-- **Python package/application version:** 0.1.0.post25
+- **Release label:** v0.1.0-test.26
+- **Python package/application version:** 0.1.0.post26
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,15 +36,15 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post25` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post26` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.25 preserves the review-after-session safeguard and adds protected calendar
-reconciliation, distinguishable existing-client selection, guarded duplicate
-archival, inactive relationship visibility, and partial joint-rate protection.
+test.26 preserves the review-after-session safeguard and adds Sessions inbox
+archiving, calendar freshness warnings, persistent privacy-safe error history,
+and on-demand support diagnostics.
 
 ### Bug Fixes In test.22
 

@@ -351,6 +351,8 @@ CREATE TABLE IF NOT EXISTS calendar_event_candidates (
   calendar_is_preferred_work INTEGER NOT NULL DEFAULT 0,
   hidden_from_review INTEGER NOT NULL DEFAULT 0,
   reconciliation_status TEXT,
+  sessions_archived_at TEXT,
+  sessions_archive_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(import_run_id, candidate_key)
@@ -361,6 +363,9 @@ CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_candidate_key
 
 CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter
   ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name);
+
+CREATE INDEX IF NOT EXISTS idx_candidates_sessions_archive
+  ON calendar_event_candidates(sessions_archived_at);
 
 CREATE TABLE IF NOT EXISTS candidate_identity_aliases (
   alias_id TEXT PRIMARY KEY,
@@ -1570,6 +1575,7 @@ MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET = "017_relationship_filing_owner_
 
 
 MIGRATION_018_DELIVERY_CONTACT_PERSON = "018_delivery_contact_person"
+MIGRATION_019_SESSION_LEDGER_ARCHIVE = "019_session_ledger_archive"
 
 
 def _apply_migration_017(conn: sqlite3.Connection) -> None:
@@ -1612,6 +1618,17 @@ def _apply_migration_018(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_019(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "calendar_event_candidates", {
+        "sessions_archived_at": "TEXT",
+        "sessions_archive_reason": "TEXT",
+    })
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_candidates_sessions_archive"
+        " ON calendar_event_candidates(sessions_archived_at)"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1631,6 +1648,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_016_LATE_CANCELLATION_BILLING, _apply_migration_016),
     (MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET, _apply_migration_017),
     (MIGRATION_018_DELIVERY_CONTACT_PERSON, _apply_migration_018),
+    (MIGRATION_019_SESSION_LEDGER_ARCHIVE, _apply_migration_019),
 ]
 
 

@@ -239,6 +239,14 @@ Expected behavior:
 - Approved sessions are not silently changed; source changes create review warnings.
 - Reports and invoice staging exclude unresolved or excluded rows until Jordana resolves and approves them.
 
+## Freshness Warning
+
+The app displays a global warning when no successful calendar sync has been
+recorded, the timestamp is invalid, or the most recent successful sync is more
+than 18 hours old. The warning does not alter review data; it tells Jordana that
+recent cancellations or schedule changes may not yet be represented locally.
+It clears automatically after a successful sync refreshes dashboard status.
+
 ## Rollback
 
 If deployment fails:
