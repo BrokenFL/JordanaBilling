@@ -596,7 +596,8 @@ for (const [args, expected] of cases) {
 
         self.assertIn("function firstPresent", js)
         self.assertIn("firstPresent(s.approved_rate_cents, s.suggested_rate_cents)", js)
-        self.assertIn('if ($("approvedRateInput") && attendanceOutcome === "late_cancellation" && billingTreatment === "waived")', js)
+        self.assertIn('if ($("approvedRateInput") && attendanceOutcome === "late_cancellation")', js)
+        self.assertIn('if (billingTreatment === "waived")', js)
 
     def test_confirmed_client_summary_renders_without_participant_chips(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -1283,7 +1284,11 @@ for (const [args, expected] of cases) {
         self.assertIn('location.hash = "sessions";', js)
         self.assertIn('await api(`/api/sessions?${params}`)', js)
         self.assertIn('state.sessions.offset = 0;', js)
-        self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0 }', js)
+        self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0, selectedIds: new Set() }', js)
+        self.assertIn('id="sessionsArchiveFilter"', html)
+        self.assertIn('id="archiveSelectedSessionsBtn"', html)
+        self.assertIn('id="restoreSelectedSessionsBtn"', html)
+        self.assertIn('class="session-row-checkbox"', js)
         self.assertIn('Read-only appointment ledger', js)
         self.assertNotIn('saveSessions', js)
 

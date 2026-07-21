@@ -9,7 +9,12 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
-from .invoice_rendering import build_invoice_render_model, format_month_label, resolve_logo_path
+from .invoice_rendering import (
+    CANCELLATION_POLICY_TEXT,
+    build_invoice_render_model,
+    format_month_label,
+    resolve_logo_path,
+)
 from .invoice_pdf import generate_invoice_pdf
 from .csv_reports import refresh_reports_after_commit
 from .service_catalog import learn_service, list_services
@@ -100,6 +105,43 @@ def _invoice_paid_cents(conn: sqlite3.Connection, invoice_id: str) -> int:
         """,
         (invoice_id,),
     ).fetchone()[0]
+
+
+def _invoice_has_payment_history(conn: sqlite3.Connection, invoice_id: str) -> bool:
+    """Return whether money has ever been allocated to this invoice's sessions.
+
+    Correction/replacement is intentionally stricter than the live balance
+    calculation: a reversed allocation or a voided payment still represents
+    financial history that must not be detached from the original invoice.
+    """
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM payment_allocations pa
+        JOIN invoice_line_items li
+          ON li.invoice_line_item_id = pa.invoice_line_item_id
+          OR li.source_session_id = pa.session_id
+        WHERE li.invoice_id = ?
+        LIMIT 1
+        """,
+        (invoice_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _invoice_excluded_session_invoice_ids(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+) -> set[str]:
+    """Return active invoice IDs intentionally allowed for a draft's lines."""
+    ids = {invoice_id}
+    row = conn.execute(
+        "SELECT correction_of_invoice_id FROM invoices WHERE invoice_id = ?",
+        (invoice_id,),
+    ).fetchone()
+    if row and row["correction_of_invoice_id"]:
+        ids.add(row["correction_of_invoice_id"])
+    return ids
 
 
 def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
@@ -956,6 +998,34 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
         or (filing.get("selected") or {}).get("display_name")
         or ""
     )
+    if invoice.get("correction_of_invoice_id"):
+        parent = conn.execute(
+            "SELECT invoice_id, invoice_number, status FROM invoices WHERE invoice_id = ?",
+            (invoice["correction_of_invoice_id"],),
+        ).fetchone()
+        invoice["correction_parent_invoice"] = dict(parent) if parent else None
+    else:
+        invoice["correction_parent_invoice"] = None
+    replacement = conn.execute(
+        """
+        SELECT invoice_id, invoice_number, status
+        FROM invoices
+        WHERE correction_of_invoice_id = ? AND status IN ('draft', 'finalized')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (invoice_id,),
+    ).fetchone()
+    invoice["replacement_invoice"] = dict(replacement) if replacement else None
+    invoice["has_payment_history"] = _invoice_has_payment_history(conn, invoice_id)
+    invoice["correction_available"] = (
+        invoice["status"] == "finalized" and not invoice["has_payment_history"]
+    )
+    invoice["correction_block_reason"] = (
+        "This invoice cannot be corrected because payment history is attached to it."
+        if invoice["status"] == "finalized" and invoice["has_payment_history"]
+        else None
+    )
     if invoice["status"] in ("finalized", "void") and invoice.get("pdf_path"):
         version = invoice.get("pdf_sha256") or invoice.get("updated_at") or invoice_id
         invoice["final_pdf_url"] = f"/api/invoices/{invoice_id}/final-pdf?v={version}"
@@ -1088,7 +1158,12 @@ def eligible_sessions(
     return result
 
 
-def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row | dict[str, Any], excluding_invoice_id: str | None = None) -> list[str]:
+def invoice_ineligibility_reasons(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row | dict[str, Any],
+    excluding_invoice_id: str | None = None,
+    excluding_invoice_ids: set[str] | None = None,
+) -> list[str]:
     s = dict(session)
     reasons = []
     if s.get("review_status") != "approved": reasons.append("Session is not approved")
@@ -1106,10 +1181,14 @@ def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row
     if s.get("appointment_status") == "late_cancellation" and s.get("billing_treatment") not in {"bill_full_fee", "custom_fee", "waived"}:
         reasons.append("Late cancellation requires explicit billing treatment")
     params: list[Any] = [s["id"]]
-    invoice_filter = ""
+    excluded_ids = set(excluding_invoice_ids or set())
     if excluding_invoice_id:
-        invoice_filter = "AND i.invoice_id != ?"
-        params.append(excluding_invoice_id)
+        excluded_ids.add(excluding_invoice_id)
+    invoice_filter = ""
+    if excluded_ids:
+        placeholders = ", ".join("?" for _ in excluded_ids)
+        invoice_filter = f"AND i.invoice_id NOT IN ({placeholders})"
+        params.extend(sorted(excluded_ids))
     attached = conn.execute(
         f"""SELECT i.status FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
         WHERE li.source_session_id = ? AND i.status IN ('draft','finalized') {invoice_filter} LIMIT 1""", params
@@ -1214,6 +1293,138 @@ def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
     return result
 
 
+def start_invoice_correction(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict[str, Any]:
+    """Create an editable correction draft for an unpaid finalized invoice.
+
+    The original invoice stays finalized until the correction draft is
+    successfully finalized. This keeps abandoning a correction safe while
+    allowing the draft editor to reuse its existing correction controls.
+    """
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("A correction reason is required.")
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        if "locked" in str(error).lower():
+            raise DatabaseBusyError(
+                "Cannot start invoice correction: database is locked by another operation. "
+                "Please retry in a moment."
+            ) from error
+        raise
+
+    try:
+        original = conn.execute(
+            "SELECT * FROM invoices WHERE invoice_id = ?",
+            (invoice_id,),
+        ).fetchone()
+        if not original:
+            raise ValueError("Invoice was not found.")
+        if original["status"] != "finalized":
+            raise ValueError("Only a finalized invoice can be corrected.")
+        if _invoice_has_payment_history(conn, invoice_id):
+            raise ValueError(
+                "This invoice cannot be corrected because payment history is attached to it."
+            )
+
+        existing = conn.execute(
+            """
+            SELECT invoice_id
+            FROM invoices
+            WHERE correction_of_invoice_id = ? AND status = 'draft'
+            LIMIT 1
+            """,
+            (invoice_id,),
+        ).fetchone()
+        if existing:
+            conn.commit()
+            return get_invoice(conn, existing["invoice_id"])
+
+        draft_id = new_id()
+        now = now_iso()
+        conn.execute(
+            """
+            INSERT INTO invoices (
+              invoice_id, status, bill_to_party_id, billing_period_start,
+              billing_period_end, invoice_date, currency, adjustment_cents,
+              delivery_method, notes, filing_owner_kind, filing_owner_record_id,
+              filing_owner_person_id, filing_owner_person_code_snapshot,
+              filing_owner_display_name_snapshot, billing_month,
+              supplement_sequence, correction_of_invoice_id, correction_reason,
+              created_at, updated_at
+            ) VALUES (
+              ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                draft_id,
+                original["bill_to_party_id"],
+                original["billing_period_start"],
+                original["billing_period_end"],
+                original["invoice_date"],
+                original["currency"],
+                original["adjustment_cents"],
+                original["delivery_method"],
+                original["notes"],
+                original["filing_owner_kind"],
+                original["filing_owner_record_id"],
+                original["filing_owner_person_id"],
+                original["filing_owner_person_code_snapshot"],
+                original["filing_owner_display_name_snapshot"],
+                original["billing_month"],
+                original["supplement_sequence"],
+                invoice_id,
+                reason,
+                now,
+                now,
+            ),
+        )
+
+        line_fields = (
+            "source_session_id", "sort_order", "service_date", "participants_snapshot",
+            "service_catalog_id", "service_name_snapshot", "billing_session_type_snapshot",
+            "time_category_snapshot", "appointment_status_snapshot", "billing_treatment_snapshot",
+            "scheduled_rate_cents_snapshot", "duration_minutes", "description_snapshot",
+            "custom_service_description_snapshot", "custom_service_code_snapshot", "quantity",
+            "unit_amount_cents", "line_amount_cents",
+        )
+        placeholders = ", ".join("?" for _ in line_fields)
+        for line in invoice_line_rows(conn, invoice_id):
+            conn.execute(
+                f"""
+                INSERT INTO invoice_line_items (
+                  invoice_line_item_id, invoice_id, {', '.join(line_fields)}, created_at, updated_at
+                ) VALUES (?, ?, {placeholders}, ?, ?)
+                """,
+                (
+                    new_id(), draft_id,
+                    *[line[field] for field in line_fields],
+                    now, now,
+                ),
+            )
+        _recalculate(conn, draft_id)
+        _audit(conn, "invoice", invoice_id, "correction_started", {
+            "correction_draft_id": draft_id,
+            "reason": reason,
+        })
+        _audit(conn, "invoice", draft_id, "correction_draft_created", {
+            "correction_of_invoice_id": invoice_id,
+            "original_invoice_number": original["invoice_number"],
+            "reason": reason,
+        })
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    result = get_invoice(conn, draft_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
+
+
 def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite3.Row | dict[str, Any], order: int) -> None:
     """Insert a single invoice line item from a session, reusing existing snapshot logic."""
     session_id = session["id"]
@@ -1299,7 +1510,11 @@ def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids
             session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if not session: raise ValueError("Source session was not found.")
             if session["billing_party_id"] != invoice["bill_to_party_id"]: raise ValueError("All invoice sessions must use the selected bill-to party.")
-            reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
+            reasons = invoice_ineligibility_reasons(
+                conn,
+                session,
+                excluding_invoice_ids=_invoice_excluded_session_invoice_ids(conn, invoice_id),
+            )
             if reasons: raise ValueError("Session is not invoice eligible: " + "; ".join(reasons))
             if session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
                 raise ValueError("Session is outside the invoice billing period.")
@@ -1518,7 +1733,8 @@ def _consolidate_duplicate_payer_drafts(conn: sqlite3.Connection) -> int:
         for r_id in redundant_ids:
             # Find draft invoices for the redundant billing party
             r_drafts = conn.execute(
-                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND status = 'draft'",
+                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND status = 'draft' "
+                "AND correction_of_invoice_id IS NULL",
                 (r_id,),
             ).fetchall()
             for r_draft in r_drafts:
@@ -1527,7 +1743,8 @@ def _consolidate_duplicate_payer_drafts(conn: sqlite3.Connection) -> int:
                     continue
                 # Find or create canonical draft for same month
                 canonical_draft = conn.execute(
-                    "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+                    "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? "
+                    "AND status = 'draft' AND correction_of_invoice_id IS NULL",
                     (canonical_id, bm),
                 ).fetchone()
                 if not canonical_draft:
@@ -1586,7 +1803,8 @@ def _find_or_create_monthly_draft(
     Returns (draft_row, created_bool).
     """
     draft = conn.execute(
-        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? "
+        "AND status = 'draft' AND correction_of_invoice_id IS NULL",
         (billing_party_id, billing_month),
     ).fetchone()
     if draft:
@@ -1696,7 +1914,8 @@ def stage_approved_sessions_to_monthly_drafts(
 
     # From existing monthly drafts (to check for stale lines)
     drafts = conn.execute(
-        "SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL"
+        "SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL "
+        "AND correction_of_invoice_id IS NULL"
     ).fetchall()
     for d in drafts:
         groups[(d["bill_to_party_id"], d["billing_month"])] = None
@@ -1717,7 +1936,8 @@ def stage_approved_sessions_to_monthly_drafts(
         try:
             # Look for existing draft without creating one yet
             existing_draft = conn.execute(
-                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? "
+                "AND status = 'draft' AND correction_of_invoice_id IS NULL",
                 (party_id, billing_month),
             ).fetchone()
 
@@ -1870,13 +2090,25 @@ def stage_approved_sessions_to_monthly_drafts(
                     draft_changed = True
 
             if draft_id and draft_changed:
-                _recalculate(conn, draft_id)
-                conn.execute(
-                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
-                    (now_iso(), draft_id),
-                )
-                _audit(conn, "invoice", draft_id, "staging_reconciled",
-                       {"billing_month": billing_month})
+                remaining_lines = conn.execute(
+                    "SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = ?",
+                    (draft_id,),
+                ).fetchone()[0]
+                if remaining_lines == 0:
+                    # A paid-at-session or otherwise ineligible session can
+                    # remove the final draft line.  Keep its payment/receipt
+                    # history, but do not leave a misleading $0 invoice.
+                    conn.execute("DELETE FROM invoices WHERE invoice_id = ? AND status = 'draft'", (draft_id,))
+                    _audit(conn, "invoice", draft_id, "empty_draft_removed_by_staging",
+                           {"billing_month": billing_month})
+                else:
+                    _recalculate(conn, draft_id)
+                    conn.execute(
+                        "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                        (now_iso(), draft_id),
+                    )
+                    _audit(conn, "invoice", draft_id, "staging_reconciled",
+                           {"billing_month": billing_month})
 
             conn.commit()
         except Exception as error:
@@ -2014,7 +2246,11 @@ def validate_invoice_readiness(
         if not session:
             errors.append({"field": "session", "message": f"Source session for {line['service_date']} is missing."})
         else:
-            reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
+            reasons = invoice_ineligibility_reasons(
+                conn,
+                session,
+                excluding_invoice_ids=_invoice_excluded_session_invoice_ids(conn, invoice_id),
+            )
             if reasons:
                 errors.append({
                     "field": "session",
@@ -2109,12 +2345,7 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
     )
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
-    insurance_payload = None
-    if data and data.get("insurance_coding_included"):
-        insurance_payload = {
-            "insurance_coding_included": True,
-            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
-        }
+    finalization_payload = dict(data or {})
     return {
         "invoice": dict(invoice),
         "lines": [dict(line) for line in lines],
@@ -2126,7 +2357,7 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
             [dict(line) for line in lines],
             business_profile=dict(profile) if profile else None,
             billing_party=dict(party) if party else None,
-            insurance_coding_payload=insurance_payload,
+            insurance_coding_payload=finalization_payload,
         ),
         "preview_revision": invoice["revision"],
         "readiness": readiness,
@@ -2226,7 +2457,16 @@ def _time_label(start_at: Any, end_at: Any) -> str:
     return start_label or end_label
 
 
-def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None, insurance_coding_included: bool = False, insurance_diagnosis_code: str = "") -> dict[str, Any]:
+def finalize_invoice(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    *,
+    expected_revision: int | None = None,
+    pdf_root: str | Path | None = None,
+    insurance_coding_included: bool = False,
+    insurance_diagnosis_code: str = "",
+    cancellation_policy_included: bool = False,
+) -> dict[str, Any]:
     existing = conn.execute("SELECT status, pdf_path FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     if not existing:
         raise ValueError("Invoice was not found.")
@@ -2253,11 +2493,24 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         insurance_payload = {
             "insurance_coding_included": insurance_coding_included,
             "insurance_diagnosis_code": insurance_diagnosis_code,
+            "cancellation_policy_included": cancellation_policy_included,
         }
         readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision, insurance_coding_payload=insurance_payload)
         if not readiness["ready"]:
             raise ValueError("; ".join(e["message"] for e in readiness["errors"]))
         invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        correction_parent = None
+        if invoice["correction_of_invoice_id"]:
+            correction_parent = conn.execute(
+                "SELECT * FROM invoices WHERE invoice_id = ?",
+                (invoice["correction_of_invoice_id"],),
+            ).fetchone()
+            if not correction_parent or correction_parent["status"] != "finalized":
+                raise ValueError("The original invoice is no longer available for correction.")
+            if _invoice_has_payment_history(conn, correction_parent["invoice_id"]):
+                raise ValueError(
+                    "This invoice cannot be corrected because payment history is attached to it."
+                )
         lines = invoice_line_rows(conn, invoice_id)
         profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
         party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
@@ -2297,10 +2550,33 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "insurance_ein_snapshot": _present_text(profile["insurance_ein"]) if insurance_coding_included else None,
             "insurance_npi_snapshot": _present_text(profile["insurance_npi"]) if insurance_coding_included else None,
             "insurance_sw_snapshot": _present_text(profile["insurance_sw"]) if insurance_coding_included else None,
+            "cancellation_policy_included": 1 if cancellation_policy_included else 0,
+            "cancellation_policy_text_snapshot": (
+                CANCELLATION_POLICY_TEXT if cancellation_policy_included else None
+            ),
             "status": "finalized", "finalized_at": now, "updated_at": now,
         }
         conn.execute(f"UPDATE invoices SET {', '.join(f'{k} = ?' for k in snapshots)} WHERE invoice_id = ?", (*snapshots.values(), invoice_id))
         _recalculate(conn, invoice_id)
+
+        if correction_parent:
+            correction_reason = str(invoice["correction_reason"] or "Invoice correction").strip()
+            replacement_reason = f"Corrected by replacement invoice {number}: {correction_reason}"
+            cursor = conn.execute(
+                """
+                UPDATE invoices
+                SET status = 'void', void_reason = ?, voided_at = ?, updated_at = ?
+                WHERE invoice_id = ? AND status = 'finalized'
+                """,
+                (replacement_reason, now, now, correction_parent["invoice_id"]),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("The original invoice changed before correction could be completed.")
+            _audit(conn, "invoice", correction_parent["invoice_id"], "replaced_by_invoice", {
+                "replacement_invoice_id": invoice_id,
+                "replacement_invoice_number": number,
+                "reason": correction_reason,
+            })
 
         # Compute the frozen account summary and store it
         account_summary = calculate_invoice_account_summary(conn, invoice_id)
@@ -2319,6 +2595,12 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         checksum = generate_invoice_pdf(frozen["invoice"], frozen["lines"], pdf_path, render_model=frozen["render_model"])
         conn.execute("UPDATE invoices SET pdf_path = ?, pdf_sha256 = ?, updated_at = ? WHERE invoice_id = ?", (str(pdf_path), checksum, now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "finalized", {"invoice_number": number, "pdf_sha256": checksum})
+        if correction_parent:
+            _audit(conn, "invoice", invoice_id, "correction_finalized", {
+                "correction_of_invoice_id": correction_parent["invoice_id"],
+                "original_invoice_number": correction_parent["invoice_number"],
+                "reason": str(invoice["correction_reason"] or "Invoice correction").strip(),
+            })
         conn.commit()
     except Exception:
         conn.rollback()
@@ -2347,6 +2629,16 @@ def void_invoice(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict
     try:
         row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
         if not row or row["status"] != "finalized": raise ValueError("Only a finalized invoice can be voided.")
+        open_correction = conn.execute(
+            """
+            SELECT invoice_id FROM invoices
+            WHERE correction_of_invoice_id = ? AND status = 'draft'
+            LIMIT 1
+            """,
+            (invoice_id,),
+        ).fetchone()
+        if open_correction:
+            raise ValueError("Delete the open correction draft before voiding this invoice.")
         now = now_iso()
         conn.execute("UPDATE invoices SET status = 'void', void_reason = ?, voided_at = ?, updated_at = ? WHERE invoice_id = ?", (reason.strip(), now, now, invoice_id))
         _audit(conn, "invoice", invoice_id, "voided", {"reason": reason.strip(), "invoice_number": row["invoice_number"]})

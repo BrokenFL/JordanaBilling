@@ -650,6 +650,20 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Existing tests**: `test_invoice_lifecycle.py`, `test_payment_and_finalization.py`
 - **Missing contract coverage**: HTTP-level shape
 
+### POST /api/invoices/{id}/correct
+
+- **Handler**: inline in `do_POST`
+- **Service**: `start_invoice_correction(conn, invoice_id, reason)`
+- **Accepted fields**: `reason` (required, non-empty)
+- **Success status**: 200
+- **Success response**: editable correction draft invoice dict linked to the finalized parent
+- **Error status codes**: 400 (invoice must be finalized, payment history blocks correction, or reason is missing)
+- **DB tables**: `invoices` (new draft with `correction_of_invoice_id` and `correction_reason`), `invoice_line_items` (cloned draft lines), `audit_log`
+- **Idempotent**: yes while an open correction draft exists for the parent; the existing draft is returned
+- **Finalization behavior**: the correction draft receives a new number/PDF and the original is atomically marked void; the original snapshots/PDF are preserved
+- **Payment safety**: any allocation history tied to the original invoice lines or source sessions blocks starting or finalizing the correction
+- **Existing tests**: `test_invoice_corrections.py`, `test_write_endpoint_contracts.py`
+
 ### POST /api/invoices/{id}/filing-owner
 
 - **Handler**: inline in `do_POST`
@@ -1262,6 +1276,7 @@ enum-like choices) before the service layer is called.
 - `parse_preview_finalize_request` — POST /api/invoices/{id}/preview-finalize
 - `parse_finalize_invoice_request` — POST /api/invoices/{id}/finalize
 - `parse_void_invoice_request` — POST /api/invoices/{id}/void
+- `parse_correct_invoice_request` — POST /api/invoices/{id}/correct
 - `parse_update_invoice_filing_owner_request` — POST /api/invoices/{id}/filing-owner
 - `parse_document_action_request` — POST /api/invoices/{id}/document-action
 - `parse_print_preview_request` — POST /api/invoices/{id}/print-preview and /draft-pdf

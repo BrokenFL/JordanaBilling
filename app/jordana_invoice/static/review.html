@@ -45,6 +45,7 @@
             <div><strong id="personalAdmin">0</strong><label>Personal/Admin</label></div>
           </div>
         </header>
+        <div id="calendarFreshnessWarning" class="calendar-freshness-warning" role="status" hidden></div>
 
         <section class="review-layout" id="reviewWorkbench">
           <section class="list-pane">
@@ -360,6 +361,10 @@
           <div class="crm-header">
             <div><h2>Sessions</h2><p>Read-only appointment ledger across reviewed and unresolved calendar records.</p></div>
             <div class="crm-tools">
+              <button id="selectAllSessionsBtn" type="button">Select all visible</button>
+              <button id="clearSessionSelectionBtn" type="button">Clear</button>
+              <button id="archiveSelectedSessionsBtn" type="button">Archive selected</button>
+              <button id="restoreSelectedSessionsBtn" type="button" hidden>Restore selected</button>
               <select id="sessionsDateFilter">
                 <option value="rolling_30">Rolling 30 days</option>
                 <option value="this_month">This month</option>
@@ -375,11 +380,16 @@
                 <option value="unpaid">Unpaid</option>
                 <option value="paid_at_session">Paid at time of session</option>
               </select>
+              <select id="sessionsArchiveFilter">
+                <option value="active" selected>Current</option>
+                <option value="archived">Archived</option>
+                <option value="all">All</option>
+              </select>
             </div>
           </div>
           <table class="review-table sessions-table">
             <thead>
-              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Actions</th></tr>
+              <tr><th><span class="sr-only">Select</span></th><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Actions</th></tr>
             </thead>
             <tbody id="sessionsRows"></tbody>
           </table>
@@ -481,6 +491,13 @@
           </div>
           <div id="reportsRefreshMessage" class="settings-message" role="status"></div>
           <div class="reports-error" id="reportsError" hidden></div>
+          <div class="report-card-grid">
+            <div class="report-card">
+              <h3>Support Diagnostics</h3>
+              <p class="report-card-desc">Create a sanitized technical report for troubleshooting. Client names, raw calendar text, invoices, and the database are excluded.</p>
+              <button id="downloadSupportDiagnosticsBtn" class="save">Download Diagnostics JSON</button>
+            </div>
+          </div>
           <div class="report-card-grid" id="reportCardGrid"></div>
           <div class="reports-privacy-note">
             Reports may contain client names, rates, and payment information. Store downloaded files securely.

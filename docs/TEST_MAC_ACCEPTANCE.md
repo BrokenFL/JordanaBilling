@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.22
+### Current Test Build — v0.1.0-test.27
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.22
-- **Python package/application version:** 0.1.0.post22
+- **Release label:** v0.1.0-test.27
+- **Python package/application version:** 0.1.0.post27
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,17 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.22 supersedes test.21 for installation and update testing because it keeps
-future appointments out of Review while ensuring pending sessions use the
-correct confirmed-client rate-card suggestion.
+test.27 supersedes test.26 for installation and update testing. It retains the
+Release 26 reliability safeguards and adds the optional cancellation policy,
+late-cancellation fee approval repair, client rename and merge tools, and the
+controlled invoice correction-and-replacement workflow.
+
+### Billing And Client Improvements In test.27
+
+1. **Optional cancellation policy** — selectable at finalization and rendered as plain text at the bottom of the invoice.
+2. **Late-cancellation billing** — full scheduled fee, custom fee, and waived treatment are available during normal review.
+3. **Client maintenance** — names can be corrected for future and draft billing, and duplicate records can be merged explicitly without rewriting finalized invoices.
+4. **Invoice correction** — finalized invoices use the controlled Correct & Replace Invoice path rather than direct editing.
 
 ### Bug Fixes In test.22
 

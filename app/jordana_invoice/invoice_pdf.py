@@ -283,6 +283,7 @@ def _generate_invoice_pdf_bytes(
         payment_title_style,
     )
     footer.extend(_build_insurance_coding_flowables(render, small))
+    footer.extend(_build_cancellation_policy_flowables(render, small))
     story.append(KeepTogether(footer))
     doc.build(story, canvasmaker=_times_canvasmaker)
     pdf_bytes = buf.getvalue()
@@ -784,6 +785,27 @@ def _build_insurance_coding_flowables(render: dict[str, Any], small_style: Any):
         text = f"{_escape(item['label'])}: {_escape(item['value'])}"
         flowables.append(Paragraph(text, coding_style))
     return flowables
+
+
+def _build_cancellation_policy_flowables(render: dict[str, Any], small_style: Any):
+    """Render the optional policy as plain bottom text without a box or shading."""
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+
+    policy = str(render.get("cancellation_policy") or "").strip()
+    if not policy:
+        return []
+    policy_style = ParagraphStyle(
+        "CancellationPolicy",
+        parent=small_style,
+        fontSize=SMALL_FONT_SIZE,
+        leading=SMALL_LEADING,
+        alignment=TA_LEFT,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    return [Spacer(1, 2 * BODY_LEADING), Paragraph(_escape(policy), policy_style)]
 
 
 def generate_draft_pdf_bytes(

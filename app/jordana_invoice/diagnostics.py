@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import sqlite3
 import subprocess
+import sys
 import threading
+import traceback
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,7 @@ DIAGNOSTIC_AREAS = {
 }
 
 _MAX_EVENTS = 160
+_MAX_PERSISTED_ERRORS = 200
 _RECENT_EVENTS: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 _EVENT_LOCK = threading.Lock()
 _ID_PATTERN = re.compile(
@@ -133,6 +137,7 @@ def record_event(
         entry["message"] = sanitize_text(message)
     with _EVENT_LOCK:
         _RECENT_EVENTS.append(entry)
+        _persist_safe_error_event(entry)
 
 
 def record_http_event(method: str, path: str, status: int, payload: object | None = None) -> None:
@@ -153,10 +158,32 @@ def record_http_event(method: str, path: str, status: int, payload: object | Non
     )
 
 
+def record_exception(error: Exception, *, method: str, path: str) -> None:
+    """Record a privacy-safe failure signature without values, paths, or traceback text."""
+    frames = traceback.extract_tb(error.__traceback__)[-4:]
+    signature = " > ".join(
+        f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
+        for frame in frames
+    )
+    entry = {
+        "timestamp": now_iso(),
+        "area": area_for_path(path),
+        "event": "unhandled_exception",
+        "severity": "error",
+        "method": method,
+        "route": route_template(path),
+        "exception_type": type(error).__name__[:100],
+        "failure_signature": signature[:500],
+    }
+    with _EVENT_LOCK:
+        _RECENT_EVENTS.append(entry)
+        _persist_safe_error_event(entry)
+
+
 def recent_events(area: str) -> dict[str, list[dict[str, Any]]]:
     normalized = normalize_area(area)
     with _EVENT_LOCK:
-        events = list(_RECENT_EVENTS)
+        events = _deduplicate_events(_read_persisted_error_events() + list(_RECENT_EVENTS))
     scoped = [entry for entry in events if entry.get("area") in {normalized, "other"}]
     warnings = [entry for entry in scoped if entry.get("severity") in {"warning", "error"}]
     errors = [entry for entry in scoped if entry.get("severity") == "error"]
@@ -165,6 +192,77 @@ def recent_events(area: str) -> dict[str, list[dict[str, Any]]]:
         "warnings": warnings[-30:],
         "errors": errors[-30:],
     }
+
+
+def _persistent_error_path() -> Path:
+    return diagnostics_dir() / "sanitized-runtime-errors.jsonl"
+
+
+def _safe_persistent_event(entry: dict[str, Any]) -> dict[str, Any] | None:
+    if entry.get("severity") not in {"warning", "error"}:
+        return None
+    safe: dict[str, Any] = {}
+    for key in (
+        "timestamp", "area", "event", "severity", "method", "route",
+        "status", "exception_type", "failure_signature",
+    ):
+        value = entry.get(key)
+        if value is None or value == "":
+            continue
+        safe[key] = value if isinstance(value, int) else sanitize_text(value)
+    return safe
+
+
+def _persist_safe_error_event(entry: dict[str, Any]) -> None:
+    safe = _safe_persistent_event(entry)
+    if not safe:
+        return
+    try:
+        path = _persistent_error_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(path.parent, 0o700)
+        except OSError:
+            pass
+        existing = path.read_text(encoding="utf-8").splitlines()[-(_MAX_PERSISTED_ERRORS - 1):] if path.exists() else []
+        lines = existing + [json.dumps(safe, ensure_ascii=False, sort_keys=True)]
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text("\n".join(lines[-_MAX_PERSISTED_ERRORS:]) + "\n", encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+        os.chmod(path, 0o600)
+    except OSError:
+        return
+
+
+def _read_persisted_error_events() -> list[dict[str, Any]]:
+    try:
+        lines = _persistent_error_path().read_text(encoding="utf-8").splitlines()[-_MAX_PERSISTED_ERRORS:]
+    except OSError:
+        return []
+    events = []
+    for line in lines:
+        try:
+            value = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(value, dict):
+            safe = _safe_persistent_event(value)
+            if safe:
+                events.append(safe)
+    return events
+
+
+def _deduplicate_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result = []
+    for event in events:
+        key = json.dumps(event, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(event)
+    return result
 
 
 def _count_rows(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> int:
@@ -267,6 +365,37 @@ def schema_version_info(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def system_health_summary(conn: sqlite3.Connection, private_terms: list[str]) -> dict[str, Any]:
+    try:
+        quick_check_row = conn.execute("PRAGMA quick_check(1)").fetchone()
+        quick_check = str(quick_check_row[0] if quick_check_row else "unavailable")
+    except sqlite3.Error:
+        quick_check = "unavailable"
+    try:
+        foreign_key_violations = len(conn.execute("PRAGMA foreign_key_check").fetchmany(101))
+        if foreign_key_violations > 100:
+            foreign_key_violations = "100+"
+    except sqlite3.Error:
+        foreign_key_violations = "unavailable"
+    sync = database_activity_summary(conn, "calendar_sync")
+    for source in sync.get("sync_sources", []):
+        source["last_error"] = sanitize_text(source.get("last_error"), private_terms)
+    return {
+        "runtime": {
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "operating_system": platform.system(),
+            "os_release": platform.release(),
+            "architecture": platform.machine(),
+            "sqlite": sqlite3.sqlite_version,
+        },
+        "database": {
+            "quick_check": sanitize_text(quick_check),
+            "foreign_key_violation_count": foreign_key_violations,
+        },
+        "calendar_sync": sync,
+    }
+
+
 def build_info_for_report() -> dict[str, str]:
     info = current_build_info()
     commit = info.get("git_commit") or ""
@@ -345,6 +474,7 @@ def create_issue_report(
             event for event in sanitized_frontend if event.get("severity") == "error"
         ][-20:],
         "database_activity": database_activity_summary(conn, normalized),
+        "system_health": system_health_summary(conn, terms),
         "privacy_exclusions": [
             "client names",
             "clinical information",
@@ -374,7 +504,7 @@ def _sanitize_event_list(events: list[dict[str, Any]], private_terms: list[str])
     sanitized = []
     for event in events:
         clean: dict[str, Any] = {}
-        for key in ("timestamp", "area", "event", "severity", "method", "route", "message"):
+        for key in ("timestamp", "area", "event", "severity", "method", "route", "message", "exception_type", "failure_signature"):
             if key in event:
                 clean[key] = sanitize_text(event.get(key), private_terms)
         if isinstance(event.get("status"), int):

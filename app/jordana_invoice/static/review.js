@@ -71,7 +71,7 @@ const state = {
   detail: null,
   invoice: null,
   eligibleSessions: [],
-  sessions: { items: [], offset: 0, limit: 30, total: 0 },
+  sessions: { items: [], offset: 0, limit: 30, total: 0, selectedIds: new Set() },
   editSteps: { clients: false, session: false },
   settingsSaving: false,
   syncRunning: false,
@@ -514,6 +514,7 @@ async function loadList() {
     limit: state.limit,
     offset: state.offset
   });
+  await api("/api/review/reconcile-calendar", { method: "POST", body: "{}" });
   const data = await api(`/api/review/candidates?${params}`);
   state.items = data.items;
   renderStatus(data.status);
@@ -529,6 +530,11 @@ function renderStatus(s) {
   $("readyApprove").textContent = s.ready_to_approve;
   $("approvedMonth").textContent = s.approved_this_month;
   $("personalAdmin").textContent = s.personal_admin;
+  const freshnessWarning = $("calendarFreshnessWarning");
+  if (freshnessWarning) {
+    freshnessWarning.textContent = s.calendar_sync_warning || "";
+    freshnessWarning.hidden = !s.calendar_sync_stale;
+  }
 }
 
 async function refreshDashboardStatus() {
@@ -597,12 +603,12 @@ function renderInspector(data) {
   const clientsLocked = !readiness.clients_ready;
   const billingLocked = !readiness.clients_ready;
   const sessionLocked = !readiness.clients_ready || !readiness.billing_ready;
-  const currentRate = centString(firstPresent(s.approved_rate_cents, s.suggested_rate_cents));
+  const scheduledRate = centString(firstPresent(s.scheduled_rate_cents, s.suggested_rate_cents, s.approved_rate_cents));
+  const currentRate = centString(firstPresent(s.approved_rate_cents, s.scheduled_rate_cents, s.suggested_rate_cents));
   const suggestedRate = centString(s.suggested_rate_cents);
   const rateChanged = currentRate !== suggestedRate && currentRate !== "";
   const attendanceOutcome = s.appointment_status === "scheduled" ? "completed" : (s.appointment_status || "completed");
   const showCancellation = ["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome);
-  const advancedOpen = attendanceOutcome === "late_cancellation" || safeList(s.fields_requiring_review).includes("billing_treatment") || safeList(s.unresolved_fields).includes("billing_treatment");
   const showSessionSave = !sessionLocked && (!readiness.session_ready || state.dirty.has("session"));
   const showRelationshipSave = !readiness.clients_ready || state.dirty.has("relationship");
   const showBillingSave = !billingLocked && (!readiness.billing_ready || state.dirty.has("billing"));
@@ -655,8 +661,8 @@ function renderInspector(data) {
       ${readiness.clients_ready && !clientsEditing
         ? `<div class="relationship-summary success"><strong>Confirmed</strong><div>${state.participants.map(p => fmt(p.display_name || p.participant_name)).join(", ")}</div></div>`
         : `<div class="chips" id="participantChips"></div>
-           <div class="combobox"><input id="personInput" placeholder="Search or add a client..." list="peopleList"><button class="mini" id="addPerson">+</button></div>
-           <datalist id="peopleList"></datalist>
+           <div class="combobox"><input id="personInput" placeholder="Search or add a client..."><button class="mini" id="addPerson">+</button></div>
+           <div id="personSearchResults" class="person-search-results" hidden></div>
            <div id="personWarning"></div>
            <div id="personEditor" class="drawer" hidden></div>`}
       <div class="inline-actions">
@@ -698,7 +704,9 @@ function renderInspector(data) {
                <label class="field" id="customDurationField" ${(s.duration_choice === "custom" || !["30","60","90","120"].includes(String(s.approved_duration_minutes || s.duration_minutes))) ? "" : "hidden"}>Custom Minutes<input id="customDurationInput" type="number" min="1" value="${escapeAttr(s.custom_duration_minutes || s.approved_duration_minutes || s.duration_minutes || "")}"></label>
                <label class="field" id="customDescField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Description<input id="customDescInput" value="${escapeAttr(s.custom_service_description || "")}"></label>
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
-               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}" data-suggested-rate="${escapeAttr(suggestedRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
+               <label class="field">Attendance Outcome<select id="attendanceOutcomeInput">${attendanceOutcomeOptions(attendanceOutcome)}</select></label>
+               ${showCancellation ? `<label class="field">Cancellation Billing<select id="billingTreatmentInput">${cancellationBillingOptions(s.billing_treatment || "unresolved", attendanceOutcome)}</select></label>` : ""}
+               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}" data-suggested-rate="${escapeAttr(suggestedRate)}" data-scheduled-rate="${escapeAttr(scheduledRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
                <label class="field">Payment Handling<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Invoice billing</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at session</option></select></label>
                <div class="field wide" id="paidAtSessionSection" ${s.payment_status === "paid_at_session" ? "" : "hidden"} style="background: rgba(0,0,0,0.02); padding: 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1); margin-top: 8px;">
                  <h4 style="margin: 0 0 8px 0;">Paid at Session Details</h4>
@@ -710,9 +718,7 @@ function renderInspector(data) {
                    <label class="field">Admin Note<input id="paymentNoteInput" placeholder="Optional" value="${escapeAttr(paidAtSessionPayment?.administrative_note || "")}"></label>
                  </div>
                </div>
-               <details class="field wide" id="advancedReviewDetails" ${advancedOpen ? "open" : ""}><summary>Advanced Review</summary><div class="field-grid">
-                 <label class="field">Attendance Outcome<select id="attendanceOutcomeInput">${attendanceOutcomeOptions(attendanceOutcome)}</select></label>
-                 ${showCancellation ? `<label class="field">Cancellation Billing<select id="billingTreatmentInput">${cancellationBillingOptions(s.billing_treatment || "unresolved", attendanceOutcome)}</select></label>` : ""}
+               <details class="field wide" id="advancedReviewDetails"><summary>Advanced Review</summary><div class="field-grid">
                  <label class="field">Appointment Method<span class="readonly-value">${appointmentMethodLabel(s.appointment_method || s.service_mode)}</span></label>
                </div></details>
                ${rateChanged ? `<label class="field wide">Override Reason<input id="overrideReasonInput" value="${escapeAttr(s.rate_override_reason || "")}"></label>` : ""}
@@ -755,7 +761,7 @@ function renderInspector(data) {
 }
 
 function wireInspector() {
-  if ($("personInput")) $("personInput").addEventListener("input", debounce(async e => fillDatalist("peopleList", await api(`/api/people?q=${encodeURIComponent(e.target.value)}`), "display_name"), 160));
+  if ($("personInput")) $("personInput").addEventListener("input", debounce(e => showPersonSearchResults(e.target.value), 160));
   if ($("addPerson")) $("addPerson").onclick = createPersonFromInput;
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
   if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = saveRelationshipSection;
@@ -826,8 +832,15 @@ function syncSessionCustomFields() {
   if ($("billingTreatmentInput") && attendanceOutcome === "late_cancellation" && !["unresolved", "bill_full_fee", "custom_fee", "waived"].includes($("billingTreatmentInput").value)) {
     $("billingTreatmentInput").value = "unresolved";
   }
-  if ($("approvedRateInput") && attendanceOutcome === "late_cancellation" && billingTreatment === "waived") {
-    $("approvedRateInput").value = "0.00";
+  if ($("approvedRateInput") && attendanceOutcome === "late_cancellation") {
+    const scheduledRate = $("approvedRateInput").dataset.scheduledRate || $("approvedRateInput").dataset.suggestedRate || "";
+    if (billingTreatment === "waived") {
+      $("approvedRateInput").value = "0.00";
+    } else if (billingTreatment === "bill_full_fee" && scheduledRate) {
+      $("approvedRateInput").value = scheduledRate;
+    } else if (billingTreatment === "custom_fee" && parseMoneyToCents($("approvedRateInput").value) === 0 && scheduledRate) {
+      $("approvedRateInput").value = scheduledRate;
+    }
   }
 
   const paymentHandling = $("paymentInput")?.value;
@@ -1126,12 +1139,39 @@ async function createPersonFromInput() {
     markDirty("relationship");
     return;
   }
-  const person = exact;
+  selectExistingPerson(exact);
+}
+
+function selectExistingPerson(person) {
   replaceMatchingProposedParticipant(person);
   $("personInput").value = "";
   renderParticipantChips();
   renderRelationshipEditor(state.detail);
   markDirty("relationship");
+}
+
+async function showPersonSearchResults(value) {
+  const results = $("personSearchResults");
+  const query = String(value || "").trim();
+  if (!results) return;
+  if (!query) {
+    results.hidden = true;
+    results.innerHTML = "";
+    return;
+  }
+  const rows = await api(`/api/people?q=${encodeURIComponent(query)}`);
+  if (!$("personInput") || $("personInput").value.trim() !== query) return;
+  results.innerHTML = rows.slice(0, 8).map(person => `
+    <button type="button" class="person-search-result" data-person-id="${escapeAttr(person.person_id)}">
+      <span>${escapeHtml(person.display_name)}</span><small>${escapeHtml(person.person_code || "Client")}</small>
+    </button>`).join("") || `<div class="person-search-empty">No existing client found. Use + to add this as a new client.</div>`;
+  results.hidden = false;
+  results.querySelectorAll(".person-search-result").forEach(button => {
+    button.onclick = () => {
+      const person = rows.find(row => row.person_id === button.dataset.personId);
+      if (person) selectExistingPerson(person);
+    };
+  });
 }
 
 async function createAccountFromInput() {
@@ -1146,6 +1186,7 @@ function showPersonEditor(index) {
   const p = state.participants[index];
   const split = splitDisplayName(p.display_name || p.participant_name || "");
   const mergeButton = !p.is_proposed && p.person_id ? '<button id="mergePersonBtn">Merge...</button>' : "";
+  const archiveButton = !p.is_proposed && p.person_id ? '<button id="archivePersonBtn" class="danger">Archive Duplicate</button>' : "";
   $("personEditor").hidden = false;
   $("personEditor").innerHTML = `
     <h4>Edit Client</h4>
@@ -1155,7 +1196,7 @@ function showPersonEditor(index) {
       <label class="field">Email<input id="editPersonEmail" value="${escapeAttr(p.billing_email || "")}"></label>
       <label class="field">Phone<input id="editPersonPhone" value="${escapeAttr(p.billing_phone || "")}"></label>
     </div>
-    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}</div>
+    <div class="inline-actions"><button id="savePersonEdit" class="save">Save Client</button><button id="cancelPersonEdit">Cancel</button>${mergeButton}${archiveButton}</div>
   `;
   $("savePersonEdit").onclick = async () => {
     const first = $("editPersonFirst").value.trim();
@@ -1200,6 +1241,21 @@ function showPersonEditor(index) {
     $("personEditor").hidden = true;
     renderParticipantChips();
     markSaved("relationship", "Client merged");
+  };
+  if ($("archivePersonBtn")) $("archivePersonBtn").onclick = async () => {
+    if (!confirm(`Archive ${p.display_name} as an unused duplicate? This will not rewrite approved sessions or delete evidence.`)) return;
+    try {
+      await api(`/api/people/${p.person_id}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Archived unused duplicate from review UI" })
+      });
+      state.participants.splice(index, 1);
+      $("personEditor").hidden = true;
+      renderParticipantChips();
+      markDirty("relationship");
+    } catch (err) {
+      alert(sanitizeUiErrorMessage(err.message, "Could not archive this duplicate client."));
+    }
   };
 }
 
@@ -1258,7 +1314,12 @@ async function openBillingRelationshipEditor() {
 }
 
 async function saveRelationshipSection() {
+  const personField = $("personInput");
+  if (personField && personField.value.trim()) await createPersonFromInput();
   await resolveTypedSelections();
+  if (!collectParticipants().length) {
+    throw new Error("Add or select at least one client before confirming Client(s).");
+  }
   const sessionDraft = collectSessionDraftValues();
   const updated = await api(`/api/review/candidates/${state.selected}/save-relationship`, {
     method: "POST",
@@ -1437,8 +1498,8 @@ function validateCancellationBillingChoice() {
   }
   if (treatment === "custom_fee") {
     const amount = Number(String($("approvedRateInput")?.value || "").replace(/[$,\s]/g, ""));
-    if (!Number.isFinite(amount) || amount < 0) {
-      throw new Error("Enter a valid custom fee amount.");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error("Enter a custom fee greater than $0.00.");
     }
   }
 }
@@ -1491,6 +1552,24 @@ function restoreSessionDraftValues(values) {
 
 async function updateSessionRatePreview() {
   if (!$("sessionRatePreview") || !state.detail?.session?.id) return;
+  const appointmentStatus = $("attendanceOutcomeInput")?.value || state.detail.session.appointment_status || "scheduled";
+  const billingTreatment = $("billingTreatmentInput")?.value || state.detail.session.billing_treatment || "";
+  if (appointmentStatus === "late_cancellation") {
+    const rateInput = $("approvedRateInput");
+    const scheduledRate = rateInput?.dataset.scheduledRate || rateInput?.dataset.suggestedRate || "";
+    if (billingTreatment === "bill_full_fee") {
+      if (rateInput && scheduledRate) rateInput.value = scheduledRate;
+      $("sessionRatePreview").textContent = scheduledRate ? `Full scheduled session fee: $${scheduledRate}` : "The scheduled session fee is not available yet.";
+    } else if (billingTreatment === "custom_fee") {
+      $("sessionRatePreview").textContent = "Enter the custom late-cancellation fee for this session.";
+    } else if (billingTreatment === "waived") {
+      if (rateInput) rateInput.value = "0.00";
+      $("sessionRatePreview").textContent = "Late-cancellation fee waived.";
+    } else {
+      $("sessionRatePreview").textContent = "Choose how to bill this late cancellation.";
+    }
+    return;
+  }
   const participantIds = confirmedSessionClients().map(p => p.person_id).filter(Boolean);
   const billingType = $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy";
   const durationChoice = $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes);
@@ -1499,7 +1578,7 @@ async function updateSessionRatePreview() {
     duration_choice: durationChoice,
     custom_duration_minutes: durationChoice === "custom" ? positiveIntOrNull($("customDurationInput")?.value) : null,
     billing_session_type: billingType,
-    appointment_status: $("attendanceOutcomeInput")?.value || state.detail.session.appointment_status || "scheduled",
+    appointment_status: appointmentStatus,
     custom_service_description: $("customDescInput")?.value || "",
     custom_service_code: $("customCodeInput")?.value || "",
     time_category: timeCategoryForBillingType(billingType, state.detail.session.time_category || "standard"),
@@ -2242,6 +2321,20 @@ function exportIssueReport() {
   setReportIssueStatus(`Exported ${state.diagnostics.filename || "report"}.`, "success");
 }
 
+function downloadDiagnosticReport(result) {
+  const text = result?.report_text || "";
+  if (!text) throw new Error("The diagnostic report was empty.");
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = result.filename || "jordana-support-diagnostics.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function showInvoiceSuccess(message) {
   const view = $("invoicesView");
   if (!view) return;
@@ -2627,6 +2720,7 @@ function renderSessions(rows, total) {
       actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button></td>`;
     return `
     <tr>
+      <td><input type="checkbox" class="session-row-checkbox" data-cid="${escapeAttr(row.candidate_id)}" aria-label="Select ${escapeAttr(row.calendar_title || row.date || "session row")}" ${state.sessions.selectedIds.has(row.candidate_id) ? "checked" : ""}></td>
       <td>${fmt(row.date)}</td>
       <td>${fmt(row.time)}</td>
       <td><span class="primary">${fmt(row.client_participants)}</span></td>
@@ -2637,7 +2731,13 @@ function renderSessions(rows, total) {
       <td>${fmt(row.review_status)}</td>
       ${actionCell}
     </tr>`;
-  }).join("") || `<tr><td colspan="9" class="readonly-note">No appointments found.</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="readonly-note">No appointments found.</td></tr>`;
+  $("sessionsRows").querySelectorAll(".session-row-checkbox").forEach(box => {
+    box.onchange = () => {
+      if (box.checked) state.sessions.selectedIds.add(box.dataset.cid);
+      else state.sessions.selectedIds.delete(box.dataset.cid);
+    };
+  });
   $("sessionsRows").querySelectorAll(".restore-session-btn").forEach(btn => {
     btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
   });
@@ -2752,11 +2852,33 @@ async function loadSessions() {
     date_range: $("sessionsDateFilter").value,
     review_status: $("sessionsReviewStatusFilter").value,
     payment_status: $("sessionsPaymentStatusFilter").value,
+    archive_status: $("sessionsArchiveFilter").value,
     limit: state.sessions.limit,
     offset: state.sessions.offset
   });
   const data = await api(`/api/sessions?${params}`);
+  state.sessions.selectedIds.clear();
+  const archivedView = $("sessionsArchiveFilter").value === "archived";
+  $("archiveSelectedSessionsBtn").hidden = archivedView;
+  $("restoreSelectedSessionsBtn").hidden = !archivedView;
   renderSessions(data.items, data.total);
+}
+
+async function updateSelectedSessionsArchive(archived) {
+  const candidateIds = [...state.sessions.selectedIds];
+  if (!candidateIds.length) return alert("Select at least one row first.");
+  const verb = archived ? "archive" : "restore";
+  if (!confirm(`${archived ? "Archive" : "Restore"} ${candidateIds.length} selected session row(s)? This changes only the Sessions view.`)) return;
+  try {
+    await api(`/api/sessions/${archived ? "archive" : "restore-archive"}`, {
+      method: "POST",
+      body: JSON.stringify({ candidate_ids: candidateIds })
+    });
+    state.sessions.selectedIds.clear();
+    await loadSessions();
+  } catch (err) {
+    alert(sanitizeUiErrorMessage(err.message, `Could not ${verb} the selected session rows.`));
+  }
 }
 
 async function showSessions() {
@@ -3398,6 +3520,7 @@ async function loadReports() {
   const yearSelect = $("reportsYearSelect");
   const generateBtn = $("generateReportsBtn");
   const message = $("reportsRefreshMessage");
+  const diagnosticsBtn = $("downloadSupportDiagnosticsBtn");
   errBox.hidden = true;
   if (message) {
     message.textContent = "";
@@ -3435,6 +3558,33 @@ async function loadReports() {
       window.location.href = `/api/reports/download?type=${type}&year=${year}`;
     };
   });
+  if (diagnosticsBtn) diagnosticsBtn.onclick = async () => {
+    if (diagnosticsBtn.disabled) return;
+    diagnosticsBtn.disabled = true;
+    diagnosticsBtn.textContent = "Creating...";
+    try {
+      const result = await api("/api/diagnostics/report-issue", {
+        method: "POST",
+        body: JSON.stringify({
+          area: currentDiagnosticArea(),
+          description: "On-demand support diagnostics from Reports.",
+          ui_state: collectDiagnosticUiState(),
+          frontend_events: state.diagnostics.events.slice(-80)
+        })
+      });
+      downloadDiagnosticReport(result);
+      if (message) {
+        message.textContent = `Downloaded ${result.filename || "support diagnostics"}.`;
+        message.className = "settings-message success";
+      }
+    } catch (err) {
+      errBox.textContent = sanitizeUiErrorMessage(err.message, "Unable to create support diagnostics.");
+      errBox.hidden = false;
+    } finally {
+      diagnosticsBtn.disabled = false;
+      diagnosticsBtn.textContent = "Download Diagnostics JSON";
+    }
+  };
   if (generateBtn) {
     generateBtn.onclick = async () => {
       if (generateBtn.disabled) return;
@@ -4028,9 +4178,14 @@ async function renderInvoiceEditor(data) {
   }
   ).join("");
   const filingControl = `<label class="field wide">File invoice under<select id="filingOwnerSelect"><option value="">Select filing owner</option>${filingOptions}</select><span class="help">${escapeHtml(filing.message || (filing.selected ? `Resolved from ${String(filing.source || "").replaceAll("_", " ")}.` : "Choose the connected folder owner for the finalized PDF."))}</span></label>`;
+  const correctionParent = i.correction_parent_invoice;
+  const correctionNotice = correctionParent
+    ? `<div class="invoice-correction-note" role="status"><strong>Correction Draft</strong><div>This draft replaces invoice ${escapeHtml(correctionParent.invoice_number || "the finalized invoice")} if you finalize it. The original invoice remains unchanged until then.</div>${i.correction_reason ? `<div class="help">Reason: ${escapeHtml(i.correction_reason)}</div>` : ""}</div>`
+    : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder">
     <button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button>
-    <div class="section-title-row"><h3>Draft Invoice</h3><span class="status-pill">Draft</span></div>
+    <div class="section-title-row"><h3>${correctionParent ? "Correction Draft" : "Draft Invoice"}</h3><span class="status-pill">Draft</span></div>
+    ${correctionNotice}
     <div class="field-grid">
       <label class="field wide">Bill To<select id="editBillTo"><option value="">Select bill-to party</option>${billToOptions}</select><span class="help">Only Bill To choices already tied to this draft's linked sessions are shown.</span></label>
       <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
@@ -4175,7 +4330,7 @@ function buildPreviewSummaryHtml(render, data, invoice) {
   return { rowsHtml: fallbackTotal, noteHtml: "" };
 }
 
-function renderFinalizationPreview(preview, insuranceState) {
+function renderFinalizationPreview(preview, insuranceState, cancellationPolicyIncluded = false) {
   revokeFinalizationPreviewPdfUrl();
   const i = preview.invoice;
   const revision = preview.preview_revision;
@@ -4194,6 +4349,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insuranceEin = escapeHtml(profile.insurance_ein || "");
   const insuranceNpi = escapeHtml(profile.insurance_npi || "");
   const insuranceSw = escapeHtml(profile.insurance_sw || "");
+  const cancellationPolicyChecked = cancellationPolicyIncluded ? "checked" : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill">Draft</span></div>
     <div class="help">Review the invoice below carefully. It uses the same canonical invoice model as the exact PDF and finalization. If the saved draft changes after this preview, finalization will be rejected.</div>
     ${readinessHtml}
@@ -4212,6 +4368,7 @@ function renderFinalizationPreview(preview, insuranceState) {
           <div>SW: ${insuranceSw}</div>
         </div>
       </div>
+      <label class="checkbox-field" style="margin-top:10px;"><input id="cancellationPolicyCheckbox" type="checkbox" ${cancellationPolicyChecked} /><span>Include Cancellation Policy</span></label>
     </div>
     <section class="invoice-html-preview-panel" id="finalizationHtmlPreview" aria-label="Invoice finalization preview">
       ${renderCanonicalInvoicePreview(preview.render_model)}
@@ -4227,6 +4384,7 @@ function renderFinalizationPreview(preview, insuranceState) {
   const insCheckbox = $("insuranceCodingCheckbox");
   const insFields = $("insuranceCodingFields");
   const insDiagnosisInput = $("insuranceDiagnosisCodeInput");
+  const cancellationPolicyCheckbox = $("cancellationPolicyCheckbox");
   const repreviewBtn = $("repreviewBtn");
   document.querySelectorAll("#invoiceWorkspace .return-approved-session-btn").forEach(button => {
     button.onclick = () => returnApprovedSessionToReview(button.dataset.cid, {
@@ -4242,10 +4400,12 @@ function renderFinalizationPreview(preview, insuranceState) {
     refreshFinalizationHtmlPreview();
   };
   if (insDiagnosisInput) insDiagnosisInput.oninput = () => scheduleFinalizationHtmlRefresh();
+  if (cancellationPolicyCheckbox) cancellationPolicyCheckbox.onchange = refreshFinalizationHtmlPreview;
   function collectInsurancePayload() {
     return {
       insurance_coding_included: insCheckbox ? insCheckbox.checked : false,
       insurance_diagnosis_code: insDiagnosisInput ? insDiagnosisInput.value.trim() : "",
+      cancellation_policy_included: cancellationPolicyCheckbox ? cancellationPolicyCheckbox.checked : false,
     };
   }
   function currentInsuranceCodingOverride() {
@@ -4265,7 +4425,12 @@ function renderFinalizationPreview(preview, insuranceState) {
   }
   function refreshFinalizationHtmlPreview() {
     const panel = $("finalizationHtmlPreview");
-    if (panel) panel.innerHTML = renderCanonicalInvoicePreview(preview.render_model, {insuranceCoding: currentInsuranceCodingOverride()});
+    if (panel) panel.innerHTML = renderCanonicalInvoicePreview(preview.render_model, {
+      insuranceCoding: currentInsuranceCodingOverride(),
+      cancellationPolicy: cancellationPolicyCheckbox?.checked
+        ? "Cancellation Policy: Cancellations received less than 24 hours prior to scheduled appointment time are billed at the rate of the full session."
+        : "",
+    });
     revokeFinalizationPreviewPdfUrl();
   }
   async function ensureFinalizationPdfPreviewUrl() {
@@ -4287,7 +4452,12 @@ function renderFinalizationPreview(preview, insuranceState) {
   if (repreviewBtn) repreviewBtn.onclick = async () => {
     try {
       const repreview = await api(`/api/invoices/${i.invoice_id}/preview-finalize`, {method:"POST", body:JSON.stringify(collectInsurancePayload())});
-      renderFinalizationPreview(repreview, {included: collectInsurancePayload().insurance_coding_included, diagnosisCode: collectInsurancePayload().insurance_diagnosis_code});
+      const payload = collectInsurancePayload();
+      renderFinalizationPreview(
+        repreview,
+        {included: payload.insurance_coding_included, diagnosisCode: payload.insurance_diagnosis_code},
+        payload.cancellation_policy_included,
+      );
     } catch (err) {
       errorDiv.textContent = err.message || "Failed to update preview.";
       errorDiv.style.display = "block";
@@ -4311,7 +4481,7 @@ function renderFinalizationPreview(preview, insuranceState) {
     const finalPdfWindow = window.open("about:blank", "_blank");
     try {
       const ins = collectInsurancePayload();
-      const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision, insurance_coding_included:ins.insurance_coding_included, insurance_diagnosis_code:ins.insurance_diagnosis_code})});
+      const final = await api(`/api/invoices/${i.invoice_id}/finalize`, {method:"POST", body:JSON.stringify({confirmed:true, expected_revision:revision, insurance_coding_included:ins.insurance_coding_included, insurance_diagnosis_code:ins.insurance_diagnosis_code, cancellation_policy_included:ins.cancellation_policy_included})});
       state.finalizeInProgress = false;
       state.invoice = final;
       finalizeBtn.disabled = true;
@@ -4411,6 +4581,22 @@ function revokeFinalizationPreviewPdfUrl() {
 function renderInvoicePreview(data) {
   const i = data.invoice;
   const voidHtml = i.status === "void" && i.void_reason ? `<div class="invoice-void-info"><strong>Voided:</strong> ${fmt(i.voided_at)} — ${escapeHtml(i.void_reason)}</div>` : "";
+  const parentCorrectionHtml = i.correction_parent_invoice
+    ? `<div class="invoice-correction-note" role="status"><strong>Replacement Invoice</strong><div>This invoice replaces ${escapeHtml(i.correction_parent_invoice.invoice_number || "the original invoice")}.</div>${i.correction_reason ? `<div class="help">Reason: ${escapeHtml(i.correction_reason)}</div>` : ""}</div>`
+    : "";
+  const replacement = i.replacement_invoice;
+  const replacementHtml = replacement
+    ? `<div class="invoice-correction-note" role="status"><strong>${replacement.status === "draft" ? "Correction Draft In Progress" : "Replaced by a New Invoice"}</strong><div>${replacement.status === "draft" ? "An editable correction draft exists for this invoice." : `Replacement invoice ${escapeHtml(replacement.invoice_number || "") } has been finalized.`}</div></div>`
+    : "";
+  const correctionAvailable = i.status === "finalized" && i.correction_available;
+  const correctionButtonLabel = replacement?.status === "draft" ? "Continue Correction Draft" : "Correct & Replace Invoice";
+  const correctionHtml = correctionAvailable
+    ? `<div id="invoiceCorrectionBox" class="lifecycle-confirm-box" hidden></div><div class="actions"><button id="correctInvoice" class="approve">${correctionButtonLabel}</button><button id="voidInvoice" class="danger">Void Invoice (advanced)</button></div>`
+    : i.status === "finalized" && i.correction_block_reason
+      ? `<div class="invoice-correction-blocked" role="note">${escapeHtml(i.correction_block_reason)}</div><div class="actions"><button id="voidInvoice" class="danger">Void Invoice (advanced)</button></div>`
+      : i.status === "finalized"
+        ? `<div class="actions"><button id="voidInvoice" class="danger">Void Invoice (advanced)</button></div>`
+        : "";
 
   const paidCents = data.current_status ? data.current_status.current_invoice_paid_cents : (i.paid_cents || 0);
   const balanceCents = data.current_status ? data.current_status.current_invoice_balance_cents : (i.balance_cents || 0);
@@ -4434,21 +4620,62 @@ function renderInvoicePreview(data) {
     : "";
   $("invoiceWorkspace").innerHTML = `<div class="invoice-builder"><button type="button" class="side-panel-close" id="closeInvoicePanel">Close</button><div class="section-title-row"><h3>Invoice Preview</h3><span class="status-pill ${escapeAttr(i.status)}">${fmt(i.status)}</span></div>
     ${voidHtml}
+    ${parentCorrectionHtml}
+    ${replacementHtml}
     ${paymentSummaryHtml}
     <div class="relationship-summary"><strong>File invoice under</strong><div>${fmt(filingDisplay || "—")}</div></div>
     <section class="invoice-html-preview-panel" aria-label="Stored invoice preview">
       ${renderCanonicalInvoicePreview(data.render_model)}
     </section>
-    <div class="actions">${i.status === "draft" ? `<button id="returnToDraft">Return to Draft</button>` : ""}${i.status === "finalized" ? `<button id="voidInvoice" class="danger">Void Invoice</button>` : ""}${pdfButtonsHtml}</div></div>`;
+    ${i.status === "draft" ? `<div class="actions"><button id="returnToDraft">Return to Draft</button></div>` : correctionHtml}${pdfButtonsHtml ? `<div class="actions">${pdfButtonsHtml}</div>` : ""}</div>`;
   $("closeInvoicePanel").onclick = closeInvoiceWorkspace;
   activateResponsiveSheet("invoiceWorkspace", closeInvoiceWorkspace);
   revealInlineInvoiceWorkspace();
   if ($("returnToDraft")) $("returnToDraft").onclick = () => renderInvoiceEditor(data);
+  if ($("correctInvoice")) $("correctInvoice").onclick = () => showInvoiceCorrectionDialog(data);
   if ($("voidInvoice")) $("voidInvoice").onclick = async () => { const reason = prompt("Reason for voiding this invoice"); if (!reason) return; const result = await api(`/api/invoices/${i.invoice_id}/void`, {method:"POST", body:JSON.stringify({reason})}); await loadInvoices(); renderInvoicePreview(result); };
   if ($("openPdfBtn")) $("openPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
   if ($("showPdfInFinderBtn")) $("showPdfInFinderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"show_in_finder"})});
   if ($("openClientFolderBtn")) $("openClientFolderBtn").onclick = () => api(`/api/invoices/${i.invoice_id}/document-action`, {method:"POST", body:JSON.stringify({action:"open_client_folder"})});
   if ($("printPdfBtn")) $("printPdfBtn").onclick = () => { openFinalInvoicePdf(i); };
+}
+
+function showInvoiceCorrectionDialog(data) {
+  const invoice = data.invoice;
+  const box = $("invoiceCorrectionBox");
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="lifecycle-confirm-content"><h4>Correct and replace this invoice?</h4><p class="lifecycle-explanation">We’ll create an editable correction draft and leave this finalized invoice unchanged. When the corrected draft is finalized, it will receive a new invoice number and this invoice will be marked void.</p><label class="field wide">Why does it need correction?<input id="invoiceCorrectionReason" type="text" value="Incorrect invoice information" maxlength="500" /></label><div id="invoiceCorrectionError" class="lifecycle-error" role="alert"></div><div class="lifecycle-confirm-actions"><button id="invoiceCorrectionCancel" class="modal-back" type="button">Cancel</button><button id="invoiceCorrectionConfirm" class="save" type="button">Create Correction Draft</button></div></div>`;
+  const reasonInput = $("invoiceCorrectionReason");
+  const error = $("invoiceCorrectionError");
+  const cancel = $("invoiceCorrectionCancel");
+  const confirmButton = $("invoiceCorrectionConfirm");
+  const close = () => { box.hidden = true; box.innerHTML = ""; };
+  cancel.onclick = close;
+  reasonInput.focus();
+  reasonInput.select();
+  confirmButton.onclick = async () => {
+    const reason = reasonInput.value.trim();
+    if (!reason) {
+      error.textContent = "Enter a reason before creating the correction draft.";
+      reasonInput.focus();
+      return;
+    }
+    confirmButton.disabled = true;
+    cancel.disabled = true;
+    error.textContent = "";
+    try {
+      const draft = await api(`/api/invoices/${invoice.invoice_id}/correct`, {method:"POST", body:JSON.stringify({reason})});
+      close();
+      await loadInvoices();
+      await renderInvoiceEditor(draft);
+      showInvoiceSuccess("Correction draft created. The original invoice remains unchanged until finalization.");
+    } catch (err) {
+      error.textContent = err.message || "Could not create the correction draft.";
+      confirmButton.disabled = false;
+      cancel.disabled = false;
+    }
+  };
 }
 
 function finalInvoicePdfUrl(invoice) {
@@ -4471,6 +4698,7 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
   const lines = model.lines || [];
   const summary = model.account_summary || null;
   const insuranceCoding = options.insuranceCoding !== undefined ? options.insuranceCoding : model.insurance_coding;
+  const cancellationPolicy = options.cancellationPolicy !== undefined ? options.cancellationPolicy : model.cancellation_policy;
   const summaryRows = summary
     ? `
       <tr><td colspan="4">Current Charges</td><td>${fmt(summary.current_invoice_total_display)}</td></tr>
@@ -4486,6 +4714,9 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
     : "";
   const insuranceHtml = insuranceCoding
     ? `<div class="invoice-preview-insurance">${insuranceCoding.map(item => `<div>${fmt(item.label)}: ${fmt(item.value)}</div>`).join("")}</div>`
+    : "";
+  const cancellationPolicyHtml = cancellationPolicy
+    ? `<div class="invoice-preview-cancellation-policy">${fmt(cancellationPolicy)}</div>`
     : "";
   return `
     <article class="invoice-preview canonical-invoice-preview">
@@ -4514,6 +4745,7 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
       </footer>
       ${insuranceHtml}
       ${model.notes ? `<div class="notes"><strong>Notes:</strong> ${fmt(model.notes)}</div>` : ""}
+      ${cancellationPolicyHtml}
     </article>
   `;
 }
@@ -4535,7 +4767,7 @@ $("invoiceNextPage").onclick = () => {
   const lib = state.invoiceLibrary;
   if (lib.offset + lib.limit < lib.total) { lib.offset += lib.limit; loadInvoices(); }
 };
-["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter"].forEach(id => $(id).addEventListener("input", () => {
+["sessionsDateFilter","sessionsReviewStatusFilter","sessionsPaymentStatusFilter","sessionsArchiveFilter"].forEach(id => $(id).addEventListener("input", () => {
   state.sessions.offset = 0;
   loadSessions();
 }));
@@ -4543,6 +4775,16 @@ $("sessionsPrevPage").onclick = () => {
   state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
   loadSessions();
 };
+$("selectAllSessionsBtn").onclick = () => {
+  state.sessions.items.forEach(row => state.sessions.selectedIds.add(row.candidate_id));
+  renderSessions(state.sessions.items, state.sessions.total);
+};
+$("clearSessionSelectionBtn").onclick = () => {
+  state.sessions.selectedIds.clear();
+  renderSessions(state.sessions.items, state.sessions.total);
+};
+$("archiveSelectedSessionsBtn").onclick = () => updateSelectedSessionsArchive(true);
+$("restoreSelectedSessionsBtn").onclick = () => updateSelectedSessionsArchive(false);
 $("sessionsNextPage").onclick = () => {
   state.sessions.offset += state.sessions.limit;
   loadSessions();
@@ -6613,6 +6855,8 @@ async function openPersonRecord(personId, options = {}) {
           <label class="field">Status<input value="${escapeAttr(data.person.active_status || "")}" readonly></label>
           <label class="field wide">Administrative Notes<input id="recordPersonNotes" value="${escapeAttr(data.person.administrative_notes || "")}"></label>
         </div>
+        <div class="readonly-note">Name changes apply to future billing and editable drafts. Finalized invoices keep their original historical name.</div>
+        <div id="personRecordMessage" class="billing-setup-message"></div>
         <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
       </section>
 
@@ -6680,6 +6924,8 @@ async function openPersonRecord(personId, options = {}) {
           <div class="compact-list">${data.aliases.map(a => `<div class="compact-list-item"><span>${fmt(a.raw_alias)} • ${a.approved_by_user ? "approved" : "inactive"}</span><button class="mini" data-alias-id="${escapeAttr(a.alias_id)}" data-raw-alias="${escapeAttr(a.raw_alias || "")}" data-approved="${a.approved_by_user ? "1" : "0"}">${a.approved_by_user ? "Deactivate" : "Inactive"}</button></div>`).join("") || "<span class='readonly-note'>No aliases yet.</span>"}</div>
           <h4>Audit History</h4>
           <div class="compact-list">${(data.audit || []).map(entry => `<div class="compact-list-item"><span>${fmt(entry.created_at)} • ${escapeHtml(entry.action || "")}</span></div>`).join("") || "<span class='readonly-note'>No audit history yet.</span>"}</div>
+          ${data.person.active ? `<h4>Duplicate Cleanup</h4><div class="readonly-note">Archive is available only after sessions and active billing relationships have been reassigned. Historical evidence is retained.</div><div class="record-actions"><button id="archivePersonRecord" class="danger">Archive Unused Duplicate</button></div>` : ""}
+          ${data.person.active ? `<div class="duplicate-merge-panel"><h4>Merge This Duplicate Into Another Client</h4><div class="readonly-note">Choose the client record to keep. Sessions, billing relationships, aliases, and future billing move to that client. Finalized invoice names and PDFs remain frozen.</div><div class="combobox"><input id="recordMergeSearch" placeholder="Search for the client record to keep"><button class="mini" id="recordMergeSearchBtn">Search</button></div><div id="recordMergeResults" class="compact-list"></div></div>` : ""}
         </div>
       </details>
     </div>
@@ -6713,19 +6959,83 @@ async function openPersonRecord(personId, options = {}) {
     };
   });
   if ($("toggleAllSessions")) $("toggleAllSessions").onclick = async () => openPersonRecord(personId, { showAllSessions: !showAllSessions });
+  if ($("archivePersonRecord")) $("archivePersonRecord").onclick = async () => {
+    const button = $("archivePersonRecord");
+    const existing = $("archivePersonConfirm");
+    if (existing) existing.remove();
+    const box = document.createElement("div");
+    box.id = "archivePersonConfirm";
+    box.className = "lifecycle-confirm-box";
+    box.innerHTML = `<p>Archive ${fmt(data.person.display_name)} as an unused duplicate? No records will be deleted.</p><div class="wizard-confirm-actions"><button type="button" id="archivePersonNo" class="modal-cancel">Cancel</button><button type="button" id="archivePersonYes" class="modal-submit">Archive</button></div><div id="archivePersonError" class="lifecycle-error"></div>`;
+    button.closest(".record-actions")?.before(box);
+    $("archivePersonNo").onclick = () => box.remove();
+    $("archivePersonYes").onclick = async () => {
+      try {
+        await api(`/api/people/${personId}/archive`, {
+          method: "POST",
+          body: JSON.stringify({ reason: "Archived unused duplicate from client record" })
+        });
+        location.hash = "people";
+        await showPeople();
+      } catch (err) {
+        $("archivePersonError").textContent = sanitizeUiErrorMessage(err.message, "Could not archive this duplicate client.");
+      }
+    };
+  };
+  if ($("recordMergeSearchBtn")) $("recordMergeSearchBtn").onclick = async () => {
+    const query = $("recordMergeSearch").value.trim();
+    const results = $("recordMergeResults");
+    if (!query) {
+      results.innerHTML = `<span class="readonly-note">Enter a client name to search.</span>`;
+      return;
+    }
+    const rows = (await api(`/api/people?q=${encodeURIComponent(query)}`)).filter(row => row.person_id !== personId);
+    results.innerHTML = rows.length
+      ? rows.map(row => `<div class="compact-list-item"><span>${fmt(row.display_name)}${row.person_code ? ` • ${fmt(row.person_code)}` : ""}</span><button class="mini" data-merge-survivor="${escapeAttr(row.person_id)}" data-merge-survivor-name="${escapeAttr(row.display_name)}">Keep This Record</button></div>`).join("")
+      : `<span class="readonly-note">No other active clients matched that search.</span>`;
+    document.querySelectorAll("[data-merge-survivor]").forEach(button => {
+      button.onclick = async () => {
+        const survivorName = button.dataset.mergeSurvivorName || "the selected client";
+        const survivorId = button.dataset.mergeSurvivor;
+        results.innerHTML = `<div class="lifecycle-confirm-box"><p>Merge ${fmt(data.person.display_name)} into ${fmt(survivorName)}? ${fmt(survivorName)} will be kept. Finalized invoices will not change.</p><div class="wizard-confirm-actions"><button type="button" id="recordMergeCancel" class="modal-cancel">Cancel</button><button type="button" id="recordMergeConfirm" class="modal-submit">Merge Clients</button></div><div id="recordMergeError" class="lifecycle-error"></div></div>`;
+        $("recordMergeCancel").onclick = () => { results.innerHTML = ""; $("recordMergeSearch").focus(); };
+        $("recordMergeConfirm").onclick = async () => {
+          $("recordMergeConfirm").disabled = true;
+          try {
+            const merged = await api(`/api/people/${survivorId}/merge`, {
+              method: "POST",
+              body: JSON.stringify({duplicate_person_id: personId, reason: "Merged from client record duplicate cleanup"}),
+            });
+            location.hash = `people/${merged.person_id}`;
+            await openPersonRecord(merged.person_id);
+            await loadPeople();
+          } catch (err) {
+            $("recordMergeError").textContent = sanitizeUiErrorMessage(err.message, "Could not merge these client records.");
+            $("recordMergeConfirm").disabled = false;
+          }
+        };
+      };
+    });
+  };
   $("savePersonRecord").onclick = async () => {
-    await api(`/api/people/${personId}`, { method: "POST", body: JSON.stringify({
-      first_name: $("recordFirstName").value,
-      last_name: $("recordLastName").value,
-      preferred_name: $("recordPreferredName").value,
-      display_name: $("recordDisplayName").value,
-      billing_email: $("recordPersonEmail").value,
-      billing_phone: $("recordPersonPhone").value,
-      administrative_notes: $("recordPersonNotes").value,
-      active: true
-    }) });
-    await openPersonRecord(personId);
-    await loadPeople();
+    const message = $("personRecordMessage");
+    try {
+      await api(`/api/people/${personId}`, { method: "POST", body: JSON.stringify({
+        first_name: $("recordFirstName").value,
+        last_name: $("recordLastName").value,
+        preferred_name: $("recordPreferredName").value,
+        display_name: $("recordDisplayName").value,
+        billing_email: $("recordPersonEmail").value,
+        billing_phone: $("recordPersonPhone").value,
+        administrative_notes: $("recordPersonNotes").value,
+        active: true
+      }) });
+      await openPersonRecord(personId);
+      await loadPeople();
+    } catch (err) {
+      message.textContent = sanitizeUiErrorMessage(err.message, "Could not save this client.");
+      message.className = "billing-setup-message error";
+    }
   };
   if ($("savePersonRateRule")) $("savePersonRateRule").onclick = async () => {
     const btn = $("savePersonRateRule");

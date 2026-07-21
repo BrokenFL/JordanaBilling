@@ -173,6 +173,24 @@ def display_invoice_number(invoice_number: Any, status: Any) -> str:
     return ""
 
 
+CANCELLATION_POLICY_TEXT = (
+    "Cancellation Policy: Cancellations received less than 24 hours prior to "
+    "scheduled appointment time are billed at the rate of the full session."
+)
+
+
+def _build_cancellation_policy(
+    invoice: dict[str, Any],
+    finalization_payload: dict[str, Any] | None,
+) -> str | None:
+    if str(invoice.get("status") or "") in ("finalized", "void"):
+        if not int(invoice.get("cancellation_policy_included") or 0):
+            return None
+        return str(invoice.get("cancellation_policy_text_snapshot") or "").strip() or None
+    payload = finalization_payload or {}
+    return CANCELLATION_POLICY_TEXT if payload.get("cancellation_policy_included") else None
+
+
 def _build_insurance_coding(
     invoice: dict[str, Any],
     profile: dict[str, Any],
@@ -335,6 +353,7 @@ def build_invoice_render_model(
         }
 
     insurance_coding = _build_insurance_coding(invoice, profile, insurance_coding_payload)
+    cancellation_policy = _build_cancellation_policy(invoice, insurance_coding_payload)
 
     return {
         "logo_path": logo_path,
@@ -369,6 +388,7 @@ def build_invoice_render_model(
         "total_display": money(invoice.get("total_cents")),
         "account_summary": summary_model,
         "insurance_coding": insurance_coding,
+        "cancellation_policy": cancellation_policy,
     }
 
 
@@ -425,6 +445,10 @@ def build_print_preview_html(
             for item in insurance_coding
         )
         insurance_html = f'<div class="insurance-coding">{insurance_lines_html}</div>'
+    policy_html = (
+        f'<div class="cancellation-policy">{_esc(render.get("cancellation_policy"))}</div>'
+        if render.get("cancellation_policy") else ""
+    )
 
     summary_rows_html = ""
     prior_note_html = ""
@@ -516,6 +540,7 @@ def build_print_preview_html(
   .insurance-coding {{ margin-top: 14px; font-size: 9pt; line-height: 1.3; }}
   .insurance-coding div {{ margin: 0; padding: 0; }}
   .notes {{ margin-top: 14px; font-size: 9pt; }}
+  .cancellation-policy {{ margin-top: 14px; font-size: 9pt; line-height: 1.35; }}
   @media print {{ .print-btn-row, .draft-banner {{ display: none; }} .draft-watermark {{ color: rgba(200,80,80,0.08); }} }}
 </style></head><body>
   <div class="draft-banner">DRAFT — NOT FINAL</div>
@@ -540,4 +565,5 @@ def build_print_preview_html(
   </div>
   {insurance_html}
   {notes_html}
+  {policy_html}
 </body></html>"""

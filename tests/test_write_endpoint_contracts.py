@@ -694,6 +694,48 @@ class TestVoidInvoiceContract(WriteEndpointContractTestBase):
         self.assertEqual(captured["payload"]["error"], "A void reason is required.")
 
 
+class TestCorrectInvoiceContract(WriteEndpointContractTestBase):
+    def _finalized_invoice_for_correction(self, key="correct-1", day=10):
+        self._approved_session(key, day=day)
+        self._post("/api/invoices/stage", {})
+        invoice_id = self.conn.execute(
+            "SELECT invoice_id FROM invoices WHERE status = 'draft' LIMIT 1"
+        ).fetchone()[0]
+        self._post(
+            f"/api/invoices/{invoice_id}/filing-owner",
+            {"person_id": self.person["person_id"]},
+        )
+        result = finalize_invoice(
+            self.conn,
+            invoice_id,
+            pdf_root=self.root / "Invoices",
+        )
+        return result["invoice"]["invoice_id"]
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_correct_creates_correction_draft(self, fake_pdf):
+        fake_pdf.return_value = "c" * 64
+        invoice_id = self._finalized_invoice_for_correction("correct-1", day=10)
+
+        _, captured = self._post(
+            f"/api/invoices/{invoice_id}/correct",
+            {"reason": "Incorrect invoice information"},
+        )
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["invoice"]["status"], "draft")
+        self.assertEqual(captured["payload"]["invoice"]["correction_of_invoice_id"], invoice_id)
+
+    def test_correct_requires_reason(self):
+        _, captured = self._post(
+            "/api/invoices/invoice-not-used/correct",
+            {"reason": ""},
+        )
+
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["payload"]["error"], "reason must not be empty.")
+
+
 # ---------------------------------------------------------------------------
 # 7. Payments
 # ---------------------------------------------------------------------------

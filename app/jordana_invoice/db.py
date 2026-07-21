@@ -351,6 +351,8 @@ CREATE TABLE IF NOT EXISTS calendar_event_candidates (
   calendar_is_preferred_work INTEGER NOT NULL DEFAULT 0,
   hidden_from_review INTEGER NOT NULL DEFAULT 0,
   reconciliation_status TEXT,
+  sessions_archived_at TEXT,
+  sessions_archive_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(import_run_id, candidate_key)
@@ -361,6 +363,9 @@ CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_candidate_key
 
 CREATE INDEX IF NOT EXISTS idx_calendar_event_candidates_calendar_filter
   ON calendar_event_candidates(calendar_disposition, hidden_from_review, calendar_name);
+
+CREATE INDEX IF NOT EXISTS idx_candidates_sessions_archive
+  ON calendar_event_candidates(sessions_archived_at);
 
 CREATE TABLE IF NOT EXISTS candidate_identity_aliases (
   alias_id TEXT PRIMARY KEY,
@@ -800,6 +805,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   insurance_ein_snapshot TEXT,
   insurance_npi_snapshot TEXT,
   insurance_sw_snapshot TEXT,
+  cancellation_policy_included INTEGER NOT NULL DEFAULT 0,
+  cancellation_policy_text_snapshot TEXT,
   notes TEXT,
   void_reason TEXT,
   pdf_path TEXT,
@@ -811,7 +818,9 @@ CREATE TABLE IF NOT EXISTS invoices (
   updated_at TEXT NOT NULL,
   finalized_at TEXT,
   voided_at TEXT,
-  account_summary_snapshot TEXT
+  account_summary_snapshot TEXT,
+  correction_of_invoice_id TEXT REFERENCES invoices(invoice_id),
+  correction_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_invoices_status_date
@@ -845,7 +854,15 @@ CREATE INDEX IF NOT EXISTS idx_payment_receipts_filing_owner
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_draft_party_month
   ON invoices(bill_to_party_id, billing_month)
-  WHERE status = 'draft' AND billing_month IS NOT NULL;
+  WHERE status = 'draft' AND billing_month IS NOT NULL
+    AND correction_of_invoice_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_open_correction
+  ON invoices(correction_of_invoice_id)
+  WHERE status = 'draft' AND correction_of_invoice_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_invoices_correction_of
+  ON invoices(correction_of_invoice_id, status);
 
 CREATE TABLE IF NOT EXISTS invoice_line_items (
   invoice_line_item_id TEXT PRIMARY KEY,
@@ -1570,6 +1587,9 @@ MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET = "017_relationship_filing_owner_
 
 
 MIGRATION_018_DELIVERY_CONTACT_PERSON = "018_delivery_contact_person"
+MIGRATION_019_SESSION_LEDGER_ARCHIVE = "019_session_ledger_archive"
+MIGRATION_020_INVOICE_CORRECTIONS = "020_invoice_corrections"
+MIGRATION_021_CANCELLATION_POLICY = "021_cancellation_policy"
 
 
 def _apply_migration_017(conn: sqlite3.Connection) -> None:
@@ -1612,6 +1632,47 @@ def _apply_migration_018(conn: sqlite3.Connection) -> None:
     )
 
 
+def _apply_migration_019(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "calendar_event_candidates", {
+        "sessions_archived_at": "TEXT",
+        "sessions_archive_reason": "TEXT",
+    })
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_candidates_sessions_archive"
+        " ON calendar_event_candidates(sessions_archived_at)"
+    )
+
+
+def _apply_migration_020(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "invoices", {
+        "correction_of_invoice_id": "TEXT REFERENCES invoices(invoice_id)",
+        "correction_reason": "TEXT",
+    })
+    conn.execute("DROP INDEX IF EXISTS idx_invoices_draft_party_month")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_draft_party_month "
+        "ON invoices(bill_to_party_id, billing_month) "
+        "WHERE status = 'draft' AND billing_month IS NOT NULL "
+        "AND correction_of_invoice_id IS NULL"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_open_correction "
+        "ON invoices(correction_of_invoice_id) "
+        "WHERE status = 'draft' AND correction_of_invoice_id IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invoices_correction_of "
+        "ON invoices(correction_of_invoice_id, status)"
+    )
+
+
+def _apply_migration_021(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "invoices", {
+        "cancellation_policy_included": "INTEGER NOT NULL DEFAULT 0",
+        "cancellation_policy_text_snapshot": "TEXT",
+    })
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1631,6 +1692,9 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_016_LATE_CANCELLATION_BILLING, _apply_migration_016),
     (MIGRATION_017_RELATIONSHIP_FILING_OWNER_TARGET, _apply_migration_017),
     (MIGRATION_018_DELIVERY_CONTACT_PERSON, _apply_migration_018),
+    (MIGRATION_019_SESSION_LEDGER_ARCHIVE, _apply_migration_019),
+    (MIGRATION_020_INVOICE_CORRECTIONS, _apply_migration_020),
+    (MIGRATION_021_CANCELLATION_POLICY, _apply_migration_021),
 ]
 
 
@@ -1931,6 +1995,8 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "insurance_ein_snapshot": "TEXT",
             "insurance_npi_snapshot": "TEXT",
             "insurance_sw_snapshot": "TEXT",
+            "cancellation_policy_included": "INTEGER NOT NULL DEFAULT 0",
+            "cancellation_policy_text_snapshot": "TEXT",
         },
     )
     conn.execute(

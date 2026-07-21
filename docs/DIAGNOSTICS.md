@@ -12,6 +12,9 @@ database or generated customer documents.
 4. Click **Create Report**.
 5. Use **Copy Report** or **Export Report**.
 
+The Reports workspace also offers **Download Diagnostics JSON** for an
+on-demand support report without opening the issue-description dialog.
+
 Reports are saved locally under:
 
 ```text
@@ -30,8 +33,13 @@ Each report includes:
 - current UI filters and selection-presence flags
 - recent frontend API/UI events
 - recent sanitized backend HTTP/sync events
+- up to 200 rotating sanitized warning/error fingerprints retained across app restarts
 - recent warnings and errors
+- privacy-safe unexpected-error fingerprints containing exception type and only
+  source filename, function, and line number (never values or full paths)
 - selected-module database activity summaries using counts and aggregate totals only
+- Python, operating-system, architecture, SQLite, database quick-check, foreign-key count,
+  and sanitized calendar-sync health
 - timestamps
 
 ## Privacy Boundary
@@ -48,8 +56,12 @@ Reports must not include:
 - real diagnosis codes
 
 The diagnostic service uses aggregate database queries and rolling in-memory
-events rather than audit-log payload dumps. It does not add a schema migration
-and does not write to operational billing tables.
+events rather than audit-log payload dumps. Warning/error history is also kept
+in `sanitized-runtime-errors.jsonl` with permissions `600`; it contains only
+timestamps, route templates, status codes, exception types, and safe source
+signatures. Messages and business values are never persisted. A database backup
+is deliberately not bundled; database export remains a separate, explicit
+backup action.
 
 ## Endpoint
 

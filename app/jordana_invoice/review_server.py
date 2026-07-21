@@ -29,6 +29,8 @@ from .google_sync import (
 )
 from .review_services import (
     add_account_member,
+    archive_already_classified_personal_admin,
+    archive_person,
     analyze_billing_relationship_duplicates,
     approve_candidate,
     BillingPartyNotFoundError,
@@ -72,6 +74,7 @@ from .review_services import (
     save_person_section,
     save_relationship_section,
     save_session_draft,
+    set_sessions_archive_state,
     search_accounts,
     search_billing_parties,
     search_organization_billing_parties,
@@ -87,6 +90,7 @@ from .review_services import (
 from .invoice_services import (
     add_sessions_to_draft,
     create_invoice_draft,
+    start_invoice_correction,
     delete_invoice_draft,
     eligible_sessions,
     finalize_invoice,
@@ -169,6 +173,7 @@ from .request_validation import (
     parse_replace_rate_rule_request,
     parse_end_rate_rule_request,
     parse_create_invoice_draft_request,
+    parse_correct_invoice_request,
     parse_stage_invoices_request,
     parse_update_invoice_draft_request,
     parse_update_invoice_line_item_request,
@@ -192,6 +197,7 @@ from .request_validation import (
 from .diagnostics import (
     create_issue_report,
     record_event as record_diagnostic_event,
+    record_exception as record_diagnostic_exception,
     record_http_event,
 )
 
@@ -396,6 +402,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Display name is required.",
             "Cannot merge a person into itself.",
             "Both people must exist before merging.",
+            "An active client with this name already exists. Use that client or resolve the duplicate explicitly.",
             "First and last name are required before assigning a person code.",
             # Business Profile
             "Business name is required.",
@@ -414,6 +421,12 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Invoice line was not found.",
             "A void reason is required.",
             "Only a finalized invoice can be voided.",
+            "A correction reason is required.",
+            "Only a finalized invoice can be corrected.",
+            "This invoice cannot be corrected because payment history is attached to it.",
+            "The original invoice is no longer available for correction.",
+            "The original invoice changed before correction could be completed.",
+            "Delete the open correction draft before voiding this invoice.",
             "Only a draft invoice can be changed.",
             "supplement_sequence cannot be negative.",
             "Description must be non-empty.",
@@ -642,6 +655,11 @@ def make_handler(
             else:
                 status = default_status
                 msg = "An unexpected error occurred."
+                record_diagnostic_exception(
+                    error,
+                    method=getattr(self, "command", ""),
+                    path=getattr(self, "path", ""),
+                )
             self.send_json({"ok": False, "error": msg}, status=status)
 
         def do_GET(self) -> None:
@@ -771,6 +789,7 @@ def make_handler(
                             date_range=first(query, "date_range") or "rolling_30",
                             review_status=first(query, "review_status"),
                             payment_status=first(query, "payment_status"),
+                            archive_status=first(query, "archive_status") or "active",
                             limit=int(first(query, "limit") or 30),
                             offset=int(first(query, "offset") or 0),
                         )
@@ -912,18 +931,12 @@ def make_handler(
                     if data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Finalization PDF preview is only available for draft invoices."}, status=400)
                         return
-                    insurance_payload = None
-                    if preview_payload.get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": preview_payload.get("insurance_diagnosis_code") or "",
-                        }
                     render_model = build_invoice_render_model(
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
                         account_summary=(data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=preview_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         data["invoice"], data["lines"],
@@ -1025,18 +1038,13 @@ def make_handler(
                         self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
                         return
                     req = parse_print_preview_request(data)
-                    insurance_payload = None
-                    if req.to_payload().get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
-                        }
+                    finalization_payload = req.to_payload()
                     html = build_print_preview_html(
                         inv_data["invoice"], inv_data["lines"],
                         business_profile=inv_data.get("business_profile"),
                         billing_party=inv_data.get("billing_party"),
                         account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=finalization_payload,
                     )
                     body = html.encode("utf-8")
                     self.send_response(200)
@@ -1053,18 +1061,13 @@ def make_handler(
                         self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
                         return
                     req = parse_print_preview_request(data)
-                    insurance_payload = None
-                    if req.to_payload().get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
-                        }
+                    finalization_payload = req.to_payload()
                     render_model = build_invoice_render_model(
                         inv_data["invoice"], inv_data["lines"],
                         business_profile=inv_data.get("business_profile"),
                         billing_party=inv_data.get("billing_party"),
                         account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=finalization_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         inv_data["invoice"], inv_data["lines"],
@@ -1094,6 +1097,29 @@ def make_handler(
                     req = parse_create_person_request(data)
                     self.send_json(create_person(self.conn(), req.to_payload()))
                     return
+                if parsed.path == "/api/review/archive-personal-admin":
+                    self.send_json(archive_already_classified_personal_admin(self.conn()))
+                    return
+                if parsed.path == "/api/sessions/archive":
+                    candidate_ids = data.get("candidate_ids")
+                    if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
+                        raise ValueError("candidate_ids must be a list of session row IDs.")
+                    self.send_json(set_sessions_archive_state(self.conn(), candidate_ids, archived=True))
+                    return
+                if parsed.path == "/api/sessions/restore-archive":
+                    candidate_ids = data.get("candidate_ids")
+                    if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
+                        raise ValueError("candidate_ids must be a list of session row IDs.")
+                    self.send_json(set_sessions_archive_state(self.conn(), candidate_ids, archived=False))
+                    return
+                if parsed.path == "/api/review/reconcile-calendar":
+                    from .importer import suppress_pending_events_missing_from_newest_covering_snapshot
+
+                    conn = self.conn()
+                    changed = suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    conn.commit()
+                    self.send_json({"reconciled": changed})
+                    return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/aliases"):
                     person_id = parsed.path.strip("/").split("/")[2]
                     req = parse_save_person_alias_request(data)
@@ -1118,6 +1144,10 @@ def make_handler(
                             req.reason,
                         )
                     )
+                    return
+                if parsed.path.startswith("/api/people/") and parsed.path.endswith("/archive"):
+                    person_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(archive_person(self.conn(), person_id, data.get("reason") or ""))
                     return
                 if parsed.path.startswith("/api/people/"):
                     person_id = parsed.path.rsplit("/", 1)[-1]
@@ -1419,6 +1449,7 @@ def make_handler(
                             expected_revision=req.to_payload().get("expected_revision"),
                             insurance_coding_included=bool(req.to_payload().get("insurance_coding_included")),
                             insurance_diagnosis_code=str(req.to_payload().get("insurance_diagnosis_code") or ""),
+                            cancellation_policy_included=bool(req.to_payload().get("cancellation_policy_included")),
                         ))
                         return
                     if action == "filing-owner":
@@ -1439,6 +1470,10 @@ def make_handler(
                     if action == "void":
                         req = parse_void_invoice_request(data)
                         self.send_json(void_invoice(self.conn(), invoice_id, req.reason))
+                        return
+                    if action == "correct":
+                        req = parse_correct_invoice_request(data)
+                        self.send_json(start_invoice_correction(self.conn(), invoice_id, req.reason))
                         return
                     req = parse_update_invoice_draft_request(data)
                     self.send_json(update_invoice_draft(self.conn(), invoice_id, req.to_payload()))

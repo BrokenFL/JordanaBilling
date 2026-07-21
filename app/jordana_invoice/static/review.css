@@ -61,6 +61,16 @@ nav button.nav-quit { margin-top: 8px; border: 1px solid rgba(255,255,255,0.28);
   padding: 8px 30px;
   font-size: 13px;
 }
+
+.calendar-freshness-warning {
+  margin: 12px 24px 0;
+  padding: 10px 14px;
+  border: 1px solid #d6a12d;
+  border-radius: 8px;
+  background: #fff7dc;
+  color: #704d00;
+  font-weight: 700;
+}
 .quit-status {
   position: fixed;
   right: 18px;
@@ -129,6 +139,12 @@ tr:hover { background: #f8fbff; }
 .day-cell { font-weight: 700; color: #31415a; }
 .review-btn { padding: 4px 14px; font-size: 12px; min-height: 28px; border-radius: 6px; background: var(--blue); color: white; border: none; }
 .review-btn:hover { background: #1a5bb5; }
+.person-search-results { margin-top: 6px; border: 1px solid var(--line); border-radius: 7px; background: white; overflow: hidden; max-width: 420px; }
+.person-search-result { width: 100%; min-height: 34px; display: flex; justify-content: space-between; align-items: center; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 7px 10px; text-align: left; }
+.person-search-result:last-child { border-bottom: 0; }
+.person-search-result:hover { background: var(--soft); }
+.person-search-result small { color: var(--muted); font-weight: 700; }
+.person-search-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
 tr.empty-row td { text-align: center; color: var(--muted); padding: 32px 0; cursor: default; }
 tr.empty-row:hover { background: transparent; }
 .dot { width: 12px; height: 12px; display: inline-block; border-radius: 50%; }
@@ -616,7 +632,11 @@ tr.empty-row:hover { background: transparent; }
 .invoice-payment { margin-top: 24px; font-size: 11px; line-height: 1.5; text-align: center; }
 .invoice-payment > div { overflow-wrap: anywhere; }
 .invoice-notes { margin-top: 18px; font-size: 11px; line-height: 1.55; }
+.invoice-preview-cancellation-policy { margin-top: 16px; font-size: 11px; line-height: 1.45; color: var(--ink); }
 .invoice-void-info { background: #fee; border: 1px solid #c33; color: #c33; padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; }
+.invoice-correction-note { background: #eef6ff; border: 1px solid #9fc5e8; color: #204a67; padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; line-height: 1.45; }
+.invoice-correction-note strong { display: block; color: #123b5d; margin-bottom: 3px; }
+.invoice-correction-blocked { background: #fff8f0; border: 1px solid #e6c28a; color: #7a4b00; padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; }
 .invoice-payment-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .invoice-payment-summary .payment-summary-card { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
 .invoice-payment-summary .payment-summary-card label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }

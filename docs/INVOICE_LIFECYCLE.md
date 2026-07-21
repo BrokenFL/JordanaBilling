@@ -189,6 +189,12 @@ During finalization, the user may optionally check "Add Insurance Coding" and en
 
 Diagnosis codes are local operational data. Real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, demo data, documentation, or committed databases. Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them. Standard self-pay invoices should not include diagnosis codes. Diagnosis-code values must never be inferred from calendar text, participant names, session descriptions, or other application data. Approved invoice snapshots must remain historically stable; removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records.
 
+The same finalization options area contains an independent **Include Cancellation
+Policy** checkbox. When selected, the canonical HTML preview and exact PDF place
+the approved policy sentence at the bottom as plain text without a box or shading.
+Finalization freezes `cancellation_policy_included` and
+`cancellation_policy_text_snapshot`; unchecked invoices omit the text.
+
 ### Save Invoices Under And File Invoice Under
 
 `Save invoices under` is a relationship-level default for future invoice filing. `File invoice under` is the draft/finalization-level filing owner that is frozen when an invoice is finalized. Both are separate from Participants, Bill To, billing relationship/account, invoice recipient, billing email, rates, approved sessions, and payment owner. Bill To remains the payer and `billing_party_id` remains the payment owner. Filing owner determines the local folder for newly finalized PDFs.
@@ -265,6 +271,23 @@ Finalized invoice snapshots (`bill_to_name_snapshot`, `bill_to_email_snapshot`, 
 ## Void And Reissue
 
 Void requires a reason and preserves the number, snapshots, PDF, and checksum. Source sessions become eligible for a new invoice with a new number. Payments and delivery are not automatically handled by void; existing payment records and allocations remain in the ledger and are not deleted.
+
+## Correct And Replace
+
+For a finalized invoice with no payment-allocation history, the invoice view offers
+**Correct & Replace Invoice**. The action requires a reason and creates an editable
+correction draft linked to the original invoice. The original finalized invoice,
+number, snapshots, and PDF remain unchanged while the draft is being edited. The
+correction draft can be abandoned or deleted without changing the original.
+
+When the correction draft is finalized, one transaction assigns it a new invoice
+number and PDF, marks the original invoice `void`, records the replacement link and
+reason in the audit history, and preserves the original PDF. The original invoice
+is not rewritten. Any payment-allocation history—including reversed allocations or
+voided payments—blocks correction so the payment ledger cannot be detached from the
+historical invoice. Correction drafts are excluded from automatic monthly staging;
+the existing manual void flow remains available for cases that should not be
+replaced through this guided workflow.
 
 ## Client Page Invoice History
 

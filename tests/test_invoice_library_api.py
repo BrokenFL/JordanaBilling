@@ -454,15 +454,24 @@ class InvoiceLibraryUiStaticTests(unittest.TestCase):
         self.assertIn("finalInvoicePdfUrl", js)
         self.assertIn("openFinalInvoicePdf(final.invoice, finalPdfWindow)", js)
         self.assertIn("window.open(\"about:blank\", \"_blank\")", js)
+        self.assertIn('id="cancellationPolicyCheckbox"', js)
+        self.assertIn("Include Cancellation Policy", js)
+        self.assertIn("cancellation_policy_included", js)
 
     def test_invoice_library_js_has_payment_summary_in_preview(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         self.assertIn("invoice-payment-summary", js)
         self.assertIn("invoice-void-info", js)
+        self.assertIn("Correct & Replace Invoice", js)
+        self.assertIn("/api/invoices/${invoice.invoice_id}/correct", js)
+        self.assertIn("invoiceCorrectionReason", js)
 
     def test_css_has_invoice_library_styles(self):
         css = Path("app/jordana_invoice/static/review.css").read_text()
         self.assertIn(".invoice-void-info", css)
+        self.assertIn(".invoice-correction-note", css)
+        self.assertIn(".invoice-correction-blocked", css)
+        self.assertIn(".invoice-preview-cancellation-policy", css)
         self.assertIn(".invoice-payment-summary", css)
         self.assertIn(".invoice-custom-date-range", css)
         self.assertIn(".pager", css)

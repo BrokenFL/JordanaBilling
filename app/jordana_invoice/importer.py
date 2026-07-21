@@ -1759,12 +1759,18 @@ def confirmed_rate_context(
         SELECT person_id, is_primary
         FROM session_participants
         WHERE session_id = ?
-          AND person_id IS NOT NULL
         ORDER BY is_primary DESC, session_participant_id
         """,
         (session["id"],),
     ).fetchall()
-    participant_person_ids = [row["person_id"] for row in participants]
+    has_unresolved_participant = any(not row["person_id"] for row in participants)
+    participant_person_ids = [row["person_id"] for row in participants if row["person_id"]]
+    if has_unresolved_participant:
+        return {
+            "account_id": session["account_id"],
+            "person_id": None,
+            "participant_person_ids": [],
+        }
     return {
         "account_id": session["account_id"],
         "person_id": participant_person_ids[0] if participant_person_ids else None,
