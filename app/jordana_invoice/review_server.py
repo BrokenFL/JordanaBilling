@@ -90,6 +90,7 @@ from .review_services import (
 from .invoice_services import (
     add_sessions_to_draft,
     create_invoice_draft,
+    start_invoice_correction,
     delete_invoice_draft,
     eligible_sessions,
     finalize_invoice,
@@ -172,6 +173,7 @@ from .request_validation import (
     parse_replace_rate_rule_request,
     parse_end_rate_rule_request,
     parse_create_invoice_draft_request,
+    parse_correct_invoice_request,
     parse_stage_invoices_request,
     parse_update_invoice_draft_request,
     parse_update_invoice_line_item_request,
@@ -400,6 +402,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Display name is required.",
             "Cannot merge a person into itself.",
             "Both people must exist before merging.",
+            "An active client with this name already exists. Use that client or resolve the duplicate explicitly.",
             "First and last name are required before assigning a person code.",
             # Business Profile
             "Business name is required.",
@@ -418,6 +421,12 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Invoice line was not found.",
             "A void reason is required.",
             "Only a finalized invoice can be voided.",
+            "A correction reason is required.",
+            "Only a finalized invoice can be corrected.",
+            "This invoice cannot be corrected because payment history is attached to it.",
+            "The original invoice is no longer available for correction.",
+            "The original invoice changed before correction could be completed.",
+            "Delete the open correction draft before voiding this invoice.",
             "Only a draft invoice can be changed.",
             "supplement_sequence cannot be negative.",
             "Description must be non-empty.",
@@ -922,18 +931,12 @@ def make_handler(
                     if data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Finalization PDF preview is only available for draft invoices."}, status=400)
                         return
-                    insurance_payload = None
-                    if preview_payload.get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": preview_payload.get("insurance_diagnosis_code") or "",
-                        }
                     render_model = build_invoice_render_model(
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
                         account_summary=(data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=preview_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         data["invoice"], data["lines"],
@@ -1035,18 +1038,13 @@ def make_handler(
                         self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
                         return
                     req = parse_print_preview_request(data)
-                    insurance_payload = None
-                    if req.to_payload().get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
-                        }
+                    finalization_payload = req.to_payload()
                     html = build_print_preview_html(
                         inv_data["invoice"], inv_data["lines"],
                         business_profile=inv_data.get("business_profile"),
                         billing_party=inv_data.get("billing_party"),
                         account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=finalization_payload,
                     )
                     body = html.encode("utf-8")
                     self.send_response(200)
@@ -1063,18 +1061,13 @@ def make_handler(
                         self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
                         return
                     req = parse_print_preview_request(data)
-                    insurance_payload = None
-                    if req.to_payload().get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
-                        }
+                    finalization_payload = req.to_payload()
                     render_model = build_invoice_render_model(
                         inv_data["invoice"], inv_data["lines"],
                         business_profile=inv_data.get("business_profile"),
                         billing_party=inv_data.get("billing_party"),
                         account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=finalization_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         inv_data["invoice"], inv_data["lines"],
@@ -1456,6 +1449,7 @@ def make_handler(
                             expected_revision=req.to_payload().get("expected_revision"),
                             insurance_coding_included=bool(req.to_payload().get("insurance_coding_included")),
                             insurance_diagnosis_code=str(req.to_payload().get("insurance_diagnosis_code") or ""),
+                            cancellation_policy_included=bool(req.to_payload().get("cancellation_policy_included")),
                         ))
                         return
                     if action == "filing-owner":
@@ -1476,6 +1470,10 @@ def make_handler(
                     if action == "void":
                         req = parse_void_invoice_request(data)
                         self.send_json(void_invoice(self.conn(), invoice_id, req.reason))
+                        return
+                    if action == "correct":
+                        req = parse_correct_invoice_request(data)
+                        self.send_json(start_invoice_correction(self.conn(), invoice_id, req.reason))
                         return
                     req = parse_update_invoice_draft_request(data)
                     self.send_json(update_invoice_draft(self.conn(), invoice_id, req.to_payload()))

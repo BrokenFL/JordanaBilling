@@ -13,6 +13,9 @@ Zelle to: ...`. It has no due date, clinical note, or treatment summary.
 Standard self-pay invoices do not include diagnosis codes or insurance coding;
 optional insurance coding may be added at finalization when required for
 administrative insurance billing (see Optional Insurance Coding Block below).
+The same finalization options area includes an independent **Include Cancellation
+Policy** checkbox. When selected, the exact policy sentence appears as plain text
+at the bottom of the invoice, with no border, box, or shaded background.
 
 ## PDF Layout (US Letter Portrait)
 
@@ -90,6 +93,19 @@ SW: <value>
 - EIN, NPI, and SW values come from Invoice Settings and are frozen into the finalized invoice snapshot at finalization time.
 - The diagnosis code is entered or approved per-invoice during finalization and is never persisted on draft invoices.
 - When insurance coding is unchecked, no block appears in preview or final PDF.
+
+## Optional Cancellation Policy
+
+The finalization screen offers **Include Cancellation Policy** alongside **Add
+Insurance Coding**. It is off by default and is independent of insurance coding.
+When enabled, preview, exact PDF preview, and the finalized PDF show this exact
+plain-text sentence at the bottom of the invoice:
+
+`Cancellation Policy: Cancellations received less than 24 hours prior to scheduled appointment time are billed at the rate of the full session.`
+
+Finalization freezes both the inclusion choice and exact text. Finalized and void
+invoices always render from that snapshot; later wording changes cannot rewrite
+historical invoices.
 - Draft preview and finalized PDF render the block identically.
 - Later changes to Invoice Settings do not alter existing finalized invoices.
 - Diagnosis codes must never be inferred from calendar text, participant names, session descriptions, or other application data. Real diagnosis codes must never be committed to GitHub, fixtures, screenshots, logs, demo data, examples, or documentation.

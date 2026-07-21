@@ -81,7 +81,7 @@ class DiagnosticsReportTests(unittest.TestCase):
         self.assertEqual(payload["selected_area"], "review")
         self.assertEqual(payload["build"]["application"], "Jordana Billing")
         self.assertRegex(payload["build"]["commit_hash"], r"^[0-9a-f]{40}$|source-checkout|unavailable")
-        self.assertEqual(payload["schema"]["migration_head"], "019_session_ledger_archive")
+        self.assertEqual(payload["schema"]["migration_head"], "021_cancellation_policy")
         self.assertIn("candidate_review_status_counts", payload["database_activity"])
         self.assertEqual(payload["system_health"]["database"]["quick_check"], "ok")
         self.assertIn("python", payload["system_health"]["runtime"])

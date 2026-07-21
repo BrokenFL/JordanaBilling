@@ -61,6 +61,19 @@ If you ever need to import into the live database (e.g. initial population on a
 fresh install), pass `--allow-operational-db` explicitly and document why.
 A verified SQLite backup is created automatically before any mutation.
 
+## Codebase Memory MCP
+
+This repository may use `codebase-memory-mcp` as a local MCP knowledge graph for
+structural code understanding. Use it as a map for source-code questions such as
+architecture overview, route/API discovery, call tracing, impact checks,
+dead-code checks, and broad refactors.
+
+Privacy boundary: keep `.cbmignore` conservative. Do not index live databases,
+reports, invoices, receipts, logs, screenshots, shortcut backups, `.env`,
+credentials, private branding, or other client/business artifacts. Confirm MCP
+findings with direct file reads, `rg`, focused tests, and the project safety
+checks before editing, committing, or pushing.
+
 ## Start Here
 
 Read these files before making changes:

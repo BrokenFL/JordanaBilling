@@ -632,7 +632,11 @@ tr.empty-row:hover { background: transparent; }
 .invoice-payment { margin-top: 24px; font-size: 11px; line-height: 1.5; text-align: center; }
 .invoice-payment > div { overflow-wrap: anywhere; }
 .invoice-notes { margin-top: 18px; font-size: 11px; line-height: 1.55; }
+.invoice-preview-cancellation-policy { margin-top: 16px; font-size: 11px; line-height: 1.45; color: var(--ink); }
 .invoice-void-info { background: #fee; border: 1px solid #c33; color: #c33; padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; }
+.invoice-correction-note { background: #eef6ff; border: 1px solid #9fc5e8; color: #204a67; padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; line-height: 1.45; }
+.invoice-correction-note strong { display: block; color: #123b5d; margin-bottom: 3px; }
+.invoice-correction-blocked { background: #fff8f0; border: 1px solid #e6c28a; color: #7a4b00; padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; }
 .invoice-payment-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .invoice-payment-summary .payment-summary-card { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
 .invoice-payment-summary .payment-summary-card label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }

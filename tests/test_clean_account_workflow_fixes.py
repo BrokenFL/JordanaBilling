@@ -324,7 +324,9 @@ class CleanAccountWorkflowFixesTests(unittest.TestCase):
             "appointment_status": "late_cancellation",
             "billing_treatment": "bill_full_fee",
         })
-        self.assertIn("approved_rate_cents", full_fee["session"]["unresolved_fields"])
+        self.assertEqual(full_fee["session"]["approved_rate_cents"], 35000)
+        self.assertEqual(full_fee["session"]["scheduled_rate_cents"], 35000)
+        self.assertNotIn("approved_rate_cents", full_fee["session"]["unresolved_fields"])
         custom_fee = save_session_draft(self.conn, detail["session"]["candidate_id"], {
             "approved_duration_minutes": 60,
             "billing_session_type": "psychotherapy",

@@ -150,6 +150,10 @@ Cancelled and no-show appointments remain preserved and reviewable. They require
 - `unresolved`
 
 Late cancellation supports an additional `bill_full_fee` and `custom_fee` treatment.
+Attendance Outcome and Cancellation Billing are visible in the main Session
+Details grid. Choosing `bill_full_fee` restores the preserved scheduled session
+rate; choosing `custom_fee` requires a positive entered amount; choosing `waived`
+sets the charge to `$0.00`.
 
 When billing treatment is `waived` or `not_billable` and the approved rate is `$0.00`, the zero rate is valid and persists through save, reload, approval, invoice staging, and finalization. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
 

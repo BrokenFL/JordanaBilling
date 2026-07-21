@@ -129,7 +129,8 @@ def _coerce_charge_for_attendance(
         if treatment == "waived":
             return outcome, treatment, 0, scheduled_rate_cents
         if treatment == "bill_full_fee":
-            return outcome, treatment, approved_rate_cents if approved_rate_cents is not None else scheduled_rate_cents, scheduled_rate_cents
+            full_fee = scheduled_rate_cents if scheduled_rate_cents is not None else approved_rate_cents
+            return outcome, treatment, full_fee, scheduled_rate_cents
         if treatment == "custom_fee":
             return outcome, treatment, approved_rate_cents, scheduled_rate_cents
         return outcome, treatment, approved_rate_cents, scheduled_rate_cents
@@ -2719,60 +2720,55 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
     if not person_code and first_name and last_name:
         person_code = generate_person_code(conn, first_name, last_name)
     now = now_iso()
-    conn.execute(
-        """
-        UPDATE people
-        SET display_name = ?,
-            first_name = ?,
-            last_name = ?,
-            preferred_name = ?,
-            person_code = COALESCE(?, person_code),
-            billing_email = ?,
-            billing_phone = ?,
-            administrative_notes = ?,
-            active_status = ?,
-            active = ?,
-            updated_at = ?
-        WHERE person_id = ?
-        """,
-        (
-            display_name,
-            first_name,
-            last_name,
-            preferred_name,
-            person_code,
-            data.get("billing_email"),
-            data.get("billing_phone"),
-            data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
-            data.get("active_status", "active"),
-            1 if data.get("active", True) else 0,
-            now,
-            person_id,
-        ),
-    )
-    if old_name != display_name:
-        upsert_calendar_alias(
-            conn,
-            raw_alias=old_name,
-            person_id=person_id,
-            account_id=data.get("account_id"),
-            classification="client_session",
-            approved=True,
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            UPDATE people
+            SET display_name = ?, first_name = ?, last_name = ?, preferred_name = ?,
+                person_code = COALESCE(?, person_code), billing_email = ?, billing_phone = ?,
+                administrative_notes = ?, active_status = ?, active = ?, updated_at = ?
+            WHERE person_id = ?
+            """,
+            (
+                display_name, first_name, last_name, preferred_name, person_code,
+                data.get("billing_email"), data.get("billing_phone"),
+                data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
+                data.get("active_status", "active"), 1 if data.get("active", True) else 0,
+                now, person_id,
+            ),
         )
-    record_audit(
-        conn,
-        "person",
-        person_id,
-        "identity_corrected",
-        {
-            "old_value": old_name,
-            "new_value": display_name,
-            "old_code": old_code,
-            "new_code": person_code,
-            "source": "review_ui",
-        },
-    )
-    conn.commit()
+        if old_name != display_name:
+            upsert_calendar_alias(
+                conn, raw_alias=old_name, person_id=person_id,
+                account_id=data.get("account_id"), classification="client_session", approved=True,
+            )
+            conn.execute(
+                "UPDATE session_participants SET participant_name = ?, updated_at = ? "
+                "WHERE person_id = ? AND (participant_name = ? OR participant_name IS NULL OR participant_name = '')",
+                (display_name, now, person_id, old_name),
+            )
+            conn.execute(
+                "UPDATE billing_parties SET billing_name = ?, updated_at = ? "
+                "WHERE person_id = ? AND billing_name = ?",
+                (display_name, now, person_id, old_name),
+            )
+            conn.execute(
+                """UPDATE client_accounts SET account_name = ?, updated_at = ?
+                   WHERE account_type = 'individual' AND account_name = ?
+                     AND account_id IN (SELECT account_id FROM account_members WHERE person_id = ?)""",
+                (display_name, now, old_name, person_id),
+            )
+            _refresh_person_draft_invoice_names(conn, person_id, old_name, display_name, now)
+        record_audit(
+            conn, "person", person_id, "identity_corrected",
+            {"old_value": old_name, "new_value": display_name, "old_code": old_code,
+             "new_code": person_code, "source": "review_ui"},
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone())
 
 
@@ -2804,6 +2800,55 @@ def similar_people(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _refresh_person_draft_invoice_names(
+    conn: sqlite3.Connection,
+    person_id: str,
+    old_name: str,
+    new_name: str,
+    now: str,
+) -> None:
+    """Refresh editable invoice names while leaving finalized/void snapshots frozen."""
+    conn.execute(
+        """UPDATE invoices SET bill_to_name_snapshot = ?, revision = revision + 1, updated_at = ?
+           WHERE status = 'draft' AND bill_to_party_id IN (
+             SELECT billing_party_id FROM billing_parties WHERE person_id = ?
+           ) AND (bill_to_name_snapshot = ? OR bill_to_name_snapshot IS NULL)""",
+        (new_name, now, person_id, old_name),
+    )
+    conn.execute(
+        """UPDATE invoices SET filing_owner_display_name_snapshot = ?, revision = revision + 1, updated_at = ?
+           WHERE status = 'draft' AND filing_owner_person_id = ?
+             AND (filing_owner_display_name_snapshot = ? OR filing_owner_display_name_snapshot IS NULL)""",
+        (new_name, now, person_id, old_name),
+    )
+    draft_lines = conn.execute(
+        """SELECT li.invoice_line_item_id, li.invoice_id, li.source_session_id
+           FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
+           WHERE i.status = 'draft' AND li.source_session_id IN (
+             SELECT session_id FROM session_participants WHERE person_id = ?
+           )""",
+        (person_id,),
+    ).fetchall()
+    changed_invoices: set[str] = set()
+    for line in draft_lines:
+        names = conn.execute(
+            """SELECT participant_name FROM session_participants
+               WHERE session_id = ? ORDER BY is_primary DESC, created_at, session_participant_id""",
+            (line["source_session_id"],),
+        ).fetchall()
+        snapshot = ", ".join(str(row["participant_name"] or "").strip() for row in names if str(row["participant_name"] or "").strip())
+        conn.execute(
+            "UPDATE invoice_line_items SET participants_snapshot = ?, updated_at = ? WHERE invoice_line_item_id = ?",
+            (snapshot, now, line["invoice_line_item_id"]),
+        )
+        changed_invoices.add(line["invoice_id"])
+    for invoice_id in changed_invoices:
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+            (now, invoice_id),
+        )
+
+
 def merge_people(
     conn: sqlite3.Connection,
     survivor_person_id: str,
@@ -2817,73 +2862,97 @@ def merge_people(
     duplicate = conn.execute("SELECT * FROM people WHERE person_id = ?", (duplicate_person_id,)).fetchone()
     if not survivor or not duplicate:
         raise ValueError("Both people must exist before merging.")
-    approved_reference = conn.execute(
-        """
-        SELECT 1
-        FROM session_participants sp
-        JOIN sessions s ON s.id = sp.session_id
-        WHERE sp.person_id = ? AND s.review_status = 'approved'
-        LIMIT 1
-        """,
-        (duplicate_person_id,),
-    ).fetchone()
-    if approved_reference:
-        raise ValueError(
-            "This duplicate is referenced by an approved session and cannot be merged automatically. Archive the duplicate relationship and use the correction workflow."
-        )
     now = now_iso()
-    conn.execute(
-        "UPDATE session_participants SET person_id = ? WHERE person_id = ?",
-        (survivor_person_id, duplicate_person_id),
-    )
-    conn.execute(
-        """
-        UPDATE account_members
-        SET person_id = ?, updated_at = ?
-        WHERE person_id = ?
-        """,
-        (survivor_person_id, now, duplicate_person_id),
-    )
-    conn.execute(
-        "UPDATE billing_parties SET person_id = ?, updated_at = ? WHERE person_id = ?",
-        (survivor_person_id, now, duplicate_person_id),
-    )
-    conn.execute(
-        "UPDATE calendar_aliases SET person_id = ?, updated_at = ? WHERE person_id = ?",
-        (survivor_person_id, now, duplicate_person_id),
-    )
-    upsert_calendar_alias(
-        conn,
-        raw_alias=duplicate["display_name"],
-        person_id=survivor_person_id,
-        classification="client_session",
-        approved=True,
-    )
-    conn.execute(
-        """
-        UPDATE people
-        SET active = 0,
-            active_status = 'merged',
-            merged_into_person_id = ?,
-            merge_note = ?,
-            updated_at = ?
-        WHERE person_id = ?
-        """,
-        (survivor_person_id, reason, now, duplicate_person_id),
-    )
-    record_audit(
-        conn,
-        "person",
-        survivor_person_id,
-        "merged_duplicate_person",
-        {
-            "survivor_person_id": survivor_person_id,
-            "duplicate_person_id": duplicate_person_id,
-            "duplicate_display_name": duplicate["display_name"],
-            "reason": reason,
-        },
-    )
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        duplicate_sessions = conn.execute(
+            "SELECT * FROM session_participants WHERE person_id = ?",
+            (duplicate_person_id,),
+        ).fetchall()
+        for row in duplicate_sessions:
+            survivor_row = conn.execute(
+                "SELECT * FROM session_participants WHERE session_id = ? AND person_id = ? LIMIT 1",
+                (row["session_id"], survivor_person_id),
+            ).fetchone()
+            if survivor_row:
+                conn.execute(
+                    "UPDATE session_participants SET is_primary = ?, updated_at = ? WHERE session_participant_id = ?",
+                    (max(int(survivor_row["is_primary"] or 0), int(row["is_primary"] or 0)), now, survivor_row["session_participant_id"]),
+                )
+                conn.execute("DELETE FROM session_participants WHERE session_participant_id = ?", (row["session_participant_id"],))
+            else:
+                conn.execute(
+                    "UPDATE session_participants SET person_id = ?, participant_name = ?, updated_at = ? WHERE session_participant_id = ?",
+                    (survivor_person_id, survivor["display_name"], now, row["session_participant_id"]),
+                )
+
+        conn.execute(
+            """DELETE FROM account_members WHERE person_id = ? AND EXISTS (
+                 SELECT 1 FROM account_members kept WHERE kept.account_id = account_members.account_id
+                   AND kept.relationship_role = account_members.relationship_role AND kept.person_id = ?
+               )""",
+            (duplicate_person_id, survivor_person_id),
+        )
+        conn.execute("UPDATE account_members SET person_id = ?, updated_at = ? WHERE person_id = ?", (survivor_person_id, now, duplicate_person_id))
+        conn.execute("UPDATE billing_parties SET person_id = ?, billing_name = CASE WHEN billing_name = ? THEN ? ELSE billing_name END, updated_at = ? WHERE person_id = ?", (survivor_person_id, duplicate["display_name"], survivor["display_name"], now, duplicate_person_id))
+        conn.execute("UPDATE billing_parties SET delivery_contact_person_id = ?, updated_at = ? WHERE delivery_contact_person_id = ?", (survivor_person_id, now, duplicate_person_id))
+        conn.execute("UPDATE calendar_aliases SET person_id = ?, updated_at = ? WHERE person_id = ?", (survivor_person_id, now, duplicate_person_id))
+        conn.execute("UPDATE rate_rules SET person_id = ?, updated_at = ? WHERE person_id = ?", (survivor_person_id, now, duplicate_person_id))
+        conn.execute(
+            """DELETE FROM rate_rule_participants WHERE person_id = ? AND EXISTS (
+                 SELECT 1 FROM rate_rule_participants kept WHERE kept.rate_rule_id = rate_rule_participants.rate_rule_id AND kept.person_id = ?
+               )""",
+            (duplicate_person_id, survivor_person_id),
+        )
+        conn.execute("UPDATE rate_rule_participants SET person_id = ? WHERE person_id = ?", (survivor_person_id, duplicate_person_id))
+        conn.execute(
+            """UPDATE custom_service_mappings SET person_id = ?, updated_at = ?
+               WHERE person_id = ? AND NOT EXISTS (
+                 SELECT 1 FROM custom_service_mappings kept WHERE kept.person_id = ?
+                   AND kept.duration_choice = custom_service_mappings.duration_choice
+                   AND kept.active = custom_service_mappings.active
+               )""",
+            (survivor_person_id, now, duplicate_person_id, survivor_person_id),
+        )
+        conn.execute("UPDATE client_accounts SET default_filing_owner_person_id = ?, updated_at = ? WHERE default_filing_owner_person_id = ?", (survivor_person_id, now, duplicate_person_id))
+        conn.execute("UPDATE client_accounts SET default_filing_owner_record_id = ?, updated_at = ? WHERE default_filing_owner_kind = 'person' AND default_filing_owner_record_id = ?", (survivor_person_id, now, duplicate_person_id))
+        conn.execute("UPDATE invoices SET filing_owner_person_id = ?, filing_owner_record_id = ?, filing_owner_display_name_snapshot = ?, revision = revision + 1, updated_at = ? WHERE status = 'draft' AND filing_owner_person_id = ?", (survivor_person_id, survivor_person_id, survivor["display_name"], now, duplicate_person_id))
+
+        relationship_rows = conn.execute(
+            "SELECT * FROM billing_relationship_keys WHERE payer_person_id = ? OR instr(',' || covered_client_key || ',', ',' || ? || ',') > 0",
+            (duplicate_person_id, duplicate_person_id),
+        ).fetchall()
+        for row in relationship_rows:
+            payer_person_id = survivor_person_id if row["payer_person_id"] == duplicate_person_id else row["payer_person_id"]
+            payer_key = f"person:{survivor_person_id}" if row["payer_person_id"] == duplicate_person_id else row["payer_identity_key"]
+            covered_ids = [survivor_person_id if value == duplicate_person_id else value for value in str(row["covered_client_key"] or "").split(",") if value]
+            covered_key = ",".join(sorted(set(covered_ids)))
+            conflict = conn.execute(
+                "SELECT account_id FROM billing_relationship_keys WHERE account_id != ? AND active = 1 AND payer_identity_key = ? AND covered_client_key = ?",
+                (row["account_id"], payer_key, covered_key),
+            ).fetchone()
+            conn.execute(
+                "UPDATE billing_relationship_keys SET payer_person_id = ?, payer_identity_key = ?, covered_client_key = ?, active = ?, updated_at = ? WHERE account_id = ?",
+                (payer_person_id, payer_key, covered_key, 0 if conflict else row["active"], now, row["account_id"]),
+            )
+
+        upsert_calendar_alias(conn, raw_alias=duplicate["display_name"], person_id=survivor_person_id, classification="client_session", approved=True)
+        _refresh_person_draft_invoice_names(conn, survivor_person_id, duplicate["display_name"], survivor["display_name"], now)
+        conn.execute(
+            """UPDATE people SET active = 0, active_status = 'merged', merged_into_person_id = ?,
+                   merge_note = ?, updated_at = ? WHERE person_id = ?""",
+            (survivor_person_id, reason, now, duplicate_person_id),
+        )
+        record_audit(
+            conn, "person", survivor_person_id, "merged_duplicate_person",
+            {"survivor_person_id": survivor_person_id, "duplicate_person_id": duplicate_person_id,
+             "duplicate_display_name": duplicate["display_name"], "reason": reason,
+             "finalized_invoice_snapshots_preserved": True},
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return dict(conn.execute("SELECT * FROM people WHERE person_id = ?", (survivor_person_id,)).fetchone())
 
 
@@ -5269,7 +5338,14 @@ def get_organization_billing_record(conn: sqlite3.Connection, billing_party_id: 
             JOIN invoices i ON i.invoice_id = li.invoice_id
             WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
             LIMIT 1
-          ) AS invoice_id
+          ) AS invoice_id,
+          (
+            SELECT i.invoice_number
+            FROM invoice_line_items li
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE li.source_session_id = s.id AND i.status IN ('draft', 'finalized')
+            LIMIT 1
+          ) AS invoice_number
         FROM sessions s
         WHERE s.billing_party_id = ?
         ORDER BY s.start_at DESC

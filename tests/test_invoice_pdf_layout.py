@@ -1074,6 +1074,38 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
             self.assertIn(s, draft_text, f"Draft PDF missing insurance line: {s}")
             self.assertIn(s, final_text, f"Finalized PDF missing insurance line: {s}")
 
+    def test_optional_cancellation_policy_is_plain_bottom_text_and_frozen(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_rendering import CANCELLATION_POLICY_TEXT, build_invoice_render_model
+
+        lines = _sample_lines()
+        draft_invoice = _sample_invoice(invoice_number="", status="draft")
+        draft_model = build_invoice_render_model(
+            draft_invoice,
+            lines,
+            insurance_coding_payload={"cancellation_policy_included": True},
+        )
+        self.assertEqual(draft_model["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+        draft_text = self._extract_pdf_text(
+            generate_draft_pdf_bytes(draft_invoice, lines, render_model=draft_model)
+        )
+        self.assertIn(CANCELLATION_POLICY_TEXT, draft_text.replace("\n", " "))
+
+        final_invoice = _sample_invoice(
+            status="finalized",
+            cancellation_policy_included=1,
+            cancellation_policy_text_snapshot=CANCELLATION_POLICY_TEXT,
+        )
+        frozen_model = build_invoice_render_model(final_invoice, lines)
+        self.assertEqual(frozen_model["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+
+        omitted = build_invoice_render_model(
+            _sample_invoice(status="finalized", cancellation_policy_included=0),
+            lines,
+        )
+        self.assertIsNone(omitted["cancellation_policy"])
+
     def test_html_preview_and_pdf_use_same_canonical_values(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")

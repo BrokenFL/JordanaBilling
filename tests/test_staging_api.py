@@ -141,7 +141,7 @@ class StagingApiTests(unittest.TestCase):
         drafts = self.conn.execute("SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL").fetchall()
         self.assertEqual(len(drafts), 1)
 
-    def test_archived_billing_relationship_is_not_staged(self):
+    def test_explicit_active_bill_to_stages_despite_archived_relationship(self):
         sid = self.approved_session("archived-rel", day=10)
         account = create_account(self.conn, "Archived relationship", "individual")
         self.conn.execute(
@@ -158,14 +158,13 @@ class StagingApiTests(unittest.TestCase):
         handler.do_POST()
 
         self.assertEqual(captured["status"], 200)
-        self.assertEqual(captured["payload"]["drafts_created"], 0)
-        self.assertEqual(captured["payload"]["sessions_staged"], 0)
+        self.assertEqual(captured["payload"]["drafts_created"], 1)
+        self.assertEqual(captured["payload"]["sessions_staged"], 1)
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM invoices WHERE status = 'draft'").fetchone()[0],
-            0,
+            1,
         )
-        skipped = captured["payload"]["sessions_skipped"]
-        self.assertTrue(any("Billing relationship is archived" in item["reasons"] for item in skipped))
+        self.assertEqual(captured["payload"]["sessions_skipped"], [])
 
     # 5. Malformed JSON returns 400
     def test_malformed_json_returns_400(self):

@@ -1197,6 +1197,17 @@ class VoidInvoiceRequest:
 
 
 @dataclass(frozen=True)
+class CorrectInvoiceRequest:
+    """Validated request for POST /api/invoices/{id}/correct."""
+
+    reason: str
+    payload: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
+
+@dataclass(frozen=True)
 class UpdateInvoiceFilingOwnerRequest:
     """Validated request for POST /api/invoices/{id}/filing-owner."""
 
@@ -1341,7 +1352,7 @@ def parse_preview_finalize_request(payload: Any) -> PreviewFinalizeRequest:
 
     Accepted fields: billing_period_start, billing_period_end, billing_month,
     delivery_method, notes, supplement_sequence, insurance_coding_included,
-    insurance_diagnosis_code.
+    insurance_diagnosis_code, cancellation_policy_included.
     """
     data = _require_object(payload)
     _optional_str(data, "billing_period_start")
@@ -1352,6 +1363,7 @@ def parse_preview_finalize_request(payload: Any) -> PreviewFinalizeRequest:
     _optional_int_not_bool(data, "supplement_sequence")
     _optional_bool(data, "insurance_coding_included")
     _optional_str(data, "insurance_diagnosis_code")
+    _optional_bool(data, "cancellation_policy_included")
     return PreviewFinalizeRequest(payload=data)
 
 
@@ -1359,7 +1371,8 @@ def parse_finalize_invoice_request(payload: Any) -> FinalizeInvoiceRequest:
     """Parse POST /api/invoices/{id}/finalize.
 
     Required: confirmed (must be true).
-    Optional: expected_revision, insurance_coding_included, insurance_diagnosis_code.
+    Optional: expected_revision, insurance_coding_included, insurance_diagnosis_code,
+    cancellation_policy_included.
     """
     data = _require_object(payload)
     confirmed = _optional_bool(data, "confirmed")
@@ -1368,6 +1381,7 @@ def parse_finalize_invoice_request(payload: Any) -> FinalizeInvoiceRequest:
     _optional_int_not_bool(data, "expected_revision")
     _optional_bool(data, "insurance_coding_included")
     _optional_str(data, "insurance_diagnosis_code")
+    _optional_bool(data, "cancellation_policy_included")
     return FinalizeInvoiceRequest(confirmed=confirmed, payload=data)
 
 
@@ -1381,6 +1395,16 @@ def parse_void_invoice_request(payload: Any) -> VoidInvoiceRequest:
     if reason is None:
         reason = ""
     return VoidInvoiceRequest(reason=reason, payload=data)
+
+
+def parse_correct_invoice_request(payload: Any) -> CorrectInvoiceRequest:
+    """Parse POST /api/invoices/{id}/correct.
+
+    Accepted fields: reason (required, non-empty).
+    """
+    data = _require_object(payload)
+    reason = _required_str(data, "reason")
+    return CorrectInvoiceRequest(reason=reason, payload=data)
 
 
 def parse_update_invoice_filing_owner_request(payload: Any) -> UpdateInvoiceFilingOwnerRequest:
@@ -1413,11 +1437,13 @@ def parse_print_preview_request(payload: Any) -> PrintPreviewRequest:
     """Parse POST /api/invoices/{id}/print-preview and
     POST /api/invoices/{id}/draft-pdf.
 
-    Accepted fields: insurance_coding_included, insurance_diagnosis_code.
+    Accepted fields: insurance_coding_included, insurance_diagnosis_code,
+    cancellation_policy_included.
     """
     data = _require_object(payload)
     _optional_bool(data, "insurance_coding_included")
     _optional_str(data, "insurance_diagnosis_code")
+    _optional_bool(data, "cancellation_policy_included")
     return PrintPreviewRequest(payload=data)
 
 

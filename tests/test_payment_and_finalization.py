@@ -233,7 +233,7 @@ class SafeFinalizationTests(unittest.TestCase):
         draft = self._draft([session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
-        self.assertEqual(render["bill_to_lines"], ["Robin Test", "Via Email: robin@example.test"])
+        self.assertEqual(render["bill_to_lines"], ["Robin Test", "robin@example.test"])
         self.assertIn("Or pay via Zelle: sample-zelle@example.test", render["payment_zelle_line"])
         self.assertEqual(render["payment_lines"], ["200 Sample Ave", "Sample, FL 00000"])
 
@@ -250,7 +250,7 @@ class SafeFinalizationTests(unittest.TestCase):
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         self.assertEqual(
             preview["render_model"]["bill_to_lines"],
-            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "robin@example.test"],
         )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
@@ -411,7 +411,7 @@ class SafeFinalizationTests(unittest.TestCase):
         reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
         self.assertEqual(
             reopened["render_model"]["bill_to_lines"],
-            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "robin@example.test"],
         )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")

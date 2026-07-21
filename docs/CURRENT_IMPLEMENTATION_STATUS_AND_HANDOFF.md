@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.22 supersedes test.21):
+The current controlled-beta release target is (test.27 supersedes test.26):
 
 ```text
-JordanaBilling-v0.1.0-test.22-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.27-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.22`
-- Python package/application version: `0.1.0.post22`
+- Release label: `v0.1.0-test.27`
+- Python package/application version: `0.1.0.post27`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,11 +130,18 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post22` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post27` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
-### Bug Fixes In test.22
+### Billing And Client Improvements In test.27
+
+1. **Optional cancellation policy** — a finalization checkbox controls the exact approved plain-text policy at the bottom of each invoice, and finalized policy snapshots remain frozen.
+2. **Late-cancellation billing** — Review exposes full scheduled fee, custom fee, and waived choices and restores the scheduled rate for full-fee approval.
+3. **Client rename and duplicate merge** — UUID-linked draft/future billing can be corrected while finalized invoice and receipt history remains unchanged.
+4. **Correct & Replace Invoice** — corrections use a linked replacement draft and atomically void the original only when the replacement finalizes safely.
+
+### Bug Fixes Inherited from test.22
 
 1. **Confirmed client rate reconciliation** — Every sync preserves UUID-backed confirmed participants on pending sessions and evaluates the rate card with the confirmed client, participant combination, and billing-relationship scope. Client-specific rules therefore take precedence over the global standard rate.
 2. **Upgrade/no-new-rows rate reconciliation** — An empty incremental sync refreshes pending suggested rates from the current confirmed rate scope, correcting stale global suggestions without modifying raw snapshots or approved charges.

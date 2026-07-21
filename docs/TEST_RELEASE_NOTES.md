@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.26 Release Notes
+# Jordana Billing v0.1.0-test.27 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.26` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.27` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.26-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.27-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.26
-- **Python package/application version:** 0.1.0.post26
+- **Release label:** v0.1.0-test.27
+- **Python package/application version:** 0.1.0.post27
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,18 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post26` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post27` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Reliability Improvements In test.26
+## Billing And Client Improvements In test.27
+
+1. **Optional cancellation policy** — Finalize Invoice includes an `Include Cancellation Policy` checkbox beside insurance coding. When selected, the exact approved policy appears as plain text at the bottom of the preview and PDF without a box, border, or shading. Finalization freezes the selected policy text historically.
+2. **Late-cancellation billing repair** — Session Review exposes Late Cancellation billing treatment in the normal details area. Full scheduled fee restores the session's scheduled rate, custom fee remains editable, waived fee is the only valid zero-dollar branch, and the reviewed cancellation can be approved normally.
+3. **Client renaming** — Correcting a client name updates UUID-linked sessions, billing relationships, account names, and draft invoice snapshots while preserving finalized and void invoice history.
+4. **Explicit duplicate-client merge** — Client records can search for a duplicate and explicitly choose the record to keep. UUID-linked sessions, memberships, billing parties, aliases, eligible rate rules, and draft filing ownership move transactionally; finalized invoices and receipts remain frozen.
+5. **Correct & Replace Invoice** — A finalized invoice can be corrected through a linked replacement draft. Finalizing the replacement voids the original atomically, preserves audit history, and blocks unsafe replacement when protected payment history exists.
+
+## Reliability Improvements Inherited from test.26
 
 1. **Calendar freshness warning** — A global warning appears when no successful sync exists, the timestamp cannot be verified, or the newest successful calendar sync is more than 18 hours old. It clears after a successful sync refreshes dashboard status.
 2. **Persistent sanitized error history** — Up to 200 warning/error fingerprints survive app restarts in a permission-restricted rotating JSONL file. Only timestamps, route templates, status codes, exception types, and safe source signatures persist; messages, client data, calendar text, database content, and full paths are excluded.

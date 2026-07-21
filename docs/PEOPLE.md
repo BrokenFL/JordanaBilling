@@ -13,6 +13,14 @@ The Clients list sorts by last name and shows client code, last name, first name
 
 Client records show contact information, billing relationships, relationship roles, sessions, bill-to links, aliases, administrative notes, merge status, active status, actual charged-rate history, and active future rate exceptions.
 
+Client names may be corrected from the client record. The corrected name flows to
+person-linked billing setup, sessions, future billing, and editable draft invoice
+snapshots. Finalized and void invoice snapshots and PDFs remain historically frozen.
+The Advanced section also provides an explicit duplicate merge: the user searches
+for and confirms the client record to keep, mutable relationships and sessions are
+repointed transactionally, the duplicate is marked merged, and finalized invoice
+snapshots are not rewritten.
+
 Session history uses approved session values. It must not reconstruct historical charges from current rate rules.
 
 Active rate exceptions shown on a person record include person-specific exceptions and shared/joint exceptions involving that person. Joint exceptions should show the actual participant names, not a fabricated household name.

@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-018_delivery_contact_person
+021_cancellation_policy
 ```
 
 The registered migrations are:
@@ -32,6 +32,9 @@ The registered migrations are:
 16. `016_late_cancellation_billing` — late-cancellation billing snapshots and scheduled-rate preservation
 17. `017_relationship_filing_owner_target` — relationship filing-owner kind/record targets for people or billing organizations
 18. `018_delivery_contact_person` — explicit delivery-contact person on billing parties
+19. `019_session_ledger_archive` — reversible session-ledger archive metadata on calendar candidates
+20. `020_invoice_corrections` — correction-draft links and correction-reason history for finalized invoice replacement
+21. `021_cancellation_policy` — optional frozen cancellation-policy text on finalized invoices
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 
@@ -145,6 +148,8 @@ The invoice schema supports:
 - prior-balance and account-summary snapshots
 - optional insurance-code snapshots
 - explicit delivery contact separate from payer identity
+- correction-draft links and reason snapshots for finalized invoice replacement
+- correction drafts excluded from automatic monthly staging and ordinary monthly-draft uniqueness
 - immutable finalized PDFs and invoice values
 - void and reissue rather than editing a finalized invoice
 
