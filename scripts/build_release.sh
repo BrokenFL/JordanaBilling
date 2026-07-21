@@ -88,7 +88,7 @@ clean_and_sign_app() {
   codesign --verify --deep --strict "$app_path"
 }
 
-prepare_setup_app() {
+sign_setup_app() {
   local app_path="$1"
   xattr -cr "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
@@ -103,6 +103,11 @@ prepare_setup_app() {
   xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
   xattr -dr com.apple.quarantine "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
+  # Sign only the outer setup bundle here. The embedded daily app is already
+  # signed and checksummed in ReleasePayload; using --deep with --force would
+  # rewrite that nested signature after the payload manifest was created.
+  codesign --force --sign - --timestamp=none "$app_path"
+  codesign --verify --deep --strict "$app_path"
 }
 
 rm -rf "$RELEASE_DIR" "$DMG_ROOT" "$DMG_PATH" "$DMG_PATH.sha256" "$BUILD_SRC" "$LAUNCHER_APP"
@@ -251,9 +256,9 @@ PY
 mkdir -p "$DMG_ROOT"
 rm -rf "$PAYLOAD_DIR"
 mv "$RELEASE_DIR" "$PAYLOAD_DIR"
-prepare_setup_app "$SETUP_APP"
+sign_setup_app "$SETUP_APP"
 ditto --norsrc "$SETUP_APP" "$DMG_ROOT/Install Jordana Billing.app"
-prepare_setup_app "$DMG_ROOT/Install Jordana Billing.app"
+sign_setup_app "$DMG_ROOT/Install Jordana Billing.app"
 cat > "$DMG_ROOT/README.txt" <<EOF
 Jordana Billing test release
 

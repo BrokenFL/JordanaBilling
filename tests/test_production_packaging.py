@@ -63,7 +63,7 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("ReleasePayload", builder)
         self.assertIn("git archive HEAD", builder)
         self.assertIn("BUILD_ID", builder)
-        self.assertIn("prepare_setup_app", builder)
+        self.assertIn("sign_setup_app", builder)
         self.assertIn('SETUP_APP="$BUILD_ROOT/Install Jordana Billing.app"', builder)
         self.assertIn('PAYLOAD_DIR="$SETUP_APP/Contents/Resources/ReleasePayload"', builder)
         self.assertIn("hdiutil create", builder)
@@ -163,7 +163,9 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn('cp "$PROJECT_DIR/scripts/install_release.sh"', builder)
         self.assertIn("clean_and_sign_app", builder)
         self.assertLess(builder.index('clean_and_sign_app "$RELEASE_DIR/Jordana Billing.app"'), builder.index('"checksums": checksums'))
-        self.assertLess(builder.index('"checksums": checksums'), builder.index('prepare_setup_app "$SETUP_APP"'))
+        self.assertLess(builder.index('"checksums": checksums'), builder.index('sign_setup_app "$SETUP_APP"'))
+        self.assertIn('codesign --force --sign - --timestamp=none "$app_path"', builder)
+        self.assertNotIn('codesign --force --deep --sign - --timestamp=none "$SETUP_APP"', builder)
 
     def test_installed_launcher_resource_is_committed_without_private_data(self) -> None:
         resource = PROJECT_DIR / "Jordana Billing.app" / "Contents" / "Resources" / "launch_installed_app.sh"
