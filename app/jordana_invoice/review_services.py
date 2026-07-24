@@ -4862,7 +4862,10 @@ def refresh_candidate_suggestions(
             """
             UPDATE sessions
             SET suggested_rate_cents = ?,
-                scheduled_rate_cents = COALESCE(scheduled_rate_cents, ?),
+                scheduled_rate_cents = CASE
+                    WHEN review_status IN ('approved', 'excluded') THEN scheduled_rate_cents
+                    ELSE ?
+                END,
                 rate_rule_id = ?,
                 rate_source = ?,
                 rate_needs_review = ?,
@@ -6790,26 +6793,29 @@ def recalc_unapproved_session_rates(conn: sqlite3.Connection) -> int:
     return count
 
 
-def reparse_unapproved_candidates(
+def _reparse_unapproved_candidates(
     conn: sqlite3.Connection,
+    *,
+    candidate_only: bool,
 ) -> dict[str, Any]:
     """
-    Reparse every unapproved, non-excluded candidate using the current parser.
+    Reparse unapproved, non-excluded candidates using the current parser.
     Preserves raw calendar evidence and audit history.
     Creates sessions for newly-classified client_session candidates
     (e.g., historical 'Sarah 5 cancelled' → client_session / cancelled / unresolved billing).
     Skips any candidate or session already approved or explicitly excluded.
     """
-    init_db(conn)
     now = now_iso()
+    candidate_only_clause = "AND s.id IS NULL" if candidate_only else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT
           c.id, c.latest_raw_snapshot_id, c.calendar_name, c.review_status AS cand_review_status,
           s.id AS session_id, s.review_status AS sess_review_status
         FROM calendar_event_candidates c
         LEFT JOIN sessions s ON s.candidate_id = c.id
         WHERE COALESCE(s.review_status, c.review_status) NOT IN ('approved', 'excluded')
+          {candidate_only_clause}
         """
     ).fetchall()
 
@@ -6823,6 +6829,13 @@ def reparse_unapproved_candidates(
             (row["latest_raw_snapshot_id"],),
         ).fetchone()
         if not snap:
+            skipped += 1
+            continue
+        if candidate_only and not re.search(
+            r"\b\d+\s+(?:min|mins|minute|minutes)\s*$",
+            text(snap["event_title"]),
+            re.IGNORECASE,
+        ):
             skipped += 1
             continue
 
@@ -6930,8 +6943,30 @@ def reparse_unapproved_candidates(
             if created:
                 sessions_created += 1
 
-    conn.commit()
     return {"reparsed": reparsed, "sessions_created": sessions_created, "skipped": skipped}
+
+
+def reparse_unapproved_candidates(
+    conn: sqlite3.Connection,
+) -> dict[str, Any]:
+    """Manually reparse all unapproved candidates, including existing sessions."""
+    init_db(conn)
+    result = _reparse_unapproved_candidates(conn, candidate_only=False)
+    conn.commit()
+    return result
+
+
+def reparse_candidate_only_duration_suffixes(
+    conn: sqlite3.Connection,
+) -> dict[str, Any]:
+    """
+    Reparse only candidate-only records whose titles end in a minute unit.
+
+    This targeted parser-upgrade repair is safe to run during sync because it
+    cannot rewrite an existing session or an approved/excluded decision, and it
+    ignores unrelated ambiguous records. The caller owns the transaction.
+    """
+    return _reparse_unapproved_candidates(conn, candidate_only=True)
 
 
 def analyze_billing_relationship_duplicates(conn: sqlite3.Connection) -> dict[str, Any]:

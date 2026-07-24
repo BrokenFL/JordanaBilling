@@ -596,7 +596,10 @@ for (const [args, expected] of cases) {
 
         self.assertIn("function firstPresent", js)
         self.assertIn("firstPresent(s.approved_rate_cents, s.suggested_rate_cents)", js)
-        self.assertIn('if ($("approvedRateInput") && attendanceOutcome === "late_cancellation")', js)
+        self.assertIn('id="customCancellationFeeInput"', js)
+        self.assertIn("function selectedSessionRateValue()", js)
+        self.assertIn('$("customCancellationFeeInput")?.value', js)
+        self.assertIn('$("billingTreatmentInput")?.value || state.detail?.session?.billing_treatment || ""', js)
         self.assertIn('if (billingTreatment === "waived")', js)
 
     def test_confirmed_client_summary_renders_without_participant_chips(self):

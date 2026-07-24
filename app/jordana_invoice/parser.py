@@ -833,6 +833,12 @@ def parse_standard_title(title: str) -> tuple[str, str | None, int | None, str, 
 def parse_shorthand(title: str) -> tuple[str, str, int | None, str, bool, str | None, str | None] | None:
     cleaned_title, service_mode = strip_service_mode(title)
     tokens = cleaned_title.strip().split()
+    if (
+        len(tokens) >= 3
+        and tokens[-1].lower() in {"min", "mins", "minute", "minutes"}
+        and is_duration_token(tokens[-2])
+    ):
+        tokens = tokens[:-1]
     if len(tokens) < 2:
         return None
 

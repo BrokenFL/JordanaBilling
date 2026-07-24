@@ -385,6 +385,9 @@ def sync_with_connection(
                     source_path=config.apps_script_url,
                     commit=False,
                 )
+                from .review_services import reparse_candidate_only_duration_suffixes
+
+                reparse_candidate_only_duration_suffixes(conn)
                 rows_imported = count_raw_rows(conn) - before
                 review_items_changed = abs(count_review_rows(conn) - review_before)
                 if final_cursor.ingested_at:

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from jordana_invoice.db import connect, init_db
+from jordana_invoice.importer import import_rows
 from jordana_invoice.google_sync import (
     EMPTY_CURSOR,
     SOURCE_NAME,
@@ -135,6 +136,71 @@ class SyncTests(unittest.TestCase):
         )
         self.assertEqual(result.rows_imported, 0)
         self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 0)
+
+    def test_empty_sync_recovers_candidate_only_record_after_parser_upgrade(self):
+        import_rows(
+            self.conn,
+            [row("legacy-trailing-min", title="Morgan Vale 1 30 min")],
+            "legacy_test",
+        )
+        candidate = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE title = ?",
+            ("Morgan Vale 1 30 min",),
+        ).fetchone()
+        session = self.conn.execute(
+            "SELECT id FROM sessions WHERE candidate_id = ?",
+            (candidate["id"],),
+        ).fetchone()
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute(
+            "DELETE FROM session_participants WHERE session_id = ?",
+            (session["id"],),
+        )
+        self.conn.execute("DELETE FROM sessions WHERE id = ?", (session["id"],))
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'unresolved',
+                proposed_client_name = 'Morgan',
+                review_status = 'needs_classification'
+            WHERE id = ?
+            """,
+            (candidate["id"],),
+        )
+        self.conn.commit()
+        raw_before = count(self.conn, "raw_calendar_snapshots")
+
+        result = sync_with_connection(
+            self.conn,
+            self.config,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [],
+                        "next_cursor": EMPTY_CURSOR,
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+
+        recovered = self.conn.execute(
+            """
+            SELECT s.duration_minutes, c.classification, c.proposed_client_name
+            FROM calendar_event_candidates c
+            JOIN sessions s ON s.candidate_id = c.id
+            WHERE c.id = ?
+            """,
+            (candidate["id"],),
+        ).fetchone()
+        self.assertEqual(result.rows_imported, 0)
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), raw_before)
+        self.assertEqual(recovered["classification"], "client_session")
+        self.assertEqual(recovered["proposed_client_name"], "Morgan Vale")
+        self.assertEqual(recovered["duration_minutes"], 30)
 
     def test_dry_run_does_not_write_sync_state_or_rows(self):
         result = sync_with_connection(
