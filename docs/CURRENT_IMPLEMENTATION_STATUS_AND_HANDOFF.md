@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.27 supersedes test.26):
+The current controlled-beta release target is (test.28 supersedes test.27):
 
 ```text
-JordanaBilling-v0.1.0-test.27-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.28-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.27`
-- Python package/application version: `0.1.0.post27`
+- Release label: `v0.1.0-test.28`
+- Python package/application version: `0.1.0.post28`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,16 +130,17 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post27` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post28` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
-### Billing And Client Improvements In test.27
+### Billing And Client Improvements In test.28
 
 1. **Optional cancellation policy** — a finalization checkbox controls the exact approved plain-text policy at the bottom of each invoice, and finalized policy snapshots remain frozen.
-2. **Late-cancellation billing** — Review exposes full scheduled fee, custom fee, and waived choices and restores the scheduled rate for full-fee approval.
+2. **Late-cancellation billing** — Review exposes a dedicated editable custom-fee field, refreshes full fee from the confirmed client's Rate Card rule, and retains the saved billing choice through final approval.
 3. **Client rename and duplicate merge** — UUID-linked draft/future billing can be corrected while finalized invoice and receipt history remains unchanged.
 4. **Correct & Replace Invoice** — corrections use a linked replacement draft and atomically void the original only when the replacement finalizes safely.
+5. **Calendar shorthand recovery** — titles ending in a duration unit such as `30 min` become reviewable client sessions, and sync repairs matching candidate-only records from preserved raw evidence.
 
 ### Bug Fixes Inherited from test.22
 

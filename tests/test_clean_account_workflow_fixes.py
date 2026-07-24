@@ -134,6 +134,36 @@ class CleanAccountWorkflowFixesTests(unittest.TestCase):
         self.assertIn(self.org["billing_party_id"], option_ids)
         self.assertEqual(refreshed["effective_billing_party"]["billing_party_id"], self.org["billing_party_id"])
 
+    def test_pending_scheduled_rate_refreshes_when_person_rule_is_added(self):
+        seed_rate_rule(
+            self.conn,
+            amount_cents=35000,
+            effective_from="2026-01-01",
+            duration_minutes=60,
+            billing_session_type="psychotherapy_weekend",
+            time_category="weekend",
+        )
+        detail = self._confirmed_client_session("rate-refresh")
+        candidate_id = detail["session"]["candidate_id"]
+        refresh_candidate_suggestions(self.conn, candidate_id)
+        before = get_review_candidate(self.conn, candidate_id)["session"]
+        self.assertEqual(before["scheduled_rate_cents"], 35000)
+
+        seed_rate_rule(
+            self.conn,
+            amount_cents=40000,
+            effective_from="2026-01-01",
+            duration_minutes=60,
+            billing_session_type="psychotherapy_weekend",
+            time_category="weekend",
+            person_id=self.client["person_id"],
+        )
+        refresh_candidate_suggestions(self.conn, candidate_id)
+        refreshed = get_review_candidate(self.conn, candidate_id)["session"]
+
+        self.assertEqual(refreshed["suggested_rate_cents"], 40000)
+        self.assertEqual(refreshed["scheduled_rate_cents"], 40000)
+
     def test_unrelated_organization_is_not_offered(self):
         detail = self._confirmed_client_session()
         account = setup_billing_relationship(self.conn, {

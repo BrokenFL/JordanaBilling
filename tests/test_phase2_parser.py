@@ -21,6 +21,22 @@ class Phase2ParserTests(unittest.TestCase):
         self.assertEqual(result.duration_source, "title")
         self.assertIn("duration_discrepancy", result.unresolved_fields)
 
+    def test_shorthand_accepts_trailing_duration_unit(self):
+        result = parse_event(
+            event(
+                "Morgan Vale 1 30 min",
+                "2026-07-22T13:00:00-04:00",
+                "2026-07-22T14:00:00-04:00",
+                duration=60,
+            )
+        )
+        self.assertEqual(result.classification, "client_session")
+        self.assertEqual(result.proposed_client_name, "Morgan Vale")
+        self.assertEqual(result.time_shorthand, "1")
+        self.assertEqual(result.proposed_duration_minutes, 30)
+        self.assertEqual(result.duration_source, "title")
+        self.assertIn("duration_discrepancy", result.unresolved_fields)
+
     def test_rebecca_colon_normalizes_name(self):
         result = parse_event(event("Rebecca colon 630 90"))
         self.assertEqual(result.proposed_client_name, "Rebecca Colon")

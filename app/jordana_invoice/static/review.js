@@ -606,6 +606,7 @@ function renderInspector(data) {
   const scheduledRate = centString(firstPresent(s.scheduled_rate_cents, s.suggested_rate_cents, s.approved_rate_cents));
   const currentRate = centString(firstPresent(s.approved_rate_cents, s.scheduled_rate_cents, s.suggested_rate_cents));
   const suggestedRate = centString(s.suggested_rate_cents);
+  const customCancellationFee = s.billing_treatment === "custom_fee" ? currentRate : "";
   const rateChanged = currentRate !== suggestedRate && currentRate !== "";
   const attendanceOutcome = s.appointment_status === "scheduled" ? "completed" : (s.appointment_status || "completed");
   const showCancellation = ["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome);
@@ -706,7 +707,9 @@ function renderInspector(data) {
                <label class="field" id="customCodeField" ${s.billing_session_type === "custom" ? "" : "hidden"}>Custom Code<input id="customCodeInput" value="${escapeAttr(s.custom_service_code || "")}"></label>
                <label class="field">Attendance Outcome<select id="attendanceOutcomeInput">${attendanceOutcomeOptions(attendanceOutcome)}</select></label>
                ${showCancellation ? `<label class="field">Cancellation Billing<select id="billingTreatmentInput">${cancellationBillingOptions(s.billing_treatment || "unresolved", attendanceOutcome)}</select></label>` : ""}
-               <label class="field">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}" data-suggested-rate="${escapeAttr(suggestedRate)}" data-scheduled-rate="${escapeAttr(scheduledRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span><span class="help" id="sessionRatePreview"></span></label>
+               <label class="field" id="sessionRateField">Rate for this session<input id="approvedRateInput" value="${escapeAttr(currentRate)}" data-suggested-rate="${escapeAttr(suggestedRate)}" data-scheduled-rate="${escapeAttr(scheduledRate)}"><span class="help" id="sessionRateHelp">This rate applies only to this session unless you save it as a future default.</span></label>
+               <label class="field" id="customCancellationFeeField" hidden>Custom late-cancellation fee ($)<input id="customCancellationFeeInput" inputmode="decimal" value="${escapeAttr(customCancellationFee)}"><span class="help">Enter the amount to charge for this cancellation.</span></label>
+               <span class="help field wide" id="sessionRatePreview"></span>
                <label class="field">Payment Handling<select id="paymentInput"><option value="unpaid" ${s.payment_status === "unpaid" ? "selected" : ""}>Invoice billing</option><option value="paid_at_session" ${s.payment_status === "paid_at_session" ? "selected" : ""}>Paid at session</option></select></label>
                <div class="field wide" id="paidAtSessionSection" ${s.payment_status === "paid_at_session" ? "" : "hidden"} style="background: rgba(0,0,0,0.02); padding: 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1); margin-top: 8px;">
                  <h4 style="margin: 0 0 8px 0;">Paid at Session Details</h4>
@@ -781,6 +784,7 @@ function wireInspector() {
     "customDescInput",
     "customCodeInput",
     "approvedRateInput",
+    "customCancellationFeeInput",
     "paymentInput",
     "attendanceOutcomeInput",
     "billingTreatmentInput",
@@ -832,13 +836,17 @@ function syncSessionCustomFields() {
   if ($("billingTreatmentInput") && attendanceOutcome === "late_cancellation" && !["unresolved", "bill_full_fee", "custom_fee", "waived"].includes($("billingTreatmentInput").value)) {
     $("billingTreatmentInput").value = "unresolved";
   }
+  const isCustomCancellation = attendanceOutcome === "late_cancellation" && billingTreatment === "custom_fee";
+  if ($("sessionRateField")) $("sessionRateField").hidden = isCustomCancellation;
+  if ($("customCancellationFeeField")) $("customCancellationFeeField").hidden = !isCustomCancellation;
+  if ($("approvedRateInput")) {
+    $("approvedRateInput").readOnly = attendanceOutcome === "late_cancellation";
+  }
   if ($("approvedRateInput") && attendanceOutcome === "late_cancellation") {
     const scheduledRate = $("approvedRateInput").dataset.scheduledRate || $("approvedRateInput").dataset.suggestedRate || "";
     if (billingTreatment === "waived") {
       $("approvedRateInput").value = "0.00";
     } else if (billingTreatment === "bill_full_fee" && scheduledRate) {
-      $("approvedRateInput").value = scheduledRate;
-    } else if (billingTreatment === "custom_fee" && parseMoneyToCents($("approvedRateInput").value) === 0 && scheduledRate) {
       $("approvedRateInput").value = scheduledRate;
     }
   }
@@ -1491,17 +1499,28 @@ async function save(approve) {
 
 function validateCancellationBillingChoice() {
   const outcome = $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "";
-  const treatment = $("billingTreatmentInput")?.value || "";
+  const treatment = $("billingTreatmentInput")?.value || state.detail?.session?.billing_treatment || "";
   if (outcome !== "late_cancellation") return;
   if (!treatment || treatment === "unresolved") {
     throw new Error("Choose how to bill this late cancellation.");
   }
   if (treatment === "custom_fee") {
-    const amount = Number(String($("approvedRateInput")?.value || "").replace(/[$,\s]/g, ""));
+    const amount = Number(String(selectedSessionRateValue()).replace(/[$,\s]/g, ""));
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error("Enter a custom fee greater than $0.00.");
     }
   }
+}
+
+function selectedSessionRateValue() {
+  const outcome = $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "";
+  const treatment = $("billingTreatmentInput")?.value || state.detail?.session?.billing_treatment || "";
+  if (outcome === "late_cancellation" && treatment === "custom_fee") {
+    return $("customCancellationFeeInput")?.value
+      || centString(firstPresent(state.detail?.session?.approved_rate_cents, null))
+      || "";
+  }
+  return $("approvedRateInput")?.value || "";
 }
 
 function collectSessionDraftValues() {
@@ -1518,7 +1537,8 @@ function collectSessionDraftValues() {
     custom_service_code: $("customCodeInput")?.value || "",
     time_category: timeCategoryForBillingType(billingType, state.detail?.session?.time_category || "standard"),
     appointment_status: $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "completed",
-    approved_rate: $("approvedRateInput")?.value || "",
+    approved_rate: selectedSessionRateValue(),
+    custom_cancellation_fee: $("customCancellationFeeInput")?.value || "",
     payment_status: $("paymentInput")?.value || "",
     amount_received: $("paymentAmountInput")?.value || "",
     payment_date: $("paymentDateInput")?.value || "",
@@ -1539,6 +1559,10 @@ function restoreSessionDraftValues(values) {
   if ($("customCodeInput")) $("customCodeInput").value = values.custom_service_code;
   if ($("attendanceOutcomeInput")) $("attendanceOutcomeInput").value = values.appointment_status;
   if ($("approvedRateInput")) $("approvedRateInput").value = values.approved_rate;
+  if ($("customCancellationFeeInput")) {
+    $("customCancellationFeeInput").value = values.custom_cancellation_fee
+      || (values.billing_treatment === "custom_fee" ? values.approved_rate : "");
+  }
   if ($("paymentInput")) $("paymentInput").value = values.payment_status;
   if ($("paymentAmountInput")) $("paymentAmountInput").value = values.amount_received;
   if ($("paymentDateInput")) $("paymentDateInput").value = values.payment_date;
@@ -1554,22 +1578,6 @@ async function updateSessionRatePreview() {
   if (!$("sessionRatePreview") || !state.detail?.session?.id) return;
   const appointmentStatus = $("attendanceOutcomeInput")?.value || state.detail.session.appointment_status || "scheduled";
   const billingTreatment = $("billingTreatmentInput")?.value || state.detail.session.billing_treatment || "";
-  if (appointmentStatus === "late_cancellation") {
-    const rateInput = $("approvedRateInput");
-    const scheduledRate = rateInput?.dataset.scheduledRate || rateInput?.dataset.suggestedRate || "";
-    if (billingTreatment === "bill_full_fee") {
-      if (rateInput && scheduledRate) rateInput.value = scheduledRate;
-      $("sessionRatePreview").textContent = scheduledRate ? `Full scheduled session fee: $${scheduledRate}` : "The scheduled session fee is not available yet.";
-    } else if (billingTreatment === "custom_fee") {
-      $("sessionRatePreview").textContent = "Enter the custom late-cancellation fee for this session.";
-    } else if (billingTreatment === "waived") {
-      if (rateInput) rateInput.value = "0.00";
-      $("sessionRatePreview").textContent = "Late-cancellation fee waived.";
-    } else {
-      $("sessionRatePreview").textContent = "Choose how to bill this late cancellation.";
-    }
-    return;
-  }
   const participantIds = confirmedSessionClients().map(p => p.person_id).filter(Boolean);
   const billingType = $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy";
   const durationChoice = $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes);
@@ -1589,12 +1597,53 @@ async function updateSessionRatePreview() {
   };
   try {
     const preview = await api("/api/rate-rules/preview", { method: "POST", body: JSON.stringify(payload) });
+    if (appointmentStatus === "late_cancellation") {
+      const rateInput = $("approvedRateInput");
+      const scheduledRate = preview.amount || rateInput?.dataset.scheduledRate || rateInput?.dataset.suggestedRate || "";
+      if (preview.amount && rateInput) {
+        rateInput.dataset.scheduledRate = preview.amount;
+        rateInput.dataset.suggestedRate = preview.amount;
+        state.detail.session.scheduled_rate_cents = parseMoneyToCents(preview.amount);
+        state.detail.session.suggested_rate_cents = parseMoneyToCents(preview.amount);
+        state.detail.session.rate_rule_id = preview.rate_rule_id || null;
+        state.detail.session.rate_source = preview.rate_source || "none";
+      }
+      if (billingTreatment === "bill_full_fee") {
+        if (rateInput && scheduledRate) rateInput.value = scheduledRate;
+        $("sessionRatePreview").textContent = scheduledRate ? `Full scheduled session fee from Rate Card: $${scheduledRate}` : "The scheduled session fee is not available yet.";
+      } else if (billingTreatment === "custom_fee") {
+        $("sessionRatePreview").textContent = scheduledRate
+          ? `Scheduled session fee is $${scheduledRate}. Enter the custom fee above.`
+          : "Enter the custom late-cancellation fee above.";
+      } else if (billingTreatment === "waived") {
+        if (rateInput) rateInput.value = "0.00";
+        $("sessionRatePreview").textContent = "Late-cancellation fee waived.";
+      } else {
+        $("sessionRatePreview").textContent = "Choose how to bill this late cancellation.";
+      }
+      return;
+    }
     const previewText = preview.amount
       ? `Suggested by Rate Card: $${preview.amount} (${preview.explanation})`
       : "No matching Rate Card rule. This session will stay marked Needs Rate unless you enter one.";
     applyMatchedRatePreview(preview);
     $("sessionRatePreview").textContent = previewText;
   } catch (err) {
+    if (appointmentStatus === "late_cancellation") {
+      const scheduledRate = $("approvedRateInput")?.dataset.scheduledRate || $("approvedRateInput")?.dataset.suggestedRate || "";
+      if (billingTreatment === "bill_full_fee" && scheduledRate) {
+        $("approvedRateInput").value = scheduledRate;
+        $("sessionRatePreview").textContent = `Full scheduled session fee: $${scheduledRate}`;
+      } else if (billingTreatment === "custom_fee") {
+        $("sessionRatePreview").textContent = "Enter the custom late-cancellation fee above.";
+      } else if (billingTreatment === "waived") {
+        $("approvedRateInput").value = "0.00";
+        $("sessionRatePreview").textContent = "Late-cancellation fee waived.";
+      } else {
+        $("sessionRatePreview").textContent = "Choose how to bill this late cancellation.";
+      }
+      return;
+    }
     $("sessionRatePreview").textContent = err.message || "Unable to preview suggested rate.";
   }
 }
@@ -1759,7 +1808,7 @@ function collectPayload() {
     rateScopePersonId = participantIds[0];
   }
 
-  const rate = $("approvedRateInput")?.value
+  const rate = selectedSessionRateValue()
     || centString(firstPresent(session.approved_rate_cents, null))
     || centString(session.suggested_rate_cents)
     || "";
@@ -1787,7 +1836,7 @@ function collectPayload() {
     custom_service_description: $("customDescInput")?.value || session.custom_service_description || "",
     custom_service_code: $("customCodeInput")?.value || session.custom_service_code || "",
     time_category: timeCategoryForBillingType(billingType, session.time_category || "standard"),
-    suggested_rate: centString(session.suggested_rate_cents),
+    suggested_rate: $("approvedRateInput")?.dataset.suggestedRate || centString(session.suggested_rate_cents),
     billing_party_id: state.billingParty?.billing_party_id || state.detail?.effective_billing_party?.billing_party_id || null,
     approved_rate: rate,
     payment_status: paymentStatus,

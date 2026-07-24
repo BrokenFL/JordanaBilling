@@ -25,6 +25,7 @@ from jordana_invoice.review_services import (
     list_review_candidates,
     mark_candidate,
     promote_candidate_to_review,
+    reparse_candidate_only_duration_suffixes,
     reparse_unapproved_candidates,
 )
 
@@ -189,6 +190,50 @@ class ReparseUnapprovedCandidatesTests(unittest.TestCase):
             "SELECT COUNT(*) AS c FROM sessions WHERE candidate_id = ?", (cid,)
         ).fetchone()["c"]
         self.assertEqual(count, 1, "Reparse must not create a duplicate session")
+
+    def test_candidate_only_reparse_recovers_trailing_minute_title(self):
+        import_rows(
+            self.conn,
+            [
+                make_row(
+                    "trailing-min",
+                    "Morgan Vale 1 30 min",
+                    start="2026-07-22T13:00:00-04:00",
+                )
+            ],
+            "reparse_test",
+        )
+        cid = self._cid("Morgan Vale")
+        self._delete_session_cascade(cid)
+        self.conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'unresolved',
+                proposed_client_name = 'Morgan',
+                review_status = 'needs_classification'
+            WHERE id = ?
+            """,
+            (cid,),
+        )
+        self.conn.commit()
+        raw_before = {
+            row["id"]: dict(row)
+            for row in self.conn.execute("SELECT * FROM raw_calendar_snapshots").fetchall()
+        }
+
+        result = reparse_candidate_only_duration_suffixes(self.conn)
+
+        candidate = self._candidate(cid)
+        session = self._session(cid)
+        raw_after = {
+            row["id"]: dict(row)
+            for row in self.conn.execute("SELECT * FROM raw_calendar_snapshots").fetchall()
+        }
+        self.assertEqual(result["sessions_created"], 1)
+        self.assertEqual(candidate["classification"], "client_session")
+        self.assertEqual(candidate["proposed_client_name"], "Morgan Vale")
+        self.assertEqual(session["duration_minutes"], 30)
+        self.assertEqual(raw_after, raw_before)
 
     def test_approved_candidate_is_skipped(self):
         import_rows(self.conn, [make_row("approved-c", "Carol Green 8")], "reparse_test")
