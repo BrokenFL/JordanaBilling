@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.29
+### Current Test Build — v0.1.0-test.30
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.29
-- **Python package/application version:** 0.1.0.post29
+- **Release label:** v0.1.0-test.30
+- **Python package/application version:** 0.1.0.post30
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,20 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post29` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post30` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.29 preserves the test.28 safeguards and makes the customer-facing invoice
-date equal the invoice's finalization date in the business timezone. Drafts show
-`Assigned when finalized`, corrected replacement invoices receive their own
-finalization date, and finalized history remains immutable.
+test.30 preserves the test.29 safeguards and prevents a correction draft from
+counting its still-finalized parent invoice as a second prior unpaid balance.
+Paid older invoices remain excluded from prior balance calculations, and
+finalized history remains immutable.
+
+### Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the customer-facing invoice date is assigned from `finalized_at` in `America/New_York`, draft previews show `Assigned when finalized`, and corrected replacement invoices receive their own finalization date without rewriting the original finalized history.
 
 ### Bug Fixes In test.22
 

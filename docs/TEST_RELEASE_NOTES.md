@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.29 Release Notes
+# Jordana Billing v0.1.0-test.30 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.29` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.30` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.29-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.30-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.29
-- **Python package/application version:** 0.1.0.post29
+- **Release label:** v0.1.0-test.30
+- **Python package/application version:** 0.1.0.post30
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,14 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post29` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post30` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Billing And Client Improvements In test.30
+
+1. **Correction-draft prior-balance fix** — correction drafts no longer count their still-finalized parent invoice as a prior unpaid invoice. This prevents the parent’s current charges from being duplicated in the editable correction draft while preserving the original finalized history.
+
+2. **Paid-history protection** — the regression coverage confirms that a fully paid older invoice remains excluded from the correction draft’s prior balance.
 
 ## Billing And Client Improvements In test.29
 

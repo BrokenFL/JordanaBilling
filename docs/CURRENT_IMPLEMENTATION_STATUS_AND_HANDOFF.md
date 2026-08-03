@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.29 supersedes test.28):
+The current controlled-beta release target is (test.30 supersedes test.29):
 
 ```text
-JordanaBilling-v0.1.0-test.29-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.30-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.29`
-- Python package/application version: `0.1.0.post29`
+- Release label: `v0.1.0-test.30`
+- Python package/application version: `0.1.0.post30`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,9 +130,13 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post29` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post30` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Billing And Client Improvements In test.30
+
+1. **Correction-draft balance fix** — correction drafts exclude their still-finalized parent invoice from prior unpaid balance calculations, preventing the parent’s current charges from appearing a second time as a prior balance.
 
 ### Billing And Client Improvements In test.29
 

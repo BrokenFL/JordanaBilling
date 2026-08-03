@@ -129,6 +129,52 @@ class InvoiceCorrectionTests(unittest.TestCase):
         self.assertEqual(unchanged["invoice"]["replacement_invoice"]["invoice_id"], correction["invoice"]["invoice_id"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_correction_draft_does_not_count_parent_as_prior_balance(self, fake_pdf):
+        fake_pdf.return_value = "h" * 64
+
+        paid_prior_session = self.approved_session("paid-prior")
+        paid_prior_draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01",
+            "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31",
+            "session_ids": [paid_prior_session["id"]],
+        })
+        paid_prior = finalize_invoice(
+            self.conn,
+            paid_prior_draft["invoice"]["invoice_id"],
+            pdf_root=self.root / "Invoices",
+        )
+        payment = create_payment(
+            self.conn,
+            billing_party_id=self.party["billing_party_id"],
+            amount_cents=paid_prior["invoice"]["total_cents"],
+            received_at="2026-06-01",
+            method="check",
+        )
+        allocate_payment_to_session(
+            self.conn,
+            payment_id=payment["payment_id"],
+            session_id=paid_prior_session["id"],
+            amount_cents=paid_prior["invoice"]["total_cents"],
+            invoice_line_item_id=paid_prior["lines"][0]["invoice_line_item_id"],
+        )
+
+        parent_session = self.approved_session("correction-parent")
+        parent = self.finalize_original(parent_session)
+        correction = start_invoice_correction(
+            self.conn,
+            parent["invoice"]["invoice_id"],
+            "Corrected invoice date",
+        )
+
+        summary = correction["render_model"]["account_summary"]
+        self.assertEqual(summary["prior_unpaid_balance_cents"], 0)
+        self.assertEqual(summary["prior_invoices"], [])
+        self.assertEqual(summary["current_invoice_balance_cents"], parent["invoice"]["total_cents"])
+        self.assertEqual(summary["total_amount_due_cents"], parent["invoice"]["total_cents"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_abandoning_correction_deletes_only_draft(self, fake_pdf):
         fake_pdf.return_value = "b" * 64
         session = self.approved_session("delete")

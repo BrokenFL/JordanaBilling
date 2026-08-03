@@ -168,6 +168,7 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
         raise ValueError("Invoice was not found.")
     invoice = dict(invoice_row)
     status = invoice["status"]
+    correction_parent_id = invoice.get("correction_of_invoice_id")
 
     current_total = int(invoice["total_cents"] or 0)
     current_paid = _invoice_paid_cents(conn, invoice_id)
@@ -225,8 +226,10 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
         cand = dict(row)
         cand_id = cand["invoice_id"]
 
-        # 1. Skip the current invoice itself
-        if cand_id == invoice_id:
+        # 1. Skip the current invoice itself and, while a correction is being
+        # edited, its still-finalized parent. The parent is being replaced by
+        # this draft and must not appear as a second prior charge.
+        if cand_id == invoice_id or cand_id == correction_parent_id:
             continue
 
         # 2. Check if the candidate is "prior" based on the cutoff rule
