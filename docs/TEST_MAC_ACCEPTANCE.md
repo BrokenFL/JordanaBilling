@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.30
+### Current Test Build — v0.1.0-test.31
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.30
-- **Python package/application version:** 0.1.0.post30
+- **Release label:** v0.1.0-test.31
+- **Python package/application version:** 0.1.0.post31
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,15 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.30 supersedes test.29 for installation and update testing. It retains the
+test.31 supersedes test.30 for installation and update testing. It retains the
 prior billing and client safeguards and prevents correction drafts from
-displaying their finalized parent invoice as a duplicate prior balance.
+displaying their finalized parent invoice as a duplicate prior balance. It also
+aligns the JavaScript-rendered invoice preview with the current canonical
+invoice layout across draft and finalized invoice surfaces.
+
+### Billing And Client Improvements In test.31
+
+1. **Canonical JavaScript invoice preview** — the preview remains easy to browse in the app while matching the current invoice formatting and data presentation used by the canonical invoice renderer.
 
 ### Billing And Client Improvements In test.30
 

@@ -93,6 +93,43 @@ for (const [input, expected] of cases) {
         self.assertNotIn("Invoice Date:", preview)
         self.assertNotIn("Billing Period", preview)
 
+    def test_invoice_preview_matches_current_canonical_invoice_layout(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function renderCanonicalInvoicePreview")
+        end = js.index('$("newInvoiceBtn").onclick', start)
+        preview = js[start:end]
+        self.assertIn('class="invoice-preview-sender"', preview)
+        self.assertIn('class="invoice-billto"', preview)
+        self.assertIn('class="invoice-preview-right"', preview)
+        self.assertIn('class="invoice-preview-logo"', preview)
+        self.assertIn('<th>Service</th>', js)
+        self.assertNotIn('<th>Description</th>', preview)
+        self.assertIn("hasAdjustedSummary", preview)
+        self.assertIn("invoice-preview-summary-row", preview)
+        self.assertIn("payment_zelle_title", preview)
+        self.assertIn("payment_zelle_value", preview)
+        self.assertIn('class="invoice-notes"', preview)
+
+    def test_invoice_preview_formats_prior_invoice_dates_as_calendar_dates(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function invoicePreviewLongDate")
+        end = js.index("function renderCanonicalInvoicePreview", start)
+        helper = js[start:end]
+        script = helper + """
+const cases = [
+  ["2026-06-02", "June 02, 2026"],
+  ["2026-12-31T00:00:00Z", "December 31, 2026"],
+  ["not-a-date", "not-a-date"],
+];
+for (const [input, expected] of cases) {
+  const actual = invoicePreviewLongDate(input);
+  if (actual !== expected) {
+    throw new Error(`${input} -> ${actual}, expected ${expected}`);
+  }
+}
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
     def test_inspector_dirty_list_does_not_reference_removed_session_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 

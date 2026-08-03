@@ -4742,24 +4742,48 @@ function openFinalInvoicePdf(invoice, targetWindow) {
   return window.open(url, "_blank");
 }
 
+function invoicePreviewLongDate(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return text;
+  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (Number.isNaN(parsed.getTime())) return text;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(parsed);
+}
+
 function renderCanonicalInvoicePreview(renderModel, options = {}) {
   const model = renderModel || {};
   const lines = model.lines || [];
   const summary = model.account_summary || null;
   const insuranceCoding = options.insuranceCoding !== undefined ? options.insuranceCoding : model.insurance_coding;
   const cancellationPolicy = options.cancellationPolicy !== undefined ? options.cancellationPolicy : model.cancellation_policy;
-  const summaryRows = summary
+  const hasCurrentPayments = summary && Number(summary.current_invoice_paid_cents || 0) > 0;
+  const hasPriorBalance = summary && Number(summary.prior_unpaid_balance_cents || 0) > 0;
+  const hasAdjustedSummary = summary && (hasPriorBalance || hasCurrentPayments);
+  const summaryRows = hasAdjustedSummary
     ? `
-      <tr><td colspan="4">Current Charges</td><td>${fmt(summary.current_invoice_total_display)}</td></tr>
-      ${summary.current_invoice_paid_cents ? `<tr><td colspan="4">Payments Applied</td><td>-${fmt(summary.current_invoice_paid_display)}</td></tr>` : ""}
-      ${summary.current_invoice_paid_cents ? `<tr><td colspan="4">Current Invoice Balance</td><td>${fmt(summary.current_invoice_balance_display)}</td></tr>` : ""}
-      ${summary.prior_unpaid_balance_cents ? `<tr><td colspan="4">Prior Unpaid Balance</td><td>${fmt(summary.prior_unpaid_balance_display)}</td></tr>` : ""}
+      <tr class="invoice-preview-summary-row"><td colspan="4">Current Charges</td><td>${fmt(summary.current_invoice_total_display)}</td></tr>
+      ${hasCurrentPayments ? `<tr class="invoice-preview-summary-row"><td colspan="4">Payments Applied</td><td>-${fmt(summary.current_invoice_paid_display)}</td></tr>` : ""}
+      ${hasCurrentPayments ? `<tr class="invoice-preview-summary-row"><td colspan="4">Current Invoice Balance</td><td>${fmt(summary.current_invoice_balance_display)}</td></tr>` : ""}
+      ${hasPriorBalance ? `<tr class="invoice-preview-summary-row"><td colspan="4">Prior Unpaid Balance</td><td>${fmt(summary.prior_unpaid_balance_display)}</td></tr>` : ""}
       <tr class="invoice-preview-total"><td colspan="4">TOTAL AMOUNT DUE</td><td>${fmt(summary.total_amount_due_display)}</td></tr>
     `
     : `<tr class="invoice-preview-total"><td colspan="4">${fmt(model.total_label || "TOTAL DUE")}</td><td>${fmt(model.total_display)}</td></tr>`;
-  const priorInvoices = summary?.prior_invoices || [];
-  const priorHtml = priorInvoices.length
-    ? `<div class="invoice-preview-prior"><strong>Prior unpaid invoices:</strong>${priorInvoices.map(item => `<div>Invoice ${fmt(item.invoice_number)} · ${fmt(item.invoice_date)} · ${money(centString(item.remaining_balance_cents))} remaining</div>`).join("")}</div>`
+  const priorInvoices = hasAdjustedSummary && hasPriorBalance
+    ? (summary.prior_invoices || [])
+    : [];
+  const priorHtml = priorInvoices.length === 1
+    ? (() => {
+        const item = priorInvoices[0];
+        return `<div class="invoice-preview-prior">Includes prior invoice ${fmt(item.invoice_number)} dated ${fmt(invoicePreviewLongDate(item.invoice_date))} &mdash; ${money(centString(item.remaining_balance_cents))} remaining</div>`;
+      })()
+    : priorInvoices.length > 1
+      ? `<div class="invoice-preview-prior"><strong>Prior unpaid invoices:</strong>${priorInvoices.map(item => `<div>Invoice ${fmt(item.invoice_number)} &mdash; ${fmt(invoicePreviewLongDate(item.invoice_date))} &mdash; ${money(centString(item.remaining_balance_cents))} remaining</div>`).join("")}</div>`
     : "";
   const insuranceHtml = insuranceCoding
     ? `<div class="invoice-preview-insurance">${insuranceCoding.map(item => `<div>${fmt(item.label)}: ${fmt(item.value)}</div>`).join("")}</div>`
@@ -4767,21 +4791,29 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
   const cancellationPolicyHtml = cancellationPolicy
     ? `<div class="invoice-preview-cancellation-policy">${fmt(cancellationPolicy)}</div>`
     : "";
+  const logoHtml = model.logo_data_uri
+    ? `<div class="invoice-preview-logo"><img src="${escapeAttr(model.logo_data_uri)}" alt="Business logo"></div>`
+    : "";
+  const senderHtml = (model.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
+  const billToHtml = (model.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("");
+  const zelleHtml = model.payment_zelle_value
+    ? `<div class="invoice-preview-zelle"><strong>${fmt(model.payment_zelle_title || "Or pay via Zelle:")}</strong><div>${fmt(model.payment_zelle_value)}</div></div>`
+    : model.payment_zelle_line
+      ? `<div class="invoice-preview-zelle">${fmt(model.payment_zelle_line)}</div>`
+      : "";
   return `
     <article class="invoice-preview canonical-invoice-preview">
       <header class="invoice-preview-header">
         <div class="invoice-preview-left">
-          <div class="invoice-preview-title"><h3>INVOICE</h3></div>
-          <div>${fmt(model.invoice_date_display)}</div>
-          <div>${fmt(model.invoice_number_display)}</div>
-          <div class="invoice-preview-billto"><strong>BILL TO</strong>${(model.bill_to_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+          <div class="invoice-preview-sender">${senderHtml}</div>
+          <div class="invoice-billto"><strong>BILL TO</strong>${billToHtml}</div>
         </div>
-        <div class="invoice-preview-provider">
-          ${model.logo_data_uri ? `<img src="${escapeAttr(model.logo_data_uri)}" alt="Business logo">` : ""}
-          <div class="invoice-preview-sender">${(model.sender_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}</div>
+        <div class="invoice-preview-right">
+          ${logoHtml}
+          <div class="invoice-preview-title"><h3>INVOICE</h3><div>${fmt(model.invoice_date_display)}</div><div>${fmt(model.invoice_number_display)}</div></div>
         </div>
       </header>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Description</th><th>Duration</th><th>Amount</th></tr></thead><tbody>
+      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>
         ${lines.map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}
         ${summaryRows}
       </tbody></table>
@@ -4790,10 +4822,10 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
         <strong>${fmt(model.payment_title || "Please make checks payable to:")}</strong>
         <div>${fmt(model.payment_name)}</div>
         ${(model.payment_lines || []).map(line => `<div>${fmt(line)}</div>`).join("")}
-        ${model.payment_zelle_line ? `<div>${fmt(model.payment_zelle_line)}</div>` : ""}
+        ${zelleHtml}
       </footer>
       ${insuranceHtml}
-      ${model.notes ? `<div class="notes"><strong>Notes:</strong> ${fmt(model.notes)}</div>` : ""}
+      ${model.notes ? `<div class="invoice-notes"><strong>Notes:</strong> ${fmt(model.notes)}</div>` : ""}
       ${cancellationPolicyHtml}
     </article>
   `;

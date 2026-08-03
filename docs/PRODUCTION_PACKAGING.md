@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.30
+### Current Test Build — v0.1.0-test.31
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.30
-- **Python package/application version:** 0.1.0.post30
+- **Release label:** v0.1.0-test.31
+- **Python package/application version:** 0.1.0.post31
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,20 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post30` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post31` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.30 preserves the test.29 safeguards and prevents a correction draft from
-counting its still-finalized parent invoice as a second prior unpaid balance.
-Paid older invoices remain excluded from prior balance calculations, and
-finalized history remains immutable.
+test.31 preserves the test.30 safeguards and keeps the invoice preview
+JavaScript-rendered while aligning its layout and content with the current
+canonical invoice template across draft, finalization, finalized, and void
+surfaces.
+
+### Billing And Client Improvements In test.30
+
+1. **Correction-draft balance fix** — correction drafts exclude their still-finalized parent invoice from prior unpaid balance calculations, preventing the parent’s current charges from appearing a second time as a prior balance.
 
 ### Billing And Client Improvements In test.29
 

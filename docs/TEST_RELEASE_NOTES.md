@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.30 Release Notes
+# Jordana Billing v0.1.0-test.31 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.30` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.31` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.30-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.31-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.30
-- **Python package/application version:** 0.1.0.post30
+- **Release label:** v0.1.0-test.31
+- **Python package/application version:** 0.1.0.post31
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,14 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post30` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post31` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Billing And Client Improvements In test.31
+
+1. **Canonical JavaScript invoice preview** — the draft editor, Review & Finalize, and finalized/void invoice preview cards remain JavaScript-rendered, but now use the current canonical invoice layout and render model. Header placement, Bill To, Service lines, totals, prior-invoice dates, Zelle details, notes, and responsive layout now match the invoice presentation.
+
+2. **Shared current invoice data presentation** — normal invoices show the current total directly, while prior-balance/payment rows appear only when the invoice model contains those adjustments. The PDF renderer was not changed by this fix.
 
 ## Billing And Client Improvements In test.30
 
