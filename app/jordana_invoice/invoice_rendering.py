@@ -355,13 +355,19 @@ def build_invoice_render_model(
     insurance_coding = _build_insurance_coding(invoice, profile, insurance_coding_payload)
     cancellation_policy = _build_cancellation_policy(invoice, insurance_coding_payload)
 
+    invoice_date_display = (
+        "Assigned when finalized"
+        if str(invoice.get("status") or "") == "draft"
+        else format_invoice_header_date(invoice.get("invoice_date"))
+    )
+
     return {
         "logo_path": logo_path,
         "logo_data_uri": logo_uri,
         "sender_lines": sender_lines,
         "bill_to_lines": bill_to_lines,
         "invoice_number_display": display_invoice_number(invoice.get("invoice_number"), invoice.get("status")),
-        "invoice_date_display": format_invoice_header_date(invoice.get("invoice_date")),
+        "invoice_date_display": invoice_date_display,
         "billing_period_display": format_billing_period(
             invoice.get("billing_month"),
             invoice.get("billing_period_start"),

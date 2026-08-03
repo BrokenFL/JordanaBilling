@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.28 Release Notes
+# Jordana Billing v0.1.0-test.29 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.28` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.29` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.28-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.29-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.28
-- **Python package/application version:** 0.1.0.post28
+- **Release label:** v0.1.0-test.29
+- **Python package/application version:** 0.1.0.post29
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,13 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post28` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post29` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the finalized invoice header date now comes from the invoice's `finalized_at` timestamp in `America/New_York`, never from a draft's arbitrary date. Draft previews display `Assigned when finalized`.
+2. **Corrected replacement dates** — a corrected replacement invoice receives the date it is finalized, while the original finalized/void invoice and its PDF remain frozen.
 
 ## Billing And Client Improvements In test.28
 

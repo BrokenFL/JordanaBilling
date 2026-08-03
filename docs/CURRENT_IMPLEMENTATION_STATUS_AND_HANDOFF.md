@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.28 supersedes test.27):
+The current controlled-beta release target is (test.29 supersedes test.28):
 
 ```text
-JordanaBilling-v0.1.0-test.28-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.29-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.28`
-- Python package/application version: `0.1.0.post28`
+- Release label: `v0.1.0-test.29`
+- Python package/application version: `0.1.0.post29`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,9 +130,13 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post28` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post29` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the customer-facing invoice date is assigned from `finalized_at` in `America/New_York`, draft previews show `Assigned when finalized`, and corrected replacement invoices receive their own finalization date without rewriting the original finalized history.
 
 ### Billing And Client Improvements In test.28
 

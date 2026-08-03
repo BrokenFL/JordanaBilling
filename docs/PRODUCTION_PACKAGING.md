@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.28
+### Current Test Build — v0.1.0-test.29
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.28
-- **Python package/application version:** 0.1.0.post28
+- **Release label:** v0.1.0-test.29
+- **Python package/application version:** 0.1.0.post29
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,16 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post28` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post29` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.28 preserves the Release 27 safeguards and repairs late-cancellation
-custom-fee entry, saved-choice approval, client-specific scheduled-rate refresh,
-and recovery of calendar shorthand ending in `min` without changing raw
-calendar evidence.
+test.29 preserves the test.28 safeguards and makes the customer-facing invoice
+date equal the invoice's finalization date in the business timezone. Drafts show
+`Assigned when finalized`, corrected replacement invoices receive their own
+finalization date, and finalized history remains immutable.
 
 ### Bug Fixes In test.22
 

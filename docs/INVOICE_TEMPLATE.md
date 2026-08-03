@@ -1,10 +1,11 @@
 # Invoice Template
 
 The ReportLab letter template contains a balanced two-column header. The
-right-side invoice block shows exactly `INVOICE`, the invoice date as an
-unlabeled uppercase short date such as `JUL 1, 2025`, and the invoice number as
-an unlabeled value such as `10-2025`. Billing Period is not displayed on the
-invoice. The line-item table, configured `TOTAL DUE`, and restrained
+right-side finalized invoice block shows exactly `INVOICE`, the finalization
+date as an unlabeled uppercase short date such as `JUL 1, 2025`, and the
+invoice number as an unlabeled value such as `10-2025`. Draft previews show
+`Assigned when finalized` instead of an arbitrary draft date. Billing Period
+is not displayed on the invoice. The line-item table, configured `TOTAL DUE`, and restrained
 footer-style payment block span the full content width below the header. The
 Bill To block shows the delivery destination implied by the invoice delivery
 method: mailing address for mail, `Via Email: ...` for email, or both in that

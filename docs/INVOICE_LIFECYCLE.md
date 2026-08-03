@@ -6,8 +6,10 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 ## Draft
 
-Drafts can add/remove eligible sessions, change invoice dates, choose Bill To,
-choose File invoice under, and override delivery. Totals use integer cents.
+Drafts can add/remove eligible sessions, choose Bill To, choose File invoice
+under, and override delivery. The customer-facing invoice date is assigned
+only when the invoice is finalized; draft previews show `Assigned when
+finalized`. Totals use integer cents.
 Changing Bill To on a draft is allowed only when every linked source session is
 already billed to that party; the draft editor does not silently rewrite linked
 session billing relationships.
@@ -150,7 +152,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, the formatted invoice date, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, disables the finalize button while errors exist, and provides direct actions for missing billing email or mailing address that return to the same invoice after saving.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, `Assigned when finalized` for drafts or the finalized invoice date for finalized/void records, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, disables the finalize button while errors exist, and provides direct actions for missing billing email or mailing address that return to the same invoice after saving.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -160,7 +162,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 - Bill-to party exists and is active
 - At least one eligible invoice line
 - All line amounts are positive, except waived late-cancellation lines which are valid at exactly $0.00 (identified by structured `appointment_status_snapshot="late_cancellation"` and `billing_treatment_snapshot="waived"` on the line item, not by description text)
-- Valid invoice date
+- Finalization date is generated transactionally from `finalized_at`
 - Active business profile
 - Required bill-to contact details for the selected delivery method (email for email/both, mailing address for mail/both)
 - Delivery method cannot remain unresolved
@@ -173,7 +175,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
-Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. On the operational database, a verified private backup is created before finalization begins. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, derives the invoice date from `finalized_at` in `America/New_York`, assigns the number for that finalization year, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. On the operational database, a verified private backup is created before finalization begins. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
 
 ### Optional Insurance Coding
 

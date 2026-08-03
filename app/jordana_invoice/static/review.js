@@ -4146,7 +4146,7 @@ async function startInvoiceBuilder() {
       <label class="field wide">Bill to<select id="draftBillTo"><option value="">Select bill-to party</option>${parties.map(p => `<option value="${escapeAttr(p.billing_party_id)}">${fmt(p.billing_name)}</option>`).join("")}</select></label>
       <label class="field">Period start<input id="draftPeriodStart" type="date" value="${monthStart}"></label>
       <label class="field">Period end<input id="draftPeriodEnd" type="date" value="${today}"></label>
-      <label class="field">Invoice date<input id="draftInvoiceDate" type="date" value="${today}"></label>
+      <div class="field"><span class="field-label">Invoice date</span><span class="help">Assigned when finalized.</span></div>
       <label class="field">Delivery<select id="draftDelivery">${optionSet(["unresolved","email","mail","both"], "unresolved")}</select></label>
     </div>
     <div><div class="section-title-row"><h3>Eligible sessions</h3><button id="refreshEligible" class="mini">Refresh</button></div><div class="eligible-list" id="eligibleSessions"><div class="empty-state">Select a bill-to party and period.</div></div></div>
@@ -4167,7 +4167,7 @@ async function startInvoiceBuilder() {
     const sessionIds = [...document.querySelectorAll("#eligibleSessions input:checked")].map(input => input.value);
     const created = await api("/api/invoices", { method:"POST", body:JSON.stringify({
       bill_to_party_id:$("draftBillTo").value, billing_period_start:$("draftPeriodStart").value,
-      billing_period_end:$("draftPeriodEnd").value, invoice_date:$("draftInvoiceDate").value,
+      billing_period_end:$("draftPeriodEnd").value,
       delivery_method:$("draftDelivery").value, session_ids:sessionIds
     })});
     await loadInvoices(); await renderInvoiceEditor(created);
@@ -4237,7 +4237,7 @@ async function renderInvoiceEditor(data) {
     ${correctionNotice}
     <div class="field-grid">
       <label class="field wide">Bill To<select id="editBillTo"><option value="">Select bill-to party</option>${billToOptions}</select><span class="help">Only Bill To choices already tied to this draft's linked sessions are shown.</span></label>
-      <label class="field">Invoice date<input id="editInvoiceDate" type="date" value="${escapeAttr(i.invoice_date)}"></label>
+      <div class="field"><span class="field-label">Invoice date</span><span class="help">Assigned when finalized.</span></div>
       <label class="field">Delivery<select id="editDelivery">${optionSet(["unresolved","email","mail","both"], i.delivery_method)}</select></label>
       <div class="field wide invoice-delivery-scope">
         <label>Delivery Method scope</label>
@@ -4272,7 +4272,7 @@ async function renderInvoiceEditor(data) {
   $("saveDraftChanges").onclick = async () => {
     const lines = [...document.querySelectorAll("#invoiceWorkspace tr[data-line]")].map((row, index) => ({invoice_line_item_id:row.dataset.line, description_snapshot:row.dataset.description, sort_order:index}));
     const selectedScope = document.querySelector('input[name="editDeliveryScope"]:checked')?.value || "invoice_only";
-    const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({bill_to_party_id:$("editBillTo").value, invoice_date:$("editInvoiceDate").value, delivery_method:$("editDelivery").value, delivery_method_scope:selectedScope, lines})});
+    const updated = await api(`/api/invoices/${i.invoice_id}`, {method:"POST", body:JSON.stringify({bill_to_party_id:$("editBillTo").value, delivery_method:$("editDelivery").value, delivery_method_scope:selectedScope, lines})});
     await renderInvoiceEditor(updated); await loadInvoices();
   };
 

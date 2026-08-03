@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.28
+### Current Test Build — v0.1.0-test.29
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.28
-- **Python package/application version:** 0.1.0.post28
+- **Release label:** v0.1.0-test.29
+- **Python package/application version:** 0.1.0.post29
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,10 +40,10 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.28 supersedes test.27 for installation and update testing. It retains the
-Release 27 billing and client safeguards and repairs custom cancellation-fee
-entry and approval, client-specific full-fee refresh, and `30 min` calendar
-shorthand recovery.
+test.29 supersedes test.28 for installation and update testing. It retains the
+prior billing and client safeguards and corrects the customer-facing invoice
+date so it is assigned from finalization, including corrected replacement
+invoices.
 
 ### Billing And Client Improvements In test.28
 

@@ -457,6 +457,9 @@ class InvoiceLibraryUiStaticTests(unittest.TestCase):
         self.assertIn('id="cancellationPolicyCheckbox"', js)
         self.assertIn("Include Cancellation Policy", js)
         self.assertIn("cancellation_policy_included", js)
+        self.assertIn("Assigned when finalized.", js)
+        self.assertNotIn('id="draftInvoiceDate"', js)
+        self.assertNotIn('id="editInvoiceDate"', js)
 
     def test_invoice_library_js_has_payment_summary_in_preview(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()

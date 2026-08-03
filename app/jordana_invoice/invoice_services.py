@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .invoice_rendering import (
     CANCELLATION_POLICY_TEXT,
@@ -30,6 +31,13 @@ def init_db(_conn: sqlite3.Connection) -> None:
 
 DELIVERY_METHODS = {"email", "mail", "both", "unresolved"}
 INVOICE_STATUSES = {"draft", "finalized", "void"}
+INVOICE_DATE_TIMEZONE = ZoneInfo("America/New_York")
+
+
+def _invoice_date_from_finalized_at(finalized_at: str) -> str:
+    """Return the customer-facing invoice date for a finalized timestamp."""
+    parsed = datetime.fromisoformat(str(finalized_at).replace("Z", "+00:00"))
+    return parsed.astimezone(INVOICE_DATE_TIMEZONE).date().isoformat()
 
 
 def _backup_operational_database_before(conn: sqlite3.Connection, reason: str) -> None:
@@ -2171,17 +2179,7 @@ def validate_invoice_readiness(
                 "message": f"Line for {line['service_date']} has an invalid or non-positive amount.",
             })
 
-    # 4. Valid invoice date
-    inv_date = invoice.get("invoice_date")
-    if not inv_date or not str(inv_date).strip():
-        errors.append({"field": "invoice_date", "message": "Invoice date is missing."})
-    else:
-        try:
-            date.fromisoformat(str(inv_date)[:10])
-        except (ValueError, TypeError):
-            errors.append({"field": "invoice_date", "message": "Invoice date is not a valid date."})
-
-    # 5. Active business profile
+    # 4. Active business profile
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     if not profile:
         errors.append({"field": "business_profile", "message": "Configure an active business profile before finalizing."})
@@ -2218,27 +2216,12 @@ def validate_invoice_readiness(
         if not _present_text(profile["zelle_recipient"]):
             errors.append({"field": "zelle_recipient", "message": "Invoice Settings must include a Zelle email or mobile number before finalizing."})
 
-    # 8. Valid, unique invoice number generation
-    if profile and inv_date:
-        try:
-            year = int(str(inv_date)[:4])
-            pattern = profile["invoice_number_format"] or "YYYY-NNNN"
-            if "YYYY" not in pattern or "NNNN" not in pattern:
-                errors.append({"field": "invoice_number", "message": "Invoice number format is invalid."})
-            else:
-                seq_row = conn.execute(
-                    "SELECT last_value FROM invoice_sequences WHERE sequence_year = ?", (year,)
-                ).fetchone()
-                next_val = (seq_row["last_value"] + 1) if seq_row else 1
-                candidate_number = pattern.replace("YYYY", str(year)).replace("NNNN", f"{next_val:04d}")
-                existing = conn.execute(
-                    "SELECT 1 FROM invoices WHERE invoice_number = ? AND invoice_id != ?",
-                    (candidate_number, invoice_id),
-                ).fetchone()
-                if existing:
-                    errors.append({"field": "invoice_number", "message": "Generated invoice number conflicts with an existing invoice."})
-        except (ValueError, TypeError):
-            errors.append({"field": "invoice_number", "message": "Cannot generate a valid invoice number."})
+    # 8. Valid invoice number format. The finalization transaction derives the
+    # year from its generated invoice date and allocates the next sequence.
+    if profile:
+        pattern = profile["invoice_number_format"] or "YYYY-NNNN"
+        if "YYYY" not in pattern or "NNNN" not in pattern:
+            errors.append({"field": "invoice_number", "message": "Invoice number format is invalid."})
 
     # 9. Any included session is no longer invoice-eligible
     for line in lines:
@@ -2518,10 +2501,12 @@ def finalize_invoice(
         filing_owner = filing.get("selected")
         if not filing_owner:
             raise ValueError(filing.get("message") or "Choose which client this invoice should be filed under.")
-        number = _next_invoice_number(conn, int(str(invoice["invoice_date"])[:4]), profile["invoice_number_format"])
         now = now_iso()
+        invoice_date = _invoice_date_from_finalized_at(now)
+        number = _next_invoice_number(conn, int(invoice_date[:4]), profile["invoice_number_format"])
         snapshots = {
             "invoice_number": number,
+            "invoice_date": invoice_date,
             "bill_to_name_snapshot": party["billing_name"],
             "bill_to_email_snapshot": party["billing_email"],
             "bill_to_phone_snapshot": party["billing_phone"],

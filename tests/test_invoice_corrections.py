@@ -202,6 +202,24 @@ class InvoiceCorrectionTests(unittest.TestCase):
         self.assertIn("correction_finalized", actions)
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_correction_assigns_its_own_finalization_date(self, fake_pdf):
+        fake_pdf.return_value = "g" * 64
+        session = self.approved_session("correction-date")
+        original = self.finalize_original(session)
+        correction = start_invoice_correction(self.conn, original["invoice"]["invoice_id"], "Corrected information")
+
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-08-10T02:00:00Z"):
+            replacement = finalize_invoice(
+                self.conn,
+                correction["invoice"]["invoice_id"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        self.assertEqual(replacement["invoice"]["finalized_at"], "2026-08-10T02:00:00Z")
+        self.assertEqual(replacement["invoice"]["invoice_date"], "2026-08-09")
+        self.assertNotEqual(replacement["invoice"]["invoice_date"], original["invoice"]["invoice_date"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_any_payment_allocation_history_blocks_correction(self, fake_pdf):
         fake_pdf.return_value = "d" * 64
         session = self.approved_session("paid")
