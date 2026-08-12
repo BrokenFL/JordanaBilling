@@ -92,14 +92,14 @@ sign_setup_app() {
   local app_path="$1"
   xattr -cr "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
-  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr 'com.apple.fileprovider.fpfs#P' "$app_path" 2>/dev/null || true
   xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
   rm -rf "$app_path/Contents/_CodeSignature"
   dot_clean -m "$app_path" 2>/dev/null || true
   xattr -cr "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
-  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr 'com.apple.fileprovider.fpfs#P' "$app_path" 2>/dev/null || true
   xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
   xattr -dr com.apple.quarantine "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
