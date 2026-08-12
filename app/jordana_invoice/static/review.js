@@ -2847,7 +2847,7 @@ function clearInvoiceSessionReturnContext() {
   sessionStorage.removeItem(INVOICE_SESSION_RETURN_KEY);
 }
 
-async function returnApprovedSessionToReview(candidateId, { refresh = null, returnInvoiceId = null } = {}) {
+async function returnApprovedSessionToReview(candidateId, { refresh = null, returnInvoiceId = null, correctionInvoiceId = null } = {}) {
   if (returnApprovedState.submitting) return;
   if (returnApprovedState.candidateId && returnApprovedState.candidateId !== candidateId) return;
   if (!getWriteToken()) {
@@ -2869,7 +2869,10 @@ async function returnApprovedSessionToReview(candidateId, { refresh = null, retu
     }
     await api(`/api/review/candidates/${candidateId}/return-to-review`, {
       method: "POST",
-      body: JSON.stringify({ action_source: "review_ui" }),
+      body: JSON.stringify({
+        action_source: "review_ui",
+        ...(correctionInvoiceId ? { correction_invoice_id: correctionInvoiceId } : {})
+      }),
     });
     closeReviewOverlay();
     state.selected = null;
@@ -4246,7 +4249,7 @@ async function renderInvoiceEditor(data) {
       </div>
       ${filingControl}
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-candidate-id="${escapeAttr(line.candidate_id || "")}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions">${line.candidate_id ? `<button class="return-approved-session-btn edit-line secondary" data-cid="${escapeAttr(line.candidate_id)}" data-return-invoice-id="${escapeAttr(i.invoice_id)}" type="button">Edit Session</button>` : ""}<button class="remove-line danger" type="button">×</button></div></td></tr>`).join("")}</tbody></table>
+    <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-candidate-id="${escapeAttr(line.candidate_id || "")}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions">${line.candidate_id ? `<button class="return-approved-session-btn edit-line secondary" data-cid="${escapeAttr(line.candidate_id)}" data-return-invoice-id="${escapeAttr(i.invoice_id)}" data-correction-invoice-id="${correctionParent ? escapeAttr(i.invoice_id) : ""}" type="button">Edit Session</button>` : ""}<button class="remove-line danger" type="button" title="Remove from this draft invoice">Remove</button></div></td></tr>`).join("")}</tbody></table>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <section class="invoice-html-preview-panel" aria-label="Draft invoice preview">
       ${renderCanonicalInvoicePreview(data.render_model)}
@@ -4260,11 +4263,13 @@ async function renderInvoiceEditor(data) {
   document.querySelectorAll("#invoiceWorkspace .return-approved-session-btn").forEach(button => {
     button.onclick = () => returnApprovedSessionToReview(button.dataset.cid, {
       returnInvoiceId: button.dataset.returnInvoiceId || i.invoice_id,
+      correctionInvoiceId: button.dataset.correctionInvoiceId || null,
     });
   });
 
   document.querySelectorAll(".remove-line").forEach(button => button.onclick = async () => {
     const lineId = button.closest("tr").dataset.line;
+    if (correctionParent && !confirm("Remove this line from the replacement invoice? This does not change the underlying appointment. If it did not occur, use Edit Session and mark it nonbillable.")) return;
     const updated = await api(`/api/invoices/${i.invoice_id}/remove-line`, {method:"POST", body:JSON.stringify({invoice_line_item_id:lineId})});
     await renderInvoiceEditor(updated); await loadInvoices();
   });
@@ -4438,6 +4443,7 @@ function renderFinalizationPreview(preview, insuranceState, cancellationPolicyIn
   document.querySelectorAll("#invoiceWorkspace .return-approved-session-btn").forEach(button => {
     button.onclick = () => returnApprovedSessionToReview(button.dataset.cid, {
       returnInvoiceId: button.dataset.returnInvoiceId || i.invoice_id,
+      correctionInvoiceId: button.dataset.correctionInvoiceId || null,
     });
   });
   document.querySelectorAll("#invoiceWorkspace .invoice-readiness-fix").forEach(button => {

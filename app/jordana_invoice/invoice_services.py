@@ -1510,6 +1510,113 @@ def _refresh_draft_line_from_session(
     return True
 
 
+def refresh_correction_draft_lines_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+) -> list[str]:
+    """Refresh replacement-draft lines after their session is re-approved.
+
+    Correction drafts intentionally are not part of routine monthly staging.
+    This explicit helper updates only an already-linked open replacement draft;
+    it never changes the finalized parent invoice or its frozen PDF/snapshots.
+    The caller owns the transaction.
+    """
+    session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if not session or session["review_status"] != "approved":
+        return []
+    rows = conn.execute(
+        """
+        SELECT li.*, i.invoice_id
+        FROM invoice_line_items li
+        JOIN invoices i ON i.invoice_id = li.invoice_id
+        JOIN invoices parent ON parent.invoice_id = i.correction_of_invoice_id
+        WHERE li.source_session_id = ?
+          AND i.status = 'draft'
+          AND i.correction_of_invoice_id IS NOT NULL
+          AND parent.status = 'finalized'
+        ORDER BY i.invoice_id, li.sort_order, li.invoice_line_item_id
+        """,
+        (session_id,),
+    ).fetchall()
+    invoice_ids: list[str] = []
+    for line in rows:
+        invoice_id = line["invoice_id"]
+        if invoice_id not in invoice_ids:
+            invoice_ids.append(invoice_id)
+        _refresh_draft_line_from_session(conn, line, session)
+    for invoice_id in invoice_ids:
+        _recalculate(conn, invoice_id)
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ? AND status = 'draft'",
+            (now_iso(), invoice_id),
+        )
+        _audit(
+            conn,
+            "invoice",
+            invoice_id,
+            "correction_draft_line_refreshed_after_approval",
+            {"source_session_id": session_id},
+        )
+    return invoice_ids
+
+
+def remove_correction_draft_lines_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    reason: str,
+) -> list[str]:
+    """Remove only replacement-draft lines after an excluded correction session.
+
+    Routine drafts are deliberately excluded. This prevents an excluded
+    appointment from remaining billable in the replacement while leaving the
+    historical parent invoice fully intact. The caller owns the transaction.
+    """
+    rows = conn.execute(
+        """
+        SELECT li.invoice_line_item_id, i.invoice_id, i.correction_of_invoice_id
+        FROM invoice_line_items li
+        JOIN invoices i ON i.invoice_id = li.invoice_id
+        JOIN invoices parent ON parent.invoice_id = i.correction_of_invoice_id
+        WHERE li.source_session_id = ?
+          AND i.status = 'draft'
+          AND i.correction_of_invoice_id IS NOT NULL
+          AND parent.status = 'finalized'
+        ORDER BY i.invoice_id, li.sort_order, li.invoice_line_item_id
+        """,
+        (session_id,),
+    ).fetchall()
+    parent_ids = sorted({row["correction_of_invoice_id"] for row in rows if row["correction_of_invoice_id"]})
+    for parent_id in parent_ids:
+        if _invoice_has_payment_history(conn, parent_id):
+            raise ValueError(
+                "This correction draft cannot be edited because payment history is attached to its original invoice."
+            )
+    invoice_ids: list[str] = []
+    for row in rows:
+        invoice_id = row["invoice_id"]
+        if invoice_id not in invoice_ids:
+            invoice_ids.append(invoice_id)
+        conn.execute(
+            "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ? AND invoice_id = ?",
+            (row["invoice_line_item_id"], invoice_id),
+        )
+    for invoice_id in invoice_ids:
+        _recalculate(conn, invoice_id)
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ? AND status = 'draft'",
+            (now_iso(), invoice_id),
+        )
+        _audit(
+            conn,
+            "invoice",
+            invoice_id,
+            "correction_draft_line_removed_for_excluded_session",
+            {"source_session_id": session_id, "reason": reason},
+        )
+    return invoice_ids
+
+
 def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids: list[str]) -> dict[str, Any]:
     invoice = _draft(conn, invoice_id)
     conn.execute("BEGIN IMMEDIATE")

@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.31
+### Current Test Build — v0.1.0-test.32
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.31
-- **Python package/application version:** 0.1.0.post31
+- **Release label:** v0.1.0-test.32
+- **Python package/application version:** 0.1.0.post32
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,11 +40,19 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.31 supersedes test.30 for installation and update testing. It retains the
+test.32 supersedes test.31 for installation and update testing. It retains the
 prior billing and client safeguards and prevents correction drafts from
 displaying their finalized parent invoice as a duplicate prior balance. It also
 aligns the JavaScript-rendered invoice preview with the current canonical
 invoice layout across draft and finalized invoice surfaces.
+
+### Billing Improvements In test.32
+
+1. **Correction-draft editing** — sessions returned from a finalized invoice
+   can be corrected in a dedicated draft when no payment history exists while
+   finalized history remains immutable.
+2. **Report Issue recovery** — diagnostic report writes now use the installed
+   Reports folder and return a safe actionable message when it is unavailable.
 
 ### Billing And Client Improvements In test.31
 

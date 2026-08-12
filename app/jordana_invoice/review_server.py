@@ -153,6 +153,7 @@ from .request_validation import (
     parse_save_session_draft_request,
     parse_mark_candidate_request,
     parse_restore_candidate_request,
+    parse_return_to_review_request,
     parse_create_person_request,
     parse_update_person_request,
     parse_save_person_alias_request,
@@ -390,6 +391,10 @@ def is_safe_validation_error(error: Exception) -> bool:
             "A reason is required to return an approved session to Review.",
             "No session found for this candidate.",
             "Only approved sessions can be returned to Review with this action.",
+            "This is not an open correction draft for a finalized invoice.",
+            "This session is not linked to the selected correction draft.",
+            "This correction draft cannot be edited because payment history is attached to its original invoice.",
+            "Could not save the diagnostic report. Check that the Reports folder is available and writable.",
             "Select which participant should receive this future rate.",
             "session_ids must be a list.",
             "Each session_id must be a non-empty string.",
@@ -1575,12 +1580,14 @@ def make_handler(
                         )
                         return
                     if action == "return-to-review":
+                        req = parse_return_to_review_request(data)
                         self.send_json(
                             return_approved_session_to_review(
                                 self.conn(),
                                 candidate_id,
-                                reason=data.get("reason", ""),
-                                action_source=data.get("action_source", "review_ui"),
+                                reason=req.reason,
+                                action_source=req.action_source,
+                                correction_invoice_id=req.correction_invoice_id,
                             )
                         )
                         return

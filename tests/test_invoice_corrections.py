@@ -16,7 +16,13 @@ from jordana_invoice.invoice_services import (
     update_invoice_line_item,
 )
 from jordana_invoice.payment_services import allocate_payment_to_session, create_payment, reverse_allocation
-from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
+from jordana_invoice.review_services import (
+    approve_candidate,
+    create_billing_party,
+    create_person,
+    mark_candidate,
+    return_approved_session_to_review,
+)
 from jordana_invoice.util import stable_hash
 
 
@@ -104,6 +110,18 @@ class InvoiceCorrectionTests(unittest.TestCase):
             pdf_root=self.root / "Invoices",
         )
 
+    def approval_payload(self, *, rate="150.00"):
+        return {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Avery Stone"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 60,
+            "service_mode": "office",
+            "time_category": "standard",
+            "approved_rate": rate,
+            "payment_status": "unpaid",
+            "billing_treatment": "billable",
+        }
+
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_start_correction_clones_editable_draft_and_preserves_original(self, fake_pdf):
         fake_pdf.return_value = "a" * 64
@@ -127,6 +145,129 @@ class InvoiceCorrectionTests(unittest.TestCase):
         self.assertEqual(unchanged["lines"][0]["description_snapshot"], original_line["description_snapshot"])
         self.assertTrue(unchanged["invoice"]["correction_available"])
         self.assertEqual(unchanged["invoice"]["replacement_invoice"]["invoice_id"], correction["invoice"]["invoice_id"])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_unpaid_correction_session_can_return_to_review_without_changing_parent(self, fake_pdf):
+        fake_pdf.return_value = "edit" * 16
+        session = self.approved_session("correction-edit")
+        original = self.finalize_original(session)
+        correction = start_invoice_correction(self.conn, original["invoice"]["invoice_id"], "Remove incorrect appointment")
+        original_pdf = original["invoice"]["pdf_path"]
+        original_number = original["invoice"]["invoice_number"]
+        candidate_id = session["candidate_id"]
+
+        result = return_approved_session_to_review(
+            self.conn,
+            candidate_id,
+            correction_invoice_id=correction["invoice"]["invoice_id"],
+        )
+
+        self.assertTrue(result["returned_to_review"])
+        self.assertTrue(result["correction_draft_line_preserved"])
+        self.assertEqual(result["session"]["review_status"], "needs_review")
+        parent_row = self.conn.execute(
+            "SELECT status, invoice_number, pdf_path FROM invoices WHERE invoice_id = ?",
+            (original["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(parent_row["status"], "finalized")
+        self.assertEqual(parent_row["invoice_number"], original_number)
+        self.assertEqual(parent_row["pdf_path"], original_pdf)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = ?",
+                (correction["invoice"]["invoice_id"],),
+            ).fetchone()[0],
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "no longer eligible"):
+            finalize_invoice(self.conn, correction["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_reapproval_refreshes_the_existing_correction_line(self, fake_pdf):
+        fake_pdf.return_value = "refresh" * 10
+        session = self.approved_session("correction-refresh")
+        original = self.finalize_original(session)
+        correction = start_invoice_correction(self.conn, original["invoice"]["invoice_id"], "Correct the session rate")
+        candidate_id = session["candidate_id"]
+        return_approved_session_to_review(
+            self.conn,
+            candidate_id,
+            correction_invoice_id=correction["invoice"]["invoice_id"],
+        )
+
+        reapproved = approve_candidate(self.conn, candidate_id, self.approval_payload(rate="175.00"))
+        refreshed = get_invoice(self.conn, correction["invoice"]["invoice_id"])
+
+        self.assertEqual(reapproved["correction_draft_invoice_ids_refreshed"], [correction["invoice"]["invoice_id"]])
+        self.assertEqual(refreshed["invoice"]["status"], "draft")
+        self.assertEqual(refreshed["lines"][0]["line_amount_cents"], 17500)
+        self.assertEqual(refreshed["invoice"]["total_cents"], 17500)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT status FROM invoices WHERE invoice_id = ?",
+                (original["invoice"]["invoice_id"],),
+            ).fetchone()[0],
+            "finalized",
+        )
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_nonbillable_correction_session_removes_only_replacement_line(self, fake_pdf):
+        fake_pdf.return_value = "remove" * 11
+        session = self.approved_session("correction-nonbillable")
+        original = self.finalize_original(session)
+        correction = start_invoice_correction(self.conn, original["invoice"]["invoice_id"], "No appointment occurred")
+        candidate_id = session["candidate_id"]
+        return_approved_session_to_review(
+            self.conn,
+            candidate_id,
+            correction_invoice_id=correction["invoice"]["invoice_id"],
+        )
+
+        marked = mark_candidate(self.conn, candidate_id, classification="nonbillable", reason="No appointment occurred")
+        refreshed = get_invoice(self.conn, correction["invoice"]["invoice_id"])
+
+        self.assertEqual(marked["session"]["review_status"], "excluded")
+        self.assertEqual(refreshed["invoice"]["total_cents"], 0)
+        self.assertEqual(refreshed["lines"], [])
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT status FROM invoices WHERE invoice_id = ?",
+                (original["invoice"]["invoice_id"],),
+            ).fetchone()[0],
+            "finalized",
+        )
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_payment_history_still_blocks_correction_session_editing(self, fake_pdf):
+        fake_pdf.return_value = "history" * 11
+        session = self.approved_session("correction-payment-history")
+        original = self.finalize_original(session)
+        correction = start_invoice_correction(self.conn, original["invoice"]["invoice_id"], "Correct a session")
+        payment = create_payment(
+            self.conn,
+            billing_party_id=self.party["billing_party_id"],
+            amount_cents=15000,
+            received_at="2026-06-01",
+            method="check",
+        )
+        allocate_payment_to_session(
+            self.conn,
+            payment_id=payment["payment_id"],
+            session_id=session["id"],
+            amount_cents=15000,
+            invoice_line_item_id=original["lines"][0]["invoice_line_item_id"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "payment history"):
+            return_approved_session_to_review(
+                self.conn,
+                session["candidate_id"],
+                correction_invoice_id=correction["invoice"]["invoice_id"],
+            )
+        self.assertEqual(
+            self.conn.execute("SELECT review_status FROM sessions WHERE id = ?", (session["id"],)).fetchone()[0],
+            "approved",
+        )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_correction_draft_does_not_count_parent_as_prior_balance(self, fake_pdf):

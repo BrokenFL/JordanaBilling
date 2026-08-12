@@ -38,6 +38,10 @@ from .session_types import (
     duration_choice_to_minutes,
 )
 from .importer import apply_calendar_signal, initial_billing_treatment, maybe_insert_session
+from .invoice_services import (
+    refresh_correction_draft_lines_for_session,
+    remove_correction_draft_lines_for_session,
+)
 from .parser import parse_event
 from .review import review_status_for_parse
 from .payment_services import _invoice_balance_summary, _invoice_paid_amount, client_account_summary
@@ -1283,6 +1287,10 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
             (now, candidate_id),
         )
         save_alias_after_approval(conn, session, participants)
+        correction_invoice_ids = refresh_correction_draft_lines_for_session(
+            conn,
+            session["id"],
+        )
         record_audit(conn, "session", session["id"], "approved", {"candidate_id": candidate_id})
         add_review_item(conn, candidate_id, session["id"], "approved", [], ["Approved in review UI."])
 
@@ -1339,6 +1347,8 @@ def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict
     report_warning = refresh_reports_after_commit(conn)
         
     res = get_review_candidate(conn, candidate_id)
+    if correction_invoice_ids:
+        res["correction_draft_invoice_ids_refreshed"] = correction_invoice_ids
     if report_warning:
         res["report_warning"] = report_warning
     if paid_at_session_outcome:
@@ -1599,36 +1609,46 @@ def mark_candidate(
     now = now_iso()
     session = conn.execute("SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
     review_status = "excluded" if classification in {"personal", "administrative", "nonbillable", "duplicate"} else "needs_classification"
-    conn.execute(
-        """
-        UPDATE calendar_event_candidates
-        SET classification = ?, review_status = ?, updated_at = ?
-        WHERE id = ?
-        """,
-        (classification, review_status, now, candidate_id),
-    )
     session_id = session["id"] if session else None
-    if session:
+    try:
         conn.execute(
             """
-            UPDATE sessions
-            SET review_status = ?, billable_status = ?, payment_status = ?, updated_at = ?
+            UPDATE calendar_event_candidates
+            SET classification = ?, review_status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (review_status, "excluded", "unpaid", now, session["id"]),
+            (classification, review_status, now, candidate_id),
         )
-    add_review_item(conn, candidate_id, session_id, review_status, [], [reason or f"Marked {classification}."])
-    if classification in {"personal", "administrative", "nonbillable"}:
-        candidate = conn.execute("SELECT title FROM calendar_event_candidates WHERE id = ?", (candidate_id,)).fetchone()
-        if candidate:
-            upsert_calendar_alias(
-                conn,
-                raw_alias=candidate["title"],
-                classification=classification,
-                approved=True,
+        if session:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET review_status = ?, billable_status = ?, payment_status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (review_status, "excluded", "unpaid", now, session["id"]),
             )
-    record_audit(conn, "calendar_event_candidate", candidate_id, f"marked_{classification}", {"reason": reason})
-    conn.commit()
+            if classification == "nonbillable":
+                remove_correction_draft_lines_for_session(
+                    conn,
+                    session["id"],
+                    reason=reason or "Marked nonbillable during correction review.",
+                )
+        add_review_item(conn, candidate_id, session_id, review_status, [], [reason or f"Marked {classification}."])
+        if classification in {"personal", "administrative", "nonbillable"}:
+            candidate = conn.execute("SELECT title FROM calendar_event_candidates WHERE id = ?", (candidate_id,)).fetchone()
+            if candidate:
+                upsert_calendar_alias(
+                    conn,
+                    raw_alias=candidate["title"],
+                    classification=classification,
+                    approved=True,
+                )
+        record_audit(conn, "calendar_event_candidate", candidate_id, f"marked_{classification}", {"reason": reason})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
 
@@ -1764,6 +1784,7 @@ def return_approved_session_to_review(
     *,
     reason: str = "",
     action_source: str = "review_ui",
+    correction_invoice_id: str | None = None,
 ) -> dict[str, Any]:
     """Move an eligible approved session back to review without losing values."""
     init_db(conn)
@@ -1772,6 +1793,15 @@ def return_approved_session_to_review(
     session = conn.execute("SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)).fetchone()
     if not session:
         raise ValueError("No session found for this candidate.")
+    if correction_invoice_id:
+        return _return_correction_session_to_review(
+            conn,
+            session,
+            candidate_id,
+            correction_invoice_id=correction_invoice_id,
+            reason=audit_reason,
+            action_source=action_source,
+        )
     draft_invoice_ids = [
         row["invoice_id"]
         for row in conn.execute(
@@ -1876,6 +1906,142 @@ def return_approved_session_to_review(
     return result
 
 
+def _return_correction_session_to_review(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row,
+    candidate_id: str,
+    *,
+    correction_invoice_id: str,
+    reason: str,
+    action_source: str,
+) -> dict[str, Any]:
+    """Open one unpaid replacement-draft session for review safely.
+
+    A correction draft is a temporary editable replacement, not permission to
+    alter its finalized parent. The narrow transition keeps the replacement
+    line in place while the session is reviewed, so finalization cannot proceed
+    with stale or unapproved values.
+    """
+    correction = conn.execute(
+        """
+        SELECT draft.invoice_id, draft.revision, draft.correction_of_invoice_id,
+               parent.status AS parent_status
+        FROM invoices draft
+        LEFT JOIN invoices parent ON parent.invoice_id = draft.correction_of_invoice_id
+        WHERE draft.invoice_id = ? AND draft.status = 'draft'
+        """,
+        (correction_invoice_id,),
+    ).fetchone()
+    if not correction or not correction["correction_of_invoice_id"] or correction["parent_status"] != "finalized":
+        raise ValueError("This is not an open correction draft for a finalized invoice.")
+
+    parent_invoice_id = correction["correction_of_invoice_id"]
+    correction_line = conn.execute(
+        """
+        SELECT 1 FROM invoice_line_items
+        WHERE invoice_id = ? AND source_session_id = ?
+        LIMIT 1
+        """,
+        (correction_invoice_id, session["id"]),
+    ).fetchone()
+    parent_line = conn.execute(
+        """
+        SELECT 1 FROM invoice_line_items
+        WHERE invoice_id = ? AND source_session_id = ?
+        LIMIT 1
+        """,
+        (parent_invoice_id, session["id"]),
+    ).fetchone()
+    if not correction_line or not parent_line:
+        raise ValueError("This session is not linked to the selected correction draft.")
+    if _invoice_has_any_payment_history(conn, parent_invoice_id):
+        raise ValueError("This correction draft cannot be edited because payment history is attached to its original invoice.")
+
+    blockers = approved_session_return_blockers(
+        conn,
+        session["id"],
+        allowed_finalized_invoice_id=parent_invoice_id,
+    )
+    if blockers:
+        raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
+
+    if session["review_status"] in {"needs_review", "pending"}:
+        result = get_review_candidate(conn, candidate_id)
+        result["returned_to_review"] = False
+        result["already_in_review"] = True
+        result["correction_invoice_id"] = correction_invoice_id
+        return result
+    if session["review_status"] != "approved":
+        raise ValueError("Only approved sessions can be returned to Review with this action.")
+
+    now = now_iso()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'needs_review',
+                billable_status = 'proposed',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, session["id"]),
+        )
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'client_session', review_status = 'needs_review', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, candidate_id),
+        )
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ? AND status = 'draft'",
+            (now, correction_invoice_id),
+        )
+        add_review_item(
+            conn,
+            candidate_id,
+            session["id"],
+            "needs_review",
+            [],
+            [reason],
+        )
+        record_audit(
+            conn,
+            "session",
+            session["id"],
+            "correction_session_returned_to_review",
+            {
+                "candidate_id": candidate_id,
+                "correction_invoice_id": correction_invoice_id,
+                "parent_invoice_id": parent_invoice_id,
+                "reason": reason,
+                "action_source": text(action_source) or "review_ui",
+            },
+        )
+        record_audit(
+            conn,
+            "invoice",
+            correction_invoice_id,
+            "correction_draft_session_pending_review",
+            {"source_session_id": session["id"], "reason": reason},
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    report_warning = refresh_reports_after_commit(conn)
+    result = get_review_candidate(conn, candidate_id)
+    result["returned_to_review"] = True
+    result["correction_invoice_id"] = correction_invoice_id
+    result["correction_draft_line_preserved"] = True
+    if report_warning:
+        result["report_warning"] = report_warning
+    return result
+
+
 def _cleanup_draft_invoice_lines_for_review(
     conn: sqlite3.Connection,
     session: sqlite3.Row,
@@ -1956,18 +2122,44 @@ def _cleanup_draft_invoice_lines_for_review(
     return result
 
 
-def approved_session_return_blockers(conn: sqlite3.Connection, session_id: str) -> list[str]:
-    blockers: list[str] = []
-    if conn.execute(
+def _invoice_has_any_payment_history(conn: sqlite3.Connection, invoice_id: str) -> bool:
+    return conn.execute(
         """
+        SELECT 1
+        FROM payment_allocations pa
+        JOIN invoice_line_items li
+          ON li.invoice_line_item_id = pa.invoice_line_item_id
+          OR li.source_session_id = pa.session_id
+        WHERE li.invoice_id = ?
+        LIMIT 1
+        """,
+        (invoice_id,),
+    ).fetchone() is not None
+
+
+def approved_session_return_blockers(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    allowed_finalized_invoice_id: str | None = None,
+) -> list[str]:
+    blockers: list[str] = []
+    finalized_filter = ""
+    finalized_params: list[str] = [session_id]
+    if allowed_finalized_invoice_id:
+        finalized_filter = " AND i.invoice_id != ?"
+        finalized_params.append(allowed_finalized_invoice_id)
+    if conn.execute(
+        f"""
         SELECT 1
         FROM invoice_line_items li
         JOIN invoices i ON i.invoice_id = li.invoice_id
         WHERE li.source_session_id = ?
           AND i.status = 'finalized'
+          {finalized_filter}
         LIMIT 1
         """,
-        (session_id,),
+        finalized_params,
     ).fetchone():
         blockers.append("the session is part of a finalized invoice")
     if conn.execute(

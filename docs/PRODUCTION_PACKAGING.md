@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.31
+### Current Test Build — v0.1.0-test.32
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.31
-- **Python package/application version:** 0.1.0.post31
+- **Release label:** v0.1.0-test.32
+- **Python package/application version:** 0.1.0.post32
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,26 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post31` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post32` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.31 preserves the test.30 safeguards and keeps the invoice preview
+test.32 preserves the prior safeguards and keeps the invoice preview
 JavaScript-rendered while aligning its layout and content with the current
 canonical invoice template across draft, finalization, finalized, and void
 surfaces.
+
+### Billing Improvements In test.32
+
+1. **Correction-draft editing** — sessions returned from a finalized invoice
+   can be corrected in a dedicated draft when no payment history exists; the
+   finalized invoice remains immutable and the draft refreshes or removes its
+   replacement line as review decisions change.
+2. **Report Issue recovery** — diagnostic report writes now use the installed
+   Reports folder and show a safe actionable message when that folder is not
+   writable.
 
 ### Billing And Client Improvements In test.30
 

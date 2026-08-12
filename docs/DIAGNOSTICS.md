@@ -15,13 +15,16 @@ database or generated customer documents.
 The Reports workspace also offers **Download Diagnostics JSON** for an
 on-demand support report without opening the issue-description dialog.
 
-Reports are saved locally under:
+Installed releases save reports under the configured user-facing reports folder:
 
 ```text
-Reports/Diagnostics/
+$JORDANA_REPORTS_DIR/Diagnostics/
 ```
 
-The folder is ignored by Git with the rest of `Reports/`.
+For a source checkout without that setting, the fallback is `Reports/Diagnostics/`.
+The directory and report files are created with private permissions. If the
+configured location is unavailable or unwritable, the app reports that precise
+safe condition instead of a generic unexpected-error message.
 
 ## Bundle Contents
 

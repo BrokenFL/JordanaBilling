@@ -236,6 +236,17 @@ Eligibility is intentionally narrow:
   `paid_at_session` selection with no actual payment, allocation, or receipt can
   still be returned for correction.
 
+An unpaid **Correction Draft** has one explicit exception. Its original invoice
+remains finalized and immutable while the replacement is being prepared. From
+that linked replacement draft only, **Edit Session** can return a line's source
+session to Review after verifying the draft, original finalized invoice, and
+session relationship, and confirming that no payment, allocation, or receipt
+history exists. The replacement line stays in place while the session is under
+review, so replacement finalization remains blocked until the session is either
+reapproved (which refreshes that same replacement line) or marked nonbillable
+(which removes only that replacement line). This never changes the original
+invoice, stored PDF, number, or snapshots.
+
 If the session exists only on a draft invoice, Edit Session / Return to Review removes that
 session's draft line, recalculates that draft, and increments the draft
 revision as part of the same transaction. Finalized invoices, payment history,

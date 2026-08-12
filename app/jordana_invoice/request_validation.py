@@ -272,6 +272,24 @@ class RestoreCandidateRequest:
         return self.payload
 
 
+@dataclass(frozen=True)
+class ReturnToReviewRequest:
+    """Validated request for POST /api/review/candidates/{id}/return-to-review.
+
+    ``correction_invoice_id`` is optional. When present, the service verifies
+    that it is the open correction draft for the session before allowing the
+    narrowly scoped correction-edit transition.
+    """
+
+    reason: str
+    action_source: str
+    correction_invoice_id: str | None
+    payload: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
+
 # ---------------------------------------------------------------------------
 # Parser functions
 # ---------------------------------------------------------------------------
@@ -507,6 +525,25 @@ def parse_restore_candidate_request(payload: Any) -> RestoreCandidateRequest:
         reason = ""
 
     return RestoreCandidateRequest(reason=reason, payload=data)
+
+
+def parse_return_to_review_request(payload: Any) -> ReturnToReviewRequest:
+    """Parse an approved-session return-to-review request.
+
+    The correction invoice is optional so the ordinary protected workflow
+    remains backward compatible. Its relationship to the candidate/session is
+    deliberately validated in the service layer.
+    """
+    data = _require_object(payload)
+    reason = _optional_str(data, "reason") or ""
+    action_source = _optional_str(data, "action_source") or "review_ui"
+    correction_invoice_id = _optional_nonempty_str(data, "correction_invoice_id")
+    return ReturnToReviewRequest(
+        reason=reason,
+        action_source=action_source,
+        correction_invoice_id=correction_invoice_id,
+        payload=data,
+    )
 
 
 # ===========================================================================

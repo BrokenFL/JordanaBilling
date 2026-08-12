@@ -101,6 +101,29 @@ class DiagnosticsReportTests(unittest.TestCase):
         self.assertNotIn("private failure", text)
         self.assertNotIn(str(Path(__file__).parent), text)
 
+    def test_report_uses_configured_reports_directory_when_no_override_exists(self):
+        reports_root = self.root / "Session Lists"
+        with patch.dict(
+            os.environ,
+            {"JORDANA_REPORTS_DIR": str(reports_root)},
+            clear=False,
+        ):
+            os.environ.pop("JORDANA_DIAGNOSTICS_DIR", None)
+            result = create_issue_report(self.conn, area="review")
+
+        saved = reports_root / "Diagnostics" / result["filename"]
+        self.assertTrue(saved.exists())
+        self.assertEqual(saved.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+
+    def test_report_write_failure_has_a_safe_actionable_message(self):
+        blocked_root = self.root / "not-a-directory"
+        blocked_root.write_text("not a directory", encoding="utf-8")
+        with patch.dict(os.environ, {"JORDANA_REPORTS_DIR": str(blocked_root)}, clear=False):
+            os.environ.pop("JORDANA_DIAGNOSTICS_DIR", None)
+            with self.assertRaisesRegex(ValueError, "Reports folder is available and writable"):
+                create_issue_report(self.conn, area="review")
+
     def test_sanitized_error_history_survives_memory_reset_without_private_message(self):
         with patch.dict(os.environ, {"JORDANA_DIAGNOSTICS_DIR": str(self.reports_dir)}):
             record_event(

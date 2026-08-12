@@ -424,6 +424,9 @@ def diagnostics_dir() -> Path:
     configured = os.environ.get("JORDANA_DIAGNOSTICS_DIR")
     if configured:
         return Path(os.path.expanduser(configured))
+    reports_dir = os.environ.get("JORDANA_REPORTS_DIR")
+    if reports_dir:
+        return Path(os.path.expanduser(reports_dir)) / "Diagnostics"
     return Path("Reports") / "Diagnostics"
 
 
@@ -486,10 +489,23 @@ def create_issue_report(
         ],
     }
     out_dir = diagnostics_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
     filename = f"issue-report-{now_iso().replace(':', '').replace('.', '-')}.json"
     path = out_dir / filename
-    path.write_text(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            os.chmod(out_dir, 0o700)
+        except OSError:
+            pass
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError as error:
+        raise ValueError(
+            "Could not save the diagnostic report. Check that the Reports folder is available and writable."
+        ) from error
     record_event(normalized, "issue_report_created", path="/api/diagnostics/report-issue", status=200)
     return {
         "ok": True,
