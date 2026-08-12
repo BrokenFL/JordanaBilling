@@ -71,18 +71,18 @@ clean_and_sign_app() {
   local app_path="$1"
   xattr -cr "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
-  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr 'com.apple.fileprovider.fpfs#P' "$app_path" 2>/dev/null || true
   rm -rf "$app_path/Contents/_CodeSignature"
   dot_clean -m "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
-  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr 'com.apple.fileprovider.fpfs#P' "$app_path" 2>/dev/null || true
   xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
   xattr -dr com.apple.quarantine "$app_path" 2>/dev/null || true
   codesign --force --deep --sign - --timestamp=none "$app_path" >/dev/null 2>&1 || true
   xattr -cr "$app_path" 2>/dev/null || true
   xattr -dr com.apple.FinderInfo "$app_path" 2>/dev/null || true
-  xattr -dr com.apple.fileprovider.fpfs#P "$app_path" 2>/dev/null || true
+  xattr -dr 'com.apple.fileprovider.fpfs#P' "$app_path" 2>/dev/null || true
   xattr -dr com.apple.provenance "$app_path" 2>/dev/null || true
   xattr -c "$app_path" 2>/dev/null || true
   codesign --verify --deep --strict "$app_path"
