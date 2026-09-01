@@ -127,6 +127,52 @@ class PriorBalanceSummaryTests(unittest.TestCase):
         self.assertEqual(summary["prior_invoices"][0]["remaining_balance_cents"], 15000)
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_earlier_service_month_remains_prior_when_finalized_later(self, fake_pdf):
+        """A July balance remains prior to August even when finalized in August."""
+        fake_pdf.return_value = "c" * 64
+
+        july_session = self.create_approved_session("july-late", self.person, self.party, "2026-07-10")
+        july_draft = self.create_draft(self.party, [july_session], "2026-07-31")
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-08-12T14:00:00+00:00"):
+            july_final = finalize_invoice(
+                self.conn,
+                july_draft["invoice"]["invoice_id"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        august_session = self.create_approved_session("august-current", self.person, self.party, "2026-08-05")
+        august_draft = self.create_draft(self.party, [august_session], "2026-08-31")
+        self.conn.execute(
+            "UPDATE invoices SET invoice_date = '2026-08-02' WHERE invoice_id = ?",
+            (august_draft["invoice"]["invoice_id"],),
+        )
+        self.conn.commit()
+
+        self.assertEqual(july_final["invoice"]["invoice_date"], "2026-08-12")
+        summary = calculate_invoice_account_summary(self.conn, august_draft["invoice"]["invoice_id"])
+        self.assertEqual(summary["prior_unpaid_balance_cents"], 15000)
+        self.assertEqual(summary["total_amount_due_cents"], 30000)
+        self.assertEqual(
+            [item["invoice_id"] for item in summary["prior_invoices"]],
+            [july_final["invoice"]["invoice_id"]],
+        )
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_later_service_month_is_not_prior_to_earlier_draft(self, fake_pdf):
+        fake_pdf.return_value = "c" * 64
+
+        august_session = self.create_approved_session("august-later", self.person, self.party, "2026-08-05")
+        august_draft = self.create_draft(self.party, [august_session], "2026-08-31")
+        finalize_invoice(self.conn, august_draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+
+        july_session = self.create_approved_session("july-current", self.person, self.party, "2026-07-10")
+        july_draft = self.create_draft(self.party, [july_session], "2026-07-31")
+        summary = calculate_invoice_account_summary(self.conn, july_draft["invoice"]["invoice_id"])
+
+        self.assertEqual(summary["prior_unpaid_balance_cents"], 0)
+        self.assertEqual(summary["prior_invoices"], [])
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_calculate_ignores_unrelated_billing_party(self, fake_pdf):
         fake_pdf.return_value = "c" * 64
         

@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.32
+### Current Test Build — v0.1.0-test.33
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.32
-- **Python package/application version:** 0.1.0.post32
+- **Release label:** v0.1.0-test.33
+- **Python package/application version:** 0.1.0.post33
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,11 +40,21 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.32 supersedes test.31 for installation and update testing. It retains the
-prior billing and client safeguards and prevents correction drafts from
-displaying their finalized parent invoice as a duplicate prior balance. It also
-aligns the JavaScript-rendered invoice preview with the current canonical
-invoice layout across draft and finalized invoice surfaces.
+test.33 supersedes test.32 for installation and update testing. It retains the
+prior billing and client safeguards, orders prior balances by service period,
+passes the same summary into Review & Finalize, and prevents long-form service
+dates from wrapping in the PDF table.
+
+### Billing Improvements In test.33
+
+1. **Late-finalized prior periods** — an unpaid earlier service month remains a
+   prior balance on a newer draft even when the older invoice's displayed
+   finalization date is later than the draft date.
+2. **Preview parity** — Review & Finalize uses the calculated prior-balance
+   summary already used by draft preview and PDF rendering.
+3. **Single-line dates** — the PDF line-item Date column is measured for the
+   longest English month names and no longer wraps dates such as August 03,
+   2026.
 
 ### Billing Improvements In test.32
 

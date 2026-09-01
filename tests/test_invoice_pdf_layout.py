@@ -291,16 +291,26 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertGreater(TABLE_COLUMN_WIDTHS[0], old_w)
 
     def test_date_column_fits_long_date_text(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
         available = TABLE_COLUMN_WIDTHS[0] - (TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING)
-        # "June 22, 2026" at the body size in Times-Roman is roughly 58pt.
-        self.assertGreaterEqual(available, 58)
+        date_widths = [
+            stringWidth(f"{month} 30, 2026", "Times-Roman", BODY_FONT_SIZE)
+            for month in (
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December",
+            )
+        ]
+        self.assertGreaterEqual(available, max(date_widths))
 
     def test_long_date_does_not_wrap_in_pdf(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
         lines = [{
-            "service_date": "2026-06-22",
+            "service_date": "2026-08-03",
             "participants_snapshot": "Avery Stone",
             "description_snapshot": "Office Visit",
             "duration_minutes": 60,
@@ -309,7 +319,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         path = self._generate_pdf(lines=lines)
         reader = PdfReader(path)
         text = reader.pages[0].extract_text() or ""
-        self.assertIn("June 22, 2026", text)
+        self.assertIn("August 03, 2026", text)
 
     # --- 6. Short-invoice footer placement and page balance ---
 
@@ -1161,7 +1171,6 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
 
         expected_values = [
             "Avery Stone",
-            "JUN 1, 2026",
             "May 22, 2026",
             "May 23, 2026",
             "Office Visit",
@@ -1180,6 +1189,8 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         for value in expected_values:
             self.assertIn(value, html)
             self.assertIn(value, pdf_text)
+        self.assertIn("Assigned when finalized", html)
+        self.assertIn("Assigned when finalized", pdf_text)
         self.assertNotIn("Invoice Number:", html)
         self.assertNotIn("Invoice Date:", html)
         self.assertNotIn("Billing Period", html)

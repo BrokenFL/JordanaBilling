@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.31 Release Notes
+# Jordana Billing v0.1.0-test.33 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.31` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.33` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.31-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.33-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.31
-- **Python package/application version:** 0.1.0.post31
+- **Release label:** v0.1.0-test.33
+- **Python package/application version:** 0.1.0.post33
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,30 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post31` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post33` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Billing Improvements In test.33
+
+1. **Prior balances follow the service period** — an unpaid invoice for an
+   earlier billing month remains a prior balance on the newer draft even when
+   the older invoice was finalized later and therefore has a later displayed
+   invoice date. Later service periods are never pulled backward as prior
+   balances, and same-period supplements retain deterministic ordering.
+
+2. **Review & Finalize shows the same balance** — the confirmation preview now
+   receives the account summary already calculated for the draft, keeping HTML,
+   exact-PDF preview, and finalization rendering aligned.
+
+3. **Service dates stay on one line** — the PDF Date column now fits every
+   English long-form month name at the actual Times body font and padding,
+   including August, September, November, and December dates. The Service
+   column retains its prior width.
+
+4. **Read-only production-data verification** — the reported July-to-August
+   cases were rechecked against the supplied database in immutable mode. No
+   operational database, finalized invoice, PDF, payment, or raw calendar
+   evidence was changed.
 
 ## Billing And Client Improvements In test.31
 

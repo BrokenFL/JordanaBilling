@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.32
+### Current Test Build — v0.1.0-test.33
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.32
-- **Python package/application version:** 0.1.0.post32
+- **Release label:** v0.1.0-test.33
+- **Python package/application version:** 0.1.0.post33
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,27 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post32` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post33` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.32 preserves the prior safeguards and keeps the invoice preview
-JavaScript-rendered while aligning its layout and content with the current
-canonical invoice template across draft, finalization, finalized, and void
-surfaces.
+test.33 preserves the prior safeguards, restores prior balances when an earlier
+service month was finalized after a newer draft was created, carries that same
+summary into Review & Finalize, and keeps long-form service dates on one PDF
+line.
+
+### Billing Improvements In test.33
+
+1. **Service-period prior balances** — prior-invoice eligibility compares billing
+   periods before customer-facing finalization dates, so late-finalized earlier
+   months remain visible on newer draft invoices.
+2. **Review & Finalize parity** — the finalization preview receives the same
+   calculated account summary used by draft HTML and exact-PDF previews.
+3. **Single-line service dates** — the PDF Date column fits every English
+   long-form month name at the actual invoice font and padding while preserving
+   the Service column width.
 
 ### Billing Improvements In test.32
 

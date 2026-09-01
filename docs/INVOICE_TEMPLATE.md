@@ -25,8 +25,8 @@ at the bottom of the invoice, with no border, box, or shaded background.
 - **Content width**: 7.5" (540pt), used consistently by the header, line-item table, total bar, and payment section.
 - **Header columns**: 3.65" left invoice/Bill To column + 3.85" right logo/provider column = 7.5".
 - **Typography**: body 10.25pt / 13pt leading; small/meta 9pt / 11pt leading; `INVOICE` title 29pt / 31pt leading; total 14.5pt / 18pt leading.
-- **Line-item table columns**: Date 1.12", Participants 1.65", Service 2.78", Duration 0.85", Amount 1.10" — sum exactly 7.5".
-- **Date column**: 1.12" wide, sufficient for ordinary long-form dates like "June 22, 2026" without unnecessary wrapping.
+- **Line-item table columns**: Date 1.38", Participants 1.49", Service 2.78", Duration 0.85", Amount 1.00" — sum exactly 7.5".
+- **Date column**: 1.38" wide, sufficient for every English long-form month name at the invoice's actual Times body font and cell padding, including "September 30, 2026", without wrapping.
 - **Logo**: top-right PNG, up to 2.10" wide and 1.35" tall, preserving aspect ratio. The current approved asset uses no optical offset and reads centered over the provider block.
 - **Header hierarchy**: The invoice metadata block shows `INVOICE`, then the unlabeled invoice date, then the unlabeled invoice number or draft placeholder. `Invoice Number:`, `Invoice Date:`, and `Billing Period:` labels are not rendered. The invoice-number line is aligned with the final line of the left-side address block. The session table starts beneath both columns with only a modest gap.
 - **Line order**: Session rows are chronological by service date, then source start time, then stable line UUID. Import, approval, insertion, and database row order do not control display order.

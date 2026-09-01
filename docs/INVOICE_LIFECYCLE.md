@@ -524,12 +524,14 @@ For a given invoice:
 
 This prior balance is displayed as a summary block and does not create duplicate service lines.
 
-### Same-Date Cutoff Ordering
+### Prior-Invoice Ordering
 Determining whether an invoice is "prior" relative to the current one uses a strict deterministic ordering:
-1. **Invoice Date**: Candidate is prior if `candidate.invoice_date < current.invoice_date`.
-2. **Tie-Breaker 1 (Finalized vs Draft)**: If dates match, a finalized invoice is prior to a draft invoice.
-3. **Tie-Breaker 2 (Finalized Timestamps)**: If both are finalized and dates match, candidate is prior if `candidate.finalized_at < current.finalized_at`.
-4. **Tie-Breaker 3 (UUID comparison)**: If finalized at the exact same millisecond, candidate is prior if `candidate.invoice_id < current.invoice_id` (alphabetically).
+1. **Service Month**: When both invoices have an identifiable complete billing month, an earlier `billing_month` is prior and a later month is not. This remains true when a July invoice is finalized after an August draft was created.
+2. **Nonoverlapping Service Period**: For legacy or nonmonthly invoices, a period ending before the current period starts is prior; a period starting after the current period ends is not.
+3. **Same-Month Supplement**: Within the same service month, a lower `supplement_sequence` is prior.
+4. **Same/Overlapping Period Fallback**: Invoice date, finalized-vs-draft state, `finalized_at`, and finally invoice UUID provide deterministic ordering for same-period supplements and legacy overlaps.
+
+The customer-facing `invoice_date` remains the finalization date. It is not used to reorder distinct service months, because doing so could hide a genuine prior balance when an earlier month's invoice is finalized late.
 
 ### Persistence & Immutability
 - **Snapshot Finalization**: During finalization, the calculated summary is frozen in a versioned JSON snapshot (version 1) in the database (`account_summary_snapshot`). The PDF generated reflects this frozen snapshot and remains immutable.

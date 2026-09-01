@@ -8,11 +8,11 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `018_delivery_contact_person`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.22`
+- **Current test release target:** `v0.1.0-test.33`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post22`
+- **Current package/application version:** `0.1.0.post33`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.21` is superseded by test.22 for installation and update testing
+- **Prior test release:** `v0.1.0-test.32` is superseded by test.33 for installation and update testing
 
 ## Architecture
 
@@ -110,17 +110,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.31 supersedes test.30):
+The current controlled-beta release target is (test.33 supersedes test.32):
 
 ```text
-JordanaBilling-v0.1.0-test.31-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.33-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.31`
-- Python package/application version: `0.1.0.post31`
+- Release label: `v0.1.0-test.33`
+- Python package/application version: `0.1.0.post33`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,9 +130,19 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post31` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post33` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Billing Improvements In test.33
+
+1. **Service-period prior balances** — an unpaid earlier service month remains in
+   a newer invoice's prior balance even if the earlier invoice was finalized
+   later; later service months remain excluded.
+2. **Finalization-preview parity** — Review & Finalize receives the same account
+   summary used by the draft and exact-PDF preview paths.
+3. **Single-line PDF dates** — the Date column fits every English long-form
+   month name without reducing the Service column.
 
 ### Billing And Client Improvements In test.31
 

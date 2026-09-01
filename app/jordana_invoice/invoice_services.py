@@ -152,6 +152,64 @@ def _invoice_excluded_session_invoice_ids(
     return ids
 
 
+def _invoice_period_month(invoice: dict[str, Any]) -> str:
+    """Return the invoice's service-period month when it can be identified."""
+    billing_month = str(invoice.get("billing_month") or "").strip()
+    if billing_month:
+        return billing_month
+    period_start = str(invoice.get("billing_period_start") or "").strip()
+    period_end = str(invoice.get("billing_period_end") or "").strip()
+    return _derive_billing_month(period_start, period_end) or ""
+
+
+def _invoice_is_prior(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Order invoices by service period before customer-facing invoice date.
+
+    Finalization assigns the displayed invoice date. It can therefore be later
+    than the date on a draft for a newer service month. Service-period ordering
+    prevents that display-date change from hiding a genuine prior balance.
+    Same-period supplements and legacy/overlapping periods retain the prior
+    deterministic finalization/date ordering.
+    """
+    candidate_month = _invoice_period_month(candidate)
+    current_month = _invoice_period_month(current)
+    if candidate_month and current_month and candidate_month != current_month:
+        return candidate_month < current_month
+
+    candidate_start = str(candidate.get("billing_period_start") or "").strip()
+    candidate_end = str(candidate.get("billing_period_end") or "").strip()
+    current_start = str(current.get("billing_period_start") or "").strip()
+    current_end = str(current.get("billing_period_end") or "").strip()
+    if candidate_end and current_start and candidate_end < current_start:
+        return True
+    if candidate_start and current_end and candidate_start > current_end:
+        return False
+
+    candidate_sequence = int(candidate.get("supplement_sequence") or 0)
+    current_sequence = int(current.get("supplement_sequence") or 0)
+    if candidate_month and candidate_month == current_month and candidate_sequence != current_sequence:
+        return candidate_sequence < current_sequence
+
+    candidate_date = str(candidate.get("invoice_date") or "")
+    current_date = str(current.get("invoice_date") or "")
+    candidate_finalized_at = str(candidate.get("finalized_at") or "")
+    current_finalized_at = str(current.get("finalized_at") or "")
+
+    if candidate_date < current_date:
+        return True
+    if candidate_date > current_date:
+        # A finalized same-period invoice is prior to an open supplement even
+        # when finalization assigned it a later customer-facing date.
+        return bool(candidate_finalized_at and not current_finalized_at)
+    if candidate_finalized_at and not current_finalized_at:
+        return True
+    if candidate_finalized_at and current_finalized_at:
+        if candidate_finalized_at != current_finalized_at:
+            return candidate_finalized_at < current_finalized_at
+        return str(candidate.get("invoice_id") or "") < str(current.get("invoice_id") or "")
+    return False
+
+
 def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     """Calculate the account summary values for a given invoice.
 
@@ -219,9 +277,6 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
     prior_invoices = []
     prior_unpaid_cents = 0
 
-    current_date = invoice["invoice_date"]
-    current_finalized_at = invoice.get("finalized_at")
-
     for row in candidates_rows:
         cand = dict(row)
         cand_id = cand["invoice_id"]
@@ -232,27 +287,8 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
         if cand_id == invoice_id or cand_id == correction_parent_id:
             continue
 
-        # 2. Check if the candidate is "prior" based on the cutoff rule
-        cand_date = cand["invoice_date"]
-        cand_finalized_at = cand.get("finalized_at")
-
-        is_prior = False
-        if cand_date < current_date:
-            is_prior = True
-        elif cand_date == current_date:
-            # Same date cutoff ordering:
-            if cand_finalized_at and not current_finalized_at:
-                # Candidate is finalized, current is draft
-                is_prior = True
-            elif cand_finalized_at and current_finalized_at:
-                # Both are finalized
-                if cand_finalized_at < current_finalized_at:
-                    is_prior = True
-                elif cand_finalized_at == current_finalized_at:
-                    # Stable tie-breaker using UUID comparison
-                    is_prior = cand_id < invoice_id
-
-        if not is_prior:
+        # 2. Check whether the candidate's service period precedes this one.
+        if not _invoice_is_prior(cand, invoice):
             continue
 
         # Calculate dynamic remaining balance for the candidate
@@ -264,9 +300,16 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
             prior_invoices.append({
                 "invoice_id": cand_id,
                 "invoice_number": cand["invoice_number"],
-                "invoice_date": cand_date,
+                "invoice_date": cand["invoice_date"],
                 "remaining_balance_cents": remaining,
-                "_sort_key": (cand_date, cand_finalized_at or "", cand_id)
+                "_sort_key": (
+                    _invoice_period_month(cand),
+                    str(cand.get("billing_period_start") or ""),
+                    int(cand.get("supplement_sequence") or 0),
+                    str(cand.get("invoice_date") or ""),
+                    str(cand.get("finalized_at") or ""),
+                    cand_id,
+                ),
             })
             prior_unpaid_cents += remaining
 
@@ -2450,6 +2493,7 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
             [dict(line) for line in lines],
             business_profile=dict(profile) if profile else None,
             billing_party=dict(party) if party else None,
+            account_summary=(result.get("render_model") or {}).get("account_summary"),
             insurance_coding_payload=finalization_payload,
         ),
         "preview_revision": invoice["revision"],
