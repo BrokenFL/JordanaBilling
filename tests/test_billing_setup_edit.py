@@ -1426,7 +1426,8 @@ class BillingRelationshipFilingOwnerTests(unittest.TestCase):
             "invoice_date": "2026-07-01",
             "session_ids": [session["id"]],
         })
-        final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-07-01T16:00:00+00:00"):
+            final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
         self.assertIn("Fictional Folder Owner/June 2026/Invoice_2026-0001.pdf", final["invoice"]["pdf_path"])
         self.assertEqual(final["invoice"]["invoice_date"], "2026-07-01")
         self.assertEqual(final["invoice"]["invoice_number"], "2026-0001")
