@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.33
+### Current Test Build — v0.1.0-test.34
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.33
-- **Python package/application version:** 0.1.0.post33
+- **Release label:** v0.1.0-test.34
+- **Python package/application version:** 0.1.0.post34
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,10 +40,21 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.33 supersedes test.32 for installation and update testing. It retains the
-prior billing and client safeguards, orders prior balances by service period,
-passes the same summary into Review & Finalize, and prevents long-form service
-dates from wrapping in the PDF table.
+test.34 supersedes test.33 for installation and update testing. It retains the
+prior billing and client safeguards, adds evidence-gated calendar capture,
+warning-first reconciliation, canonical duplicate protection, reversible
+recovery, and the optional Dr. invoice-title checkbox.
+
+### Calendar Reliability And Client Presentation In test.34
+
+1. Confirm a normal Shortcut run records `past_3_days` and `next_2_days` rows,
+   and that future-only rows do not enter billing Review.
+2. Confirm moved/absent appointments appear as warnings without automatic
+   exclusion or invoicing.
+3. Enable the Dr. checkbox on a sanitized test client and confirm draft Bill To
+   and participant names update while the normal client/calendar name does not.
+4. Confirm toggling the checkbox after a finalized test invoice does not change
+   its snapshot or PDF.
 
 ### Billing Improvements In test.33
 

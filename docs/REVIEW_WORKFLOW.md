@@ -17,6 +17,16 @@ The visible workflow is:
 
 Routine review does not expose backend Client / Family Account fields, account codes, household labels, or membership roles.
 
+Calendar-presence, identity, and duplicate-billing warnings are reversible
+queue warnings. They never silently change approval, billability, payment, or
+the raw calendar evidence. When later positive calendar evidence resolves a
+presence warning, the warning closes automatically.
+
+A legacy suppression recovery can return a post-session-evidenced appointment
+to the normal queue, but it never approves it, creates an invoice line, or
+overwrites its raw evidence. A duration/end-time conflict remains a warning,
+not a chosen billable session.
+
 ## Participants
 
 Participants are permanent people connected to the session as attendees.

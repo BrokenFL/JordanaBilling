@@ -270,6 +270,14 @@ This ensures that a draft created before the Billing Setup was completed still r
 
 Finalized invoice snapshots (`bill_to_name_snapshot`, `bill_to_email_snapshot`, `bill_to_address_snapshot`, `delivery_method`) remain immutable. Changes to the billing party after finalization do not affect the finalized invoice or its PDF.
 
+A client can intentionally enable **Use “Dr.” before this client’s name on
+invoices** from Client Details. The preference applies to that person's
+invoice-facing Bill To name when the person-linked billing name is still the
+client's own name, and to the person's participant name on service lines. A
+custom billing/delivery-contact name is not prefixed. Calendar identity and
+filing-folder names stay unchanged. Toggling the preference refreshes editable
+drafts only; finalized and void invoice snapshots and PDFs remain immutable.
+
 ## Void And Reissue
 
 Void requires a reason and preserves the number, snapshots, PDF, and checksum. Source sessions become eligible for a new invoice with a new number. Payments and delivery are not automatically handled by void; existing payment records and allocations remain in the ledger and are not deleted.

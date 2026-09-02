@@ -410,6 +410,7 @@ CREATE TABLE IF NOT EXISTS people (
   first_name TEXT,
   last_name TEXT,
   preferred_name TEXT,
+  use_dr_on_invoices INTEGER NOT NULL DEFAULT 0,
   person_code TEXT UNIQUE,
   billing_email TEXT,
   billing_phone TEXT,
@@ -751,6 +752,27 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS calendar_recovery_actions (
+  recovery_action_id TEXT PRIMARY KEY,
+  action_key TEXT NOT NULL UNIQUE,
+  action_type TEXT NOT NULL,
+  candidate_id TEXT REFERENCES calendar_event_candidates(id),
+  session_id TEXT REFERENCES sessions(id),
+  invoice_id TEXT REFERENCES invoices(invoice_id),
+  invoice_line_item_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('applied', 'reversed')),
+  reason TEXT NOT NULL,
+  original_state_json TEXT NOT NULL,
+  applied_state_json TEXT NOT NULL,
+  applied_at TEXT,
+  reversed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_recovery_actions_status
+  ON calendar_recovery_actions(status, action_type);
 
 CREATE TABLE IF NOT EXISTS invoice_sequences (
   sequence_year INTEGER PRIMARY KEY,
@@ -1673,6 +1695,46 @@ def _apply_migration_021(conn: sqlite3.Connection) -> None:
     })
 
 
+MIGRATION_022_CALENDAR_RECOVERY_ACTIONS = "022_calendar_recovery_actions"
+
+
+def _apply_migration_022(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS calendar_recovery_actions (
+          recovery_action_id TEXT PRIMARY KEY,
+          action_key TEXT NOT NULL UNIQUE,
+          action_type TEXT NOT NULL,
+          candidate_id TEXT REFERENCES calendar_event_candidates(id),
+          session_id TEXT REFERENCES sessions(id),
+          invoice_id TEXT REFERENCES invoices(invoice_id),
+          invoice_line_item_id TEXT,
+          status TEXT NOT NULL CHECK (status IN ('applied', 'reversed')),
+          reason TEXT NOT NULL,
+          original_state_json TEXT NOT NULL,
+          applied_state_json TEXT NOT NULL,
+          applied_at TEXT,
+          reversed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_calendar_recovery_actions_status
+          ON calendar_recovery_actions(status, action_type);
+        """
+    )
+
+
+MIGRATION_023_CLIENT_INVOICE_TITLE = "023_client_invoice_title"
+
+
+def _apply_migration_023(conn: sqlite3.Connection) -> None:
+    add_columns(
+        conn,
+        "people",
+        {"use_dr_on_invoices": "INTEGER NOT NULL DEFAULT 0"},
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1695,6 +1757,8 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_019_SESSION_LEDGER_ARCHIVE, _apply_migration_019),
     (MIGRATION_020_INVOICE_CORRECTIONS, _apply_migration_020),
     (MIGRATION_021_CANCELLATION_POLICY, _apply_migration_021),
+    (MIGRATION_022_CALENDAR_RECOVERY_ACTIONS, _apply_migration_022),
+    (MIGRATION_023_CLIENT_INVOICE_TITLE, _apply_migration_023),
 ]
 
 

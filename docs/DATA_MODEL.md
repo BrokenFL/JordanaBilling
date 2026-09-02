@@ -98,7 +98,7 @@ still match the repair-applied state.
 
 ## `people`
 
-Actual humans with permanent UUIDs. Person codes are optional human-readable helpers and are generated only after first and last names are confirmed. The code is not the primary key and is not silently changed when a name changes.
+Actual humans with permanent UUIDs. Person codes are optional human-readable helpers and are generated only after first and last names are confirmed. The code is not the primary key and is not silently changed when a name changes. `use_dr_on_invoices` is an explicit client-level presentation preference: it adds `Dr.` to invoice-facing Bill To and participant names without changing calendar identity, aliases, search names, or filing folders. Editable drafts refresh when it changes; finalized and void snapshots remain frozen.
 
 ## `client_accounts`
 

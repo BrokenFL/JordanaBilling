@@ -6937,12 +6937,13 @@ async function openPersonRecord(personId, options = {}) {
           <label class="field">Last Name<input id="recordLastName" value="${escapeAttr(data.person.last_name || "")}"></label>
           <label class="field">Preferred Name<input id="recordPreferredName" value="${escapeAttr(data.person.preferred_name || "")}"></label>
           <label class="field">Display Name<input id="recordDisplayName" value="${escapeAttr(data.person.display_name || "")}"></label>
+          <label class="checkbox-field wide"><input id="recordUseDrOnInvoices" type="checkbox" ${data.person.use_dr_on_invoices ? "checked" : ""}><span>Use “Dr.” before this client’s name on invoices</span></label>
           <label class="field">Email<input id="recordPersonEmail" value="${escapeAttr(data.person.billing_email || "")}"></label>
           <label class="field">Phone<input id="recordPersonPhone" value="${escapeAttr(data.person.billing_phone || "")}"></label>
           <label class="field">Status<input value="${escapeAttr(data.person.active_status || "")}" readonly></label>
           <label class="field wide">Administrative Notes<input id="recordPersonNotes" value="${escapeAttr(data.person.administrative_notes || "")}"></label>
         </div>
-        <div class="readonly-note">Name changes apply to future billing and editable drafts. Finalized invoices keep their original historical name.</div>
+        <div class="readonly-note">Name and invoice-title changes apply to future billing and editable drafts. Calendar matching keeps the normal display name. Finalized invoices keep their original historical name.</div>
         <div id="personRecordMessage" class="billing-setup-message"></div>
         <div class="record-actions"><button id="savePersonRecord" class="save">Save Client</button></div>
       </section>
@@ -7112,6 +7113,7 @@ async function openPersonRecord(personId, options = {}) {
         last_name: $("recordLastName").value,
         preferred_name: $("recordPreferredName").value,
         display_name: $("recordDisplayName").value,
+        use_dr_on_invoices: $("recordUseDrOnInvoices").checked,
         billing_email: $("recordPersonEmail").value,
         billing_phone: $("recordPersonPhone").value,
         administrative_notes: $("recordPersonNotes").value,

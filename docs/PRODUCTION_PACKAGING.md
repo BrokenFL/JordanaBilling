@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.33
+### Current Test Build — v0.1.0-test.34
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.33
-- **Python package/application version:** 0.1.0.post33
+- **Release label:** v0.1.0-test.34
+- **Python package/application version:** 0.1.0.post34
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,26 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post33` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post34` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.33 preserves the prior safeguards, restores prior balances when an earlier
-service month was finalized after a newer draft was created, carries that same
-summary into Review & Finalize, and keeps long-form service dates on one PDF
-line.
+test.34 preserves the prior safeguards, adds evidence-gated calendar capture and
+warning-first reconciliation, prevents duplicate billing identity, provides
+reversible recovery, and adds the optional client-level Dr. invoice title.
+
+### Calendar Reliability And Client Presentation In test.34
+
+1. **Past evidence is required for billing** — the two-day future window is raw
+   scheduling evidence; a later three-day past capture supplies billing evidence.
+2. **Moved appointments warn instead of disappearing** — newest-snapshot absence
+   is reviewable and does not silently rewrite a billing decision.
+3. **Duplicate and recovery safeguards** — canonical event identity and the
+   reversible recovery ledger protect drafts and finalized history.
+4. **Optional Dr. invoice title** — an intentional Client Details checkbox
+   updates editable/new invoice names without changing calendar identity.
 
 ### Billing Improvements In test.33
 

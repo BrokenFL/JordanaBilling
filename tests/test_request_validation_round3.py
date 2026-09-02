@@ -70,8 +70,9 @@ from jordana_invoice.review_server import is_safe_validation_error
 
 class TestParseCreatePerson(unittest.TestCase):
     def test_valid_payload(self):
-        req = parse_create_person_request({"display_name": "Alice Stone"})
+        req = parse_create_person_request({"display_name": "Alice Stone", "use_dr_on_invoices": True})
         self.assertEqual(req.to_payload()["display_name"], "Alice Stone")
+        self.assertTrue(req.to_payload()["use_dr_on_invoices"])
 
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
@@ -85,11 +86,16 @@ class TestParseCreatePerson(unittest.TestCase):
         with self.assertRaises(RequestValidationError):
             parse_create_person_request({"display_name": 123})
 
+    def test_invoice_title_must_be_boolean(self):
+        with self.assertRaises(RequestValidationError):
+            parse_create_person_request({"display_name": "Alice Stone", "use_dr_on_invoices": "yes"})
+
 
 class TestParseUpdatePerson(unittest.TestCase):
     def test_valid_payload(self):
-        req = parse_update_person_request({"display_name": "Alice Stone", "active": False})
+        req = parse_update_person_request({"display_name": "Alice Stone", "active": False, "use_dr_on_invoices": True})
         self.assertFalse(req.to_payload()["active"])
+        self.assertTrue(req.to_payload()["use_dr_on_invoices"])
 
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
@@ -98,6 +104,10 @@ class TestParseUpdatePerson(unittest.TestCase):
     def test_wrong_type_for_bool(self):
         with self.assertRaises(RequestValidationError):
             parse_update_person_request({"active": "yes"})
+
+    def test_invoice_title_must_be_boolean(self):
+        with self.assertRaises(RequestValidationError):
+            parse_update_person_request({"use_dr_on_invoices": "yes"})
 
 
 class TestParseSavePersonAlias(unittest.TestCase):

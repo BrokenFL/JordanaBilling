@@ -14,6 +14,7 @@ from typing import Callable, Any
 
 from .csv_reports import write_reports
 from .db import (
+    DEFAULT_BUSY_TIMEOUT_MS,
     DEFAULT_LOCK_TIMEOUT_SECONDS,
     DatabaseBusyError,
     DatabaseLock,
@@ -190,6 +191,25 @@ def default_transport(
         raise SyncError("Invalid JSON response from Apps Script.") from error
 
 
+def _connect_for_sync(database_path: str, *, dry_run: bool) -> sqlite3.Connection:
+    if not dry_run:
+        migrate_database(database_path)
+        return connect(database_path)
+
+    resolved = Path(database_path).expanduser().resolve()
+    if not resolved.is_file():
+        raise SyncError("Dry-run sync requires an existing initialized database.")
+    conn = sqlite3.connect(
+        resolved.as_uri() + "?mode=ro",
+        uri=True,
+        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
+    return conn
+
+
 def sync_now(
     config: SyncConfig | None = None,
     full: bool = False,
@@ -197,21 +217,23 @@ def sync_now(
     transport: Transport = default_transport,
 ) -> SyncResult:
     config = config or load_config()
-    migrate_database(config.database_path)
     if not dry_run:
         from .backups import create_verified_backup
         from .db import is_operational_db_path
 
         if is_operational_db_path(config.database_path):
             create_verified_backup(config.database_path, reason="sync_apply")
-    conn = connect(config.database_path)
-    return sync_with_connection(
-        conn,
-        config,
-        full=full,
-        dry_run=dry_run,
-        transport=transport,
-    )
+    conn = _connect_for_sync(config.database_path, dry_run=dry_run)
+    try:
+        return sync_with_connection(
+            conn,
+            config,
+            full=full,
+            dry_run=dry_run,
+            transport=transport,
+        )
+    finally:
+        conn.close()
 
 
 def sync_calendar_automatically(
@@ -235,14 +257,13 @@ def sync_calendar_automatically(
         raise SyncAlreadyRunning("Calendar sync is already running.")
     try:
         config = config or load_config()
-        migrate_database(config.database_path)
         if not dry_run:
             from .backups import create_verified_backup
             from .db import is_operational_db_path
 
             if is_operational_db_path(config.database_path):
                 create_verified_backup(config.database_path, reason="sync_apply")
-        conn = connect(config.database_path)
+        conn = _connect_for_sync(config.database_path, dry_run=dry_run)
         try:
             initial = should_run_initial_full_sync(conn)
             return sync_with_connection(
@@ -304,7 +325,7 @@ def sync_with_process_lock(
 
             if is_operational_db_path(config.database_path):
                 create_verified_backup(config.database_path, reason="sync_apply")
-        conn = connect(config.database_path)
+        conn = _connect_for_sync(config.database_path, dry_run=dry_run)
         try:
             return sync_with_connection(
                 conn,

@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-021_cancellation_policy
+022_calendar_recovery_actions
 ```
 
 The registered migrations are:
@@ -35,6 +35,7 @@ The registered migrations are:
 19. `019_session_ledger_archive` — reversible session-ledger archive metadata on calendar candidates
 20. `020_invoice_corrections` — correction-draft links and correction-reason history for finalized invoice replacement
 21. `021_cancellation_policy` — optional frozen cancellation-policy text on finalized invoices
+22. `022_calendar_recovery_actions` — reversible, scoped audit state for the legacy calendar-suppression and draft-duplicate recovery
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 
@@ -89,6 +90,7 @@ Raw snapshot rows are never edited or deleted by normal review workflows.
 - `calendar_event_candidates` — current interpretation of source calendar evidence
 - `candidate_identity_aliases` — exact event-ID, fingerprint, and conservative structural identity aliases
 - `candidate_duplicate_reconciliations` — audited duplicate-repair plans, apply state, and reversal state
+- `calendar_recovery_actions` — audited, reversible actions from the narrowly scoped legacy calendar recovery
 - `review_queue` and `review_items` — review status and decision tracking
 - `calendar_aliases` — approved shorthand, person associations, and classification aliases
 

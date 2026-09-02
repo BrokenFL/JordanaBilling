@@ -9,7 +9,8 @@ This is not a general multi-user billing platform. It is implemented and tested 
 ## Current Scope
 
 - Authenticated Google Apps Script sync
-- Normal Shortcut capture window of 3 days back and 7 days ahead
+- Normal Shortcut capture window of 3 days back and 2 days ahead; the future
+  batch is raw scheduling evidence, not a billing candidate
 - One-time June 1-14, 2026 backfill capture label support
 - Google Sheets CSV importer for testing and emergency recovery
 - Raw snapshot preservation
@@ -20,6 +21,7 @@ This is not a general multi-user billing platform. It is implemented and tested 
 - Source-calendar classification and review filtering
 - Event classification
 - People/account/billing-party data model
+- Optional client-level “Dr.” invoice title that does not alter calendar identity
 - Session participant modeling
 - Simplified Participants and Bill-to review workflow
 - Service mode, rate group, evening, and weekend categorization
@@ -237,6 +239,23 @@ pending/unreviewed operational records from the newest event version, excludes
 pending records whose newest evidence is non-client, and protects approved
 sessions from silent rewrites.
 
+For the narrowly-scoped repair of the historic absence-suppression bug and
+exact duplicate lines in editable drafts, use the separate recovery command.
+It is read-only by default, requires a month when applying, and never approves
+or invoices a restored session:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-recovery --dry-run --month 2026-08
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-recovery --apply --month 2026-08 --confirm-apply APPLY_CALENDAR_RECOVERY
+```
+
+Only a candidate with preserved post-end `past_3_days` evidence can return to
+normal Review. Future-only or otherwise unproven legacy records stay untouched;
+conflicting duration evidence is warned, not chosen. Exact duplicates are
+quarantined, and a line is removed only from an unpaid, unnumbered, editable
+draft when every billable snapshot value matches. Apply creates a verified
+private backup and every unchanged recovery action can be reversed.
+
 For June 2026 recovery after installing the current test release:
 
 1. Open `Jordana Billing`.
@@ -264,7 +283,7 @@ Calendar filters can show all calendars, the preferred work calendar, other cale
 
 ## Calendar Entry Standard
 
-The Shortcut still imports all non-all-day events from all calendars. `Jordana Work` is a preferred classification signal, not an ingestion restriction. Normal capture uses `past_3_days` and `next_7_days`. Calendar start time remains authoritative, and title time is validation evidence only.
+The Shortcut still imports all non-all-day events from all calendars. `Jordana Work` is a preferred classification signal, not an ingestion restriction. Normal v3 capture uses `past_3_days` and a short `next_2_days` scheduling-health window. Only a post-end past capture may create a billing candidate; future rows remain raw evidence. Calendar start time remains authoritative, and title time is validation evidence only.
 
 Preferred structured titles:
 

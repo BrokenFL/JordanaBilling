@@ -10,17 +10,20 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .calendar_identity import canonical_datetime, canonical_structural_parts, has_complete_structural_identity
+from .calendar_warnings import upsert_calendar_warning
 from .invoice_rendering import (
     CANCELLATION_POLICY_TEXT,
     build_invoice_render_model,
     format_month_label,
     resolve_logo_path,
 )
+from .invoice_names import format_invoice_person_name
 from .invoice_pdf import generate_invoice_pdf
 from .csv_reports import refresh_reports_after_commit
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
-from .util import json_dumps, new_id, normalize_payment_status, now_iso
+from .util import json_dumps, new_id, normalize_payment_status, now_iso, stable_hash
 from .db import DatabaseBusyError, _get_db_path_from_conn, is_operational_db_path
 
 
@@ -51,6 +54,43 @@ def _backup_operational_database_before(conn: sqlite3.Connection, reason: str) -
 
 def _present_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _billing_party_invoice_name(
+    conn: sqlite3.Connection,
+    party: sqlite3.Row | dict[str, Any] | None,
+) -> str:
+    if not party:
+        return ""
+    billing_name = _present_text(_row_get(party, "billing_name"))
+    person_id = _present_text(_row_get(party, "person_id"))
+    if not person_id:
+        return billing_name
+    person = conn.execute(
+        "SELECT display_name, use_dr_on_invoices FROM people WHERE person_id = ?",
+        (person_id,),
+    ).fetchone()
+    if not person or not person["use_dr_on_invoices"]:
+        return billing_name
+    display_name = _present_text(person["display_name"])
+    titled_name = format_invoice_person_name(display_name, True)
+    normalized_billing = " ".join(billing_name.casefold().split())
+    eligible_names = {
+        " ".join(display_name.casefold().split()),
+        " ".join(titled_name.casefold().split()),
+    }
+    return titled_name if normalized_billing in eligible_names else billing_name
+
+
+def _invoice_render_party(
+    conn: sqlite3.Connection,
+    party: sqlite3.Row | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not party:
+        return None
+    result = dict(party)
+    result["invoice_display_name"] = _billing_party_invoice_name(conn, party)
+    return result
 
 
 def _billing_address_complete(party: sqlite3.Row | dict[str, Any] | None) -> bool:
@@ -1036,7 +1076,7 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
     current_profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     current_party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (row["bill_to_party_id"],)).fetchone()
     profile = dict(current_profile) if current_profile and row["status"] == "draft" else None
-    party = dict(current_party) if current_party else None
+    party = _invoice_render_party(conn, current_party)
     invoice = dict(row)
     line_dicts = [dict(line) for line in lines]
     paid_cents = _invoice_paid_cents(conn, invoice_id)
@@ -1479,8 +1519,102 @@ def start_invoice_correction(conn: sqlite3.Connection, invoice_id: str, reason: 
     return result
 
 
+def calendar_source_identity_for_session(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row | dict[str, Any],
+) -> str | None:
+    """Return a privacy-safe identity for a session's underlying calendar event.
+
+    A stable calendar-event identifier is preferred.  If it is unavailable,
+    use an exact canonical structural identity (title, UTC start/end, duration,
+    calendar) only when all fields are present.  Conflicting stable identifiers
+    intentionally return None so the caller can leave the case reviewable.
+    """
+
+    candidate_id = str(session["candidate_id"] or "")
+    if candidate_id:
+        aliases = conn.execute(
+            """
+            SELECT alias_type, alias_value
+            FROM candidate_identity_aliases
+            WHERE candidate_id = ?
+              AND alias_type = 'calendar_event_id'
+            """,
+            (candidate_id,),
+        ).fetchall()
+        event_ids = {str(row["alias_value"]) for row in aliases if row["alias_type"] == "calendar_event_id"}
+        if len(event_ids) == 1:
+            return "calendar_event_id:" + next(iter(event_ids))
+        if len(event_ids) > 1:
+            return None
+    if not has_complete_structural_identity(session):
+        return None
+    return "structural:" + stable_hash("|".join(canonical_structural_parts(session)))
+
+
+def equivalent_session_in_invoice(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    session: sqlite3.Row | dict[str, Any],
+) -> sqlite3.Row | None:
+    """Find a different draft line with the same confirmed source event."""
+
+    source_identity = calendar_source_identity_for_session(conn, session)
+    if not source_identity:
+        return None
+    source_session_id = str(session["id"])
+    lines = conn.execute(
+        """
+        SELECT li.invoice_line_item_id, li.source_session_id, s.*
+        FROM invoice_line_items li
+        JOIN sessions s ON s.id = li.source_session_id
+        WHERE li.invoice_id = ?
+        """,
+        (invoice_id,),
+    ).fetchall()
+    for line in lines:
+        if line["source_session_id"] == source_session_id:
+            continue
+        if calendar_source_identity_for_session(conn, line) == source_identity:
+            return line
+    return None
+
+
+def _warn_duplicate_calendar_identity(
+    conn: sqlite3.Connection,
+    *,
+    invoice_id: str,
+    session: sqlite3.Row | dict[str, Any],
+) -> None:
+    candidate_id = str(session["candidate_id"] or "")
+    if not candidate_id:
+        return
+    upsert_calendar_warning(
+        conn,
+        candidate_id=candidate_id,
+        session_id=str(session["id"]),
+        warning_code="duplicate_billing_identity_warning",
+        reason=(
+            "A session with the same confirmed calendar identity is already "
+            "in this draft invoice. The duplicate was not added."
+        ),
+        new_value=f"draft:{invoice_id}",
+    )
+
+
+def _assert_no_equivalent_session_in_invoice(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    session: sqlite3.Row | dict[str, Any],
+) -> None:
+    if equivalent_session_in_invoice(conn, invoice_id, session):
+        _warn_duplicate_calendar_identity(conn, invoice_id=invoice_id, session=session)
+        raise ValueError("A session with the same confirmed calendar identity is already included in this draft.")
+
+
 def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite3.Row | dict[str, Any], order: int) -> None:
     """Insert a single invoice line item from a session, reusing existing snapshot logic."""
+    _assert_no_equivalent_session_in_invoice(conn, invoice_id, session)
     session_id = session["id"]
     values = _line_item_snapshot_values(conn, session)
     now = now_iso()
@@ -1662,6 +1796,14 @@ def remove_correction_draft_lines_for_session(
 
 def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids: list[str]) -> dict[str, Any]:
     invoice = _draft(conn, invoice_id)
+    # Detect same-event selections before opening the write transaction so the
+    # warning survives the rejected manual add and appears in normal Review.
+    for session_id in session_ids:
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if session and equivalent_session_in_invoice(conn, invoice_id, session):
+            _warn_duplicate_calendar_identity(conn, invoice_id=invoice_id, session=session)
+            conn.commit()
+            raise ValueError("A session with the same confirmed calendar identity is already included in this draft.")
     conn.execute("BEGIN IMMEDIATE")
     try:
         order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?", (invoice_id,)).fetchone()[0]
@@ -1925,7 +2067,21 @@ def _consolidate_duplicate_payer_drafts(conn: sqlite3.Connection) -> int:
                         "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
                         (canonical_draft["invoice_id"], line["source_session_id"]),
                     ).fetchone()
-                    if not already:
+                    session = conn.execute(
+                        "SELECT * FROM sessions WHERE id = ?",
+                        (line["source_session_id"],),
+                    ).fetchone()
+                    if not already and session and equivalent_session_in_invoice(
+                        conn,
+                        canonical_draft["invoice_id"],
+                        session,
+                    ):
+                        _warn_duplicate_calendar_identity(
+                            conn,
+                            invoice_id=canonical_draft["invoice_id"],
+                            session=session,
+                        )
+                    elif not already:
                         order = conn.execute(
                             "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
                             (canonical_draft["invoice_id"],),
@@ -2158,7 +2314,17 @@ def stage_approved_sessions_to_monthly_drafts(
                                 "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
                                 (target_draft["invoice_id"], session["id"]),
                             ).fetchone()
-                            if not already:
+                            if not already and equivalent_session_in_invoice(conn, target_draft["invoice_id"], session):
+                                _warn_duplicate_calendar_identity(
+                                    conn,
+                                    invoice_id=target_draft["invoice_id"],
+                                    session=session,
+                                )
+                                result["sessions_skipped"].append({
+                                    "session_id": session["id"],
+                                    "reasons": ["Same confirmed calendar event is already staged in the target draft."],
+                                })
+                            elif not already:
                                 order = conn.execute(
                                     "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
                                     (target_draft["invoice_id"],),
@@ -2169,7 +2335,7 @@ def stage_approved_sessions_to_monthly_drafts(
                                     "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
                                     (now_iso(), target_draft["invoice_id"]),
                                 )
-                            result["sessions_moved"] += 1
+                                result["sessions_moved"] += 1
                     else:
                         reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=draft_id)
                         if reasons:
@@ -2246,6 +2412,13 @@ def stage_approved_sessions_to_monthly_drafts(
                         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
                         (draft_id,),
                     ).fetchone()[0]
+                    if equivalent_session_in_invoice(conn, draft_id, session):
+                        _warn_duplicate_calendar_identity(conn, invoice_id=draft_id, session=session)
+                        result["sessions_skipped"].append({
+                            "session_id": session["id"],
+                            "reasons": ["Same confirmed calendar event is already staged in this draft."],
+                        })
+                        continue
                     _insert_line_item(conn, draft_id, session, order)
                     result["sessions_staged"] += 1
                     draft_changed = True
@@ -2481,18 +2654,19 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
     )
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
+    render_party = _invoice_render_party(conn, party)
     finalization_payload = dict(data or {})
     return {
         "invoice": dict(invoice),
         "lines": [dict(line) for line in lines],
         "business_profile": dict(profile) if profile else None,
-        "billing_party": dict(party) if party else None,
+        "billing_party": render_party,
         "filing_owner": resolve_invoice_filing_owner(conn, invoice_id),
         "render_model": build_invoice_render_model(
             dict(invoice),
             [dict(line) for line in lines],
             business_profile=dict(profile) if profile else None,
-            billing_party=dict(party) if party else None,
+            billing_party=render_party,
             account_summary=(result.get("render_model") or {}).get("account_summary"),
             insurance_coding_payload=finalization_payload,
         ),
@@ -2507,7 +2681,8 @@ def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> lis
         f"""
         SELECT li.invoice_line_item_id, li.service_date, li.participants_snapshot,
                li.duration_minutes, li.line_amount_cents, li.source_session_id,
-               s.start_at, s.end_at, s.candidate_id
+               s.start_at, s.end_at, s.candidate_id, s.raw_calendar_title,
+               s.calendar_name
         FROM invoice_line_items li
         LEFT JOIN sessions s ON s.id = li.source_session_id
         WHERE li.invoice_id = ?
@@ -2519,12 +2694,27 @@ def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> lis
     for left, right in combinations([dict(row) for row in rows], 2):
         if left.get("service_date") != right.get("service_date"):
             continue
-        same_start = bool(left.get("start_at") and right.get("start_at") and left["start_at"] == right["start_at"])
+        left_session = next((row for row in rows if row["source_session_id"] == left.get("source_session_id")), None)
+        right_session = next((row for row in rows if row["source_session_id"] == right.get("source_session_id")), None)
+        same_source_event = bool(
+            left_session
+            and right_session
+            and calendar_source_identity_for_session(conn, left_session)
+            and calendar_source_identity_for_session(conn, left_session)
+            == calendar_source_identity_for_session(conn, right_session)
+        )
+        same_start = bool(
+            left.get("start_at")
+            and right.get("start_at")
+            and canonical_datetime(left["start_at"]) == canonical_datetime(right["start_at"])
+        )
         overlapping = _line_times_overlap(left, right)
         matching = _substantially_matching_lines(left, right)
-        if not (same_start or overlapping or matching):
+        if not (same_source_event or same_start or overlapping or matching):
             continue
         reason_parts = []
+        if same_source_event:
+            reason_parts.append("same confirmed calendar event")
         if same_start:
             reason_parts.append("same start time")
         elif overlapping:
@@ -2661,7 +2851,7 @@ def finalize_invoice(
         snapshots = {
             "invoice_number": number,
             "invoice_date": invoice_date,
-            "bill_to_name_snapshot": party["billing_name"],
+            "bill_to_name_snapshot": _billing_party_invoice_name(conn, party),
             "bill_to_email_snapshot": party["billing_email"],
             "bill_to_phone_snapshot": party["billing_phone"],
             "bill_to_address_snapshot": _address(party, "billing_"),
@@ -2813,8 +3003,20 @@ def _next_invoice_number(conn: sqlite3.Connection, year: int, pattern: str) -> s
 
 
 def _participant_names(conn: sqlite3.Connection, session_id: str) -> str:
-    rows = conn.execute("""SELECT COALESCE(p.display_name, sp.participant_name) AS name FROM session_participants sp LEFT JOIN people p ON p.person_id = sp.person_id WHERE sp.session_id = ? ORDER BY sp.created_at""", (session_id,)).fetchall()
-    return " & ".join(row["name"] for row in rows if row["name"])
+    rows = conn.execute(
+        """SELECT COALESCE(p.display_name, sp.participant_name) AS name,
+                  COALESCE(p.use_dr_on_invoices, 0) AS use_dr_on_invoices
+           FROM session_participants sp
+           LEFT JOIN people p ON p.person_id = sp.person_id
+           WHERE sp.session_id = ?
+           ORDER BY sp.created_at""",
+        (session_id,),
+    ).fetchall()
+    return " & ".join(
+        format_invoice_person_name(row["name"], row["use_dr_on_invoices"])
+        for row in rows
+        if row["name"]
+    )
 
 
 def _service_description(session: sqlite3.Row, service_name: str) -> str:

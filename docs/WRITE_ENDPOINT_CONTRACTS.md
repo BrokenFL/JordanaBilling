@@ -217,7 +217,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `create_person(conn, data)`
-- **Accepted fields**: `display_name` (string or dict), `first_name`, `last_name`
+- **Accepted fields**: `display_name` (string or dict), `first_name`, `last_name`, `preferred_name`, `use_dr_on_invoices` (boolean), billing contact fields, and administrative notes
 - **Required fields**: `display_name` (enforced at service level: "Display name is required.")
 - **Optional fields**: `first_name`, `last_name`
 - **Success status**: 200
@@ -232,7 +232,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `update_person(conn, person_id, data)`
-- **Accepted fields**: `display_name`, `first_name`, `last_name`, `active`, `administrative_notes`, `person_code`
+- **Accepted fields**: `display_name`, `first_name`, `last_name`, `preferred_name`, `use_dr_on_invoices` (boolean), `active`, billing contact fields, `administrative_notes`, `person_code`
 - **Required fields**: none at HTTP layer
 - **Optional fields**: all
 - **Success status**: 200

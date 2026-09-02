@@ -602,6 +602,7 @@ def parse_create_person_request(payload: Any) -> CreatePersonRequest:
     """Parse POST /api/people.
 
     Accepted fields: display_name, first_name, last_name, preferred_name,
+    use_dr_on_invoices,
     billing_email, email, billing_phone, phone, administrative_notes.
     """
     data = _require_object(payload)
@@ -609,6 +610,7 @@ def parse_create_person_request(payload: Any) -> CreatePersonRequest:
     _optional_str(data, "first_name")
     _optional_str(data, "last_name")
     _optional_str(data, "preferred_name")
+    _optional_bool(data, "use_dr_on_invoices")
     _optional_str(data, "billing_email")
     _optional_str(data, "email")
     _optional_str(data, "billing_phone")
@@ -621,6 +623,7 @@ def parse_update_person_request(payload: Any) -> UpdatePersonRequest:
     """Parse POST /api/people/{id}.
 
     Accepted fields: display_name, first_name, last_name, preferred_name,
+    use_dr_on_invoices,
     person_code, billing_email, billing_phone, administrative_notes,
     active_status, active, account_id.
     """
@@ -629,6 +632,7 @@ def parse_update_person_request(payload: Any) -> UpdatePersonRequest:
     _optional_str(data, "first_name")
     _optional_str(data, "last_name")
     _optional_str(data, "preferred_name")
+    _optional_bool(data, "use_dr_on_invoices")
     _optional_str(data, "person_code")
     _optional_str(data, "billing_email")
     _optional_str(data, "billing_phone")

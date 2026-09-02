@@ -229,6 +229,44 @@ class SyncTests(unittest.TestCase):
             ).fetchone()
         )
 
+    def test_automatic_dry_run_does_not_apply_pending_migrations(self):
+        self.conn.execute("DROP TABLE calendar_recovery_actions")
+        self.conn.execute(
+            "DELETE FROM schema_migrations WHERE migration_id = ?",
+            ("022_calendar_recovery_actions",),
+        )
+        self.conn.commit()
+
+        result = sync_calendar_automatically(
+            self.config,
+            dry_run=True,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [],
+                        "next_cursor": EMPTY_CURSOR,
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+
+        self.assertTrue(result.dry_run)
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+                ("022_calendar_recovery_actions",),
+            ).fetchone()
+        )
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("calendar_recovery_actions",),
+            ).fetchone()
+        )
+
     def test_no_successful_cursor_triggers_full_sync(self):
         transport = FakeTransport(
             [

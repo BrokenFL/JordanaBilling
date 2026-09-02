@@ -283,7 +283,12 @@ def build_invoice_render_model(
         if value
     ]
 
-    bill_to_lines = [str(invoice.get("bill_to_name_snapshot") or party.get("billing_name") or "").strip()]
+    bill_to_lines = [str(
+        invoice.get("bill_to_name_snapshot")
+        or party.get("invoice_display_name")
+        or party.get("billing_name")
+        or ""
+    ).strip()]
     if delivery_method in {"mail", "both"}:
         bill_to_lines.extend(bill_to_address_lines)
     if delivery_method in {"email", "both"} and bill_to_email:

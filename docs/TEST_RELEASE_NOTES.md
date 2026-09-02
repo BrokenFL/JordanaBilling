@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.33 Release Notes
+# Jordana Billing v0.1.0-test.34 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.33` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.34` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.33-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.34-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.33
-- **Python package/application version:** 0.1.0.post33
+- **Release label:** v0.1.0-test.34
+- **Python package/application version:** 0.1.0.post34
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,30 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post33` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post34` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Calendar Reliability And Client Presentation In test.34
+
+1. **Past evidence is required for billing** — normal capture uses three days
+   back and two days ahead. Future rows are retained as scheduling evidence but
+   cannot create billing candidates until a post-session past capture exists.
+2. **Moved appointments remain reviewable** — an appointment absent from the
+   newest covering snapshot produces a Review warning instead of being silently
+   excluded or removed from billing.
+3. **Duplicate identity safeguards** — canonical UTC event identity prevents
+   repeated captures and timezone-offset variants from creating duplicate
+   sessions or draft invoice lines.
+4. **Reversible calendar recovery** — month-scoped dry-run/apply tooling can
+   restore only records supported by preserved post-session evidence, while
+   protecting finalized invoices and recording reversible recovery actions.
+5. **Faster staged-sheet sync** — Apps Script pagination reads only the cursor
+   columns globally and fetches selected rows in blocks, avoiding the prior
+   timeout on the full snapshot history.
+6. **Optional Dr. invoice title** — Client Details now includes a checkbox that
+   adds `Dr.` to that client's Bill To and participant names on editable/new
+   invoices without changing calendar matching, custom delivery-contact names,
+   filing folders, or finalized history.
 
 ## Billing Improvements In test.33
 
@@ -96,6 +118,24 @@ Release facts:
 5. **Joint-rate safety** — A partially resolved multi-client session cannot receive one confirmed participant's solo rate exception prematurely.
 6. **Personal/Admin cleanup** — Bulk Personal/Admin archive is an authenticated, transactional write operation that leaves approved sessions unchanged.
 7. **Paid-at-session invoice cleanup** — Empty zero-dollar invoice drafts are removed after paid-at-session staging while payment and receipt evidence remains intact.
+
+## Current Calendar Safety Update
+
+1. **Post-session billing evidence** — v3 normal Shortcut payloads use
+   past_3_days plus a short next_2_days health window. Future rows remain raw
+   schedule evidence until the event appears in a post-end past capture.
+2. **Reversible absence handling** — Absence from a later complete capture
+   creates an idempotent Review warning instead of excluding or hiding a
+   pending session. Positive later evidence closes that warning automatically.
+3. **Timezone-safe identity and invoice staging** — Canonical UTC identity
+   prevents two offset renderings of one event from becoming two candidates or
+   draft lines. Ambiguous existing records are warned, not silently merged.
+4. **Scoped legacy repair** — The new `calendar-recovery` dry run identifies
+   only legacy-hidden candidates with post-end past-capture evidence, exact
+   timezone-offset duplicates, and exact editable-draft duplicate lines. Apply
+   requires a month and explicit confirmation, creates a verified private
+   backup, never auto-approves or invoices a restored session, and records
+   reversible action state.
 
 ## Bug Fixes Inherited from test.22
 

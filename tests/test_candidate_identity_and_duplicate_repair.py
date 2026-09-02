@@ -129,17 +129,83 @@ class CandidateIdentityTests(unittest.TestCase):
         )
 
         self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 3)
-        self.assertEqual(count(self.conn, "calendar_event_candidates"), 3)
-        ambiguous = self.conn.execute(
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 2)
+        warnings = self.conn.execute(
             """
-            SELECT unresolved_fields, review_reasons
-            FROM calendar_event_candidates
-            ORDER BY created_at DESC
-            LIMIT 1
+            SELECT COUNT(*) AS c
+            FROM review_items
+            WHERE reviewed_at IS NULL
+              AND unresolved_fields LIKE '%calendar_identity_warning%'
             """
         ).fetchone()
-        self.assertIn("identity_resolution", ambiguous["unresolved_fields"])
-        self.assertIn("Ambiguous calendar identity", ambiguous["review_reasons"])
+        self.assertEqual(warnings["c"], 2)
+
+    def test_same_utc_event_with_different_offset_serialization_creates_one_candidate(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "offset-west",
+                    fingerprint="",
+                    start="2026-06-17T08:00:00-06:00",
+                    end="2026-06-17T09:00:00-06:00",
+                ),
+                raw_row(
+                    "offset-east",
+                    fingerprint="",
+                    start="2026-06-17T10:00:00-04:00",
+                    end="2026-06-17T11:00:00-04:00",
+                    ingested_at="2026-06-29T12:01:00.000Z",
+                ),
+            ],
+            "test",
+        )
+
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 2)
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+
+    def test_legacy_duration_conflict_stays_reviewable_without_second_candidate(self):
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "duration-sixty",
+                    fingerprint="",
+                    start="2026-06-17T10:00:00-04:00",
+                    end="2026-06-17T11:00:00-04:00",
+                    duration="60",
+                ),
+            ],
+            "test",
+        )
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "duration-thirty",
+                    fingerprint="",
+                    start="2026-06-17T10:00:00-04:00",
+                    end="2026-06-17T10:30:00-04:00",
+                    duration="30",
+                    ingested_at="2026-06-29T12:01:00.000Z",
+                ),
+            ],
+            "test",
+        )
+
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 2)
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 1)
+        self.assertEqual(count(self.conn, "sessions"), 1)
+        warning = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM review_items
+            WHERE reviewed_at IS NULL
+              AND unresolved_fields LIKE '%calendar_identity_warning%'
+            """
+        ).fetchone()
+        self.assertEqual(warning["c"], 1)
 
     def test_distinct_similar_title_appointment_does_not_merge(self):
         import_rows(self.conn, [raw_row("snap-1", fingerprint="fp-one")], "test")
@@ -238,17 +304,16 @@ class CandidateIdentityTests(unittest.TestCase):
             "test",
         )
 
-        self.assertEqual(count(self.conn, "calendar_event_candidates"), 3)
-        ambiguous = self.conn.execute(
+        self.assertEqual(count(self.conn, "calendar_event_candidates"), 2)
+        warnings = self.conn.execute(
             """
-            SELECT unresolved_fields, review_reasons
-            FROM calendar_event_candidates
-            ORDER BY created_at DESC
-            LIMIT 1
+            SELECT COUNT(*) AS c
+            FROM review_items
+            WHERE reviewed_at IS NULL
+              AND unresolved_fields LIKE '%calendar_identity_warning%'
             """
         ).fetchone()
-        self.assertIn("identity_resolution", ambiguous["unresolved_fields"])
-        self.assertIn("Ambiguous calendar identity", ambiguous["review_reasons"])
+        self.assertEqual(warnings["c"], 2)
 
     def test_approved_existing_session_values_are_preserved_during_identity_reuse(self):
         import_rows(self.conn, [raw_row("snap-1", fingerprint="fp-approved")], "test")

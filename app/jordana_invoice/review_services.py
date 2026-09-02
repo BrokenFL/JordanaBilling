@@ -42,6 +42,7 @@ from .invoice_services import (
     refresh_correction_draft_lines_for_session,
     remove_correction_draft_lines_for_session,
 )
+from .invoice_names import format_invoice_person_name
 from .parser import parse_event
 from .review import review_status_for_parse
 from .payment_services import _invoice_balance_summary, _invoice_paid_amount, client_account_summary
@@ -2836,14 +2837,15 @@ def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any], 
     first = text(data.get("first_name") or split_name(display_name)[0])
     last = text(data.get("last_name") or split_name(display_name)[1])
     preferred = text(data.get("preferred_name") or first)
+    use_dr_on_invoices = 1 if data.get("use_dr_on_invoices") else 0
     person_code = generate_person_code(conn, first, last) if first and last else None
     conn.execute(
         """
         INSERT INTO people (
           person_id, display_name, first_name, last_name, preferred_name,
-          person_code, billing_email, billing_phone, administrative_notes,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          use_dr_on_invoices, person_code, billing_email, billing_phone,
+          administrative_notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             person_id,
@@ -2851,6 +2853,7 @@ def create_person(conn: sqlite3.Connection, display_name: str | dict[str, Any], 
             first,
             last,
             preferred,
+            use_dr_on_invoices,
             person_code,
             data.get("billing_email") or data.get("email"),
             data.get("billing_phone") or data.get("phone"),
@@ -2907,6 +2910,12 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
     first_name = text(data.get("first_name") or split_name(display_name)[0])
     last_name = text(data.get("last_name") or split_name(display_name)[1])
     preferred_name = text(data.get("preferred_name") or first_name)
+    old_use_dr_on_invoices = bool(existing["use_dr_on_invoices"])
+    use_dr_on_invoices = (
+        bool(data["use_dr_on_invoices"])
+        if "use_dr_on_invoices" in data
+        else old_use_dr_on_invoices
+    )
     old_code = existing["person_code"]
     person_code = data.get("person_code") or old_code
     if not person_code and first_name and last_name:
@@ -2918,12 +2927,14 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
             """
             UPDATE people
             SET display_name = ?, first_name = ?, last_name = ?, preferred_name = ?,
-                person_code = COALESCE(?, person_code), billing_email = ?, billing_phone = ?,
+                use_dr_on_invoices = ?, person_code = COALESCE(?, person_code),
+                billing_email = ?, billing_phone = ?,
                 administrative_notes = ?, active_status = ?, active = ?, updated_at = ?
             WHERE person_id = ?
             """,
             (
-                display_name, first_name, last_name, preferred_name, person_code,
+                display_name, first_name, last_name, preferred_name,
+                1 if use_dr_on_invoices else 0, person_code,
                 data.get("billing_email"), data.get("billing_phone"),
                 data.get("administrative_notes") if "administrative_notes" in data else existing["administrative_notes"],
                 data.get("active_status", "active"), 1 if data.get("active", True) else 0,
@@ -2951,11 +2962,21 @@ def update_person(conn: sqlite3.Connection, person_id: str, data: dict[str, Any]
                      AND account_id IN (SELECT account_id FROM account_members WHERE person_id = ?)""",
                 (display_name, now, old_name, person_id),
             )
-            _refresh_person_draft_invoice_names(conn, person_id, old_name, display_name, now)
+        if old_name != display_name or old_use_dr_on_invoices != use_dr_on_invoices:
+            _refresh_person_draft_invoice_names(
+                conn,
+                person_id,
+                old_name,
+                display_name,
+                now,
+                old_use_dr_on_invoices=old_use_dr_on_invoices,
+                new_use_dr_on_invoices=use_dr_on_invoices,
+            )
         record_audit(
             conn, "person", person_id, "identity_corrected",
             {"old_value": old_name, "new_value": display_name, "old_code": old_code,
-             "new_code": person_code, "source": "review_ui"},
+             "new_code": person_code, "source": "review_ui",
+             "invoice_title_changed": old_use_dr_on_invoices != use_dr_on_invoices},
         )
         conn.commit()
     except Exception:
@@ -2998,21 +3019,29 @@ def _refresh_person_draft_invoice_names(
     old_name: str,
     new_name: str,
     now: str,
+    *,
+    old_use_dr_on_invoices: bool = False,
+    new_use_dr_on_invoices: bool = False,
 ) -> None:
     """Refresh editable invoice names while leaving finalized/void snapshots frozen."""
+    old_invoice_name = format_invoice_person_name(old_name, old_use_dr_on_invoices)
+    new_invoice_name = format_invoice_person_name(new_name, new_use_dr_on_invoices)
     conn.execute(
         """UPDATE invoices SET bill_to_name_snapshot = ?, revision = revision + 1, updated_at = ?
            WHERE status = 'draft' AND bill_to_party_id IN (
-             SELECT billing_party_id FROM billing_parties WHERE person_id = ?
+             SELECT billing_party_id FROM billing_parties
+             WHERE person_id = ?
+               AND lower(trim(billing_name)) IN (lower(trim(?)), lower(trim(?)))
            ) AND (bill_to_name_snapshot = ? OR bill_to_name_snapshot IS NULL)""",
-        (new_name, now, person_id, old_name),
+        (new_invoice_name, now, person_id, old_name, old_invoice_name, old_invoice_name),
     )
-    conn.execute(
-        """UPDATE invoices SET filing_owner_display_name_snapshot = ?, revision = revision + 1, updated_at = ?
-           WHERE status = 'draft' AND filing_owner_person_id = ?
-             AND (filing_owner_display_name_snapshot = ? OR filing_owner_display_name_snapshot IS NULL)""",
-        (new_name, now, person_id, old_name),
-    )
+    if old_name != new_name:
+        conn.execute(
+            """UPDATE invoices SET filing_owner_display_name_snapshot = ?, revision = revision + 1, updated_at = ?
+               WHERE status = 'draft' AND filing_owner_person_id = ?
+                 AND (filing_owner_display_name_snapshot = ? OR filing_owner_display_name_snapshot IS NULL)""",
+            (new_name, now, person_id, old_name),
+        )
     draft_lines = conn.execute(
         """SELECT li.invoice_line_item_id, li.invoice_id, li.source_session_id
            FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
@@ -3024,11 +3053,19 @@ def _refresh_person_draft_invoice_names(
     changed_invoices: set[str] = set()
     for line in draft_lines:
         names = conn.execute(
-            """SELECT participant_name FROM session_participants
-               WHERE session_id = ? ORDER BY is_primary DESC, created_at, session_participant_id""",
+            """SELECT COALESCE(p.display_name, sp.participant_name) AS display_name,
+                      COALESCE(p.use_dr_on_invoices, 0) AS use_dr_on_invoices
+               FROM session_participants sp
+               LEFT JOIN people p ON p.person_id = sp.person_id
+               WHERE sp.session_id = ?
+               ORDER BY sp.is_primary DESC, sp.created_at, sp.session_participant_id""",
             (line["source_session_id"],),
         ).fetchall()
-        snapshot = ", ".join(str(row["participant_name"] or "").strip() for row in names if str(row["participant_name"] or "").strip())
+        snapshot = " & ".join(
+            format_invoice_person_name(row["display_name"], row["use_dr_on_invoices"])
+            for row in names
+            if str(row["display_name"] or "").strip()
+        )
         conn.execute(
             "UPDATE invoice_line_items SET participants_snapshot = ?, updated_at = ? WHERE invoice_line_item_id = ?",
             (snapshot, now, line["invoice_line_item_id"]),
@@ -3129,7 +3166,15 @@ def merge_people(
             )
 
         upsert_calendar_alias(conn, raw_alias=duplicate["display_name"], person_id=survivor_person_id, classification="client_session", approved=True)
-        _refresh_person_draft_invoice_names(conn, survivor_person_id, duplicate["display_name"], survivor["display_name"], now)
+        _refresh_person_draft_invoice_names(
+            conn,
+            survivor_person_id,
+            duplicate["display_name"],
+            survivor["display_name"],
+            now,
+            old_use_dr_on_invoices=bool(duplicate["use_dr_on_invoices"]),
+            new_use_dr_on_invoices=bool(survivor["use_dr_on_invoices"]),
+        )
         conn.execute(
             """UPDATE people SET active = 0, active_status = 'merged', merged_into_person_id = ?,
                    merge_note = ?, updated_at = ? WHERE person_id = ?""",
