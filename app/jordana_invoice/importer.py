@@ -5,7 +5,6 @@ import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -826,317 +825,74 @@ def warn_ambiguous_calendar_identity(
 def suppress_pending_events_missing_from_newest_covering_snapshot(
     conn: sqlite3.Connection,
 ) -> int:
-    """Warn when completed pending events disappear from a complete capture.
+    """Retire the broad legacy calendar-presence warning.
 
-    Absence is evidence of a calendar change, not proof that a session did not
-    happen.  Raw snapshot rows remain append-only, and the warning never
-    changes a candidate's classification, review status, billability, payment,
-    or visibility.  A later positive observation resolves the warning
-    automatically.
+    A v3 future observation is raw scheduling evidence only, so an appointment
+    moved before it occurs never creates a candidate. Once a post-end past
+    observation creates a candidate, later absence may simply mean that the
+    rolling capture window aged past the appointment. Absence must therefore
+    neither hide the session nor create routine Review noise.
 
-    The legacy function name remains for callers and upgrades, but it no
-    longer suppresses anything.
+    The legacy function name remains for API and upgrade compatibility. It now
+    closes only presence warnings created by the short-lived Test.34 behavior;
+    identity conflicts and other genuinely ambiguous evidence still warn.
     """
-    newest_covering_batches = newest_complete_covering_batches(conn)
-    if not newest_covering_batches:
+    candidate_rows = conn.execute(
+        """
+        SELECT id AS candidate_id
+        FROM calendar_event_candidates
+        WHERE reconciliation_status = 'calendar_presence_warning'
+        UNION
+        SELECT candidate_id
+        FROM review_items
+        WHERE candidate_id IS NOT NULL
+          AND review_status = 'source_change_warning'
+          AND reviewed_at IS NULL
+          AND unresolved_fields LIKE '%calendar_presence_warning%'
+        UNION
+        SELECT candidate_id
+        FROM review_queue
+        WHERE review_type = 'calendar_presence_warning'
+          AND status = 'open'
+        """
+    ).fetchall()
+    if not candidate_rows:
         return 0
 
-    candidates = conn.execute(
-        """
-        SELECT c.id, c.candidate_key, c.start_at, c.proposed_start_at,
-               c.latest_raw_snapshot_id,
-               c.end_at AS candidate_end_at,
-               s.id AS session_id,
-               s.end_at AS session_end_at
-        FROM calendar_event_candidates c
-        LEFT JOIN sessions s ON s.candidate_id = c.id
-        WHERE c.classification = 'client_session'
-          AND c.review_status NOT IN ('approved', 'excluded')
-          AND COALESCE(s.review_status, '') != 'approved'
-        """
-    ).fetchall()
-    suppressed = 0
-    for candidate in candidates:
-        appointment_date = snapshot_date(candidate["proposed_start_at"] or candidate["start_at"])
-        if not appointment_date:
-            continue
-        if not appointment_has_ended(candidate["session_end_at"] or candidate["candidate_end_at"]):
-            continue
-        batches = newest_covering_batches.get(appointment_date)
-        if not batches:
-            continue
-        if candidate_is_present_in_snapshot_batches(conn, candidate, batches):
-            resolved = resolve_calendar_warning(
-                conn,
-                candidate_id=candidate["id"],
-                warning_code="calendar_presence_warning",
-                resolution="The event appeared in a later complete calendar capture.",
-            )
-            if resolved:
-                conn.execute(
-                    """
-                    UPDATE calendar_event_candidates
-                    SET reconciliation_status = NULL, updated_at = ?
-                    WHERE id = ?
-                      AND reconciliation_status = 'calendar_presence_warning'
-                    """,
-                    (now_iso(), candidate["id"]),
-                )
-            continue
-        warn_pending_candidate_for_missing_snapshot(
+    now = now_iso()
+    resolution = (
+        "Routine calendar-absence warnings were retired. Post-session past "
+        "evidence remains authoritative when an event later ages out of the "
+        "rolling capture window."
+    )
+    for row in candidate_rows:
+        candidate_id = row["candidate_id"]
+        resolve_calendar_warning(
             conn,
-            candidate["id"],
-            candidate["session_id"],
-            batches,
+            candidate_id=candidate_id,
+            warning_code="calendar_presence_warning",
+            resolution=resolution,
         )
-        suppressed += 1
-    return suppressed
-
-
-def appointment_has_ended(value: object) -> bool:
-    try:
-        end_at = datetime.fromisoformat(text(value).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if end_at.tzinfo is None:
-        return False
-    return end_at.astimezone(timezone.utc) <= datetime.now(timezone.utc)
-
-
-def newest_complete_covering_batches(conn: sqlite3.Connection) -> dict[str, tuple[tuple[str, str], ...]]:
-    """Return every newest-run batch that proves coverage for each date.
-
-    Coverage boundaries are retained inside ``raw_json`` because the original
-    Sheet columns are intentionally preserved verbatim.  A batch without both
-    valid boundaries (or a canonical label/timestamp fallback) is not evidence
-    of coverage. A current event in either overlapping batch keeps it active.
-    """
-    rows = conn.execute(
-        """
-        SELECT r.*, i.status AS import_status
-        FROM raw_calendar_snapshots r
-        JOIN import_runs i ON i.id = r.import_run_id
-        WHERE trim(coalesce(r.run_id, '')) != ''
-        """
-    ).fetchall()
-    run_windows: dict[str, set[str]] = defaultdict(set)
-    run_is_successful: dict[str, bool] = {}
-    batch_rows: dict[tuple[str, str], list[sqlite3.Row]] = defaultdict(list)
-    for row in rows:
-        run_id = text(row["run_id"])
-        capture_window = text(row["capture_window"])
-        run_windows[run_id].add(capture_window)
-        run_is_successful[run_id] = run_is_successful.get(run_id, True) and row["import_status"] == "imported"
-        batch_rows[(run_id, capture_window)].append(row)
-
-    run_rank: dict[str, tuple[str, str, str]] = defaultdict(lambda: ("", "", ""))
-    for row in rows:
-        run_id = text(row["run_id"])
-        run_rank[run_id] = max(
-            run_rank[run_id],
-            (text(row["captured_at"]), text(row["ingested_at"]), text(row["id"])),
+        conn.execute(
+            """
+            UPDATE review_queue
+            SET status = 'resolved', decision_payload = ?, updated_at = ?
+            WHERE candidate_id = ?
+              AND review_type = 'calendar_presence_warning'
+              AND status = 'open'
+            """,
+            (json_dumps({"resolution": resolution}), now, candidate_id),
         )
-
-    covering_by_run_and_date: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
-    for (run_id, capture_window), batch in batch_rows.items():
-        if not run_is_successful.get(run_id) or not completed_run_windows(run_windows[run_id]):
-            continue
-        coverage = snapshot_batch_coverage(batch)
-        if not coverage:
-            continue
-        for appointment_date in coverage:
-            covering_by_run_and_date[(run_id, appointment_date)].append((run_id, capture_window))
-
-    newest_covering_batches: dict[str, tuple[tuple[str, str, str], tuple[tuple[str, str], ...]]] = {}
-    for (run_id, appointment_date), batches in covering_by_run_and_date.items():
-        rank = run_rank[run_id]
-        prior = newest_covering_batches.get(appointment_date)
-        if prior is None or rank > prior[0]:
-            newest_covering_batches[appointment_date] = (rank, tuple(batches))
-    return {
-        appointment_date: batches
-        for appointment_date, (_, batches) in newest_covering_batches.items()
-    }
-
-
-def snapshot_batch_coverage(rows: list[sqlite3.Row]) -> set[str]:
-    coverage: set[str] = set()
-    for row in rows:
-        try:
-            raw = json.loads(text(row["raw_json"]))
-        except json.JSONDecodeError:
-            continue
-        window_start = snapshot_date(raw.get("window_start"))
-        window_end = snapshot_date(raw.get("window_end"))
-        if not window_start or not window_end or window_end < window_start:
-            continue
-        current = window_start
-        while current <= window_end:
-            coverage.add(current)
-            # ISO calendar arithmetic is deliberately local-date based; capture
-            # windows are calendar-date boundaries, not elapsed-time intervals.
-            current = (date.fromisoformat(current) + timedelta(days=1)).isoformat()
-    if coverage:
-        return coverage
-
-    # The production Shortcut currently leaves explicit window boundaries blank
-    # even though it supplies a canonical window label and capture timestamp.
-    # Those labels have fixed inclusive date semantics, so they are still
-    # definite coverage evidence. Unknown/legacy labels remain non-covering.
-    capture_windows = {text(row["capture_window"]) for row in rows if text(row["capture_window"])}
-    if len(capture_windows) != 1:
-        return set()
-    capture_window = next(iter(capture_windows))
-    if capture_window == "backfill_2026_06_01_through_2026_06_14":
-        return dates_inclusive("2026-06-01", "2026-06-14")
-
-    capture_dates = {snapshot_date(row["captured_at"]) for row in rows}
-    capture_dates.discard(None)
-    if len(capture_dates) != 1:
-        return set()
-    captured_on = date.fromisoformat(next(iter(capture_dates)))
-    offsets = {
-        "past_3_days": (-3, 0),
-        "past_7_days": (-7, 0),
-        "next_7_days": (0, 7),
-        "next_2_days": (0, 2),
-    }.get(capture_window)
-    if not offsets:
-        return set()
-    start_offset, end_offset = offsets
-    return dates_inclusive(
-        (captured_on + timedelta(days=start_offset)).isoformat(),
-        (captured_on + timedelta(days=end_offset)).isoformat(),
-    )
-
-
-def dates_inclusive(start_date: str, end_date: str) -> set[str]:
-    dates: set[str] = set()
-    current = date.fromisoformat(start_date)
-    end = date.fromisoformat(end_date)
-    while current <= end:
-        dates.add(current.isoformat())
-        current += timedelta(days=1)
-    return dates
-
-
-def snapshot_date(value: object) -> str | None:
-    candidate = text(value)[:10]
-    if len(candidate) != 10 or candidate[4] != "-" or candidate[7] != "-":
-        return None
-    try:
-        return date.fromisoformat(candidate).isoformat()
-    except ValueError:
-        return None
-
-
-def candidate_is_present_in_snapshot_batches(
-    conn: sqlite3.Connection,
-    candidate: sqlite3.Row,
-    batches: tuple[tuple[str, str], ...],
-) -> bool:
-    return any(
-        candidate_is_present_in_snapshot_batch(conn, candidate, batch)
-        for batch in batches
-    )
-
-
-def candidate_is_present_in_snapshot_batch(
-    conn: sqlite3.Connection,
-    candidate: sqlite3.Row,
-    batch: tuple[str, str],
-) -> bool:
-    run_id, capture_window = batch
-    row = conn.execute(
-        """
-        SELECT 1
-        FROM candidate_identity_aliases a
-        JOIN raw_calendar_snapshots r ON r.id = a.source_raw_snapshot_id
-        WHERE a.candidate_id = ?
-          AND r.run_id = ?
-          AND r.capture_window = ?
-        LIMIT 1
-        """,
-        (candidate["id"], run_id, capture_window),
-    ).fetchone()
-    if row:
-        return True
-    latest = conn.execute(
-        """
-        SELECT run_id, capture_window
-        FROM raw_calendar_snapshots
-        WHERE id = ?
-        """,
-        (candidate["latest_raw_snapshot_id"],),
-    ).fetchone()
-    return bool(latest and latest["run_id"] == run_id and latest["capture_window"] == capture_window)
-
-
-def warn_pending_candidate_for_missing_snapshot(
-    conn: sqlite3.Connection,
-    candidate_id: str,
-    session_id: str | None,
-    batches: tuple[tuple[str, str], ...],
-) -> None:
-    run_id = batches[0][0]
-    capture_windows = sorted({capture_window for _, capture_window in batches})
-    reason = (
-        "This completed appointment was absent from the newest complete "
-        "calendar capture that covered its date. Review only; no billing "
-        "decision was made from the absence."
-    )
-    upsert_calendar_warning(
-        conn,
-        candidate_id=candidate_id,
-        session_id=session_id,
-        warning_code="calendar_presence_warning",
-        reason=reason,
-        old_value="present in prior captured calendar evidence",
-        new_value=f"absent from complete run {run_id} ({', '.join(capture_windows)})",
-    )
-    conn.execute(
-        """
-        UPDATE calendar_event_candidates
-        SET reconciliation_status = 'calendar_presence_warning',
-            updated_at = ?
-        WHERE id = ?
-          AND review_status NOT IN ('approved', 'excluded')
-        """,
-        (now_iso(), candidate_id),
-    )
-    audit(
-        conn,
-        "calendar_event_candidate",
-        candidate_id,
-        "calendar_presence_warning_created",
-        {
-            "newest_covering_run_id": run_id,
-            "newest_covering_capture_windows": capture_windows,
-        },
-    )
-
-
-def suppress_pending_candidate_for_missing_snapshot(
-    conn: sqlite3.Connection,
-    candidate_id: str,
-    batches: tuple[tuple[str, str], ...],
-) -> None:
-    """Compatibility wrapper for older internal callers.
-
-    This intentionally creates only a reversible warning.  It no longer
-    excludes sessions or hides them from the Review queue.
-    """
-
-    session = conn.execute(
-        "SELECT id FROM sessions WHERE candidate_id = ?",
-        (candidate_id,),
-    ).fetchone()
-    warn_pending_candidate_for_missing_snapshot(
-        conn,
-        candidate_id,
-        session["id"] if session else None,
-        batches,
-    )
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET reconciliation_status = NULL, updated_at = ?
+            WHERE id = ?
+              AND reconciliation_status = 'calendar_presence_warning'
+            """,
+            (now, candidate_id),
+        )
+    return len(candidate_rows)
 
 
 def candidate_key(row: sqlite3.Row) -> str:

@@ -230,8 +230,8 @@ replay groups existing raw snapshots by calendar event identity, chooses the
 newest billing-evidence version for pending records, and creates missing
 candidates/sessions when the preserved raw evidence qualifies. Explicit
 personal/admin/non-client source evidence may exclude a pending session;
-absence from a later snapshot instead creates a reversible Review warning.
-Approved sessions are not silently rewritten.
+ordinary absence from a later rolling capture neither excludes the session nor
+creates a Review warning. Approved sessions are not silently rewritten.
 
 ## Legacy Absence-Suppression Recovery
 

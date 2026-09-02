@@ -34,12 +34,17 @@ Release facts:
 
 ## Calendar Reliability And Client Presentation In test.34
 
+This refreshed Test.34 build narrows only the backend absence behavior. The
+existing v3 `Jordana Calendar Sync` Shortcut remains compatible and does not
+need to be replaced before its first run.
+
 1. **Past evidence is required for billing** — normal capture uses three days
    back and two days ahead. Future rows are retained as scheduling evidence but
    cannot create billing candidates until a post-session past capture exists.
-2. **Moved appointments remain reviewable** — an appointment absent from the
-   newest covering snapshot produces a Review warning instead of being silently
-   excluded or removed from billing.
+2. **Moved appointments and window aging stay quiet** — future-only appointments
+   create no billing candidate. Once post-session past evidence creates a
+   candidate, later absence from the rolling window neither excludes it nor
+   creates a routine Review warning.
 3. **Duplicate identity safeguards** — canonical UTC event identity prevents
    repeated captures and timezone-offset variants from creating duplicate
    sessions or draft invoice lines.
@@ -124,9 +129,11 @@ Release facts:
 1. **Post-session billing evidence** — v3 normal Shortcut payloads use
    past_3_days plus a short next_2_days health window. Future rows remain raw
    schedule evidence until the event appears in a post-end past capture.
-2. **Reversible absence handling** — Absence from a later complete capture
-   creates an idempotent Review warning instead of excluding or hiding a
-   pending session. Positive later evidence closes that warning automatically.
+2. **Targeted absence handling** — Future-only rows remain raw evidence if an
+   appointment is moved before it occurs. Post-session candidates persist when
+   they age out of the rolling window, without exclusion or routine warning;
+   the upgrade retires any broad presence warning created by an earlier Test.34
+   build.
 3. **Timezone-safe identity and invoice staging** — Canonical UTC identity
    prevents two offset renderings of one event from becoming two candidates or
    draft lines. Ambiguous existing records are warned, not silently merged.

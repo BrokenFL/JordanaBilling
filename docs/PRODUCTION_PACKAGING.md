@@ -43,15 +43,19 @@ This is a controlled pilot/test release, not a final production release.
 - **Privacy and Git safety checks:** required before publication
 
 test.34 preserves the prior safeguards, adds evidence-gated calendar capture and
-warning-first reconciliation, prevents duplicate billing identity, provides
+post-session persistence, prevents duplicate billing identity, provides
 reversible recovery, and adds the optional client-level Dr. invoice title.
 
 ### Calendar Reliability And Client Presentation In test.34
 
+The refreshed Test.34 artifact keeps the existing v3 Calendar Sync Shortcut
+contract; Jordana does not need another Shortcut before its first run.
+
 1. **Past evidence is required for billing** — the two-day future window is raw
    scheduling evidence; a later three-day past capture supplies billing evidence.
-2. **Moved appointments warn instead of disappearing** — newest-snapshot absence
-   is reviewable and does not silently rewrite a billing decision.
+2. **Moved appointments stay quiet** — future-only appointments create no
+   candidate, while post-session evidence remains reviewable without a routine
+   absence warning when it ages out of the rolling capture window.
 3. **Duplicate and recovery safeguards** — canonical event identity and the
    reversible recovery ledger protect drafts and finalized history.
 4. **Optional Dr. invoice title** — an intentional Client Details checkbox

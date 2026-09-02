@@ -136,10 +136,15 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 
 ### Calendar Reliability And Client Presentation In test.34
 
+The refreshed Test.34 installer is an application-only refinement. The existing
+v3 Calendar Sync Shortcut remains compatible and does not require replacement.
+
 1. **Evidence-gated billing** — future rows remain raw scheduling evidence;
    only post-session past capture can create billing candidates.
-2. **Warning-first moved appointments** — newest-snapshot absence is surfaced
-   for Review without silently excluding a session.
+2. **Quiet schedule movement and window aging** — a future appointment that is
+   moved before it occurs creates no candidate, while a post-session candidate
+   is never removed or warned merely because it later ages out of the rolling
+   capture window.
 3. **Canonical duplicate protection and reversible recovery** — repeated
    captures, offset variants, and supported legacy recovery are handled without
    rewriting finalized history.

@@ -306,6 +306,9 @@ The same appointment may be edited in Apple Calendar and arrive later with a cha
 - Approved sessions are not silently overwritten.
 - If an already-approved session's source event later changes, a visible source-change warning review item is created instead of rewriting approved values.
 - Event absence from one capture window alone does not prove deletion/cancellation.
+- Routine absence never creates a calendar-presence warning: future-only rows
+  remain raw scheduling evidence, and post-session rows persist for Review when
+  they later age out of the rolling capture window.
 - The logic is additive, idempotent, and reversible.
 
 ### Ambiguous Title Review Routing
