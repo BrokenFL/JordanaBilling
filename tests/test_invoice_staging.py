@@ -425,7 +425,9 @@ class InvoiceStagingTests(unittest.TestCase):
         self.conn.commit()
         result = stage_approved_sessions_to_monthly_drafts(self.conn)
         self.assertEqual(result["sessions_removed_ineligible"], 1)
-        self.assertEqual(self.count_lines(draft["invoice_id"]), 0)
+        self.assertIsNone(
+            self.conn.execute("SELECT 1 FROM invoices WHERE invoice_id = ?", (draft["invoice_id"],)).fetchone()
+        )
         # Should not be restaged
         result2 = stage_approved_sessions_to_monthly_drafts(self.conn)
         self.assertEqual(result2["sessions_staged"], 0)

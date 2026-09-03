@@ -32,6 +32,7 @@ class LedgerFilters:
     date_range: str = "all"
     review_status: str = ""
     payment_status: str = ""
+    archive_status: str = "active"
     limit: int = 30
     offset: int = 0
     today: date | None = None
@@ -44,7 +45,7 @@ def build_appointment_ledger_csv_rows(
 ) -> list[dict[str, object]]:
     rows = list_appointment_ledger_rows(
         conn,
-        LedgerFilters(date_range="all", review_status="", payment_status="", limit=1000000, offset=0, today=today),
+        LedgerFilters(date_range="all", review_status="", payment_status="", archive_status="all", limit=1000000, offset=0, today=today),
     )
     return [row_to_csv(row) for row in rows]
 
@@ -55,6 +56,7 @@ def list_appointment_ledger_page(
     date_range: str = "rolling_30",
     review_status: str = "",
     payment_status: str = "",
+    archive_status: str = "active",
     limit: int = 30,
     offset: int = 0,
     today: date | None = None,
@@ -63,6 +65,7 @@ def list_appointment_ledger_page(
         date_range=date_range,
         review_status=review_status,
         payment_status=payment_status,
+        archive_status=archive_status,
         limit=limit,
         offset=offset,
         today=today,
@@ -100,6 +103,7 @@ def list_appointment_ledger_rows(
           pa.participant_names,
           c.candidate_person_names,
           c.possible_referenced_person
+          ,c.sessions_archived_at
         FROM calendar_event_candidates c
         LEFT JOIN sessions s ON s.candidate_id = c.id
         LEFT JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
@@ -175,6 +179,12 @@ def ledger_where(filters: LedgerFilters) -> tuple[str, list[Any]]:
     if filters.payment_status:
         clauses.append(f"{payment_status_sql()} = ?")
         params.append(filters.payment_status)
+    if filters.archive_status == "active":
+        clauses.append("c.sessions_archived_at IS NULL")
+    elif filters.archive_status == "archived":
+        clauses.append("c.sessions_archived_at IS NOT NULL")
+    elif filters.archive_status != "all":
+        raise ValueError(f"Unsupported archive status: {filters.archive_status}")
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     return where_sql, params
@@ -217,6 +227,7 @@ def ledger_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "candidate_id": row["candidate_id"],
         "session_id": row["session_id"],
+        "sessions_archived_at": row["sessions_archived_at"],
         "date": row["appointment_date"] or "",
         "time": start_time(row["appointment_start"]),
         "calendar_title": row["calendar_title"] or "",

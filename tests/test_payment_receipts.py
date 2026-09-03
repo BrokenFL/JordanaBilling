@@ -66,8 +66,8 @@ class PaymentReceiptTests(unittest.TestCase):
         self.conn.close()
         self.temp.cleanup()
 
-    def _approved_session(self, key, amount="150.00", payment_status="unpaid"):
-        import_rows(self.conn, [raw_row(key, "Pat Client | 60 | Office", "2026-05-10T10:00:00-04:00")], "test")
+    def _approved_session(self, key, amount="150.00", payment_status="unpaid", start_at="2026-05-10T10:00:00-04:00"):
+        import_rows(self.conn, [raw_row(key, "Pat Client | 60 | Office", start_at)], "test")
         candidate_id = self.conn.execute(
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
             (stable_hash(f"calendar_event_id:event-{key}"),),
@@ -87,12 +87,21 @@ class PaymentReceiptTests(unittest.TestCase):
         detail = approve_candidate(self.conn, candidate_id, payload)
         return self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
 
-    def _finalize_invoice(self, session_id, *, insurance_coding_included=False, insurance_diagnosis_code=""):
+    def _finalize_invoice(
+        self,
+        session_id,
+        *,
+        billing_period_start="2026-05-01",
+        billing_period_end="2026-05-31",
+        invoice_date="2026-05-31",
+        insurance_coding_included=False,
+        insurance_diagnosis_code="",
+    ):
         draft = create_invoice_draft(self.conn, {
             "bill_to_party_id": self.party["billing_party_id"],
-            "billing_period_start": "2026-05-01",
-            "billing_period_end": "2026-05-31",
-            "invoice_date": "2026-05-31",
+            "billing_period_start": billing_period_start,
+            "billing_period_end": billing_period_end,
+            "invoice_date": invoice_date,
             "session_ids": [session_id],
         })
         with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
@@ -208,6 +217,32 @@ class PaymentReceiptTests(unittest.TestCase):
         path = Path(result["receipt"]["pdf_path"])
         self.assertEqual(path.parts[-4:], ("Receipts", "Pat Client", "May 2026", "Receipt_R-2026-0001.pdf"))
         self.assertEqual(result["receipt"]["filing_owner_person_id"], self.person["person_id"])
+
+    def test_receipt_uses_invoice_month_when_payment_arrives_later(self):
+        session = self._approved_session("july-paid-august", start_at="2026-07-10T10:00:00-04:00")
+        invoice = self._finalize_invoice(
+            session["id"],
+            billing_period_start="2026-07-01",
+            billing_period_end="2026-07-31",
+            invoice_date="2026-07-31",
+        )["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn,
+            invoice_id=invoice,
+            payment_date="2026-08-15",
+            amount_cents=15000,
+            payment_method="zelle",
+        )["payment"]
+
+        result = self._create_receipt(payment["payment_id"])
+
+        self.assertEqual(result["snapshot"]["filing_month"], "2026-07")
+        self.assertEqual(result["snapshot"]["filing_month_source"], "invoice_billing_month")
+        self.assertEqual(result["snapshot"]["payment_date"], "2026-08-15")
+        self.assertEqual(
+            Path(result["receipt"]["pdf_path"]).parts[-4:],
+            ("Receipts", "Pat Client", "July 2026", "Receipt_R-2026-0001.pdf"),
+        )
 
     def test_receipt_uses_configured_documents_client_files_root(self):
         session = self._approved_session("docs-receipt")

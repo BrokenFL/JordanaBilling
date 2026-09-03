@@ -7,7 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jordana_invoice.db import connect, migrate_database
-from jordana_invoice.diagnostics import create_issue_report, record_event
+from jordana_invoice.diagnostics import create_issue_report, record_event, record_exception
+import jordana_invoice.diagnostics as diagnostics_module
 from jordana_invoice.review_server import make_handler
 from jordana_invoice.review_services import create_billing_party, create_person
 
@@ -80,9 +81,71 @@ class DiagnosticsReportTests(unittest.TestCase):
         self.assertEqual(payload["selected_area"], "review")
         self.assertEqual(payload["build"]["application"], "Jordana Billing")
         self.assertRegex(payload["build"]["commit_hash"], r"^[0-9a-f]{40}$|source-checkout|unavailable")
-        self.assertEqual(payload["schema"]["migration_head"], "018_delivery_contact_person")
+        self.assertEqual(payload["schema"]["migration_head"], "024_month_close")
         self.assertIn("candidate_review_status_counts", payload["database_activity"])
+        self.assertEqual(payload["system_health"]["database"]["quick_check"], "ok")
+        self.assertIn("python", payload["system_health"]["runtime"])
+        self.assertIn("calendar_sync", payload["system_health"])
         self.assertIn("/api/review/candidates/{id}", text)
+
+    def test_exception_report_has_safe_failure_signature_without_message_or_path(self):
+        try:
+            raise RuntimeError("Avery Stone private failure")
+        except RuntimeError as error:
+            record_exception(error, method="POST", path="/api/review/candidates/01234567-89ab-cdef-0123-456789abcdef/save")
+        with patch.dict(os.environ, {"JORDANA_DIAGNOSTICS_DIR": str(self.reports_dir)}):
+            result = create_issue_report(self.conn, area="review")
+        text = result["report_text"]
+        self.assertIn('"exception_type": "RuntimeError"', text)
+        self.assertIn('"failure_signature"', text)
+        self.assertNotIn("private failure", text)
+        self.assertNotIn(str(Path(__file__).parent), text)
+
+    def test_report_uses_configured_reports_directory_when_no_override_exists(self):
+        reports_root = self.root / "Session Lists"
+        with patch.dict(
+            os.environ,
+            {"JORDANA_REPORTS_DIR": str(reports_root)},
+            clear=False,
+        ):
+            os.environ.pop("JORDANA_DIAGNOSTICS_DIR", None)
+            result = create_issue_report(self.conn, area="review")
+
+        saved = reports_root / "Diagnostics" / result["filename"]
+        self.assertTrue(saved.exists())
+        self.assertEqual(saved.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+
+    def test_report_write_failure_has_a_safe_actionable_message(self):
+        blocked_root = self.root / "not-a-directory"
+        blocked_root.write_text("not a directory", encoding="utf-8")
+        with patch.dict(os.environ, {"JORDANA_REPORTS_DIR": str(blocked_root)}, clear=False):
+            os.environ.pop("JORDANA_DIAGNOSTICS_DIR", None)
+            with self.assertRaisesRegex(ValueError, "Reports folder is available and writable"):
+                create_issue_report(self.conn, area="review")
+
+    def test_sanitized_error_history_survives_memory_reset_without_private_message(self):
+        with patch.dict(os.environ, {"JORDANA_DIAGNOSTICS_DIR": str(self.reports_dir)}):
+            record_event(
+                "review",
+                "http_response",
+                severity="error",
+                method="POST",
+                path="/api/review/candidates/01234567-89ab-cdef-0123-456789abcdef/save",
+                status=500,
+                message="Avery Stone private database detail",
+            )
+            persisted = self.reports_dir / "sanitized-runtime-errors.jsonl"
+            self.assertTrue(persisted.exists())
+            persisted_text = persisted.read_text(encoding="utf-8")
+            self.assertNotIn("Avery", persisted_text)
+            self.assertNotIn("private database detail", persisted_text)
+            self.assertIn('"route": "/api/review/candidates/{id}/save"', persisted_text)
+            self.assertEqual(persisted.stat().st_mode & 0o777, 0o600)
+            diagnostics_module._RECENT_EVENTS.clear()
+            result = create_issue_report(self.conn, area="review")
+
+        self.assertTrue(any(event.get("status") == 500 for event in result["report"]["recent_errors"]))
 
     def test_report_issue_endpoint_requires_token_and_returns_report_text(self):
         handler_cls = make_handler(str(self.db_path))
@@ -134,6 +197,8 @@ class DiagnosticsUiStaticTests(unittest.TestCase):
         self.assertIn('id="reportIssueDescription"', self.html)
         self.assertIn('id="copyIssueReportBtn"', self.html)
         self.assertIn('id="exportIssueReportBtn"', self.html)
+        self.assertIn('id="downloadSupportDiagnosticsBtn"', self.html)
+        self.assertIn('id="calendarFreshnessWarning"', self.html)
 
     def test_report_payload_uses_sanitized_state_and_events(self):
         self.assertIn('api("/api/diagnostics/report-issue"', self.js)
@@ -141,6 +206,8 @@ class DiagnosticsUiStaticTests(unittest.TestCase):
         self.assertIn("frontend_events: state.diagnostics.events.slice(-80)", self.js)
         self.assertIn("selected_candidate_present", self.js)
         self.assertNotIn("raw_calendar_title: state", self.js)
+        self.assertIn("downloadDiagnosticReport(result)", self.js)
+        self.assertIn("calendar_sync_warning", self.js)
 
     def test_api_records_diagnostic_events_without_console_logging(self):
         self.assertIn('window.dispatchEvent(new CustomEvent("jordana:api-diagnostic"', self.api_js)

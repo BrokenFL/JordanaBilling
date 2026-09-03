@@ -231,7 +231,7 @@ function handleAggregateRunComplete_(sheet, payload, runId) {
     pastFound,
     countRowsForRunWindow_(rawSheet, runId, "past_3_days"),
     futureFound,
-    countRowsForRunWindow_(rawSheet, runId, "next_7_days"),
+    countFutureRowsForRun_(rawSheet, runId, payload),
     false
   );
 }
@@ -313,17 +313,85 @@ function handleSyncRequest_(payload) {
   const cursor = syncCursorFromPayload_(payload);
   const spreadsheet = spreadsheet_();
   const rawSheet = ensureSheet_(spreadsheet, RAW_SHEET_NAME, RAW_HEADERS);
-  const rows = syncRows_(sheetObjects_(rawSheet, RAW_HEADERS), cursor.ingested_at, cursor.snapshot_key);
-  const page = rows.slice(0, limit);
+  const result = syncPageFromSheet_(rawSheet, cursor, limit);
+  const page = result.page;
   const nextCursor = syncNextCursor_(page, cursor);
+  const runLogSheet = spreadsheet.getSheetByName(RUN_LOG_SHEET_NAME);
   return {
     ok: true,
     record_type: "sync_response",
     rows: page,
     next_cursor: nextCursor,
-    has_more: rows.length > page.length,
+    has_more: result.has_more,
+    capture_runs: runLogSheet ? sheetObjects_(runLogSheet, RUN_LOG_HEADERS) : [],
     timestamp: new Date().toISOString(),
   };
+}
+
+function syncPageFromSheet_(sheet, cursor, limit) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return { page: [], has_more: false };
+  }
+
+  // Read only the two cursor columns for the full sheet. The previous sync
+  // path materialized every wide raw row on every page, which crossed the
+  // Web App response deadline as the immutable Sheet grew. The selected page
+  // is then fetched in contiguous blocks without changing cursor ordering.
+  const metadata = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  const candidates = [];
+  metadata.forEach((values, index) => {
+    const row = {
+      ingested_at: String(values[0] || ""),
+      snapshot_key: String(values[1] || ""),
+      sheet_row: index + 2,
+    };
+    if (isRowAfterCursor_(row, cursor)) {
+      candidates.push(row);
+    }
+  });
+  candidates.sort(compareSyncRows_);
+
+  const selected = candidates.slice(0, limit);
+  const valuesByRow = sheetRowsByNumber_(
+    sheet,
+    selected.map((row) => row.sheet_row),
+    RAW_HEADERS.length
+  );
+  return {
+    page: selected.map((metadataRow) =>
+      sheetObjectFromValues_(valuesByRow[metadataRow.sheet_row], RAW_HEADERS)
+    ),
+    has_more: candidates.length > selected.length,
+  };
+}
+
+function sheetRowsByNumber_(sheet, rowNumbers, columnCount) {
+  const output = {};
+  const sorted = rowNumbers.slice().sort((a, b) => a - b);
+  let index = 0;
+  while (index < sorted.length) {
+    const start = sorted[index];
+    let end = start;
+    while (index + 1 < sorted.length && sorted[index + 1] === end + 1) {
+      index += 1;
+      end = sorted[index];
+    }
+    const values = sheet.getRange(start, 1, end - start + 1, columnCount).getValues();
+    values.forEach((row, offset) => {
+      output[start + offset] = row;
+    });
+    index += 1;
+  }
+  return output;
+}
+
+function sheetObjectFromValues_(values, headers) {
+  const row = {};
+  headers.forEach((header, index) => {
+    row[header] = (values || [])[index];
+  });
+  return row;
 }
 
 function syncCursorFromPayload_(payload) {
@@ -513,6 +581,21 @@ function countRowsForRunWindow_(sheet, runId, captureWindow) {
   }).length;
 }
 
+function countFutureRowsForRun_(sheet, runId, payload) {
+  const requested = canonicalCaptureWindow_(
+    (payload && (payload.future_capture_window || payload.future_window)) || ""
+  );
+  if (isFutureCaptureWindow_(requested)) {
+    return countRowsForRunWindow_(sheet, runId, requested);
+  }
+
+  // New v3 shortcuts identify the short next_2_days window explicitly.  For
+  // deployed legacy shortcuts that do not send the field, prefer any v3 rows
+  // and otherwise retain the next_7_days count for backwards compatibility.
+  const next2 = countRowsForRunWindow_(sheet, runId, "next_2_days");
+  return next2 || countRowsForRunWindow_(sheet, runId, "next_7_days");
+}
+
 function ensureSheet_(spreadsheet, name, headers) {
   let sheet = spreadsheet.getSheetByName(name);
   if (!sheet) {
@@ -593,13 +676,10 @@ function sheetObjects_(sheet, headers) {
   if (lastRow < 2) {
     return [];
   }
-  return sheet.getRange(2, 1, lastRow - 1, headers.length).getValues().map((values) => {
-    const row = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index];
-    });
-    return row;
-  });
+  return sheet
+    .getRange(2, 1, lastRow - 1, headers.length)
+    .getValues()
+    .map((values) => sheetObjectFromValues_(values, headers));
 }
 
 function numberValue_(value) {

@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.22 Release Notes
+# Jordana Billing v0.1.0-test.35 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.22` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.35` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.22-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.35-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.22
-- **Python package/application version:** 0.1.0.post22
+- **Release label:** v0.1.0-test.35
+- **Python package/application version:** 0.1.0.post35
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,10 +29,130 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post22` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post35` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
 
-## Bug Fixes In test.22
+## Month Close And Service-Month Accounting In test.35
+
+1. **Month Close screen** — verifies capture-run transfer counts, past calendar evidence, canonical UTC duplicates, unresolved sessions, finalized invoice coverage, payment allocations, and receipt filing for one service month.
+2. **No random moved-event warnings** — future-only snapshots and ordinary edited-event history remain informational; only `past_3_days` evidence is expected to reach billing review.
+3. **Clear financial cards** — Invoices shows Total Billable and Total Invoiced. Payments shows Payments Applied and Outstanding, all attributed to the selected service month.
+4. **Correct receipt folders** — receipts follow the oldest invoice service month represented by the payment allocations, not the later payment date.
+5. **Existing Shortcut remains valid** — the v3 Shortcut already sends the required aggregate counts. The existing Apps Script Web App must be redeployed so sync can copy `Run_Log` proof into SQLite.
+
+## Calendar Reliability And Client Presentation In test.34
+
+This refreshed Test.34 build narrows only the backend absence behavior. The
+existing v3 `Jordana Calendar Sync` Shortcut remains compatible and does not
+need to be replaced before its first run.
+
+1. **Past evidence is required for billing** — normal capture uses three days
+   back and two days ahead. Future rows are retained as scheduling evidence but
+   cannot create billing candidates until a post-session past capture exists.
+2. **Moved appointments and window aging stay quiet** — future-only appointments
+   create no billing candidate. Once post-session past evidence creates a
+   candidate, later absence from the rolling window neither excludes it nor
+   creates a routine Review warning.
+3. **Duplicate identity safeguards** — canonical UTC event identity prevents
+   repeated captures and timezone-offset variants from creating duplicate
+   sessions or draft invoice lines.
+4. **Reversible calendar recovery** — month-scoped dry-run/apply tooling can
+   restore only records supported by preserved post-session evidence, while
+   protecting finalized invoices and recording reversible recovery actions.
+5. **Faster staged-sheet sync** — Apps Script pagination reads only the cursor
+   columns globally and fetches selected rows in blocks, avoiding the prior
+   timeout on the full snapshot history.
+6. **Optional Dr. invoice title** — Client Details now includes a checkbox that
+   adds `Dr.` to that client's Bill To and participant names on editable/new
+   invoices without changing calendar matching, custom delivery-contact names,
+   filing folders, or finalized history.
+
+## Billing Improvements In test.33
+
+1. **Prior balances follow the service period** — an unpaid invoice for an
+   earlier billing month remains a prior balance on the newer draft even when
+   the older invoice was finalized later and therefore has a later displayed
+   invoice date. Later service periods are never pulled backward as prior
+   balances, and same-period supplements retain deterministic ordering.
+
+2. **Review & Finalize shows the same balance** — the confirmation preview now
+   receives the account summary already calculated for the draft, keeping HTML,
+   exact-PDF preview, and finalization rendering aligned.
+
+3. **Service dates stay on one line** — the PDF Date column now fits every
+   English long-form month name at the actual Times body font and padding,
+   including August, September, November, and December dates. The Service
+   column retains its prior width.
+
+4. **Read-only production-data verification** — the reported July-to-August
+   cases were rechecked against the supplied database in immutable mode. No
+   operational database, finalized invoice, PDF, payment, or raw calendar
+   evidence was changed.
+
+## Billing And Client Improvements In test.31
+
+1. **Canonical JavaScript invoice preview** — the draft editor, Review & Finalize, and finalized/void invoice preview cards remain JavaScript-rendered, but now use the current canonical invoice layout and render model. Header placement, Bill To, Service lines, totals, prior-invoice dates, Zelle details, notes, and responsive layout now match the invoice presentation.
+
+2. **Shared current invoice data presentation** — normal invoices show the current total directly, while prior-balance/payment rows appear only when the invoice model contains those adjustments. The PDF renderer was not changed by this fix.
+
+## Billing And Client Improvements In test.30
+
+1. **Correction-draft prior-balance fix** — correction drafts no longer count their still-finalized parent invoice as a prior unpaid invoice. This prevents the parent’s current charges from being duplicated in the editable correction draft while preserving the original finalized history.
+
+2. **Paid-history protection** — the regression coverage confirms that a fully paid older invoice remains excluded from the correction draft’s prior balance.
+
+## Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the finalized invoice header date now comes from the invoice's `finalized_at` timestamp in `America/New_York`, never from a draft's arbitrary date. Draft previews display `Assigned when finalized`.
+2. **Corrected replacement dates** — a corrected replacement invoice receives the date it is finalized, while the original finalized/void invoice and its PDF remain frozen.
+
+## Billing And Client Improvements In test.28
+
+1. **Optional cancellation policy** — Finalize Invoice includes an `Include Cancellation Policy` checkbox beside insurance coding. When selected, the exact approved policy appears as plain text at the bottom of the preview and PDF without a box, border, or shading. Finalization freezes the selected policy text historically.
+2. **Late-cancellation billing repair** — Session Review exposes a dedicated custom-fee input, refreshes full scheduled fee from the confirmed client's current Rate Card rule, preserves the saved billing choice when the editor collapses, and permits normal final approval.
+3. **Client renaming** — Correcting a client name updates UUID-linked sessions, billing relationships, account names, and draft invoice snapshots while preserving finalized and void invoice history.
+4. **Explicit duplicate-client merge** — Client records can search for a duplicate and explicitly choose the record to keep. UUID-linked sessions, memberships, billing parties, aliases, eligible rate rules, and draft filing ownership move transactionally; finalized invoices and receipts remain frozen.
+5. **Correct & Replace Invoice** — A finalized invoice can be corrected through a linked replacement draft. Finalizing the replacement voids the original atomically, preserves audit history, and blocks unsafe replacement when protected payment history exists.
+6. **Calendar shorthand recovery** — Titles such as `Example Client 1 30 min` import as 30-minute client sessions. An empty sync safely repairs matching candidate-only records from preserved raw evidence without modifying that evidence or existing reviewed sessions.
+
+## Reliability Improvements Inherited from test.26
+
+1. **Calendar freshness warning** — A global warning appears when no successful sync exists, the timestamp cannot be verified, or the newest successful calendar sync is more than 18 hours old. It clears after a successful sync refreshes dashboard status.
+2. **Persistent sanitized error history** — Up to 200 warning/error fingerprints survive app restarts in a permission-restricted rotating JSONL file. Only timestamps, route templates, status codes, exception types, and safe source signatures persist; messages, client data, calendar text, database content, and full paths are excluded.
+3. **Sessions inbox archive** — Sessions supports checkboxes, select-all-visible, bulk archive, Current/Archived/All filters, and bulk restore. Archiving changes only ledger visibility and never changes approval, classification, rates, payments, invoices, or raw evidence.
+4. **Stronger support reports** — Reports includes an on-demand sanitized Diagnostics JSON download with system health, database quick-check, sync health, and privacy-safe failure signatures.
+
+## Bug Fixes Inherited from test.25
+
+1. **Safe review reconciliation** — Review refresh uses an authenticated write endpoint for ended calendar reconciliation; GET endpoints remain read-only while removed appointments are still suppressed before the queue is displayed.
+2. **Existing-client selection** — Review search returns and displays stable client codes, searches by name or code, and excludes archived clients so same-name records can be distinguished reliably.
+3. **Guarded duplicate archival** — Unused duplicate clients can be archived without deletion, but only after sessions and active billing relationships are reassigned. Approved identities are never rewritten.
+4. **Billing Relationship inactive visibility** — Inactive person-linked accounts remain available in the Inactive directory without leaking their members into the active payer record.
+5. **Joint-rate safety** — A partially resolved multi-client session cannot receive one confirmed participant's solo rate exception prematurely.
+6. **Personal/Admin cleanup** — Bulk Personal/Admin archive is an authenticated, transactional write operation that leaves approved sessions unchanged.
+7. **Paid-at-session invoice cleanup** — Empty zero-dollar invoice drafts are removed after paid-at-session staging while payment and receipt evidence remains intact.
+
+## Current Calendar Safety Update
+
+1. **Post-session billing evidence** — v3 normal Shortcut payloads use
+   past_3_days plus a short next_2_days health window. Future rows remain raw
+   schedule evidence until the event appears in a post-end past capture.
+2. **Targeted absence handling** — Future-only rows remain raw evidence if an
+   appointment is moved before it occurs. Post-session candidates persist when
+   they age out of the rolling window, without exclusion or routine warning;
+   the upgrade retires any broad presence warning created by an earlier Test.34
+   build.
+3. **Timezone-safe identity and invoice staging** — Canonical UTC identity
+   prevents two offset renderings of one event from becoming two candidates or
+   draft lines. Ambiguous existing records are warned, not silently merged.
+4. **Scoped legacy repair** — The new `calendar-recovery` dry run identifies
+   only legacy-hidden candidates with post-end past-capture evidence, exact
+   timezone-offset duplicates, and exact editable-draft duplicate lines. Apply
+   requires a month and explicit confirmation, creates a verified private
+   backup, never auto-approves or invoices a restored session, and records
+   reversible action state.
+
+## Bug Fixes Inherited from test.22
 
 1. **Confirmed client rate reconciliation** — Calendar sync preserves confirmed UUID-backed participants on unapproved sessions and evaluates the rate card with client, participant-combination, and billing-relationship scope before the global standard rate.
 2. **Upgrade/no-new-rows rate reconciliation** — An incremental sync with no new raw snapshots refreshes stale pending rate suggestions. Raw evidence and approved charges remain unchanged.

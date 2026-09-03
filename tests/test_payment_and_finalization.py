@@ -206,11 +206,28 @@ class SafeFinalizationTests(unittest.TestCase):
         draft = self._draft([session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
-        self.assertEqual(render["invoice_date_display"], "MAY 31, 2026")
+        self.assertEqual(render["invoice_date_display"], "Assigned when finalized")
         self.assertEqual(render["billing_period_display"], "May 2026")
         self.assertEqual(render["invoice_number_display"], "Assigned when finalized")
         self.assertEqual(render["lines"][0]["service_date_display"], "May 17, 2026")
         self.assertEqual(render["sender_lines"][0], "Sample Provider")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalization_assigns_invoice_date_from_eastern_finalized_at(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("finaldate")
+        draft = self._draft([session])
+
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-08-03T01:30:00Z"):
+            final = finalize_invoice(
+                self.conn,
+                draft["invoice"]["invoice_id"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        self.assertEqual(final["invoice"]["finalized_at"], "2026-08-03T01:30:00Z")
+        self.assertEqual(final["invoice"]["invoice_date"], "2026-08-02")
+        self.assertNotEqual(final["invoice"]["invoice_date"], draft["invoice"]["invoice_date"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_preview_render_model_uses_compact_multimonth_period(self, fake_pdf):
@@ -233,7 +250,7 @@ class SafeFinalizationTests(unittest.TestCase):
         draft = self._draft([session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
-        self.assertEqual(render["bill_to_lines"], ["Robin Test", "Via Email: robin@example.test"])
+        self.assertEqual(render["bill_to_lines"], ["Robin Test", "robin@example.test"])
         self.assertIn("Or pay via Zelle: sample-zelle@example.test", render["payment_zelle_line"])
         self.assertEqual(render["payment_lines"], ["200 Sample Ave", "Sample, FL 00000"])
 
@@ -250,7 +267,7 @@ class SafeFinalizationTests(unittest.TestCase):
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         self.assertEqual(
             preview["render_model"]["bill_to_lines"],
-            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "robin@example.test"],
         )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
@@ -411,7 +428,7 @@ class SafeFinalizationTests(unittest.TestCase):
         reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
         self.assertEqual(
             reopened["render_model"]["bill_to_lines"],
-            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "robin@example.test"],
         )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")

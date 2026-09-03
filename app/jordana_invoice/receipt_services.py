@@ -20,7 +20,7 @@ from .invoice_services import (
     _sanitize_path_part,
     resolve_invoice_filing_owner,
 )
-from .payment_services import get_payment_detail, payment_unapplied_amount
+from .payment_services import _invoice_period_key, get_payment_detail, payment_unapplied_amount
 from .receipt_pdf import generate_receipt_pdf
 from .util import new_id, now_iso
 
@@ -82,7 +82,7 @@ def create_payment_receipt(
         )
         filing_owner = snapshot["filing_owner"]["selected"]
         client_folder = _filing_owner_folder(conn, root, filing_owner)
-        month_folder = _sanitize_path_part(_receipt_month_label(snapshot["payment_date"]), "Unknown Month")
+        month_folder = _sanitize_path_part(_receipt_month_label(snapshot["filing_month"]), "Unknown Month")
         pdf_path = client_folder / month_folder / f"Receipt_{number}.pdf"
         pdf_existed_before = pdf_path.exists()
         if pdf_existed_before:
@@ -200,6 +200,7 @@ def _build_receipt_snapshot(
 
     paid_in_full = bool(all(int(row["remaining_balance_cents"] or 0) == 0 for row in allocation_rows))
     payment_date = str(payment["received_at"])[:10]
+    filing_month, filing_month_source = _receipt_filing_month(allocation_rows, payment_date)
     sender_lines = [
         value for value in [
             " ".join(part for part in [profile["provider_display_name"], profile["credentials_display"]] if part).strip(),
@@ -228,6 +229,8 @@ def _build_receipt_snapshot(
         "payment_id": payment["payment_id"],
         "payment_date": payment_date,
         "payment_date_display": format_long_date(payment_date),
+        "filing_month": filing_month,
+        "filing_month_source": filing_month_source,
         "payment_method": payment["method"],
         "payment_method_display": _payment_method_label(payment["method"]),
         "reference_number": payment["reference_number"] or "",
@@ -301,6 +304,7 @@ def _allocation_snapshot(conn: sqlite3.Connection, alloc: dict[str, Any]) -> dic
         "invoice_line_item_id": alloc.get("invoice_line_item_id"),
         "invoice_id": invoice["invoice_id"] if invoice else "",
         "invoice_number": invoice["invoice_number"] if invoice else "",
+        "invoice_billing_month": _invoice_period_key(invoice) if invoice else "",
         "reference_display": reference,
         "service_date": session["session_date"],
         "service_date_display": format_long_date(session["session_date"]),
@@ -449,9 +453,23 @@ def _next_receipt_number(conn: sqlite3.Connection, year: int) -> str:
     return f"R-{year}-{next_value:04d}"
 
 
+def _receipt_filing_month(allocation_rows: list[dict[str, Any]], payment_date: str) -> tuple[str, str]:
+    invoice_months = sorted({
+        str(row.get("invoice_billing_month") or "").strip()
+        for row in allocation_rows
+        if row.get("invoice_billing_month")
+    })
+    if invoice_months:
+        # A single payment can cover multiple invoices for the same filing owner.
+        # File that one receipt with the oldest invoice month represented.
+        return invoice_months[0], "invoice_billing_month"
+    return str(payment_date or "")[:7], "payment_date"
+
+
 def _receipt_month_label(value: str) -> str:
     try:
-        parsed = date.fromisoformat(str(value)[:10])
+        raw = str(value or "").strip()
+        parsed = date.fromisoformat(f"{raw[:7]}-01")
     except (TypeError, ValueError):
         return "Unknown Month"
     return parsed.strftime("%B %Y")

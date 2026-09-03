@@ -70,6 +70,18 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         sync_status.assert_called_once_with(shared_conn)
         self.assertEqual(captured["payload"]["conn_id"], id(shared_conn))
 
+    def test_month_close_endpoint_uses_selected_service_month(self):
+        shared_conn = object()
+        handler, captured = self._handler("/api/month-close?month=2026-07")
+        handler.conn = lambda: shared_conn
+        with patch(
+            "jordana_invoice.review_server.get_month_close_report",
+            return_value={"ok": True, "month": "2026-07", "status": "ready"},
+        ) as report:
+            handler.do_GET()
+        report.assert_called_once_with(shared_conn, "2026-07")
+        self.assertEqual(captured["payload"]["status"], "ready")
+
     def test_sync_run_uses_active_review_server_database_path(self):
         handler, captured = self._handler("/api/sync/run", body=json.dumps({}).encode("utf-8"))
 

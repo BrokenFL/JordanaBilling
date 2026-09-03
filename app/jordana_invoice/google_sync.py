@@ -14,6 +14,7 @@ from typing import Callable, Any
 
 from .csv_reports import write_reports
 from .db import (
+    DEFAULT_BUSY_TIMEOUT_MS,
     DEFAULT_LOCK_TIMEOUT_SECONDS,
     DatabaseBusyError,
     DatabaseLock,
@@ -190,6 +191,25 @@ def default_transport(
         raise SyncError("Invalid JSON response from Apps Script.") from error
 
 
+def _connect_for_sync(database_path: str, *, dry_run: bool) -> sqlite3.Connection:
+    if not dry_run:
+        migrate_database(database_path)
+        return connect(database_path)
+
+    resolved = Path(database_path).expanduser().resolve()
+    if not resolved.is_file():
+        raise SyncError("Dry-run sync requires an existing initialized database.")
+    conn = sqlite3.connect(
+        resolved.as_uri() + "?mode=ro",
+        uri=True,
+        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
+    return conn
+
+
 def sync_now(
     config: SyncConfig | None = None,
     full: bool = False,
@@ -197,21 +217,23 @@ def sync_now(
     transport: Transport = default_transport,
 ) -> SyncResult:
     config = config or load_config()
-    migrate_database(config.database_path)
     if not dry_run:
         from .backups import create_verified_backup
         from .db import is_operational_db_path
 
         if is_operational_db_path(config.database_path):
             create_verified_backup(config.database_path, reason="sync_apply")
-    conn = connect(config.database_path)
-    return sync_with_connection(
-        conn,
-        config,
-        full=full,
-        dry_run=dry_run,
-        transport=transport,
-    )
+    conn = _connect_for_sync(config.database_path, dry_run=dry_run)
+    try:
+        return sync_with_connection(
+            conn,
+            config,
+            full=full,
+            dry_run=dry_run,
+            transport=transport,
+        )
+    finally:
+        conn.close()
 
 
 def sync_calendar_automatically(
@@ -235,14 +257,13 @@ def sync_calendar_automatically(
         raise SyncAlreadyRunning("Calendar sync is already running.")
     try:
         config = config or load_config()
-        migrate_database(config.database_path)
         if not dry_run:
             from .backups import create_verified_backup
             from .db import is_operational_db_path
 
             if is_operational_db_path(config.database_path):
                 create_verified_backup(config.database_path, reason="sync_apply")
-        conn = connect(config.database_path)
+        conn = _connect_for_sync(config.database_path, dry_run=dry_run)
         try:
             initial = should_run_initial_full_sync(conn)
             return sync_with_connection(
@@ -304,7 +325,7 @@ def sync_with_process_lock(
 
             if is_operational_db_path(config.database_path):
                 create_verified_backup(config.database_path, reason="sync_apply")
-        conn = connect(config.database_path)
+        conn = _connect_for_sync(config.database_path, dry_run=dry_run)
         try:
             return sync_with_connection(
                 conn,
@@ -333,6 +354,7 @@ def sync_with_connection(
     mode = "initial_full" if full else "incremental"
     cursor = SyncCursor(EMPTY_CURSOR) if full else get_cursor(conn)
     all_rows: list[dict[str, Any]] = []
+    capture_runs_by_id: dict[str, dict[str, Any]] = {}
     final_cursor = cursor
 
     try:
@@ -350,6 +372,8 @@ def sync_with_connection(
             )
             rows, next_cursor, has_more = validate_sync_response(response)
             all_rows.extend(rows)
+            for capture_run in validate_capture_runs(response.get("capture_runs", [])):
+                capture_runs_by_id[text(capture_run.get("run_id"))] = capture_run
             response_cursor = cursor_from_response(next_cursor, rows)
             if is_cursor_after(response_cursor, final_cursor):
                 final_cursor = response_cursor
@@ -385,6 +409,10 @@ def sync_with_connection(
                     source_path=config.apps_script_url,
                     commit=False,
                 )
+                upsert_capture_runs(conn, capture_runs_by_id.values())
+                from .review_services import reparse_candidate_only_duration_suffixes
+
+                reparse_candidate_only_duration_suffixes(conn)
                 rows_imported = count_raw_rows(conn) - before
                 review_items_changed = abs(count_review_rows(conn) - review_before)
                 if final_cursor.ingested_at:
@@ -460,6 +488,71 @@ def validate_sync_response(
     if not isinstance(has_more, bool):
         raise SyncError("has_more must be boolean.")
     return rows, next_cursor, has_more
+
+
+def validate_capture_runs(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise SyncError("capture_runs must be a list.")
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise SyncError("Every capture run must be an object.")
+        if not text(item.get("run_id")):
+            raise SyncError("Every capture run must include run_id.")
+        result.append(item)
+    return result
+
+
+def upsert_capture_runs(
+    conn: sqlite3.Connection,
+    capture_runs: Any,
+) -> None:
+    synced_at = now_iso()
+    for item in capture_runs:
+        conn.execute(
+            """
+            INSERT INTO calendar_capture_runs (
+              run_id, batch_name, started_at, completed_at,
+              past_found, past_received, future_found, future_received,
+              status, error_message, source_updated_at, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+              batch_name = excluded.batch_name,
+              started_at = excluded.started_at,
+              completed_at = excluded.completed_at,
+              past_found = excluded.past_found,
+              past_received = excluded.past_received,
+              future_found = excluded.future_found,
+              future_received = excluded.future_received,
+              status = excluded.status,
+              error_message = excluded.error_message,
+              source_updated_at = excluded.source_updated_at,
+              synced_at = excluded.synced_at
+            """,
+            (
+                text(item.get("run_id")),
+                text(item.get("batch_name")),
+                text(item.get("started_at")),
+                text(item.get("completed_at")),
+                _safe_int(item.get("past_found")),
+                _safe_int(item.get("past_received")),
+                _safe_int(item.get("future_found")),
+                _safe_int(item.get("future_received")),
+                text(item.get("status")) or "partial",
+                text(item.get("error_message")),
+                text(item.get("updated_at")),
+                synced_at,
+            ),
+        )
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def parse_cursor(value: Any) -> SyncCursor:

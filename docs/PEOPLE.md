@@ -8,10 +8,24 @@ Names are stored as:
 - `last_name`
 - `preferred_name`
 - `display_name`
+- `use_dr_on_invoices` — an intentional presentation preference controlled by
+  the **Use “Dr.” before this client’s name on invoices** checkbox
 
 The Clients list sorts by last name and shows client code, last name, first name, display name, billing relationships, bill-to links, last session, and active status.
 
 Client records show contact information, billing relationships, relationship roles, sessions, bill-to links, aliases, administrative notes, merge status, active status, actual charged-rate history, and active future rate exceptions.
+
+Client names may be corrected from the client record. The corrected name flows to
+person-linked billing setup, sessions, future billing, and editable draft invoice
+snapshots. Finalized and void invoice snapshots and PDFs remain historically frozen.
+The optional Dr. checkbox changes only invoice-facing Bill To and participant
+names. It does not add the title to `display_name`, calendar aliases, calendar
+matching, client search, or filing-folder identity. It refreshes editable drafts;
+finalized and void invoices retain the title state frozen when they were finalized.
+The Advanced section also provides an explicit duplicate merge: the user searches
+for and confirms the client record to keep, mutable relationships and sessions are
+repointed transactionally, the duplicate is marked merged, and finalized invoice
+snapshots are not rewritten.
 
 Session history uses approved session values. It must not reconstruct historical charges from current rate rules.
 

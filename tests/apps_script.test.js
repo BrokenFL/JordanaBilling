@@ -443,6 +443,27 @@ const syncResponse = script.handleSyncRequest_({
 assert.strictEqual(syncResponse.record_type, "sync_response");
 assert.strictEqual(syncResponse.rows.length, 3);
 assert.strictEqual(syncResponse.rows[0].run_id, "batch-run");
+assert.strictEqual(syncResponse.capture_runs.length, 1);
+assert.strictEqual(syncResponse.capture_runs[0].run_id, "batch-run");
+
+const firstSyncPage = script.handleSyncRequest_({
+  after_ingested_at: "1970-01-01T00:00:00.000Z",
+  after_snapshot_key: "",
+  limit: 2,
+});
+assert.strictEqual(firstSyncPage.rows.length, 2);
+assert.strictEqual(firstSyncPage.has_more, true);
+const secondSyncPage = script.handleSyncRequest_({
+  after_ingested_at: firstSyncPage.next_cursor.ingested_at,
+  after_snapshot_key: firstSyncPage.next_cursor.snapshot_key,
+  limit: 2,
+});
+assert.strictEqual(secondSyncPage.rows.length, 1);
+assert.strictEqual(secondSyncPage.has_more, false);
+assert.strictEqual(
+  new Set(firstSyncPage.rows.concat(secondSyncPage.rows).map((row) => row.snapshot_key)).size,
+  3
+);
 
 const missingRunLogSpreadsheet = new MockSpreadsheet();
 missingRunLogSpreadsheet.sheets.Raw_Event_Snapshots = batchSpreadsheet.sheets.Raw_Event_Snapshots;
@@ -452,6 +473,7 @@ const missingRunLogSyncResponse = script.handleSyncRequest_({
   limit: 10,
 });
 assert.strictEqual(missingRunLogSyncResponse.rows.length, 3);
+assert.strictEqual(missingRunLogSyncResponse.capture_runs.length, 0);
 assert.strictEqual(missingRunLogSpreadsheet.sheets.Run_Log, undefined);
 
 console.log("Apps Script helper tests passed");

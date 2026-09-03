@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.22
+### Current Test Build — v0.1.0-test.35
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.22
-- **Python package/application version:** 0.1.0.post22
+- **Release label:** v0.1.0-test.35
+- **Python package/application version:** 0.1.0.post35
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,9 +40,56 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.22 supersedes test.21 for installation and update testing because it keeps
-future appointments out of Review while ensuring pending sessions use the
-correct confirmed-client rate-card suggestion.
+test.34 supersedes test.33 for installation and update testing. It retains the
+prior billing and client safeguards, adds evidence-gated calendar capture,
+warning-first reconciliation, canonical duplicate protection, reversible
+recovery, and the optional Dr. invoice-title checkbox.
+
+### Calendar Reliability And Client Presentation In test.34
+
+1. Confirm a normal Shortcut run records `past_3_days` and `next_2_days` rows,
+   and that future-only rows do not enter billing Review.
+2. Confirm moved/absent appointments appear as warnings without automatic
+   exclusion or invoicing.
+3. Enable the Dr. checkbox on a sanitized test client and confirm draft Bill To
+   and participant names update while the normal client/calendar name does not.
+4. Confirm toggling the checkbox after a finalized test invoice does not change
+   its snapshot or PDF.
+
+### Billing Improvements In test.33
+
+1. **Late-finalized prior periods** — an unpaid earlier service month remains a
+   prior balance on a newer draft even when the older invoice's displayed
+   finalization date is later than the draft date.
+2. **Preview parity** — Review & Finalize uses the calculated prior-balance
+   summary already used by draft preview and PDF rendering.
+3. **Single-line dates** — the PDF line-item Date column is measured for the
+   longest English month names and no longer wraps dates such as August 03,
+   2026.
+
+### Billing Improvements In test.32
+
+1. **Correction-draft editing** — sessions returned from a finalized invoice
+   can be corrected in a dedicated draft when no payment history exists while
+   finalized history remains immutable.
+2. **Report Issue recovery** — diagnostic report writes now use the installed
+   Reports folder and return a safe actionable message when it is unavailable.
+
+### Billing And Client Improvements In test.31
+
+1. **Canonical JavaScript invoice preview** — the preview remains easy to browse in the app while matching the current invoice formatting and data presentation used by the canonical invoice renderer.
+
+### Billing And Client Improvements In test.30
+
+1. **Correction-draft balance fix** — a correction draft excludes the finalized invoice it replaces from prior unpaid balance calculations, so current charges are not duplicated while the correction is being edited.
+
+### Billing And Client Improvements In test.28
+
+1. **Optional cancellation policy** — selectable at finalization and rendered as plain text at the bottom of the invoice.
+2. **Late-cancellation billing** — full scheduled fee refreshes from the confirmed client's Rate Card rule, custom fee has a dedicated editable field, and the saved choice remains valid during approval.
+3. **Client maintenance** — names can be corrected for future and draft billing, and duplicate records can be merged explicitly without rewriting finalized invoices.
+4. **Invoice correction** — finalized invoices use the controlled Correct & Replace Invoice path rather than direct editing.
+5. **Calendar shorthand recovery** — matching candidate-only titles ending in `min` are safely reparsed from unchanged raw calendar evidence.
 
 ### Bug Fixes In test.22
 

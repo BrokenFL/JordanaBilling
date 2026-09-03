@@ -6,8 +6,10 @@ A session must be approved, have participants and bill-to, preserve a nonnegativ
 
 ## Draft
 
-Drafts can add/remove eligible sessions, change invoice dates, choose Bill To,
-choose File invoice under, and override delivery. Totals use integer cents.
+Drafts can add/remove eligible sessions, choose Bill To, choose File invoice
+under, and override delivery. The customer-facing invoice date is assigned
+only when the invoice is finalized; draft previews show `Assigned when
+finalized`. Totals use integer cents.
 Changing Bill To on a draft is allowed only when every linked source session is
 already billed to that party; the draft editor does not silently rewrite linked
 session billing relationships.
@@ -150,7 +152,7 @@ Paid-at-session sessions remain excluded from staging temporarily. Paid-at-sessi
 
 Finalization is a two-step process:
 
-1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, the formatted invoice date, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, disables the finalize button while errors exist, and provides direct actions for missing billing email or mailing address that return to the same invoice after saving.
+1. **Preview**: Reread the saved draft from SQLite, run `validate_invoice_readiness` to check all readiness rules, and return a preview with a `revision` number for optimistic locking and a `readiness` object with `ready` (bool) and `errors` (list of `{field, message}` dicts). This step is side-effect free: it does not save draft edits, assign a number, write a PDF path/checksum, or change revision/status. `get_invoice` auto-syncs stale `unresolved`/blank delivery methods from the active billing party before the readiness check, so the preview reflects the resolved delivery. The UI shows a clean in-app HTML invoice preview built from the same canonical backend render model used by the exact PDF renderer. The invoice header shows only `INVOICE`, `Assigned when finalized` for drafts or the finalized invoice date for finalized/void records, and the invoice number or draft placeholder; Billing Period is not displayed in the invoice header. `Open Exact PDF`, download, and print actions remain available as secondary actions through `GET /api/invoices/{id}/draft-pdf` and the finalization preview token endpoint. The UI shows "Ready to finalize" or "Not ready to finalize" with specific fixes, disables the finalize button while errors exist, and provides direct actions for missing billing email or mailing address that return to the same invoice after saving.
 2. **Confirm**: Finalize only if the invoice revision matches the preview and `validate_invoice_readiness` passes. This prevents stale or double submissions.
 
 ### Readiness Validation
@@ -160,7 +162,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 - Bill-to party exists and is active
 - At least one eligible invoice line
 - All line amounts are positive, except waived late-cancellation lines which are valid at exactly $0.00 (identified by structured `appointment_status_snapshot="late_cancellation"` and `billing_treatment_snapshot="waived"` on the line item, not by description text)
-- Valid invoice date
+- Finalization date is generated transactionally from `finalized_at`
 - Active business profile
 - Required bill-to contact details for the selected delivery method (email for email/both, mailing address for mail/both)
 - Delivery method cannot remain unresolved
@@ -173,7 +175,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 Validation errors are structured as `{field, message}` for UI display. No validation logic is duplicated between frontend and backend.
 
-Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, assigns the number, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. On the operational database, a verified private backup is created before finalization begins. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
+Explicit confirmation starts a transaction that revalidates readiness, checks the revision matches, derives the invoice date from `finalized_at` in `America/New_York`, assigns the number for that finalization year, freezes bill-to/business/line/filing-owner snapshots, calculates totals, writes the PDF atomically, stores SHA-256, and audits finalization. On the operational database, a verified private backup is created before finalization begins. Failure rolls back and removes partial output. The finalized snapshot, in-app HTML preview, exact PDF preview, and stored PDF are built from the same canonical render model except for approved final metadata such as the real invoice number replacing the draft marker.
 
 ### Optional Insurance Coding
 
@@ -188,6 +190,12 @@ During finalization, the user may optionally check "Add Insurance Coding" and en
 - When unchecked, none of these fields block finalization and no insurance block appears on the PDF.
 
 Diagnosis codes are local operational data. Real diagnosis codes must never appear in source control, fixtures, screenshots, logs, examples, demo data, documentation, or committed databases. Diagnosis codes may appear only in authorized insurance-related invoice output when Jordana intentionally supplies or approves them. Standard self-pay invoices should not include diagnosis codes. Diagnosis-code values must never be inferred from calendar text, participant names, session descriptions, or other application data. Approved invoice snapshots must remain historically stable; removing or changing a diagnosis code after finalization must use the existing correction, void, or reissue workflow rather than silently rewriting finalized records.
+
+The same finalization options area contains an independent **Include Cancellation
+Policy** checkbox. When selected, the canonical HTML preview and exact PDF place
+the approved policy sentence at the bottom as plain text without a box or shading.
+Finalization freezes `cancellation_policy_included` and
+`cancellation_policy_text_snapshot`; unchecked invoices omit the text.
 
 ### Save Invoices Under And File Invoice Under
 
@@ -262,9 +270,34 @@ This ensures that a draft created before the Billing Setup was completed still r
 
 Finalized invoice snapshots (`bill_to_name_snapshot`, `bill_to_email_snapshot`, `bill_to_address_snapshot`, `delivery_method`) remain immutable. Changes to the billing party after finalization do not affect the finalized invoice or its PDF.
 
+A client can intentionally enable **Use “Dr.” before this client’s name on
+invoices** from Client Details. The preference applies to that person's
+invoice-facing Bill To name when the person-linked billing name is still the
+client's own name, and to the person's participant name on service lines. A
+custom billing/delivery-contact name is not prefixed. Calendar identity and
+filing-folder names stay unchanged. Toggling the preference refreshes editable
+drafts only; finalized and void invoice snapshots and PDFs remain immutable.
+
 ## Void And Reissue
 
 Void requires a reason and preserves the number, snapshots, PDF, and checksum. Source sessions become eligible for a new invoice with a new number. Payments and delivery are not automatically handled by void; existing payment records and allocations remain in the ledger and are not deleted.
+
+## Correct And Replace
+
+For a finalized invoice with no payment-allocation history, the invoice view offers
+**Correct & Replace Invoice**. The action requires a reason and creates an editable
+correction draft linked to the original invoice. The original finalized invoice,
+number, snapshots, and PDF remain unchanged while the draft is being edited. The
+correction draft can be abandoned or deleted without changing the original.
+
+When the correction draft is finalized, one transaction assigns it a new invoice
+number and PDF, marks the original invoice `void`, records the replacement link and
+reason in the audit history, and preserves the original PDF. The original invoice
+is not rewritten. Any payment-allocation history—including reversed allocations or
+voided payments—blocks correction so the payment ledger cannot be detached from the
+historical invoice. Correction drafts are excluded from automatic monthly staging;
+the existing manual void flow remains available for cases that should not be
+replaced through this guided workflow.
 
 ## Client Page Invoice History
 
@@ -305,7 +338,7 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `create_payment_receipt` creates one finalized receipt per posted payment. Repeated create requests return the existing receipt.
 - Finalized receipts store one immutable `snapshot_json` and serve the stored PDF; they are not re-rendered from live payment or allocation state.
 - Receipts for payments allocated to finalized invoices preserve the invoice's finalized insurance-coding snapshot when that invoice was finalized with coding.
-- Receipt PDFs are stored under the configured receipt root. Installed releases set that root to `~/Documents/Jordana Billing/Client Files`, using `Client Files/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`.
+- Receipt PDFs are stored under the configured receipt root. Installed releases set that root to `~/Documents/Jordana Billing/Client Files`, using `Client Files/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`. For invoice-linked payments, the folder month is the invoice billing month, not the payment date. If one receipt covers invoices from multiple months, it is filed under the oldest invoice month represented. Payments without an invoice retain the payment-month fallback.
 - Invoice-linked payments inherit invoice filing ownership. Paid-at-session payments without invoices resolve an eligible session participant; ambiguous ownership blocks final creation.
 
 ### Dry-Run CLI
@@ -499,12 +532,14 @@ For a given invoice:
 
 This prior balance is displayed as a summary block and does not create duplicate service lines.
 
-### Same-Date Cutoff Ordering
+### Prior-Invoice Ordering
 Determining whether an invoice is "prior" relative to the current one uses a strict deterministic ordering:
-1. **Invoice Date**: Candidate is prior if `candidate.invoice_date < current.invoice_date`.
-2. **Tie-Breaker 1 (Finalized vs Draft)**: If dates match, a finalized invoice is prior to a draft invoice.
-3. **Tie-Breaker 2 (Finalized Timestamps)**: If both are finalized and dates match, candidate is prior if `candidate.finalized_at < current.finalized_at`.
-4. **Tie-Breaker 3 (UUID comparison)**: If finalized at the exact same millisecond, candidate is prior if `candidate.invoice_id < current.invoice_id` (alphabetically).
+1. **Service Month**: When both invoices have an identifiable complete billing month, an earlier `billing_month` is prior and a later month is not. This remains true when a July invoice is finalized after an August draft was created.
+2. **Nonoverlapping Service Period**: For legacy or nonmonthly invoices, a period ending before the current period starts is prior; a period starting after the current period ends is not.
+3. **Same-Month Supplement**: Within the same service month, a lower `supplement_sequence` is prior.
+4. **Same/Overlapping Period Fallback**: Invoice date, finalized-vs-draft state, `finalized_at`, and finally invoice UUID provide deterministic ordering for same-period supplements and legacy overlaps.
+
+The customer-facing `invoice_date` remains the finalization date. It is not used to reorder distinct service months, because doing so could hide a genuine prior balance when an earlier month's invoice is finalized late.
 
 ### Persistence & Immutability
 - **Snapshot Finalization**: During finalization, the calculated summary is frozen in a versioned JSON snapshot (version 1) in the database (`account_summary_snapshot`). The PDF generated reflects this frozen snapshot and remains immutable.

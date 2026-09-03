@@ -1,10 +1,11 @@
 # Invoice Template
 
 The ReportLab letter template contains a balanced two-column header. The
-right-side invoice block shows exactly `INVOICE`, the invoice date as an
-unlabeled uppercase short date such as `JUL 1, 2025`, and the invoice number as
-an unlabeled value such as `10-2025`. Billing Period is not displayed on the
-invoice. The line-item table, configured `TOTAL DUE`, and restrained
+right-side finalized invoice block shows exactly `INVOICE`, the finalization
+date as an unlabeled uppercase short date such as `JUL 1, 2025`, and the
+invoice number as an unlabeled value such as `10-2025`. Draft previews show
+`Assigned when finalized` instead of an arbitrary draft date. Billing Period
+is not displayed on the invoice. The line-item table, configured `TOTAL DUE`, and restrained
 footer-style payment block span the full content width below the header. The
 Bill To block shows the delivery destination implied by the invoice delivery
 method: mailing address for mail, `Via Email: ...` for email, or both in that
@@ -13,6 +14,9 @@ Zelle to: ...`. It has no due date, clinical note, or treatment summary.
 Standard self-pay invoices do not include diagnosis codes or insurance coding;
 optional insurance coding may be added at finalization when required for
 administrative insurance billing (see Optional Insurance Coding Block below).
+The same finalization options area includes an independent **Include Cancellation
+Policy** checkbox. When selected, the exact policy sentence appears as plain text
+at the bottom of the invoice, with no border, box, or shaded background.
 
 ## PDF Layout (US Letter Portrait)
 
@@ -21,8 +25,8 @@ administrative insurance billing (see Optional Insurance Coding Block below).
 - **Content width**: 7.5" (540pt), used consistently by the header, line-item table, total bar, and payment section.
 - **Header columns**: 3.65" left invoice/Bill To column + 3.85" right logo/provider column = 7.5".
 - **Typography**: body 10.25pt / 13pt leading; small/meta 9pt / 11pt leading; `INVOICE` title 29pt / 31pt leading; total 14.5pt / 18pt leading.
-- **Line-item table columns**: Date 1.12", Participants 1.65", Service 2.78", Duration 0.85", Amount 1.10" — sum exactly 7.5".
-- **Date column**: 1.12" wide, sufficient for ordinary long-form dates like "June 22, 2026" without unnecessary wrapping.
+- **Line-item table columns**: Date 1.38", Participants 1.49", Service 2.78", Duration 0.85", Amount 1.00" — sum exactly 7.5".
+- **Date column**: 1.38" wide, sufficient for every English long-form month name at the invoice's actual Times body font and cell padding, including "September 30, 2026", without wrapping.
 - **Logo**: top-right PNG, up to 2.10" wide and 1.35" tall, preserving aspect ratio. The current approved asset uses no optical offset and reads centered over the provider block.
 - **Header hierarchy**: The invoice metadata block shows `INVOICE`, then the unlabeled invoice date, then the unlabeled invoice number or draft placeholder. `Invoice Number:`, `Invoice Date:`, and `Billing Period:` labels are not rendered. The invoice-number line is aligned with the final line of the left-side address block. The session table starts beneath both columns with only a modest gap.
 - **Line order**: Session rows are chronological by service date, then source start time, then stable line UUID. Import, approval, insertion, and database row order do not control display order.
@@ -90,6 +94,19 @@ SW: <value>
 - EIN, NPI, and SW values come from Invoice Settings and are frozen into the finalized invoice snapshot at finalization time.
 - The diagnosis code is entered or approved per-invoice during finalization and is never persisted on draft invoices.
 - When insurance coding is unchecked, no block appears in preview or final PDF.
+
+## Optional Cancellation Policy
+
+The finalization screen offers **Include Cancellation Policy** alongside **Add
+Insurance Coding**. It is off by default and is independent of insurance coding.
+When enabled, preview, exact PDF preview, and the finalized PDF show this exact
+plain-text sentence at the bottom of the invoice:
+
+`Cancellation Policy: Cancellations received less than 24 hours prior to scheduled appointment time are billed at the rate of the full session.`
+
+Finalization freezes both the inclusion choice and exact text. Finalized and void
+invoices always render from that snapshot; later wording changes cannot rewrite
+historical invoices.
 - Draft preview and finalized PDF render the block identically.
 - Later changes to Invoice Settings do not alter existing finalized invoices.
 - Diagnosis codes must never be inferred from calendar text, participant names, session descriptions, or other application data. Real diagnosis codes must never be committed to GitHub, fixtures, screenshots, logs, demo data, examples, or documentation.

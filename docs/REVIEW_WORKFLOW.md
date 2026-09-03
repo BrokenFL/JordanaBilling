@@ -17,6 +17,16 @@ The visible workflow is:
 
 Routine review does not expose backend Client / Family Account fields, account codes, household labels, or membership roles.
 
+Calendar-presence, identity, and duplicate-billing warnings are reversible
+queue warnings. They never silently change approval, billability, payment, or
+the raw calendar evidence. When later positive calendar evidence resolves a
+presence warning, the warning closes automatically.
+
+A legacy suppression recovery can return a post-session-evidenced appointment
+to the normal queue, but it never approves it, creates an invoice line, or
+overwrites its raw evidence. A duration/end-time conflict remains a warning,
+not a chosen billable session.
+
 ## Participants
 
 Participants are permanent people connected to the session as attendees.
@@ -150,6 +160,10 @@ Cancelled and no-show appointments remain preserved and reviewable. They require
 - `unresolved`
 
 Late cancellation supports an additional `bill_full_fee` and `custom_fee` treatment.
+Attendance Outcome and Cancellation Billing are visible in the main Session
+Details grid. Choosing `bill_full_fee` restores the preserved scheduled session
+rate; choosing `custom_fee` requires a positive entered amount; choosing `waived`
+sets the charge to `$0.00`.
 
 When billing treatment is `waived` or `not_billable` and the approved rate is `$0.00`, the zero rate is valid and persists through save, reload, approval, invoice staging, and finalization. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
 
@@ -232,6 +246,17 @@ Eligibility is intentionally narrow:
   `paid_at_session` selection with no actual payment, allocation, or receipt can
   still be returned for correction.
 
+An unpaid **Correction Draft** has one explicit exception. Its original invoice
+remains finalized and immutable while the replacement is being prepared. From
+that linked replacement draft only, **Edit Session** can return a line's source
+session to Review after verifying the draft, original finalized invoice, and
+session relationship, and confirming that no payment, allocation, or receipt
+history exists. The replacement line stays in place while the session is under
+review, so replacement finalization remains blocked until the session is either
+reapproved (which refreshes that same replacement line) or marked nonbillable
+(which removes only that replacement line). This never changes the original
+invoice, stored PDF, number, or snapshots.
+
 If the session exists only on a draft invoice, Edit Session / Return to Review removes that
 session's draft line, recalculates that draft, and increments the draft
 revision as part of the same transaction. Finalized invoices, payment history,
@@ -281,6 +306,9 @@ The same appointment may be edited in Apple Calendar and arrive later with a cha
 - Approved sessions are not silently overwritten.
 - If an already-approved session's source event later changes, a visible source-change warning review item is created instead of rewriting approved values.
 - Event absence from one capture window alone does not prove deletion/cancellation.
+- Routine absence never creates a calendar-presence warning: future-only rows
+  remain raw scheduling evidence, and post-session rows persist for Review when
+  they later age out of the rolling capture window.
 - The logic is additive, idempotent, and reversible.
 
 ### Ambiguous Title Review Routing
@@ -334,8 +362,12 @@ Client Sessions reports.
 
 The Review Queue offers Needs Review, Approved, and Excluded filters. Needs Review excludes approved and excluded records.
 
-The Sessions workspace is a read-only ledger. Its review-status filter is
-intentionally limited to `All` and `Needs Classification`. Eligible
+The Sessions workspace is a read-only ledger with a separate inbox-style archive
+state. Jordana may select any visible rows, archive them from the default Current
+view, inspect them under Archived, and restore them later. This changes only
+Sessions visibility: review status, classification, approval, rate, payment,
+invoice links, and raw calendar evidence remain unchanged. The review-status
+filter is intentionally limited to `All` and `Needs Classification`. Eligible
 candidate-only records may be sent to review, and excluded sessions may be
 returned to review. Approved or invoiced records are not silently reopened.
 

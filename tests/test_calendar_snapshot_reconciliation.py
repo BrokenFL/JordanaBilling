@@ -3,8 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from jordana_invoice.calendar_warnings import upsert_calendar_warning
 from jordana_invoice.db import connect, init_db
-from jordana_invoice.importer import import_rows
+from jordana_invoice.importer import (
+    import_rows,
+    suppress_pending_events_missing_from_newest_covering_snapshot,
+)
 from jordana_invoice.review_services import approve_candidate, list_review_candidates
 
 
@@ -19,6 +23,7 @@ def raw_row(
     event_id: str,
     title: str,
     start_at: str,
+    payload_version: str = "2",
 ) -> dict[str, str]:
     return {
         "ingested_at": captured_at,
@@ -40,7 +45,7 @@ def raw_row(
         "location": "",
         "notes": "",
         "calendar": "Jordana Work",
-        "payload_version": "2",
+        "payload_version": payload_version,
         "raw_json": "{}",
     }
 
@@ -134,7 +139,7 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.assertNotEqual(row["session_status"], "excluded")
         self.assertNotEqual(row["reconciliation_status"], "removed_from_newest_covering_snapshot")
 
-    def test_newest_covering_snapshot_omission_suppresses_pending_candidate(self):
+    def test_newest_covering_snapshot_omission_does_not_warn_or_exclude_pending_candidate(self):
         self.import_old_event()
         self.import_complete_run(
             "newer",
@@ -145,13 +150,170 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         )
 
         row = self.candidate_and_session()
-        self.assertEqual(row["candidate_status"], "excluded")
-        self.assertEqual(row["session_status"], "excluded")
-        self.assertEqual(row["billable_status"], "excluded")
-        self.assertEqual(row["reconciliation_status"], "removed_from_newest_covering_snapshot")
-        self.assertEqual(row["hidden_from_review"], 1)
+        self.assertNotEqual(row["candidate_status"], "excluded")
+        self.assertNotEqual(row["session_status"], "excluded")
+        self.assertNotEqual(row["billable_status"], "excluded")
+        self.assertNotEqual(row["reconciliation_status"], "calendar_presence_warning")
+        self.assertEqual(row["hidden_from_review"], 0)
+        warning = self.conn.execute(
+            """
+            SELECT review_item_id
+            FROM review_items
+            WHERE candidate_id = ?
+              AND reviewed_at IS NULL
+              AND unresolved_fields LIKE '%calendar_presence_warning%'
+            """,
+            (row["candidate_id"],),
+        ).fetchone()
+        self.assertIsNone(warning)
 
-    def test_blank_production_window_bounds_use_canonical_capture_window_coverage(self):
+    def test_upgrade_retires_existing_presence_warning_without_changing_session(self):
+        self.import_old_event()
+        candidate = self.candidate_and_session()
+        upsert_calendar_warning(
+            self.conn,
+            candidate_id=candidate["candidate_id"],
+            session_id=candidate["session_id"],
+            warning_code="calendar_presence_warning",
+            reason="Legacy broad absence warning.",
+        )
+        self.conn.execute(
+            "UPDATE calendar_event_candidates SET reconciliation_status = 'calendar_presence_warning' WHERE id = ?",
+            (candidate["candidate_id"],),
+        )
+        self.conn.commit()
+
+        changed = suppress_pending_events_missing_from_newest_covering_snapshot(self.conn)
+        self.conn.commit()
+
+        candidate = self.candidate_and_session()
+        self.assertEqual(changed, 1)
+        self.assertNotEqual(candidate["reconciliation_status"], "calendar_presence_warning")
+        self.assertNotEqual(candidate["candidate_status"], "excluded")
+        self.assertNotEqual(candidate["session_status"], "excluded")
+        self.assertIsNone(
+            self.conn.execute(
+                """
+                SELECT review_item_id
+                FROM review_items
+                WHERE candidate_id = ?
+                  AND reviewed_at IS NULL
+                  AND unresolved_fields LIKE '%calendar_presence_warning%'
+                """,
+                (candidate["candidate_id"],),
+            ).fetchone()
+        )
+
+    def test_v3_future_capture_is_raw_only_until_post_end_past_capture_arrives(self):
+        future_start = "2099-07-09T17:00:00-04:00"
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "v3-future",
+                    run_id="v3-future",
+                    capture_window="next_2_days",
+                    captured_at="2099-07-08T12:00:00.000Z",
+                    window_start="2099-07-08T00:00:00-04:00",
+                    window_end="2099-07-10T23:59:59-04:00",
+                    event_id="v3-event",
+                    title="Future Client | 60 | Phone",
+                    start_at=future_start,
+                    payload_version="3",
+                )
+            ],
+            "test",
+        )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM calendar_event_candidates").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
+
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "v3-past",
+                    run_id="v3-past",
+                    capture_window="past_3_days",
+                    captured_at="2099-07-10T22:30:00.000Z",
+                    window_start="2099-07-07T00:00:00-04:00",
+                    window_end="2099-07-10T23:59:59-04:00",
+                    event_id="v3-event",
+                    title="Future Client | 60 | Phone",
+                    start_at=future_start,
+                    payload_version="3",
+                )
+            ],
+            "test",
+        )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0], 2)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM calendar_event_candidates").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 1)
+
+    def test_v3_post_session_candidate_survives_three_day_window_aging_without_warning(self):
+        start_at = "2026-08-07T17:00:00-04:00"
+        import_rows(
+            self.conn,
+            [
+                raw_row(
+                    "v3-post-session",
+                    run_id="v3-post-session",
+                    capture_window="past_3_days",
+                    captured_at="2026-08-08T01:31:00-04:00",
+                    window_start="",
+                    window_end="",
+                    event_id="v3-completed-event",
+                    title="Completed Client | 60 | Phone",
+                    start_at=start_at,
+                    payload_version="3",
+                )
+            ],
+            "test",
+        )
+        before = self.candidate_and_session("Completed Client | 60 | Phone")
+        self.assertIsNotNone(before)
+
+        self.import_complete_run(
+            "three-days-later",
+            "2026-08-10T14:15:00-04:00",
+            future_rows=[("future-other", "future-other", "Other Client | 60 | Phone", "2026-08-11T17:00:00-04:00")],
+            past_window=("2026-08-07T00:00:00-04:00", "2026-08-10T23:59:59-04:00"),
+            future_window=("2026-08-10T00:00:00-04:00", "2026-08-17T23:59:59-04:00"),
+            explicit_windows=False,
+        )
+
+        after = self.candidate_and_session("Completed Client | 60 | Phone")
+        self.assertEqual(after["candidate_id"], before["candidate_id"])
+        self.assertNotEqual(after["candidate_status"], "excluded")
+        self.assertNotEqual(after["session_status"], "excluded")
+        self.assertNotEqual(after["reconciliation_status"], "calendar_presence_warning")
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM review_queue WHERE review_type = 'calendar_presence_warning' AND status = 'open'"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_protected_review_reconciliation_does_not_turn_omission_into_warning(self):
+        self.import_old_event()
+        self.import_complete_run(
+            "newer",
+            "2026-07-08T12:00:00.000Z",
+            future_rows=[("newer-moved", "janet-new", "Janet Hershaft | 60 | Phone", "2026-07-10T17:00:00-04:00")],
+            past_window=("2026-07-05T00:00:00-04:00", "2026-07-08T23:59:59-04:00"),
+            future_window=("2026-07-08T00:00:00-04:00", "2026-07-15T23:59:59-04:00"),
+        )
+        self.assertNotEqual(self.candidate_and_session()["candidate_status"], "excluded")
+
+        changed = suppress_pending_events_missing_from_newest_covering_snapshot(self.conn)
+        self.conn.commit()
+
+        row = self.candidate_and_session()
+        self.assertEqual(changed, 0)
+        self.assertNotEqual(row["candidate_status"], "excluded")
+        self.assertNotEqual(row["reconciliation_status"], "calendar_presence_warning")
+
+    def test_blank_production_window_bounds_do_not_create_presence_warning(self):
         self.import_complete_run(
             "older",
             "2026-07-03T12:00:00.000Z",
@@ -170,8 +332,9 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         )
 
         row = self.candidate_and_session()
-        self.assertEqual(row["candidate_status"], "excluded")
-        self.assertEqual(row["session_status"], "excluded")
+        self.assertNotEqual(row["candidate_status"], "excluded")
+        self.assertNotEqual(row["session_status"], "excluded")
+        self.assertNotEqual(row["reconciliation_status"], "calendar_presence_warning")
 
     def test_overlapping_newest_run_keeps_event_present_in_either_covering_batch(self):
         self.import_old_event()
@@ -367,9 +530,11 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         )
 
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0], 4)
-        self.assertEqual(self.candidate_and_session()["candidate_status"], "excluded")
+        row = self.candidate_and_session()
+        self.assertNotEqual(row["candidate_status"], "excluded")
+        self.assertNotEqual(row["reconciliation_status"], "calendar_presence_warning")
 
-    def test_moved_appointment_suppresses_old_occurrence_and_keeps_new_occurrence_available(self):
+    def test_moved_appointment_does_not_warn_and_keeps_new_occurrence_available(self):
         self.import_old_event()
         self.import_complete_run(
             "newer",
@@ -389,10 +554,16 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
             """
         ).fetchall()
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["review_status"], "excluded")
-        self.assertEqual(rows[0]["session_status"], "excluded")
+        self.assertNotEqual(rows[0]["review_status"], "excluded")
+        self.assertNotEqual(rows[0]["session_status"], "excluded")
         self.assertNotEqual(rows[1]["review_status"], "excluded")
         self.assertNotEqual(rows[1]["session_status"], "excluded")
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM review_queue WHERE review_type = 'calendar_presence_warning' AND status = 'open'"
+            ).fetchone()[0],
+            0,
+        )
 
 
 if __name__ == "__main__":

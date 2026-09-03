@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-018_delivery_contact_person
+024_month_close
 ```
 
 The registered migrations are:
@@ -32,6 +32,12 @@ The registered migrations are:
 16. `016_late_cancellation_billing` — late-cancellation billing snapshots and scheduled-rate preservation
 17. `017_relationship_filing_owner_target` — relationship filing-owner kind/record targets for people or billing organizations
 18. `018_delivery_contact_person` — explicit delivery-contact person on billing parties
+19. `019_session_ledger_archive` — reversible session-ledger archive metadata on calendar candidates
+20. `020_invoice_corrections` — correction-draft links and correction-reason history for finalized invoice replacement
+21. `021_cancellation_policy` — optional frozen cancellation-policy text on finalized invoices
+22. `022_calendar_recovery_actions` — reversible, scoped audit state for the legacy calendar-suppression and draft-duplicate recovery
+23. `023_client_invoice_title` — optional client-level `Dr.` invoice presentation flag
+24. `024_month_close` — additive local capture-run summaries synced from the Sheet `Run_Log`
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 
@@ -76,6 +82,7 @@ The operational database must never be deleted, reset, or recreated as a migrati
 
 - `raw_calendar_snapshots` — append-only captured calendar evidence
 - `sync_state` — durable full or incremental sync cursor and last-run outcome
+- `calendar_capture_runs` — local copies of immutable Sheet capture-run counts used by Month Close
 - `calendar_preferences` — local calendar disposition and filtering preferences
 - `app_metadata` — database-level application metadata such as demo mode
 
@@ -86,6 +93,7 @@ Raw snapshot rows are never edited or deleted by normal review workflows.
 - `calendar_event_candidates` — current interpretation of source calendar evidence
 - `candidate_identity_aliases` — exact event-ID, fingerprint, and conservative structural identity aliases
 - `candidate_duplicate_reconciliations` — audited duplicate-repair plans, apply state, and reversal state
+- `calendar_recovery_actions` — audited, reversible actions from the narrowly scoped legacy calendar recovery
 - `review_queue` and `review_items` — review status and decision tracking
 - `calendar_aliases` — approved shorthand, person associations, and classification aliases
 
@@ -145,6 +153,8 @@ The invoice schema supports:
 - prior-balance and account-summary snapshots
 - optional insurance-code snapshots
 - explicit delivery contact separate from payer identity
+- correction-draft links and reason snapshots for finalized invoice replacement
+- correction drafts excluded from automatic monthly staging and ordinary monthly-draft uniqueness
 - immutable finalized PDFs and invoice values
 - void and reissue rather than editing a finalized invoice
 

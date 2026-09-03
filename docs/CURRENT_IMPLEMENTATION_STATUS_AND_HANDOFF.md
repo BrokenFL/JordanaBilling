@@ -6,13 +6,13 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
-- **Migration head:** `018_delivery_contact_person`
+- **Migration head:** `024_month_close`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.22`
+- **Current test release target:** `v0.1.0-test.35`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post22`
+- **Current package/application version:** `0.1.0.post35`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.21` is superseded by test.22 for installation and update testing
+- **Prior test release:** `v0.1.0-test.34` is superseded by test.35 for installation and update testing
 
 ## Architecture
 
@@ -92,6 +92,9 @@ This is not yet a final production declaration. Brooke should remain available d
 - Outstanding, Paid, and All Payments views with shared Invoice Period filtering and first-name sorting
 - Shared invoice/payment financial-summary calculations
 - Read-only historical paid-at-session analyzer and CLI
+- Service-month payment and outstanding totals, independent of cash-received date
+- Receipts filed under the invoice service month even when paid later
+- Month Close screen with narrow calendar-to-receipt reconciliation
 
 ### Packaging And Installation
 
@@ -110,17 +113,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.22 supersedes test.21):
+The current controlled-beta release target is (test.35 supersedes test.34):
 
 ```text
-JordanaBilling-v0.1.0-test.22-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.35-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.22`
-- Python package/application version: `0.1.0.post22`
+- Release label: `v0.1.0-test.35`
+- Python package/application version: `0.1.0.post35`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,11 +133,67 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post22` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post35` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
-### Bug Fixes In test.22
+### Month Close And Service-Month Accounting In test.35
+
+1. **Dedicated Month Close** — one screen checks capture-run proof, past raw evidence, canonical UTC duplicates, unresolved sessions, finalized invoice coverage, payment allocations, and receipt filing.
+2. **Quiet schedule changes** — future-only events and ordinary edited-event history are informational. Only `past_3_days` evidence is expected to become a billing candidate.
+3. **Service-month totals** — Invoices shows Total Billable and Total Invoiced; Payments shows Payments Applied and Outstanding for the selected service month.
+4. **Receipt filing** — a receipt follows the oldest invoice service month represented by its allocations, not the date cash arrived.
+5. **No new Shortcut** — the existing v3 Shortcut already sends aggregate completion counts. Redeploying the existing Apps Script Web App makes `Run_Log` proof available to the backend.
+
+### Calendar Reliability And Client Presentation In test.34
+
+The refreshed Test.34 installer is an application-only refinement. The existing
+v3 Calendar Sync Shortcut remains compatible and does not require replacement.
+
+1. **Evidence-gated billing** — future rows remain raw scheduling evidence;
+   only post-session past capture can create billing candidates.
+2. **Quiet schedule movement and window aging** — a future appointment that is
+   moved before it occurs creates no candidate, while a post-session candidate
+   is never removed or warned merely because it later ages out of the rolling
+   capture window.
+3. **Canonical duplicate protection and reversible recovery** — repeated
+   captures, offset variants, and supported legacy recovery are handled without
+   rewriting finalized history.
+4. **Optional Dr. invoice title** — a Client Details checkbox controls `Dr.` on
+   editable/new invoice names while keeping calendar identity and finalized
+   snapshots unchanged.
+
+### Billing Improvements In test.33
+
+1. **Service-period prior balances** — an unpaid earlier service month remains in
+   a newer invoice's prior balance even if the earlier invoice was finalized
+   later; later service months remain excluded.
+2. **Finalization-preview parity** — Review & Finalize receives the same account
+   summary used by the draft and exact-PDF preview paths.
+3. **Single-line PDF dates** — the Date column fits every English long-form
+   month name without reducing the Service column.
+
+### Billing And Client Improvements In test.31
+
+1. **Canonical JavaScript invoice preview** — the draft editor, Review & Finalize, and finalized/void invoice preview cards remain JavaScript-rendered but now use the current canonical invoice layout and render model, including the correct header, Bill To block, Service table, totals, prior-invoice dates, Zelle details, and notes.
+
+### Billing And Client Improvements In test.30
+
+1. **Correction-draft balance fix** — correction drafts exclude their still-finalized parent invoice from prior unpaid balance calculations, preventing the parent’s current charges from appearing a second time as a prior balance.
+
+### Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the customer-facing invoice date is assigned from `finalized_at` in `America/New_York`, draft previews show `Assigned when finalized`, and corrected replacement invoices receive their own finalization date without rewriting the original finalized history.
+
+### Billing And Client Improvements In test.28
+
+1. **Optional cancellation policy** — a finalization checkbox controls the exact approved plain-text policy at the bottom of each invoice, and finalized policy snapshots remain frozen.
+2. **Late-cancellation billing** — Review exposes a dedicated editable custom-fee field, refreshes full fee from the confirmed client's Rate Card rule, and retains the saved billing choice through final approval.
+3. **Client rename and duplicate merge** — UUID-linked draft/future billing can be corrected while finalized invoice and receipt history remains unchanged.
+4. **Correct & Replace Invoice** — corrections use a linked replacement draft and atomically void the original only when the replacement finalizes safely.
+5. **Calendar shorthand recovery** — titles ending in a duration unit such as `30 min` become reviewable client sessions, and sync repairs matching candidate-only records from preserved raw evidence.
+
+### Bug Fixes Inherited from test.22
 
 1. **Confirmed client rate reconciliation** — Every sync preserves UUID-backed confirmed participants on pending sessions and evaluates the rate card with the confirmed client, participant combination, and billing-relationship scope. Client-specific rules therefore take precedence over the global standard rate.
 2. **Upgrade/no-new-rows rate reconciliation** — An empty incremental sync refreshes pending suggested rates from the current confirmed rate scope, correcting stale global suggestions without modifying raw snapshots or approved charges.

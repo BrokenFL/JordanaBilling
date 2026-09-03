@@ -9,14 +9,22 @@ Apple Calendar -> iPhone Shortcut -> Google Apps Script -> existing Google Sprea
 The normal Shortcut should capture all non-all-day events from all calendars:
 
 - 3 days backward with `capture_window=past_3_days`
-- 7 days forward with `capture_window=next_7_days`
+- 2 days forward with `capture_window=next_2_days`
 - timezone `America/New_York`
-- payload version `2`
+- payload version `3`
+- no fabricated `calendar_event_id`; Shortcuts exposes an event's optional URL
+  field, not EventKit's stable identifier, so the importer derives the
+  canonical structural fingerprint from title, UTC start/end, and calendar
+
+The v3 future batch is a short scheduling-health capture, not billable-session
+evidence. It stays in the raw Sheet/SQLite evidence layer. A candidate/session
+is derived only when the appointment appears in a later `past_3_days` capture
+after its offset-aware end time.
 
 Deprecated transition labels remain accepted by the local importer and the repo Apps Script source:
 
 - `past_7_days`
-- `next_2_days`
+- `next_7_days`
 - `legacy`
 
 ## June Backfill
@@ -56,7 +64,13 @@ It reads deployment-specific values from Script Properties:
 The API key must not be hardcoded in Apps Script source. The spreadsheet ID should point to the existing production spreadsheet; do not create a replacement spreadsheet.
 
 The sync endpoint returns `Raw_Event_Snapshots` in `(ingested_at, snapshot_key)`
-order. Pagination must use both `after_ingested_at` and `after_snapshot_key`:
+order and includes the existing `Run_Log` rows as `capture_runs`. The local
+sync upserts those run summaries into SQLite so Month Close can distinguish a
+complete transfer from a partial one, including zero-event runs. Older Apps
+Script deployments that omit `capture_runs` remain readable, but Month Close
+will report that capture proof is unavailable until the existing Web App is
+redeployed and synced. Pagination must use both `after_ingested_at` and
+`after_snapshot_key`:
 a row is included when its `ingested_at` is greater than the cursor timestamp,
 or when its `ingested_at` equals the cursor timestamp and its `snapshot_key` is
 greater than the cursor snapshot key. This prevents a 500-row page boundary
@@ -77,7 +91,8 @@ successful raw snapshot ingestion.
 
 The modern aggregate `run_complete` payload supplies
 `past_events_found`, `past_events_received`, `future_events_found`, and
-`future_events_received`. Apps Script now uses those supplied counts directly
+`future_events_received`, plus `future_capture_window=next_2_days` for the
+v3 normal Shortcut. Apps Script now uses those supplied counts directly
 for `Run_Log` instead of rereading `Raw_Event_Snapshots` to recount the run.
 If those received-count fields are absent, the legacy recount fallback remains
 in place for older payloads. Numeric zero counts are valid supplied values, not
@@ -168,7 +183,11 @@ the installed SQLite database without duplicating existing snapshots.
 
 ## Shortcut Status
 
-The current macOS Shortcuts library has `Jordana Calendar Snapshot v2`, but Apple `shortcuts` on this Mac can list/run/view/sign only; it does not export or install a Shortcut from the command line. Live Shortcut specs are therefore prepared locally in ignored files, while final installation/update remains a device-side step unless a safer Shortcuts automation path is added.
+The current macOS Shortcuts library contains the live Calendar Sync shortcut,
+but Apple `shortcuts` on this Mac can list/run/view/sign only; it does not
+export or install a Shortcut from the command line. Live Shortcut specs are
+therefore prepared locally in ignored files, while final installation/update
+remains a device-side step unless a safer Shortcuts automation path is added.
 
 Do not commit live Shortcut artifacts. The generated payload specs contain the endpoint and key and must stay under `data/private/shortcut-build/`.
 
@@ -178,11 +197,14 @@ The Python importer preserves every new raw snapshot unless the exact `snapshot_
 
 1. `calendar_event_id`
 2. `event_fingerprint`
-3. title/start/end/calendar fallback evidence
+3. exact canonical title, UTC start/end, duration, and calendar fallback evidence
 
-Repeated normal captures, repeated June backfills, and overlap between normal and backfill windows should not create duplicate operational sessions when stable event identity is present. Approved session values remain protected from silent overwrite; source raw snapshot links and raw calendar title evidence may refresh.
+Repeated normal captures, repeated June backfills, and overlap between normal and backfill windows should not create duplicate operational sessions. A real upstream `calendar_event_id` is preferred when one is supplied; otherwise the importer uses the canonical structural fingerprint. An event's optional URL must never be substituted for its identity because unrelated appointments can reuse the same URL. Approved session values remain protected from silent overwrite; source raw snapshot links and raw calendar title evidence may refresh.
 
-Future events may be imported as proposed, reviewable sessions. They must not be treated as approved, finalized, paid, or invoice-ready merely because they were captured. A future homepage Upcoming Sessions section should query unapproved/proposed sessions by `session_date`/`start_at` and avoid invoice readiness state.
+For v3, future events remain raw schedule evidence and do not create proposed
+sessions. Only a later post-end past capture becomes a normal reviewable
+session. No future raw event may be treated as approved, finalized, paid, or
+invoice-ready merely because it was captured.
 
 ## Raw Snapshot Replay Recovery
 
@@ -211,10 +233,37 @@ PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 cale
 
 Apply mode creates and verifies a SQLite backup before derived writes. The
 replay groups existing raw snapshots by calendar event identity, chooses the
-newest captured/ingested version for pending records, creates missing
-candidates/sessions, and excludes pending sessions whose latest evidence is
-personal/admin/non-client. Approved sessions are not silently rewritten; later
-source changes create review warnings instead.
+newest billing-evidence version for pending records, and creates missing
+candidates/sessions when the preserved raw evidence qualifies. Explicit
+personal/admin/non-client source evidence may exclude a pending session;
+ordinary absence from a later rolling capture neither excludes the session nor
+creates a Review warning. Approved sessions are not silently rewritten.
+
+## Legacy Absence-Suppression Recovery
+
+`calendar-recovery` is a separate, one-time repair for records hidden by the
+old rule that treated absence from a later snapshot as proof that an appointment
+did not happen. It reads the local database only; it never edits Sheets or raw
+calendar snapshots.
+
+Run a scoped dry run first:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-recovery --dry-run --month 2026-08
+```
+
+Apply requires the same explicit month and confirmation phrase:
+
+```bash
+PYTHONPATH=app python3 -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-recovery --apply --month 2026-08 --confirm-apply APPLY_CALENDAR_RECOVERY
+```
+
+The recovery restores a session only when preserved raw evidence shows it in a
+post-end `past_3_days` capture. It returns that session to normal Review without
+approval or invoice creation. Exact timezone-offset duplicates are quarantined
+reversibly; conflicting duration/end-time evidence is only flagged; and exact
+duplicates are removed only from safe editable draft invoices. Apply and
+reversal both create a verified private backup for the operational database.
 
 ### June 2026 Recovery Instructions For Jordana
 
@@ -238,6 +287,14 @@ Expected behavior:
 - Excluded or non-client latest evidence is marked excluded and does not enter billing.
 - Approved sessions are not silently changed; source changes create review warnings.
 - Reports and invoice staging exclude unresolved or excluded rows until Jordana resolves and approves them.
+
+## Freshness Warning
+
+The app displays a global warning when no successful calendar sync has been
+recorded, the timestamp is invalid, or the most recent successful sync is more
+than 18 hours old. The warning does not alter review data; it tells Jordana that
+recent cancellations or schedule changes may not yet be represented locally.
+It clears automatically after a successful sync refreshes dashboard status.
 
 ## Rollback
 

@@ -93,6 +93,43 @@ for (const [input, expected] of cases) {
         self.assertNotIn("Invoice Date:", preview)
         self.assertNotIn("Billing Period", preview)
 
+    def test_invoice_preview_matches_current_canonical_invoice_layout(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function renderCanonicalInvoicePreview")
+        end = js.index('$("newInvoiceBtn").onclick', start)
+        preview = js[start:end]
+        self.assertIn('class="invoice-preview-sender"', preview)
+        self.assertIn('class="invoice-billto"', preview)
+        self.assertIn('class="invoice-preview-right"', preview)
+        self.assertIn('class="invoice-preview-logo"', preview)
+        self.assertIn('<th>Service</th>', js)
+        self.assertNotIn('<th>Description</th>', preview)
+        self.assertIn("hasAdjustedSummary", preview)
+        self.assertIn("invoice-preview-summary-row", preview)
+        self.assertIn("payment_zelle_title", preview)
+        self.assertIn("payment_zelle_value", preview)
+        self.assertIn('class="invoice-notes"', preview)
+
+    def test_invoice_preview_formats_prior_invoice_dates_as_calendar_dates(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        start = js.index("function invoicePreviewLongDate")
+        end = js.index("function renderCanonicalInvoicePreview", start)
+        helper = js[start:end]
+        script = helper + """
+const cases = [
+  ["2026-06-02", "June 02, 2026"],
+  ["2026-12-31T00:00:00Z", "December 31, 2026"],
+  ["not-a-date", "not-a-date"],
+];
+for (const [input, expected] of cases) {
+  const actual = invoicePreviewLongDate(input);
+  if (actual !== expected) {
+    throw new Error(`${input} -> ${actual}, expected ${expected}`);
+  }
+}
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
     def test_inspector_dirty_list_does_not_reference_removed_session_fields(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
@@ -115,7 +152,8 @@ for (const [input, expected] of cases) {
         html = Path("app/jordana_invoice/static/review.html").read_text()
 
         self.assertIn("Payments", html)
-        self.assertIn('id="paymentsPeriodFilter"', html)
+        self.assertIn('id="paymentsSummaryMonth"', html)
+        self.assertNotIn('id="paymentsPeriodFilter"', html)
         self.assertIn("<th>Status</th><th>Service Period</th><th>Bill To</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
         self.assertNotIn("<th>Status</th><th>Invoice Number</th>", html)
         self.assertNotIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th>", html)
@@ -320,7 +358,8 @@ for (const [args, expected] of cases) {
         self.assertNotIn("prompt(", fn)
         self.assertNotIn("confirm(", fn)
         self.assertIn("returnApprovedState.submitting", fn)
-        self.assertIn('body: JSON.stringify({ action_source: "review_ui" })', fn)
+        self.assertIn("correction_invoice_id: correctionInvoiceId", fn)
+        self.assertIn("...(correctionInvoiceId ? { correction_invoice_id: correctionInvoiceId } : {})", fn)
         self.assertIn("await showReviewWorkbench();", fn)
         self.assertIn("await selectCandidate(candidateId);", fn)
         self.assertIn("Session returned to Review. Please review and approve it again before billing.", js)
@@ -596,7 +635,11 @@ for (const [args, expected] of cases) {
 
         self.assertIn("function firstPresent", js)
         self.assertIn("firstPresent(s.approved_rate_cents, s.suggested_rate_cents)", js)
-        self.assertIn('if ($("approvedRateInput") && attendanceOutcome === "late_cancellation" && billingTreatment === "waived")', js)
+        self.assertIn('id="customCancellationFeeInput"', js)
+        self.assertIn("function selectedSessionRateValue()", js)
+        self.assertIn('$("customCancellationFeeInput")?.value', js)
+        self.assertIn('$("billingTreatmentInput")?.value || state.detail?.session?.billing_treatment || ""', js)
+        self.assertIn('if (billingTreatment === "waived")', js)
 
     def test_confirmed_client_summary_renders_without_participant_chips(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
@@ -1283,7 +1326,11 @@ for (const [args, expected] of cases) {
         self.assertIn('location.hash = "sessions";', js)
         self.assertIn('await api(`/api/sessions?${params}`)', js)
         self.assertIn('state.sessions.offset = 0;', js)
-        self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0 }', js)
+        self.assertIn('sessions: { items: [], offset: 0, limit: 30, total: 0, selectedIds: new Set() }', js)
+        self.assertIn('id="sessionsArchiveFilter"', html)
+        self.assertIn('id="archiveSelectedSessionsBtn"', html)
+        self.assertIn('id="restoreSelectedSessionsBtn"', html)
+        self.assertIn('class="session-row-checkbox"', js)
         self.assertIn('Read-only appointment ledger', js)
         self.assertNotIn('saveSessions', js)
 

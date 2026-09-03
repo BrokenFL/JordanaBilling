@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.22
+### Current Test Build — v0.1.0-test.35
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.22
-- **Python package/application version:** 0.1.0.post22
+- **Release label:** v0.1.0-test.35
+- **Python package/application version:** 0.1.0.post35
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,14 +36,60 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post22` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post35` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.22 preserves the review-after-session safeguard and corrects pending-rate
-reconciliation for confirmed clients during sync and automatic name matching.
+test.35 preserves the prior safeguards and adds Month Close, service-month
+financial totals, capture-run proof synced from `Run_Log`, and invoice-month
+receipt filing. The existing v3 Shortcut remains compatible; only the existing
+Apps Script Web App source needs redeployment for capture-run sync.
+
+### Calendar Reliability And Client Presentation In test.34
+
+The refreshed Test.34 artifact keeps the existing v3 Calendar Sync Shortcut
+contract; Jordana does not need another Shortcut before its first run.
+
+1. **Past evidence is required for billing** — the two-day future window is raw
+   scheduling evidence; a later three-day past capture supplies billing evidence.
+2. **Moved appointments stay quiet** — future-only appointments create no
+   candidate, while post-session evidence remains reviewable without a routine
+   absence warning when it ages out of the rolling capture window.
+3. **Duplicate and recovery safeguards** — canonical event identity and the
+   reversible recovery ledger protect drafts and finalized history.
+4. **Optional Dr. invoice title** — an intentional Client Details checkbox
+   updates editable/new invoice names without changing calendar identity.
+
+### Billing Improvements In test.33
+
+1. **Service-period prior balances** — prior-invoice eligibility compares billing
+   periods before customer-facing finalization dates, so late-finalized earlier
+   months remain visible on newer draft invoices.
+2. **Review & Finalize parity** — the finalization preview receives the same
+   calculated account summary used by draft HTML and exact-PDF previews.
+3. **Single-line service dates** — the PDF Date column fits every English
+   long-form month name at the actual invoice font and padding while preserving
+   the Service column width.
+
+### Billing Improvements In test.32
+
+1. **Correction-draft editing** — sessions returned from a finalized invoice
+   can be corrected in a dedicated draft when no payment history exists; the
+   finalized invoice remains immutable and the draft refreshes or removes its
+   replacement line as review decisions change.
+2. **Report Issue recovery** — diagnostic report writes now use the installed
+   Reports folder and show a safe actionable message when that folder is not
+   writable.
+
+### Billing And Client Improvements In test.30
+
+1. **Correction-draft balance fix** — correction drafts exclude their still-finalized parent invoice from prior unpaid balance calculations, preventing the parent’s current charges from appearing a second time as a prior balance.
+
+### Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the customer-facing invoice date is assigned from `finalized_at` in `America/New_York`, draft previews show `Assigned when finalized`, and corrected replacement invoices receive their own finalization date without rewriting the original finalized history.
 
 ### Bug Fixes In test.22
 

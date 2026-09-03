@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from jordana_invoice.db import connect, init_db
+from jordana_invoice.importer import import_rows
 from jordana_invoice.google_sync import (
     EMPTY_CURSOR,
     SOURCE_NAME,
@@ -127,6 +128,19 @@ class SyncTests(unittest.TestCase):
                         "ok": True,
                         "record_type": "sync_response",
                         "rows": [],
+                        "capture_runs": [{
+                            "run_id": "capture-1",
+                            "batch_name": "JORDANA_CALENDAR_TEST",
+                            "started_at": "2026-06-30T08:00:00-04:00",
+                            "completed_at": "2026-06-30T08:01:00-04:00",
+                            "past_found": 4,
+                            "past_received": 4,
+                            "future_found": 2,
+                            "future_received": 2,
+                            "status": "complete",
+                            "error_message": "",
+                            "updated_at": "2026-06-30T12:01:00Z",
+                        }],
                         "next_cursor": EMPTY_CURSOR,
                         "has_more": False,
                     }
@@ -135,6 +149,76 @@ class SyncTests(unittest.TestCase):
         )
         self.assertEqual(result.rows_imported, 0)
         self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 0)
+        capture = self.conn.execute(
+            "SELECT * FROM calendar_capture_runs WHERE run_id = 'capture-1'"
+        ).fetchone()
+        self.assertEqual(capture["status"], "complete")
+        self.assertEqual(capture["past_received"], 4)
+
+    def test_empty_sync_recovers_candidate_only_record_after_parser_upgrade(self):
+        import_rows(
+            self.conn,
+            [row("legacy-trailing-min", title="Morgan Vale 1 30 min")],
+            "legacy_test",
+        )
+        candidate = self.conn.execute(
+            "SELECT id FROM calendar_event_candidates WHERE title = ?",
+            ("Morgan Vale 1 30 min",),
+        ).fetchone()
+        session = self.conn.execute(
+            "SELECT id FROM sessions WHERE candidate_id = ?",
+            (candidate["id"],),
+        ).fetchone()
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.conn.execute(
+            "DELETE FROM session_participants WHERE session_id = ?",
+            (session["id"],),
+        )
+        self.conn.execute("DELETE FROM sessions WHERE id = ?", (session["id"],))
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'unresolved',
+                proposed_client_name = 'Morgan',
+                review_status = 'needs_classification'
+            WHERE id = ?
+            """,
+            (candidate["id"],),
+        )
+        self.conn.commit()
+        raw_before = count(self.conn, "raw_calendar_snapshots")
+
+        result = sync_with_connection(
+            self.conn,
+            self.config,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [],
+                        "next_cursor": EMPTY_CURSOR,
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+
+        recovered = self.conn.execute(
+            """
+            SELECT s.duration_minutes, c.classification, c.proposed_client_name
+            FROM calendar_event_candidates c
+            JOIN sessions s ON s.candidate_id = c.id
+            WHERE c.id = ?
+            """,
+            (candidate["id"],),
+        ).fetchone()
+        self.assertEqual(result.rows_imported, 0)
+        self.assertEqual(count(self.conn, "raw_calendar_snapshots"), raw_before)
+        self.assertEqual(recovered["classification"], "client_session")
+        self.assertEqual(recovered["proposed_client_name"], "Morgan Vale")
+        self.assertEqual(recovered["duration_minutes"], 30)
 
     def test_dry_run_does_not_write_sync_state_or_rows(self):
         result = sync_with_connection(
@@ -160,6 +244,44 @@ class SyncTests(unittest.TestCase):
             self.conn.execute(
                 "SELECT 1 FROM sync_state WHERE source_name = ?",
                 (SOURCE_NAME,),
+            ).fetchone()
+        )
+
+    def test_automatic_dry_run_does_not_apply_pending_migrations(self):
+        self.conn.execute("DROP TABLE calendar_recovery_actions")
+        self.conn.execute(
+            "DELETE FROM schema_migrations WHERE migration_id = ?",
+            ("022_calendar_recovery_actions",),
+        )
+        self.conn.commit()
+
+        result = sync_calendar_automatically(
+            self.config,
+            dry_run=True,
+            transport=FakeTransport(
+                [
+                    {
+                        "ok": True,
+                        "record_type": "sync_response",
+                        "rows": [],
+                        "next_cursor": EMPTY_CURSOR,
+                        "has_more": False,
+                    }
+                ]
+            ),
+        )
+
+        self.assertTrue(result.dry_run)
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+                ("022_calendar_recovery_actions",),
+            ).fetchone()
+        )
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("calendar_recovery_actions",),
             ).fetchone()
         )
 

@@ -15,6 +15,7 @@
           <a class="active" href="/review" id="reviewNav">Review Queue <span id="navNeeds" class="count">0</span></a>
           <a href="#" id="calendarImportNav">Calendar Import</a>
           <a href="#" id="reconciliationNav">Reconciliation</a>
+          <a href="/month-close" id="monthCloseNav">Month Close</a>
           <a href="#" id="clientsNav">Billing Relationships</a>
           <a href="#" id="peopleNav">Clients</a>
           <a href="#" id="rateCardNav">Rate Card</a>
@@ -45,6 +46,7 @@
             <div><strong id="personalAdmin">0</strong><label>Personal/Admin</label></div>
           </div>
         </header>
+        <div id="calendarFreshnessWarning" class="calendar-freshness-warning" role="status" hidden></div>
 
         <section class="review-layout" id="reviewWorkbench">
           <section class="list-pane">
@@ -324,6 +326,27 @@
           </section>
         </section>
 
+        <section class="settings-view" id="monthCloseView" hidden>
+          <div class="crm-header">
+            <div><h2>Month Close</h2><p>One focused check from calendar capture through receipts.</p></div>
+          </div>
+          <section class="settings-card">
+            <div class="crm-tools reconciliation-toolbar">
+              <label class="field inline-field">Service month<input id="monthCloseMonth" type="month" /></label>
+              <button id="runMonthCloseBtn" class="save">Run Month Close Check</button>
+            </div>
+            <div class="help">Moved or deleted future appointments do not create warnings. Only past-3-days evidence is expected to become a session.</div>
+          </section>
+          <div id="monthCloseStatus" class="month-close-status" role="status"></div>
+          <div class="summary-cards financial-summary-cards month-close-money" aria-live="polite">
+            <div class="summary-card"><div class="summary-card-label">Total Billable</div><div class="summary-card-value" id="monthCloseBillable">$0.00</div><div class="summary-card-note">Approved service-month sessions</div></div>
+            <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value" id="monthCloseInvoiced">$0.00</div><div class="summary-card-note">Finalized for this service month</div></div>
+            <div class="summary-card"><div class="summary-card-label">Payments Applied</div><div class="summary-card-value" id="monthClosePayments">$0.00</div><div class="summary-card-note">Applied to this service month</div></div>
+            <div class="summary-card"><div class="summary-card-label">Outstanding</div><div class="summary-card-value" id="monthCloseOutstanding">$0.00</div><div class="summary-card-note">For this service month only</div></div>
+          </div>
+          <div id="monthCloseChecks" class="month-close-checks"><div class="empty-state">Choose a month and run the check.</div></div>
+        </section>
+
         <section class="crm-view" id="clientsView" hidden>
           <div class="crm-header">
             <div><h2>Billing Relationships</h2><p>Who receives invoices and who they pay for, including shared billing groups.</p></div>
@@ -360,6 +383,10 @@
           <div class="crm-header">
             <div><h2>Sessions</h2><p>Read-only appointment ledger across reviewed and unresolved calendar records.</p></div>
             <div class="crm-tools">
+              <button id="selectAllSessionsBtn" type="button">Select all visible</button>
+              <button id="clearSessionSelectionBtn" type="button">Clear</button>
+              <button id="archiveSelectedSessionsBtn" type="button">Archive selected</button>
+              <button id="restoreSelectedSessionsBtn" type="button" hidden>Restore selected</button>
               <select id="sessionsDateFilter">
                 <option value="rolling_30">Rolling 30 days</option>
                 <option value="this_month">This month</option>
@@ -375,11 +402,16 @@
                 <option value="unpaid">Unpaid</option>
                 <option value="paid_at_session">Paid at time of session</option>
               </select>
+              <select id="sessionsArchiveFilter">
+                <option value="active" selected>Current</option>
+                <option value="archived">Archived</option>
+                <option value="all">All</option>
+              </select>
             </div>
           </div>
           <table class="review-table sessions-table">
             <thead>
-              <tr><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Actions</th></tr>
+              <tr><th><span class="sr-only">Select</span></th><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Actions</th></tr>
             </thead>
             <tbody id="sessionsRows"></tbody>
           </table>
@@ -396,12 +428,11 @@
             </div>
           </div>
           <div class="financial-summary-toolbar">
-            <label class="field">Summary month<input id="invoiceSummaryMonth" type="month" /></label>
+            <label class="field">Service month totals<input id="invoiceSummaryMonth" type="month" /></label>
           </div>
           <div class="summary-cards financial-summary-cards" id="invoiceSummaryCards" aria-live="polite">
-            <div class="summary-card"><div class="summary-card-label">Draft Invoice Value</div><div class="summary-card-value" id="invoiceDraftValue">$0.00</div><div class="summary-card-note">Current drafts</div></div>
-            <div class="summary-card"><div class="summary-card-label">Finalized This Month</div><div class="summary-card-value" id="invoiceFinalizedValue">$0.00</div><div class="summary-card-note">By finalization date</div></div>
-            <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value" id="invoiceOutstandingValue">$0.00</div><div class="summary-card-note">All finalized invoices</div></div>
+            <div class="summary-card"><div class="summary-card-label">Total Billable</div><div class="summary-card-value" id="invoiceBillableValue">$0.00</div><div class="summary-card-note">Approved sessions in this service month</div></div>
+            <div class="summary-card"><div class="summary-card-label">Total Invoiced</div><div class="summary-card-value" id="invoiceInvoicedValue">$0.00</div><div class="summary-card-note">Finalized for this service month</div></div>
           </div>
           <div id="draftMonthTotals" class="draft-month-summary" aria-live="polite"></div>
           <div class="invoice-batch-toolbar" aria-label="Draft invoice packet tools">
@@ -431,13 +462,11 @@
             <div><h2>Payments</h2><p>Record payments, review outstanding and paid invoices, and browse the payment ledger.</p></div>
           </div>
           <div class="financial-summary-toolbar">
-            <label class="field">Summary month<input id="paymentsSummaryMonth" type="month" /></label>
-            <label class="field">Invoice Period<select id="paymentsPeriodFilter"><option value="">All</option></select></label>
+            <label class="field">Service month<input id="paymentsSummaryMonth" type="month" /></label>
           </div>
           <div class="summary-cards financial-summary-cards" id="paymentsSummaryCards" aria-live="polite">
-            <div class="summary-card"><div class="summary-card-label">Invoiced This Month</div><div class="summary-card-value" id="paymentsInvoicedValue">$0.00</div><div class="summary-card-note">Finalized invoices</div></div>
-            <div class="summary-card"><div class="summary-card-label">Payments Received This Month</div><div class="summary-card-value" id="paymentsReceivedValue">$0.00</div><div class="summary-card-note">Posted cash receipts</div></div>
-            <div class="summary-card"><div class="summary-card-label">Outstanding Balance</div><div class="summary-card-value" id="paymentsOutstandingValue">$0.00</div><div class="summary-card-note">All finalized invoices</div></div>
+            <div class="summary-card"><div class="summary-card-label">Payments Applied</div><div class="summary-card-value" id="paymentsAppliedValue">$0.00</div><div class="summary-card-note">Applied to this service month</div></div>
+            <div class="summary-card"><div class="summary-card-label">Outstanding</div><div class="summary-card-value" id="paymentsOutstandingValue">$0.00</div><div class="summary-card-note">For this service month only</div></div>
           </div>
           <div class="payments-tabs" id="paymentsTabs">
             <button class="payments-tab active" data-payments-tab="outstanding">Outstanding</button>
@@ -481,6 +510,13 @@
           </div>
           <div id="reportsRefreshMessage" class="settings-message" role="status"></div>
           <div class="reports-error" id="reportsError" hidden></div>
+          <div class="report-card-grid">
+            <div class="report-card">
+              <h3>Support Diagnostics</h3>
+              <p class="report-card-desc">Create a sanitized technical report for troubleshooting. Client names, raw calendar text, invoices, and the database are excluded.</p>
+              <button id="downloadSupportDiagnosticsBtn" class="save">Download Diagnostics JSON</button>
+            </div>
+          </div>
           <div class="report-card-grid" id="reportCardGrid"></div>
           <div class="reports-privacy-note">
             Reports may contain client names, rates, and payment information. Store downloaded files securely.

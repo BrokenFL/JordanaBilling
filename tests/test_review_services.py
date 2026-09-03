@@ -14,6 +14,7 @@ from jordana_invoice.invoice_services import (
 )
 from jordana_invoice.rates import seed_rate_rule
 from jordana_invoice.review_services import (
+    archive_already_classified_personal_admin,
     approve_candidate,
     create_account,
     create_billing_party,
@@ -123,6 +124,22 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(count(self.conn, "sessions"), 1)
         self.assertEqual(count(self.conn, "session_participants"), 2)
         self.assertGreaterEqual(count(self.conn, "calendar_aliases"), 1)
+
+    def test_personal_admin_cleanup_archives_only_pending_classified_record(self):
+        self.conn.execute(
+            "UPDATE calendar_event_candidates SET classification = 'personal', review_status = 'needs_classification' WHERE id = ?",
+            (self.candidate_id,),
+        )
+        self.conn.execute(
+            "UPDATE sessions SET review_status = 'needs_classification', billable_status = 'proposed' WHERE candidate_id = ?",
+            (self.candidate_id,),
+        )
+        self.conn.commit()
+
+        result = archive_already_classified_personal_admin(self.conn)
+
+        self.assertEqual(result["archived"], 1)
+        self.assertEqual(get_review_candidate(self.conn, self.candidate_id)["session"]["review_status"], "excluded")
         self.assertGreater(count(self.conn, "audit_log"), 0)
 
     def test_approved_session_rejects_relationship_and_bill_to_edits(self):
@@ -947,18 +964,16 @@ class ReviewServiceTests(unittest.TestCase):
         self.assertEqual(row["time"], "1:30 PM")
         self.assertEqual(detail["session"]["start_at"], "2026-06-17T13:30:00-04:00")
 
-    def test_saving_empty_participant_list_clears_participants_and_suppresses_proposal(self):
+    def test_saving_empty_participant_list_is_rejected_and_preserves_proposal(self):
         candidate_id = self.import_without_persisted_participants("snap-empty", "Leah Grossman 630 30")
 
-        saved = save_relationship_section(self.conn, candidate_id, {"participants": []})
+        with self.assertRaisesRegex(ValueError, "Add or select at least one client"):
+            save_relationship_section(self.conn, candidate_id, {"participants": []})
 
-        session_id = saved["session"]["id"]
-        self.assertEqual(saved["participants"], [])
         self.assertEqual(
-            self.conn.execute("SELECT COUNT(*) AS count FROM session_participants WHERE session_id = ?", (session_id,)).fetchone()["count"],
-            0,
+            get_review_candidate(self.conn, candidate_id)["participants"][0]["display_name"],
+            "Leah Grossman",
         )
-        self.assertEqual(get_review_candidate(self.conn, candidate_id)["participants"], [])
 
     def test_confirming_participant_preserves_raw_calendar_evidence(self):
         candidate_id = self.import_without_persisted_participants("snap-raw", "Leah Grossman 630 30")

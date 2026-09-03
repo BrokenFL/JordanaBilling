@@ -66,7 +66,8 @@ class ReviewJsEscapingTests(unittest.TestCase):
         start = REVIEW_JS.index("function renderInvoiceEditor")
         end = REVIEW_JS.index("function renderInvoicePreview")
         section = REVIEW_JS[start:end]
-        self.assertIn("escapeAttr(i.invoice_date)", section)
+        self.assertNotIn("escapeAttr(i.invoice_date)", section)
+        self.assertIn("Assigned when finalized.", section)
         self.assertIn("escapeAttr(line.invoice_line_item_id)", section)
         self.assertIn("escapeHtml(line.description_snapshot)", section)
 

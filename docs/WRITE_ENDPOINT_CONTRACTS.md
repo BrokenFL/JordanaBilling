@@ -150,12 +150,13 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 ### POST /api/review/candidates/{id}/return-to-review
 
 - **Handler**: inline in `do_POST`
-- **Service**: `return_approved_session_to_review(conn, candidate_id, reason=data.get("reason", ""), action_source=data.get("action_source", "review_ui"))`
-- **Accepted fields**: `reason` (optional, default `""`), `action_source` (optional)
+- **Service**: `return_approved_session_to_review(conn, candidate_id, reason, action_source, correction_invoice_id)`
+- **Accepted fields**: `reason` (optional, default `""`), `action_source` (optional), `correction_invoice_id` (optional, non-empty string)
 - **Success status**: 200
-- **Success response**: full candidate detail dict with `returned_to_review: true` and `draft_invoice_ids_removed`
+- **Success response**: full candidate detail dict with `returned_to_review: true` and `draft_invoice_ids_removed` for ordinary drafts; correction returns additionally identify `correction_invoice_id` and `correction_draft_line_preserved: true`
 - **DB tables**: `sessions`, `calendar_event_candidates`, `review_items`, `audit_log`, and draft-only `invoice_line_items`/`invoices` when the session was staged in a draft
 - **Eligibility**: only approved sessions; finalized invoices, posted session payments, payment allocations tied to the session, allocations tied to an invoice containing the session, or related receipts block the action
+- **Correction-draft exception**: when `correction_invoice_id` identifies the exact open replacement draft for an unpaid finalized parent invoice and the session appears on both records, the parent finalized invoice alone does not block the action. The replacement line remains while the session is in Review; reapproval refreshes it, and a nonbillable decision removes only that replacement line. Payment or receipt history still blocks the transition.
 - **Payment status distinction**: a stored payment-status label alone does not block the action unless actual payment, allocation, receipt, or finalized-invoice history exists
 - **Transaction boundary**: status change, audit record, review item, and any draft-only invoice-line removal commit atomically; blocked failures make no partial changes
 - **Existing tests**: `test_review_services.py` service-level return/blocking/audit coverage and `test_review_ui_static.py` UI contract coverage
@@ -216,7 +217,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `create_person(conn, data)`
-- **Accepted fields**: `display_name` (string or dict), `first_name`, `last_name`
+- **Accepted fields**: `display_name` (string or dict), `first_name`, `last_name`, `preferred_name`, `use_dr_on_invoices` (boolean), billing contact fields, and administrative notes
 - **Required fields**: `display_name` (enforced at service level: "Display name is required.")
 - **Optional fields**: `first_name`, `last_name`
 - **Success status**: 200
@@ -231,7 +232,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 - **Handler**: inline in `do_POST`
 - **Service**: `update_person(conn, person_id, data)`
-- **Accepted fields**: `display_name`, `first_name`, `last_name`, `active`, `administrative_notes`, `person_code`
+- **Accepted fields**: `display_name`, `first_name`, `last_name`, `preferred_name`, `use_dr_on_invoices` (boolean), `active`, billing contact fields, `administrative_notes`, `person_code`
 - **Required fields**: none at HTTP layer
 - **Optional fields**: all
 - **Success status**: 200
@@ -649,6 +650,20 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Idempotent**: no — voiding a non-finalized invoice raises an error
 - **Existing tests**: `test_invoice_lifecycle.py`, `test_payment_and_finalization.py`
 - **Missing contract coverage**: HTTP-level shape
+
+### POST /api/invoices/{id}/correct
+
+- **Handler**: inline in `do_POST`
+- **Service**: `start_invoice_correction(conn, invoice_id, reason)`
+- **Accepted fields**: `reason` (required, non-empty)
+- **Success status**: 200
+- **Success response**: editable correction draft invoice dict linked to the finalized parent
+- **Error status codes**: 400 (invoice must be finalized, payment history blocks correction, or reason is missing)
+- **DB tables**: `invoices` (new draft with `correction_of_invoice_id` and `correction_reason`), `invoice_line_items` (cloned draft lines), `audit_log`
+- **Idempotent**: yes while an open correction draft exists for the parent; the existing draft is returned
+- **Finalization behavior**: the correction draft receives a new number/PDF and the original is atomically marked void; the original snapshots/PDF are preserved
+- **Payment safety**: any allocation history tied to the original invoice lines or source sessions blocks starting or finalizing the correction
+- **Existing tests**: `test_invoice_corrections.py`, `test_write_endpoint_contracts.py`
 
 ### POST /api/invoices/{id}/filing-owner
 
@@ -1262,6 +1277,7 @@ enum-like choices) before the service layer is called.
 - `parse_preview_finalize_request` — POST /api/invoices/{id}/preview-finalize
 - `parse_finalize_invoice_request` — POST /api/invoices/{id}/finalize
 - `parse_void_invoice_request` — POST /api/invoices/{id}/void
+- `parse_correct_invoice_request` — POST /api/invoices/{id}/correct
 - `parse_update_invoice_filing_owner_request` — POST /api/invoices/{id}/filing-owner
 - `parse_document_action_request` — POST /api/invoices/{id}/document-action
 - `parse_print_preview_request` — POST /api/invoices/{id}/print-preview and /draft-pdf

@@ -5,12 +5,20 @@ import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
 from .calendar_preferences import CalendarDisposition, classify_calendar
-from .capture_windows import completed_run_windows
+from .calendar_identity import (
+    canonical_datetime,
+    canonical_event_slot_parts,
+    canonical_structural_parts,
+    has_complete_event_slot_identity,
+    has_complete_structural_identity,
+    utc_datetime,
+)
+from .calendar_warnings import resolve_calendar_warning, upsert_calendar_warning
+from .capture_windows import completed_run_windows, is_past_capture_window
 from .db import (
     OperationalImportAuthorization,
     _create_backup,
@@ -63,6 +71,7 @@ class CandidateIdentityResolution:
     candidate_id: str | None = None
     reason: str = "new_candidate"
     ambiguous: bool = False
+    candidate_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -425,11 +434,26 @@ def _possible_duplicate_sessions(conn: sqlite3.Connection, month: str | None) ->
     ).fetchall()
     groups: dict[tuple[str, str, str], list[dict[str, object]]] = defaultdict(list)
     for row in rows:
-        groups[(text(row["session_date"]), text(row["start_at"]), text(row["billing_party_id"]))].append(_session_summary(row))
+        # A Shortcut serialization bug once represented the same instant with
+        # two different UTC offsets.  Compare instants in UTC so the
+        # reconciliation report shows those as one possible duplicate instead
+        # of hiding them in separate literal timestamp buckets.
+        groups[
+            (
+                canonical_datetime(row["start_at"]),
+                canonical_datetime(row["end_at"]),
+                text(row["billing_party_id"]),
+            )
+        ].append(_session_summary(row))
     return [
-        {"date": date, "start_at": start_at, "billing_party_id": bill_to, "sessions": sessions}
-        for (date, start_at, bill_to), sessions in groups.items()
-        if date and start_at and len(sessions) > 1
+        {
+            "date": text(sessions[0].get("date")),
+            "start_at": start_at,
+            "billing_party_id": bill_to,
+            "sessions": sessions,
+        }
+        for (start_at, _end_at, bill_to), sessions in groups.items()
+        if start_at and len(sessions) > 1
     ][:50]
 
 
@@ -686,6 +710,12 @@ def collapse_raw_snapshot_rows(
         key = str(group_info["key"])
         resolution = group_info["resolution"]
         incoming_group = list(group_info["rows"])
+        if isinstance(resolution, CandidateIdentityResolution) and resolution.ambiguous:
+            warn_ambiguous_calendar_identity(conn, resolution)
+            # Never create a third derived candidate merely because existing
+            # evidence is ambiguous.  The raw observation remains preserved
+            # and the affected normal Review queue receives a warning.
+            continue
         if isinstance(resolution, CandidateIdentityResolution) and resolution.candidate_id:
             candidate = conn.execute(
                 "SELECT candidate_key FROM calendar_event_candidates WHERE id = ?",
@@ -693,9 +723,20 @@ def collapse_raw_snapshot_rows(
             ).fetchone()
             if candidate:
                 key = candidate["candidate_key"]
-        group = raw_snapshots_for_identity_group(conn, key, incoming_group)
+        group = raw_snapshots_for_identity_group(
+            conn,
+            key,
+            incoming_group,
+            candidate_id=resolution.candidate_id if isinstance(resolution, CandidateIdentityResolution) else None,
+        )
+        billing_evidence = [row for row in group if row_is_billing_evidence(row)]
+        if not billing_evidence:
+            # v3 future capture is deliberately raw scheduling/health
+            # evidence.  It becomes a session candidate only after the event
+            # is seen in a later post-end past capture.
+            continue
         latest = sorted(
-            group,
+            billing_evidence,
             key=lambda r: (
                 text(r["captured_at"]),
                 text(r["ingested_at"]),
@@ -739,285 +780,119 @@ def collapse_raw_snapshot_rows(
     suppress_pending_events_missing_from_newest_covering_snapshot(conn)
 
 
+def payload_version(row: sqlite3.Row | dict[str, object]) -> int:
+    return parse_int(row["payload_version"]) or 0
+
+
+def row_is_billing_evidence(row: sqlite3.Row | dict[str, object]) -> bool:
+    """Return whether one raw snapshot may derive a billing candidate.
+
+    v2 and earlier payloads retain their historic behavior for compatibility.
+    Starting with v3, a future batch is raw-only scheduling evidence and a
+    past batch qualifies only after the appointment's offset-aware end time.
+    """
+
+    if payload_version(row) < 3:
+        return True
+    if not is_past_capture_window(row["capture_window"]):
+        return False
+    captured_at = utc_datetime(row["captured_at"])
+    end_at = utc_datetime(row["end_at"])
+    return bool(captured_at and end_at and captured_at >= end_at)
+
+
+def warn_ambiguous_calendar_identity(
+    conn: sqlite3.Connection,
+    resolution: CandidateIdentityResolution,
+) -> None:
+    for candidate_id in resolution.candidate_ids:
+        session = conn.execute(
+            "SELECT id FROM sessions WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        upsert_calendar_warning(
+            conn,
+            candidate_id=candidate_id,
+            session_id=session["id"] if session else None,
+            warning_code="calendar_identity_warning",
+            reason=(
+                "More than one existing candidate has the same canonical calendar "
+                "identity. No automatic merge or billing decision was made."
+            ),
+        )
+
+
 def suppress_pending_events_missing_from_newest_covering_snapshot(
     conn: sqlite3.Connection,
 ) -> int:
-    """Exclude ended pending events omitted by the newest complete capture run.
+    """Retire the broad legacy calendar-presence warning.
 
-    Raw snapshot rows remain append-only evidence.  A missing event is only
-    operationally meaningful only after its scheduled end, when the newest
-    complete capture run omits it from every batch that covers that date.
-    Partial, failed, malformed, non-covering, future, and approved records
-    therefore cannot suppress anything.
+    A v3 future observation is raw scheduling evidence only, so an appointment
+    moved before it occurs never creates a candidate. Once a post-end past
+    observation creates a candidate, later absence may simply mean that the
+    rolling capture window aged past the appointment. Absence must therefore
+    neither hide the session nor create routine Review noise.
+
+    The legacy function name remains for API and upgrade compatibility. It now
+    closes only presence warnings created by the short-lived Test.34 behavior;
+    identity conflicts and other genuinely ambiguous evidence still warn.
     """
-    newest_covering_batches = newest_complete_covering_batches(conn)
-    if not newest_covering_batches:
+    candidate_rows = conn.execute(
+        """
+        SELECT id AS candidate_id
+        FROM calendar_event_candidates
+        WHERE reconciliation_status = 'calendar_presence_warning'
+        UNION
+        SELECT candidate_id
+        FROM review_items
+        WHERE candidate_id IS NOT NULL
+          AND review_status = 'source_change_warning'
+          AND reviewed_at IS NULL
+          AND unresolved_fields LIKE '%calendar_presence_warning%'
+        UNION
+        SELECT candidate_id
+        FROM review_queue
+        WHERE review_type = 'calendar_presence_warning'
+          AND status = 'open'
+        """
+    ).fetchall()
+    if not candidate_rows:
         return 0
 
-    candidates = conn.execute(
-        """
-        SELECT c.id, c.candidate_key, c.start_at, c.proposed_start_at,
-               c.latest_raw_snapshot_id,
-               c.end_at AS candidate_end_at,
-               s.end_at AS session_end_at
-        FROM calendar_event_candidates c
-        LEFT JOIN sessions s ON s.candidate_id = c.id
-        WHERE c.classification = 'client_session'
-          AND c.review_status NOT IN ('approved', 'excluded')
-          AND COALESCE(s.review_status, '') != 'approved'
-        """
-    ).fetchall()
-    suppressed = 0
-    for candidate in candidates:
-        appointment_date = snapshot_date(candidate["proposed_start_at"] or candidate["start_at"])
-        if not appointment_date:
-            continue
-        if not appointment_has_ended(candidate["session_end_at"] or candidate["candidate_end_at"]):
-            continue
-        batches = newest_covering_batches.get(appointment_date)
-        if not batches:
-            continue
-        if candidate_is_present_in_snapshot_batches(conn, candidate, batches):
-            continue
-        suppress_pending_candidate_for_missing_snapshot(conn, candidate["id"], batches)
-        suppressed += 1
-    return suppressed
-
-
-def appointment_has_ended(value: object) -> bool:
-    try:
-        end_at = datetime.fromisoformat(text(value).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if end_at.tzinfo is None:
-        return False
-    return end_at.astimezone(timezone.utc) <= datetime.now(timezone.utc)
-
-
-def newest_complete_covering_batches(conn: sqlite3.Connection) -> dict[str, tuple[tuple[str, str], ...]]:
-    """Return every newest-run batch that proves coverage for each date.
-
-    Coverage boundaries are retained inside ``raw_json`` because the original
-    Sheet columns are intentionally preserved verbatim.  A batch without both
-    valid boundaries (or a canonical label/timestamp fallback) is not evidence
-    of coverage. A current event in either overlapping batch keeps it active.
-    """
-    rows = conn.execute(
-        """
-        SELECT r.*, i.status AS import_status
-        FROM raw_calendar_snapshots r
-        JOIN import_runs i ON i.id = r.import_run_id
-        WHERE trim(coalesce(r.run_id, '')) != ''
-        """
-    ).fetchall()
-    run_windows: dict[str, set[str]] = defaultdict(set)
-    run_is_successful: dict[str, bool] = {}
-    batch_rows: dict[tuple[str, str], list[sqlite3.Row]] = defaultdict(list)
-    for row in rows:
-        run_id = text(row["run_id"])
-        capture_window = text(row["capture_window"])
-        run_windows[run_id].add(capture_window)
-        run_is_successful[run_id] = run_is_successful.get(run_id, True) and row["import_status"] == "imported"
-        batch_rows[(run_id, capture_window)].append(row)
-
-    run_rank: dict[str, tuple[str, str, str]] = defaultdict(lambda: ("", "", ""))
-    for row in rows:
-        run_id = text(row["run_id"])
-        run_rank[run_id] = max(
-            run_rank[run_id],
-            (text(row["captured_at"]), text(row["ingested_at"]), text(row["id"])),
-        )
-
-    covering_by_run_and_date: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
-    for (run_id, capture_window), batch in batch_rows.items():
-        if not run_is_successful.get(run_id) or not completed_run_windows(run_windows[run_id]):
-            continue
-        coverage = snapshot_batch_coverage(batch)
-        if not coverage:
-            continue
-        for appointment_date in coverage:
-            covering_by_run_and_date[(run_id, appointment_date)].append((run_id, capture_window))
-
-    newest_covering_batches: dict[str, tuple[tuple[str, str, str], tuple[tuple[str, str], ...]]] = {}
-    for (run_id, appointment_date), batches in covering_by_run_and_date.items():
-        rank = run_rank[run_id]
-        prior = newest_covering_batches.get(appointment_date)
-        if prior is None or rank > prior[0]:
-            newest_covering_batches[appointment_date] = (rank, tuple(batches))
-    return {
-        appointment_date: batches
-        for appointment_date, (_, batches) in newest_covering_batches.items()
-    }
-
-
-def snapshot_batch_coverage(rows: list[sqlite3.Row]) -> set[str]:
-    coverage: set[str] = set()
-    for row in rows:
-        try:
-            raw = json.loads(text(row["raw_json"]))
-        except json.JSONDecodeError:
-            continue
-        window_start = snapshot_date(raw.get("window_start"))
-        window_end = snapshot_date(raw.get("window_end"))
-        if not window_start or not window_end or window_end < window_start:
-            continue
-        current = window_start
-        while current <= window_end:
-            coverage.add(current)
-            # ISO calendar arithmetic is deliberately local-date based; capture
-            # windows are calendar-date boundaries, not elapsed-time intervals.
-            current = (date.fromisoformat(current) + timedelta(days=1)).isoformat()
-    if coverage:
-        return coverage
-
-    # The production Shortcut currently leaves explicit window boundaries blank
-    # even though it supplies a canonical window label and capture timestamp.
-    # Those labels have fixed inclusive date semantics, so they are still
-    # definite coverage evidence. Unknown/legacy labels remain non-covering.
-    capture_windows = {text(row["capture_window"]) for row in rows if text(row["capture_window"])}
-    if len(capture_windows) != 1:
-        return set()
-    capture_window = next(iter(capture_windows))
-    if capture_window == "backfill_2026_06_01_through_2026_06_14":
-        return dates_inclusive("2026-06-01", "2026-06-14")
-
-    capture_dates = {snapshot_date(row["captured_at"]) for row in rows}
-    capture_dates.discard(None)
-    if len(capture_dates) != 1:
-        return set()
-    captured_on = date.fromisoformat(next(iter(capture_dates)))
-    offsets = {
-        "past_3_days": (-3, 0),
-        "past_7_days": (-7, 0),
-        "next_7_days": (0, 7),
-        "next_2_days": (0, 2),
-    }.get(capture_window)
-    if not offsets:
-        return set()
-    start_offset, end_offset = offsets
-    return dates_inclusive(
-        (captured_on + timedelta(days=start_offset)).isoformat(),
-        (captured_on + timedelta(days=end_offset)).isoformat(),
-    )
-
-
-def dates_inclusive(start_date: str, end_date: str) -> set[str]:
-    dates: set[str] = set()
-    current = date.fromisoformat(start_date)
-    end = date.fromisoformat(end_date)
-    while current <= end:
-        dates.add(current.isoformat())
-        current += timedelta(days=1)
-    return dates
-
-
-def snapshot_date(value: object) -> str | None:
-    candidate = text(value)[:10]
-    if len(candidate) != 10 or candidate[4] != "-" or candidate[7] != "-":
-        return None
-    try:
-        return date.fromisoformat(candidate).isoformat()
-    except ValueError:
-        return None
-
-
-def candidate_is_present_in_snapshot_batches(
-    conn: sqlite3.Connection,
-    candidate: sqlite3.Row,
-    batches: tuple[tuple[str, str], ...],
-) -> bool:
-    return any(
-        candidate_is_present_in_snapshot_batch(conn, candidate, batch)
-        for batch in batches
-    )
-
-
-def candidate_is_present_in_snapshot_batch(
-    conn: sqlite3.Connection,
-    candidate: sqlite3.Row,
-    batch: tuple[str, str],
-) -> bool:
-    run_id, capture_window = batch
-    row = conn.execute(
-        """
-        SELECT 1
-        FROM candidate_identity_aliases a
-        JOIN raw_calendar_snapshots r ON r.id = a.source_raw_snapshot_id
-        WHERE a.candidate_id = ?
-          AND r.run_id = ?
-          AND r.capture_window = ?
-        LIMIT 1
-        """,
-        (candidate["id"], run_id, capture_window),
-    ).fetchone()
-    if row:
-        return True
-    latest = conn.execute(
-        """
-        SELECT run_id, capture_window
-        FROM raw_calendar_snapshots
-        WHERE id = ?
-        """,
-        (candidate["latest_raw_snapshot_id"],),
-    ).fetchone()
-    return bool(latest and latest["run_id"] == run_id and latest["capture_window"] == capture_window)
-
-
-def suppress_pending_candidate_for_missing_snapshot(
-    conn: sqlite3.Connection,
-    candidate_id: str,
-    batches: tuple[tuple[str, str], ...],
-) -> None:
-    run_id = batches[0][0]
-    capture_windows = sorted({capture_window for _, capture_window in batches})
     now = now_iso()
-    reason = "Absent from every newest complete calendar snapshot batch that covers this completed appointment."
-    conn.execute(
-        """
-        UPDATE calendar_event_candidates
-        SET review_status = 'excluded',
-            hidden_from_review = 1,
-            reconciliation_status = 'removed_from_newest_covering_snapshot',
-            updated_at = ?
-        WHERE id = ?
-          AND review_status NOT IN ('approved', 'excluded')
-        """,
-        (now, candidate_id),
+    resolution = (
+        "Routine calendar-absence warnings were retired. Post-session past "
+        "evidence remains authoritative when an event later ages out of the "
+        "rolling capture window."
     )
-    conn.execute(
-        """
-        UPDATE sessions
-        SET review_status = 'excluded',
-            billable_status = 'excluded',
-            hidden_from_review = 1,
-            updated_at = ?
-        WHERE candidate_id = ?
-          AND review_status != 'approved'
-        """,
-        (now, candidate_id),
-    )
-    conn.execute(
-        """
-        UPDATE review_items
-        SET review_status = 'excluded',
-            reviewed_at = COALESCE(reviewed_at, ?),
-            updated_at = ?
-        WHERE candidate_id = ?
-          AND reviewed_at IS NULL
-        """,
-        (now, now, candidate_id),
-    )
-    audit(
-        conn,
-        "calendar_event_candidate",
-        candidate_id,
-        "suppressed_by_newest_covering_calendar_snapshot",
-        {
-            "reason": reason,
-            "newest_covering_run_id": run_id,
-            "newest_covering_capture_windows": capture_windows,
-        },
-    )
+    for row in candidate_rows:
+        candidate_id = row["candidate_id"]
+        resolve_calendar_warning(
+            conn,
+            candidate_id=candidate_id,
+            warning_code="calendar_presence_warning",
+            resolution=resolution,
+        )
+        conn.execute(
+            """
+            UPDATE review_queue
+            SET status = 'resolved', decision_payload = ?, updated_at = ?
+            WHERE candidate_id = ?
+              AND review_type = 'calendar_presence_warning'
+              AND status = 'open'
+            """,
+            (json_dumps({"resolution": resolution}), now, candidate_id),
+        )
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET reconciliation_status = NULL, updated_at = ?
+            WHERE id = ?
+              AND reconciliation_status = 'calendar_presence_warning'
+            """,
+            (now, candidate_id),
+        )
+    return len(candidate_rows)
 
 
 def candidate_key(row: sqlite3.Row) -> str:
@@ -1027,24 +902,11 @@ def candidate_key(row: sqlite3.Row) -> str:
     event_fingerprint = text(row["event_fingerprint"])
     if event_fingerprint:
         return stable_hash(f"event_fingerprint:{event_fingerprint}")
-    stable_parts = [
-        text(row["event_title"]).lower(),
-        text(row["start_at"]),
-        text(row["end_at"]),
-        text(row["calendar_name"]).lower(),
-    ]
-    return stable_hash("|".join(part for part in stable_parts if part))
+    return stable_hash("|".join(canonical_structural_parts(row, include_duration=False)))
 
 
 def structural_identity_value(row: sqlite3.Row) -> str:
-    stable_parts = [
-        text(row["event_title"]).lower(),
-        text(row["start_at"]),
-        text(row["end_at"]),
-        text(row["duration_minutes"]),
-        text(row["calendar_name"]).lower(),
-    ]
-    return stable_hash("structural:" + "|".join(part for part in stable_parts if part))
+    return stable_hash("structural:" + "|".join(canonical_structural_parts(row)))
 
 
 def identity_aliases_for_row(row: sqlite3.Row) -> list[tuple[str, str]]:
@@ -1055,7 +917,7 @@ def identity_aliases_for_row(row: sqlite3.Row) -> list[tuple[str, str]]:
     event_fingerprint = text(row["event_fingerprint"])
     if event_fingerprint:
         aliases.append(("event_fingerprint", stable_hash(f"event_fingerprint:{event_fingerprint}")))
-    if text(row["event_title"]) and text(row["start_at"]) and text(row["end_at"]) and text(row["calendar_name"]):
+    if has_complete_structural_identity(row):
         aliases.append(("structural", structural_identity_value(row)))
     return aliases
 
@@ -1094,7 +956,12 @@ def resolve_candidate_identity(
     if len(resolved_candidate_ids) == 1:
         return resolved[0]
     if len(resolved_candidate_ids) > 1:
-        return CandidateIdentityResolution(None, "ambiguous_identifier_conflict", True)
+        return CandidateIdentityResolution(
+            None,
+            "ambiguous_identifier_conflict",
+            True,
+            tuple(sorted(candidate_id for candidate_id in resolved_candidate_ids if candidate_id)),
+        )
 
     if not (event_id and fingerprint):
         structural_resolution = resolve_structural_identity(
@@ -1106,6 +973,14 @@ def resolve_candidate_identity(
             return structural_resolution
         if structural_resolution.ambiguous:
             return structural_resolution
+    # Legacy payloads without a stable event identifier can disagree about
+    # duration/end time for the same title/start/calendar slot. That is not
+    # enough evidence to create a second billable candidate or choose a
+    # duration, so retain the raw evidence and send normal Review a warning.
+    if not event_id and not fingerprint:
+        slot_conflict = resolve_event_slot_conflict(conn, row)
+        if slot_conflict.ambiguous:
+            return slot_conflict
     return CandidateIdentityResolution(None, "new_candidate")
 
 
@@ -1134,9 +1009,15 @@ def resolve_exact_identity(
         ).fetchall()
     )
     if len(candidate_ids) == 1:
-        return CandidateIdentityResolution(next(iter(candidate_ids)), f"exact_{alias_type}")
+        candidate_id = next(iter(candidate_ids))
+        return CandidateIdentityResolution(candidate_id, f"exact_{alias_type}", candidate_ids=(candidate_id,))
     if len(candidate_ids) > 1:
-        return CandidateIdentityResolution(None, f"ambiguous_{alias_type}", True)
+        return CandidateIdentityResolution(
+            None,
+            f"ambiguous_{alias_type}",
+            True,
+            tuple(sorted(candidate_ids)),
+        )
     return CandidateIdentityResolution(None, "new_candidate")
 
 
@@ -1158,38 +1039,27 @@ def resolve_structural_identity(
             (alias_value,),
         ).fetchall()
     }
-    candidate_ids.update(
-        candidate_row["id"]
-        for candidate_row in conn.execute(
-            """
-            SELECT c.id
-            FROM calendar_event_candidates c
-            JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
-            WHERE lower(trim(coalesce(c.title, ''))) = lower(trim(?))
-              AND c.start_at = ?
-              AND c.end_at = ?
-              AND coalesce(c.calendar_duration_minutes, -1) = coalesce(?, -1)
-              AND lower(trim(coalesce(c.calendar_name, ''))) = lower(trim(?))
-              AND lower(trim(coalesce(r.event_title, ''))) = lower(trim(?))
-              AND r.start_at = ?
-              AND r.end_at = ?
-              AND coalesce(r.duration_minutes, -1) = coalesce(?, -1)
-              AND lower(trim(coalesce(r.calendar_name, ''))) = lower(trim(?))
-            """,
-            (
-                text(row["event_title"]),
-                text(row["start_at"]),
-                text(row["end_at"]),
-                parse_int(row["duration_minutes"]),
-                text(row["calendar_name"]),
-                text(row["event_title"]),
-                text(row["start_at"]),
-                text(row["end_at"]),
-                parse_int(row["duration_minutes"]),
-                text(row["calendar_name"]),
-            ),
-        ).fetchall()
-    )
+    # Legacy data can have two textual offset representations for the same
+    # instant.  First narrow by title/calendar/duration in SQLite, then compare
+    # the timestamps in UTC in Python.  This preserves the raw text while
+    # avoiding an accidental split of one event into two billing candidates.
+    for candidate_row in conn.execute(
+        """
+        SELECT c.id, c.review_status, r.*
+        FROM calendar_event_candidates c
+        JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
+        WHERE lower(trim(coalesce(c.title, ''))) = lower(trim(?))
+          AND lower(trim(coalesce(c.calendar_name, ''))) = lower(trim(?))
+          AND coalesce(c.calendar_duration_minutes, -1) = coalesce(?, -1)
+        """,
+        (
+            text(row["event_title"]),
+            text(row["calendar_name"]),
+            parse_int(row["duration_minutes"]),
+        ),
+    ).fetchall():
+        if structural_identity_value(candidate_row) == alias_value:
+            candidate_ids.add(candidate_row["id"])
     if not include_approved and candidate_ids:
         candidate_ids = {
             candidate_id
@@ -1206,10 +1076,57 @@ def resolve_structural_identity(
             ).fetchone()
         }
     if len(candidate_ids) == 1:
-        return CandidateIdentityResolution(next(iter(candidate_ids)), "exact_structural")
+        candidate_id = next(iter(candidate_ids))
+        return CandidateIdentityResolution(candidate_id, "exact_structural", candidate_ids=(candidate_id,))
     if len(candidate_ids) > 1:
-        return CandidateIdentityResolution(None, "ambiguous_structural", True)
+        return CandidateIdentityResolution(
+            None,
+            "ambiguous_structural",
+            True,
+            tuple(sorted(candidate_ids)),
+        )
     return CandidateIdentityResolution(None, "new_candidate")
+
+
+def resolve_event_slot_conflict(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> CandidateIdentityResolution:
+    """Flag unidentifiable legacy observations that conflict on duration.
+
+    Exact structural matches are handled first. Here, matching title, UTC
+    start, and calendar with a different end/duration is deliberately
+    ambiguous: raw observations stay intact and no additional billing
+    candidate is created.
+    """
+
+    if not has_complete_event_slot_identity(row):
+        return CandidateIdentityResolution(None, "new_candidate")
+    slot = canonical_event_slot_parts(row)
+    candidate_ids: set[str] = set()
+    for candidate_row in conn.execute(
+        """
+        SELECT c.id, c.title, c.calendar_name, c.start_at, c.end_at,
+               c.calendar_duration_minutes
+        FROM calendar_event_candidates c
+        WHERE lower(trim(coalesce(c.title, ''))) = lower(trim(?))
+          AND lower(trim(coalesce(c.calendar_name, ''))) = lower(trim(?))
+        """,
+        (text(row["event_title"]), text(row["calendar_name"])),
+    ).fetchall():
+        if canonical_event_slot_parts(candidate_row) != slot:
+            continue
+        if canonical_structural_parts(candidate_row) == canonical_structural_parts(row):
+            continue
+        candidate_ids.add(candidate_row["id"])
+    if not candidate_ids:
+        return CandidateIdentityResolution(None, "new_candidate")
+    return CandidateIdentityResolution(
+        None,
+        "ambiguous_duration_or_end_time",
+        True,
+        tuple(sorted(candidate_ids)),
+    )
 
 
 def raw_snapshots_for_candidate_key(conn: sqlite3.Connection, key: str) -> list[sqlite3.Row]:
@@ -1226,8 +1143,26 @@ def raw_snapshots_for_identity_group(
     conn: sqlite3.Connection,
     key: str,
     incoming_rows: list[sqlite3.Row],
+    *,
+    candidate_id: str | None = None,
 ) -> list[sqlite3.Row]:
     by_id = {row["id"]: row for row in raw_snapshots_for_candidate_key(conn, key)}
+    if candidate_id:
+        linked_rows = conn.execute(
+            """
+            SELECT DISTINCT r.*
+            FROM raw_calendar_snapshots r
+            JOIN candidate_identity_aliases a ON a.source_raw_snapshot_id = r.id
+            WHERE a.candidate_id = ?
+            UNION
+            SELECT r.*
+            FROM raw_calendar_snapshots r
+            JOIN calendar_event_candidates c ON c.latest_raw_snapshot_id = r.id
+            WHERE c.id = ?
+            """,
+            (candidate_id, candidate_id),
+        ).fetchall()
+        by_id.update({row["id"]: row for row in linked_rows})
     for row in incoming_rows:
         by_id[row["id"]] = row
     return list(by_id.values())
@@ -1759,12 +1694,18 @@ def confirmed_rate_context(
         SELECT person_id, is_primary
         FROM session_participants
         WHERE session_id = ?
-          AND person_id IS NOT NULL
         ORDER BY is_primary DESC, session_participant_id
         """,
         (session["id"],),
     ).fetchall()
-    participant_person_ids = [row["person_id"] for row in participants]
+    has_unresolved_participant = any(not row["person_id"] for row in participants)
+    participant_person_ids = [row["person_id"] for row in participants if row["person_id"]]
+    if has_unresolved_participant:
+        return {
+            "account_id": session["account_id"],
+            "person_id": None,
+            "participant_person_ids": [],
+        }
     return {
         "account_id": session["account_id"],
         "person_id": participant_person_ids[0] if participant_person_ids else None,
