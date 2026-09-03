@@ -129,6 +129,7 @@ const state = {
     running: false,
     applying: false
   },
+  monthClose: { month: "", running: false, data: null },
   quitting: false,
   diagnostics: {
     events: [],
@@ -466,12 +467,10 @@ function summaryMoney(value) {
 
 function renderFinancialSummary(data) {
   const values = {
-    invoiceDraftValue: data.draft_invoice_value_cents,
-    invoiceFinalizedValue: data.finalized_invoice_value_for_month_cents,
-    invoiceOutstandingValue: data.outstanding_balance_cents,
-    paymentsInvoicedValue: data.finalized_invoice_value_for_month_cents,
-    paymentsReceivedValue: data.payments_received_for_month_cents,
-    paymentsOutstandingValue: data.outstanding_balance_cents,
+    invoiceBillableValue: data.total_billable_cents,
+    invoiceInvoicedValue: data.total_invoiced_cents,
+    paymentsAppliedValue: data.payments_applied_cents,
+    paymentsOutstandingValue: data.outstanding_cents,
   };
   Object.entries(values).forEach(([id, value]) => {
     const node = $(id);
@@ -489,7 +488,15 @@ async function loadFinancialSummary() {
     input.onchange = async () => {
       if (!input.value) return;
       state.financialSummary.month = input.value;
-      await loadFinancialSummary();
+      if (id === "paymentsSummaryMonth") {
+        state.payments.billingMonth = input.value;
+        state.unpaid.selectedInvoiceId = null;
+        if (state.payments.activeTab === "outstanding") await loadOutstandingInvoices(null);
+        else if (state.payments.activeTab === "paid") await loadPaidInvoices();
+        else await loadAllPayments();
+      } else {
+        await loadFinancialSummary();
+      }
     };
   });
   try {
@@ -498,7 +505,7 @@ async function loadFinancialSummary() {
     renderFinancialSummary(data);
   } catch (_) {
     state.financialSummary.data = null;
-    ["invoiceDraftValue", "invoiceFinalizedValue", "invoiceOutstandingValue", "paymentsInvoicedValue", "paymentsReceivedValue", "paymentsOutstandingValue"].forEach(id => {
+    ["invoiceBillableValue", "invoiceInvoicedValue", "paymentsAppliedValue", "paymentsOutstandingValue"].forEach(id => {
       const node = $(id);
       if (node) node.textContent = "Unavailable";
     });
@@ -2023,6 +2030,11 @@ document.getElementById("reconciliationNav").onclick = (event) => {
   location.hash = "reconciliation";
   showReconciliation();
 };
+document.getElementById("monthCloseNav").onclick = (event) => {
+  event.preventDefault();
+  history.pushState({}, "", "/month-close");
+  showMonthClose();
+};
 document.getElementById("rateCardNav").onclick = (event) => {
   event.preventDefault();
   location.hash = "rate-card";
@@ -2109,8 +2121,8 @@ async function loadBuildInfo() {
 
 function hideViews() {
   closeResponsiveSheet();
-  ["reviewWorkbench","calendarImportView","reconciliationView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
-  ["reviewNav","calendarImportNav","reconciliationNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
+  ["reviewWorkbench","calendarImportView","reconciliationView","monthCloseView","rateCardView","clientsView","peopleView","sessionsView","invoicesView","paymentsView","reportsView","settingsView"].forEach(id => document.getElementById(id).hidden = true);
+  ["reviewNav","calendarImportNav","reconciliationNav","monthCloseNav","rateCardNav","clientsNav","peopleNav","sessionsNav","invoicesNav","reportsNav","paymentsNav","settingsNav"].forEach(id => document.getElementById(id).classList.remove("active"));
 }
 
 async function showClientsTab(personId = null) {
@@ -2978,6 +2990,82 @@ async function showReconciliation() {
   wireReconciliationControls();
 }
 
+async function showMonthClose() {
+  hideViews();
+  $("monthCloseView").hidden = false;
+  $("monthCloseNav").classList.add("active");
+  $("pageTitle").textContent = "Month Close";
+  $("pageSubtitle").textContent = "Verify the calendar-to-payment chain for one service month";
+  document.title = "Jordana Billing - Month Close";
+  if (!state.monthClose.month) state.monthClose.month = currentLocalMonth();
+  $("monthCloseMonth").value = state.monthClose.month;
+  $("monthCloseMonth").onchange = () => {
+    if ($("monthCloseMonth").value) state.monthClose.month = $("monthCloseMonth").value;
+  };
+  $("runMonthCloseBtn").onclick = runMonthClose;
+  await runMonthClose();
+}
+
+async function runMonthClose() {
+  if (state.monthClose.running) return;
+  const month = $("monthCloseMonth").value || state.monthClose.month || currentLocalMonth();
+  state.monthClose.month = month;
+  state.monthClose.running = true;
+  $("runMonthCloseBtn").disabled = true;
+  $("monthCloseStatus").className = "month-close-status in-progress";
+  $("monthCloseStatus").textContent = "Checking preserved calendar evidence, sessions, invoices, payments, and receipts…";
+  try {
+    const data = await api(`/api/month-close?month=${encodeURIComponent(month)}`);
+    state.monthClose.data = data;
+    renderMonthClose(data);
+  } catch (error) {
+    $("monthCloseStatus").className = "month-close-status action-needed";
+    $("monthCloseStatus").textContent = sanitizeUiErrorMessage(error.message, "Month Close could not run.");
+  } finally {
+    state.monthClose.running = false;
+    $("runMonthCloseBtn").disabled = false;
+  }
+}
+
+function monthCloseStatusLabel(status) {
+  return ({passed: "Passed", action_needed: "Action needed", informational: "Information", in_progress: "In progress"}[status] || status);
+}
+
+function monthCloseItemText(item) {
+  if (item.sessions) return `${item.date || ""} ${item.start_at || ""} — ${item.sessions.length} possible duplicates`;
+  if (item.receipt_number) return `${item.receipt_number} — expected ${item.expected_month}`;
+  if (item.run_id) return `${item.started_at || item.completed_at || "Capture run"} — past ${item.past || "matched"}, future ${item.future || "matched"}`;
+  return `${item.session_date || item.start_at || ""}${item.title ? ` — ${item.title}` : ""}` || "Review item";
+}
+
+function openMonthCloseAction(action) {
+  if (action === "calendar_import") { location.hash = "calendar-import"; showCalendarImport(); }
+  else if (action === "reconciliation") { location.hash = "reconciliation"; showReconciliation(); }
+  else if (action === "review") { history.pushState({}, "", "/review"); showReviewWorkbench(); loadList(); }
+  else if (action === "invoices") { history.pushState({}, "", "/invoices"); showInvoices(); }
+  else if (action === "payments") { history.pushState({}, "", "/payments"); showPayments(); }
+}
+
+function renderMonthClose(data) {
+  const summary = data.financial_summary || {};
+  $("monthCloseBillable").textContent = summaryMoney(summary.total_billable_cents);
+  $("monthCloseInvoiced").textContent = summaryMoney(summary.total_invoiced_cents);
+  $("monthClosePayments").textContent = summaryMoney(summary.payments_applied_cents);
+  $("monthCloseOutstanding").textContent = summaryMoney(summary.outstanding_cents);
+  const statusText = data.status === "ready" ? "Ready to close" : data.status === "in_progress" ? "Month still in progress" : `${data.blocker_count} check(s) need attention`;
+  $("monthCloseStatus").className = `month-close-status ${data.status.replaceAll("_", "-")}`;
+  $("monthCloseStatus").innerHTML = `<strong>${fmt(statusText)}</strong><span>Checked ${fmtDateTime(data.checked_at)}. ${fmt(data.note)}</span>`;
+  $("monthCloseChecks").innerHTML = (data.checks || []).map(check => `
+    <section class="month-close-check ${String(check.status).replaceAll("_", "-")}">
+      <div class="month-close-check-heading"><div><span class="month-close-badge">${fmt(monthCloseStatusLabel(check.status))}</span><h3>${fmt(check.label)}</h3></div>${check.action ? `<button type="button" data-month-close-action="${escapeHtml(check.action)}">Review</button>` : ""}</div>
+      <p>${fmt(check.summary)}</p>
+      ${(check.items || []).length ? `<details><summary>Show ${check.items.length} item(s)</summary><ul>${check.items.map(item => `<li>${fmt(monthCloseItemText(item))}</li>`).join("")}</ul></details>` : ""}
+    </section>`).join("");
+  document.querySelectorAll("[data-month-close-action]").forEach(button => {
+    button.onclick = () => openMonthCloseAction(button.dataset.monthCloseAction);
+  });
+}
+
 function wireReconciliationControls() {
   const dryRunBtn = $("reconciliationDryRunBtn");
   const applyBtn = $("reconciliationApplyBtn");
@@ -3145,6 +3233,8 @@ async function showPayments() {
   $("pageTitle").textContent = "Payments";
   $("pageSubtitle").textContent = "Record payments, review outstanding and paid invoices, and browse the payment ledger";
   document.title = "Jordana Billing - Payments";
+  state.financialSummary.month = state.financialSummary.month || currentLocalMonth();
+  state.payments.billingMonth = state.financialSummary.month;
   setupPaymentsTabs();
   if (state.payments.activeTab === "outstanding") {
     await loadOutstandingInvoices();
@@ -7482,6 +7572,7 @@ loadBuildInfo();
 loadList();
 if (location.hash === "#calendar-import") showCalendarImport();
 if (location.hash === "#reconciliation") showReconciliation();
+if (location.pathname === "/month-close") showMonthClose();
 if (location.hash === "#rate-card") showRateCard();
 if (
   location.hash === "#billing-relationships"

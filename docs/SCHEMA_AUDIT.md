@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-022_calendar_recovery_actions
+024_month_close
 ```
 
 The registered migrations are:
@@ -36,6 +36,8 @@ The registered migrations are:
 20. `020_invoice_corrections` — correction-draft links and correction-reason history for finalized invoice replacement
 21. `021_cancellation_policy` — optional frozen cancellation-policy text on finalized invoices
 22. `022_calendar_recovery_actions` — reversible, scoped audit state for the legacy calendar-suppression and draft-duplicate recovery
+23. `023_client_invoice_title` — optional client-level `Dr.` invoice presentation flag
+24. `024_month_close` — additive local capture-run summaries synced from the Sheet `Run_Log`
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 
@@ -80,6 +82,7 @@ The operational database must never be deleted, reset, or recreated as a migrati
 
 - `raw_calendar_snapshots` — append-only captured calendar evidence
 - `sync_state` — durable full or incremental sync cursor and last-run outcome
+- `calendar_capture_runs` — local copies of immutable Sheet capture-run counts used by Month Close
 - `calendar_preferences` — local calendar disposition and filtering preferences
 - `app_metadata` — database-level application metadata such as demo mode
 

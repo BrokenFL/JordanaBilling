@@ -128,6 +128,19 @@ class SyncTests(unittest.TestCase):
                         "ok": True,
                         "record_type": "sync_response",
                         "rows": [],
+                        "capture_runs": [{
+                            "run_id": "capture-1",
+                            "batch_name": "JORDANA_CALENDAR_TEST",
+                            "started_at": "2026-06-30T08:00:00-04:00",
+                            "completed_at": "2026-06-30T08:01:00-04:00",
+                            "past_found": 4,
+                            "past_received": 4,
+                            "future_found": 2,
+                            "future_received": 2,
+                            "status": "complete",
+                            "error_message": "",
+                            "updated_at": "2026-06-30T12:01:00Z",
+                        }],
                         "next_cursor": EMPTY_CURSOR,
                         "has_more": False,
                     }
@@ -136,6 +149,11 @@ class SyncTests(unittest.TestCase):
         )
         self.assertEqual(result.rows_imported, 0)
         self.assertEqual(count(self.conn, "raw_calendar_snapshots"), 0)
+        capture = self.conn.execute(
+            "SELECT * FROM calendar_capture_runs WHERE run_id = 'capture-1'"
+        ).fetchone()
+        self.assertEqual(capture["status"], "complete")
+        self.assertEqual(capture["past_received"], 4)
 
     def test_empty_sync_recovers_candidate_only_record_after_parser_upgrade(self):
         import_rows(

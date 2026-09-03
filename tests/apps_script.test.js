@@ -443,6 +443,8 @@ const syncResponse = script.handleSyncRequest_({
 assert.strictEqual(syncResponse.record_type, "sync_response");
 assert.strictEqual(syncResponse.rows.length, 3);
 assert.strictEqual(syncResponse.rows[0].run_id, "batch-run");
+assert.strictEqual(syncResponse.capture_runs.length, 1);
+assert.strictEqual(syncResponse.capture_runs[0].run_id, "batch-run");
 
 const firstSyncPage = script.handleSyncRequest_({
   after_ingested_at: "1970-01-01T00:00:00.000Z",
@@ -471,6 +473,7 @@ const missingRunLogSyncResponse = script.handleSyncRequest_({
   limit: 10,
 });
 assert.strictEqual(missingRunLogSyncResponse.rows.length, 3);
+assert.strictEqual(missingRunLogSyncResponse.capture_runs.length, 0);
 assert.strictEqual(missingRunLogSpreadsheet.sheets.Run_Log, undefined);
 
 console.log("Apps Script helper tests passed");

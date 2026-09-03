@@ -1264,7 +1264,7 @@ body.responsive-sheet-open {
 
 .financial-summary-toolbar { display: flex; justify-content: flex-end; margin: 4px 0 10px; }
 .financial-summary-toolbar .field { width: 190px; }
-.financial-summary-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 16px; }
+.financial-summary-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
 .financial-summary-cards .summary-card { min-height: 96px; }
 .summary-card-note { color: var(--muted); font-size: 11px; margin-top: 5px; }
 .inline-field { display: inline-flex; align-items: center; gap: 6px; width: auto; }
@@ -1276,6 +1276,23 @@ body.responsive-sheet-open {
 .draft-month-summary-item span { font-size: 13px; font-weight: 600; }
 .draft-month-summary-item strong { font-size: 16px; }
 .draft-month-summary-item small { color: var(--muted); }
+.month-close-money { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.month-close-status { display: grid; gap: 4px; margin: 14px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f7f9fc; }
+.month-close-status.ready { border-color: #78b992; background: #edf8f1; color: #195c35; }
+.month-close-status.action-needed { border-color: #e0a24e; background: #fff8e8; color: #6a4600; }
+.month-close-status span { font-size: 13px; }
+.month-close-checks { display: grid; gap: 10px; }
+.month-close-check { border: 1px solid var(--line); border-left-width: 5px; border-radius: 8px; background: #fff; padding: 14px 16px; }
+.month-close-check.passed { border-left-color: #55a978; }
+.month-close-check.action-needed { border-left-color: #e0a24e; }
+.month-close-check.informational, .month-close-check.in-progress { border-left-color: #7895b7; }
+.month-close-check-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.month-close-check-heading > div { display: flex; align-items: center; gap: 10px; }
+.month-close-check h3 { margin: 0; font-size: 16px; }
+.month-close-check p { margin: 8px 0 0; color: var(--muted); }
+.month-close-check details { margin-top: 10px; }
+.month-close-check li { margin: 4px 0; }
+.month-close-badge { border-radius: 999px; padding: 3px 8px; background: #eef2f6; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 @media (max-width: 880px) {
   .financial-summary-cards { grid-template-columns: 1fr; }
   .financial-summary-toolbar { justify-content: flex-start; }

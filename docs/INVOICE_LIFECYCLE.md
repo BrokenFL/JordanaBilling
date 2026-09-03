@@ -338,7 +338,7 @@ Migration `003_payment_ledger_foundation` adds two additive tables — `payments
 - `create_payment_receipt` creates one finalized receipt per posted payment. Repeated create requests return the existing receipt.
 - Finalized receipts store one immutable `snapshot_json` and serve the stored PDF; they are not re-rendered from live payment or allocation state.
 - Receipts for payments allocated to finalized invoices preserve the invoice's finalized insurance-coding snapshot when that invoice was finalized with coding.
-- Receipt PDFs are stored under the configured receipt root. Installed releases set that root to `~/Documents/Jordana Billing/Client Files`, using `Client Files/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`.
+- Receipt PDFs are stored under the configured receipt root. Installed releases set that root to `~/Documents/Jordana Billing/Client Files`, using `Client Files/<Client Display Name>/<Month YYYY>/Receipt_<number>.pdf`. For invoice-linked payments, the folder month is the invoice billing month, not the payment date. If one receipt covers invoices from multiple months, it is filed under the oldest invoice month represented. Payments without an invoice retain the payment-month fallback.
 - Invoice-linked payments inherit invoice filing ownership. Paid-at-session payments without invoices resolve an eligible session participant; ambiguous ownership blocks final creation.
 
 ### Dry-Run CLI

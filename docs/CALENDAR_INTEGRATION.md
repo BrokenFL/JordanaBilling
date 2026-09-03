@@ -64,7 +64,13 @@ It reads deployment-specific values from Script Properties:
 The API key must not be hardcoded in Apps Script source. The spreadsheet ID should point to the existing production spreadsheet; do not create a replacement spreadsheet.
 
 The sync endpoint returns `Raw_Event_Snapshots` in `(ingested_at, snapshot_key)`
-order. Pagination must use both `after_ingested_at` and `after_snapshot_key`:
+order and includes the existing `Run_Log` rows as `capture_runs`. The local
+sync upserts those run summaries into SQLite so Month Close can distinguish a
+complete transfer from a partial one, including zero-event runs. Older Apps
+Script deployments that omit `capture_runs` remain readable, but Month Close
+will report that capture proof is unavailable until the existing Web App is
+redeployed and synced. Pagination must use both `after_ingested_at` and
+`after_snapshot_key`:
 a row is included when its `ingested_at` is greater than the cursor timestamp,
 or when its `ingested_at` equals the cursor timestamp and its `snapshot_key` is
 greater than the cursor snapshot key. This prevents a 500-row page boundary

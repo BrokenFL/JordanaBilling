@@ -6,13 +6,13 @@ This document supersedes older uploaded handoffs and stale repository notes. New
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
-- **Migration head:** `023_client_invoice_title`
+- **Migration head:** `024_month_close`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.34`
+- **Current test release target:** `v0.1.0-test.35`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post34`
+- **Current package/application version:** `0.1.0.post35`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.33` is superseded by test.34 for installation and update testing
+- **Prior test release:** `v0.1.0-test.34` is superseded by test.35 for installation and update testing
 
 ## Architecture
 
@@ -92,6 +92,9 @@ This is not yet a final production declaration. Brooke should remain available d
 - Outstanding, Paid, and All Payments views with shared Invoice Period filtering and first-name sorting
 - Shared invoice/payment financial-summary calculations
 - Read-only historical paid-at-session analyzer and CLI
+- Service-month payment and outstanding totals, independent of cash-received date
+- Receipts filed under the invoice service month even when paid later
+- Month Close screen with narrow calendar-to-receipt reconciliation
 
 ### Packaging And Installation
 
@@ -110,17 +113,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.34 supersedes test.33):
+The current controlled-beta release target is (test.35 supersedes test.34):
 
 ```text
-JordanaBilling-v0.1.0-test.34-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.35-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.34`
-- Python package/application version: `0.1.0.post34`
+- Release label: `v0.1.0-test.35`
+- Python package/application version: `0.1.0.post35`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,9 +133,17 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post34` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post35` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
+
+### Month Close And Service-Month Accounting In test.35
+
+1. **Dedicated Month Close** — one screen checks capture-run proof, past raw evidence, canonical UTC duplicates, unresolved sessions, finalized invoice coverage, payment allocations, and receipt filing.
+2. **Quiet schedule changes** — future-only events and ordinary edited-event history are informational. Only `past_3_days` evidence is expected to become a billing candidate.
+3. **Service-month totals** — Invoices shows Total Billable and Total Invoiced; Payments shows Payments Applied and Outstanding for the selected service month.
+4. **Receipt filing** — a receipt follows the oldest invoice service month represented by its allocations, not the date cash arrived.
+5. **No new Shortcut** — the existing v3 Shortcut already sends aggregate completion counts. Redeploying the existing Apps Script Web App makes `Run_Log` proof available to the backend.
 
 ### Calendar Reliability And Client Presentation In test.34
 

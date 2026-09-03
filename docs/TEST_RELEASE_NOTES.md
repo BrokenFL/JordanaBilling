@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.34 Release Notes
+# Jordana Billing v0.1.0-test.35 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.34` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.35` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.34-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.35-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.34
-- **Python package/application version:** 0.1.0.post34
+- **Release label:** v0.1.0-test.35
+- **Python package/application version:** 0.1.0.post35
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,16 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post34` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post35` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Month Close And Service-Month Accounting In test.35
+
+1. **Month Close screen** — verifies capture-run transfer counts, past calendar evidence, canonical UTC duplicates, unresolved sessions, finalized invoice coverage, payment allocations, and receipt filing for one service month.
+2. **No random moved-event warnings** — future-only snapshots and ordinary edited-event history remain informational; only `past_3_days` evidence is expected to reach billing review.
+3. **Clear financial cards** — Invoices shows Total Billable and Total Invoiced. Payments shows Payments Applied and Outstanding, all attributed to the selected service month.
+4. **Correct receipt folders** — receipts follow the oldest invoice service month represented by the payment allocations, not the later payment date.
+5. **Existing Shortcut remains valid** — the v3 Shortcut already sends the required aggregate counts. The existing Apps Script Web App must be redeployed so sync can copy `Run_Log` proof into SQLite.
 
 ## Calendar Reliability And Client Presentation In test.34
 

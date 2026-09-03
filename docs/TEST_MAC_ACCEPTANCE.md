@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.34
+### Current Test Build — v0.1.0-test.35
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.34
-- **Python package/application version:** 0.1.0.post34
+- **Release label:** v0.1.0-test.35
+- **Python package/application version:** 0.1.0.post35
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`

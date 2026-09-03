@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.34
+### Current Test Build — v0.1.0-test.35
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.34
-- **Python package/application version:** 0.1.0.post34
+- **Release label:** v0.1.0-test.35
+- **Python package/application version:** 0.1.0.post35
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,15 +36,16 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post34` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post35` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.34 preserves the prior safeguards, adds evidence-gated calendar capture and
-post-session persistence, prevents duplicate billing identity, provides
-reversible recovery, and adds the optional client-level Dr. invoice title.
+test.35 preserves the prior safeguards and adds Month Close, service-month
+financial totals, capture-run proof synced from `Run_Log`, and invoice-month
+receipt filing. The existing v3 Shortcut remains compatible; only the existing
+Apps Script Web App source needs redeployment for capture-run sync.
 
 ### Calendar Reliability And Client Presentation In test.34
 

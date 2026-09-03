@@ -4,7 +4,7 @@ Local-first calendar evidence importer, billing review workflow, invoice system,
 
 The current implementation imports Apple Calendar snapshot rows through Google Sheets, preserves the raw evidence, collapses duplicate event versions, proposes classifications, parses Jordana's shorthand, and keeps ambiguous records reviewable. Approved sessions can be staged into draft invoices, finalized with immutable snapshots and local PDFs, voided and reissued, and tracked through payments, allocations, corrections, receipts, prior balances, filing ownership, and optional invoice-specific insurance coding.
 
-This is not a general multi-user billing platform. It is implemented and tested locally, with clean-Mac acceptance and final production handoff still tracked separately. Invoice delivery by email/mail, credits/refunds/write-offs, automated multi-invoice allocation, payment reconciliation, month-close, and a polished dashboard remain known limitations.
+This is not a general multi-user billing platform. It is implemented and tested locally, with clean-Mac acceptance and final production handoff still tracked separately. Invoice delivery by email/mail, credits/refunds/write-offs, automated multi-invoice allocation, and a polished dashboard remain known limitations.
 
 ## Current Scope
 
@@ -48,7 +48,8 @@ This is not a general multi-user billing platform. It is implemented and tested 
 - Draft, finalized, and void invoice lifecycle
 - Transaction-safe numbering and immutable invoice snapshots
 - Local multi-page PDF generation
-- Shared invoice/payment financial summaries for draft value, monthly finalized invoices, monthly payment receipts, and outstanding balance
+- Service-month financial summaries for approved billable sessions, finalized invoices, applied payments, and outstanding balance
+- Month Close screen with capture-run, past-evidence, UTC duplicate, review, invoice-coverage, payment, and receipt-filing checks
 - Local sanitized Report Issue diagnostic bundles for focused support
 
 ## Quick Start

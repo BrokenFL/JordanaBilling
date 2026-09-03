@@ -116,6 +116,7 @@ from .backups import (
     open_backup_folder,
 )
 from .financial_summary import get_financial_summary
+from .month_close import get_month_close_report
 from .payment_services import (
     apply_available_funds,
     get_payment_detail_view,
@@ -670,7 +671,7 @@ def make_handler(
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             try:
-                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid", "/payments"} or parsed.path.startswith("/invoices/"):
+                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid", "/payments", "/month-close"} or parsed.path.startswith("/invoices/"):
                     self.send_static("review.html")
                     return
                 if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
@@ -812,6 +813,10 @@ def make_handler(
                 if parsed.path == "/api/financial-summary":
                     query = parse_qs(parsed.query)
                     self.send_json(get_financial_summary(self.conn(), first(query, "month") or None))
+                    return
+                if parsed.path == "/api/month-close":
+                    query = parse_qs(parsed.query)
+                    self.send_json(get_month_close_report(self.conn(), first(query, "month") or None))
                     return
                 if parsed.path == "/api/invoices/eligible-sessions":
                     query = parse_qs(parsed.query)

@@ -281,6 +281,24 @@ CREATE TABLE IF NOT EXISTS sync_state (
   updated_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS calendar_capture_runs (
+  run_id TEXT PRIMARY KEY,
+  batch_name TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  past_found INTEGER NOT NULL DEFAULT 0,
+  past_received INTEGER NOT NULL DEFAULT 0,
+  future_found INTEGER NOT NULL DEFAULT 0,
+  future_received INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'partial',
+  error_message TEXT,
+  source_updated_at TEXT,
+  synced_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_capture_runs_completed
+  ON calendar_capture_runs(completed_at, status);
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
   migration_id TEXT PRIMARY KEY,
   applied_at TEXT NOT NULL
@@ -1735,6 +1753,32 @@ def _apply_migration_023(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_024_MONTH_CLOSE = "024_month_close"
+
+
+def _apply_migration_024(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS calendar_capture_runs (
+          run_id TEXT PRIMARY KEY,
+          batch_name TEXT,
+          started_at TEXT,
+          completed_at TEXT,
+          past_found INTEGER NOT NULL DEFAULT 0,
+          past_received INTEGER NOT NULL DEFAULT 0,
+          future_found INTEGER NOT NULL DEFAULT 0,
+          future_received INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'partial',
+          error_message TEXT,
+          source_updated_at TEXT,
+          synced_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_calendar_capture_runs_completed
+          ON calendar_capture_runs(completed_at, status);
+        """
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1759,6 +1803,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_021_CANCELLATION_POLICY, _apply_migration_021),
     (MIGRATION_022_CALENDAR_RECOVERY_ACTIONS, _apply_migration_022),
     (MIGRATION_023_CLIENT_INVOICE_TITLE, _apply_migration_023),
+    (MIGRATION_024_MONTH_CLOSE, _apply_migration_024),
 ]
 
 

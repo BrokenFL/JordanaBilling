@@ -316,12 +316,14 @@ function handleSyncRequest_(payload) {
   const result = syncPageFromSheet_(rawSheet, cursor, limit);
   const page = result.page;
   const nextCursor = syncNextCursor_(page, cursor);
+  const runLogSheet = spreadsheet.getSheetByName(RUN_LOG_SHEET_NAME);
   return {
     ok: true,
     record_type: "sync_response",
     rows: page,
     next_cursor: nextCursor,
     has_more: result.has_more,
+    capture_runs: runLogSheet ? sheetObjects_(runLogSheet, RUN_LOG_HEADERS) : [],
     timestamp: new Date().toISOString(),
   };
 }

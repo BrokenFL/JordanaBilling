@@ -152,7 +152,8 @@ for (const [input, expected] of cases) {
         html = Path("app/jordana_invoice/static/review.html").read_text()
 
         self.assertIn("Payments", html)
-        self.assertIn('id="paymentsPeriodFilter"', html)
+        self.assertIn('id="paymentsSummaryMonth"', html)
+        self.assertNotIn('id="paymentsPeriodFilter"', html)
         self.assertIn("<th>Status</th><th>Service Period</th><th>Bill To</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th>", html)
         self.assertNotIn("<th>Status</th><th>Invoice Number</th>", html)
         self.assertNotIn("<th>Status</th><th>Invoice Number</th><th>Bill To</th><th>Invoice Date</th>", html)
