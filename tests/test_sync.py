@@ -158,7 +158,8 @@ class SyncTests(unittest.TestCase):
     def test_empty_sync_recovers_candidate_only_record_after_parser_upgrade(self):
         import_rows(
             self.conn,
-            [row("legacy-trailing-min", title="Morgan Vale 1 30 min")],
+            [{**row("legacy-trailing-min", title="Morgan Vale 1 30 min", capture_window="past_3_days"),
+              "captured_at": "2026-06-24T12:00:00-04:00"}],
             "legacy_test",
         )
         candidate = self.conn.execute(

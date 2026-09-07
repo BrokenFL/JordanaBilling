@@ -684,6 +684,10 @@ def make_handler(
                 if parsed.path == "/api/health":
                     self.send_json({"ok": True, "status": "healthy", **current_build_info()})
                     return
+                if parsed.path == "/api/updates":
+                    from .software_updates import check_updates
+                    self.send_json(check_updates(current_build_info()["version"]))
+                    return
                 if parsed.path == "/api/build-info":
                     self.send_json({"ok": True, **current_build_info()})
                     return
@@ -1011,6 +1015,17 @@ def make_handler(
             if parsed is None:
                 return
             try:
+                if parsed.path in {"/api/updates/check", "/api/updates/install"}:
+                    from .software_updates import check_updates, start_update
+                    try:
+                        if parsed.path.endswith("/check"):
+                            result = check_updates(current_build_info()["version"], force=True)
+                        else:
+                            result = start_update(database_path, current_build_info()["version"], data.get("version"))
+                        self.send_json(result)
+                    except ValueError as error:
+                        self.send_json({"ok": False, "error": str(error)}, status=400)
+                    return
                 if parsed.path == "/api/app/quit":
                     ok, already_started, message = schedule_shutdown(self)
                     if not ok:

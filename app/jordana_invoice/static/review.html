@@ -29,6 +29,7 @@
         </nav>
         <div class="db-status"><span></span>Database<br />Connected</div>
         <small id="buildInfoLabel">Build unavailable</small>
+        <button id="checkSoftwareUpdate" type="button" class="nav-report">Check for updates</button>
       </aside>
 
       <main class="workspace">
@@ -651,8 +652,17 @@
         <div id="quitStatus" class="quit-status" hidden role="status"></div>
       </main>
     </div>
+    <aside id="softwareUpdate" class="software-update" aria-label="Software updates" hidden>
+      <div id="softwareUpdateDetails" hidden role="status">
+        <p id="softwareUpdateMessage"></p>
+        <p id="softwareUpdateNotes"></p>
+        <button id="installSoftwareUpdate" type="button" hidden>Update and restart</button>
+        <button id="laterSoftwareUpdate" type="button">Later</button>
+      </div>
+    </aside>
     <script src="/static/js/api.js"></script>
     <script src="/static/js/overlay_manager.js"></script>
     <script src="/static/review.js"></script>
+    <script src="/static/js/software_updates.js"></script>
   </body>
 </html>

@@ -2,6 +2,13 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Prepared next update — Test.37 (unpublished)
+
+Zoom parsing, historical candidate-only Review routing, targeted existing-record
+repair, and maintainer-controlled update notices/installation are implemented.
+The last distributed release remains Test.36. The update feed is disabled; no
+new release or installation has been performed. See `SOFTWARE_UPDATES.md`.
+
 ## Verified Baseline
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`

@@ -1297,3 +1297,7 @@ body.responsive-sheet-open {
   .financial-summary-cards { grid-template-columns: 1fr; }
   .financial-summary-toolbar { justify-content: flex-start; }
 }
+
+.software-update { position: fixed; right: 16px; bottom: 12px; z-index: 30; max-width: min(420px, 90vw); background: white; border: 1px solid #ccc; border-radius: 10px; padding: 10px; box-shadow: 0 3px 12px #0002; }
+.software-update p { margin: 8px 0; white-space: pre-wrap; }
+@media print { .software-update { display: none; } }

@@ -157,13 +157,19 @@ def _review_billing_treatment(
 def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """
-        SELECT review_status, COUNT(*) AS count
-        FROM sessions
-        WHERE datetime(COALESCE(end_at, start_at)) <= datetime('now')
-        GROUP BY review_status
+        SELECT s.review_status, COUNT(*) AS count
+        FROM sessions s
+        JOIN calendar_event_candidates c ON c.id = s.candidate_id
+        WHERE datetime(COALESCE(s.end_at, s.start_at)) <= datetime('now')
+          AND (s.review_status = 'approved' OR c.calendar_review_state NOT IN
+               ('future_only', 'absent', 'manual_exclusion', 'nonclient'))
+        GROUP BY s.review_status
         """
     ).fetchall()
     counts = {row["review_status"]: int(row["count"]) for row in rows}
+    from .parser import recognizable_appointment_title
+    candidate_pending = sum(1 for row in list_candidate_only_rows(conn, actionable_only=True)
+                            if recognizable_appointment_title(row["raw_title"]))
     personal_admin = conn.execute(
         """
         SELECT COUNT(*) AS count
@@ -185,7 +191,7 @@ def dashboard_status(conn: sqlite3.Connection) -> dict[str, Any]:
         "needs_review": sum(
             counts.get(status, 0)
             for status in REVIEW_ACTIONABLE_STATUSES
-        ),
+        ) + candidate_pending,
         "ready_to_approve": counts.get("ready_for_approval", 0),
         "approved_this_month": counts.get("approved", 0),
         "personal_admin": int(personal_admin),
@@ -549,12 +555,10 @@ def list_review_candidates(
         ORDER BY s.start_at DESC, s.raw_calendar_title
         LIMIT ? OFFSET ?
         """,
-        (*params, limit, offset),
+        (*params, -1, 0),
     ).fetchall()
     items = [row_summary(conn, row) for row in rows]
-    include_candidate_only = bool(
-        review_status or calendar_filter in {"personal_admin", "all", "hidden"}
-    )
+    include_candidate_only = True
     candidate_only = (
         list_candidate_only_rows(
             conn,
@@ -566,8 +570,16 @@ def list_review_candidates(
         if include_candidate_only
         else []
     )
-    if offset == 0:
-        items.extend(candidate_only[: max(0, limit - len(items))])
+    if not review_status and calendar_filter not in {"personal_admin", "all", "hidden"}:
+        from .parser import recognizable_appointment_title
+        candidate_only = [r for r in candidate_only if recognizable_appointment_title(r["raw_title"])]
+    for field, value in (("service_mode", service_mode), ("billing_session_type", billing_session_type),
+                         ("time_category", time_category), ("payment_status", payment_status)):
+        if value:
+            candidate_only = [r for r in candidate_only if r.get(field) == value]
+    items.extend(candidate_only)
+    items.sort(key=lambda r: (r.get("start_at", ""), r.get("candidate_id", "")), reverse=True)
+    items = items[offset:offset + limit]
     return {
         "total": int(session_total) + len(candidate_only),
         "items": items,
@@ -760,6 +772,7 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "candidate_id": row["candidate_id"],
         "status": row["review_status"],
         "date": row["session_date"] or text(row["start_at"])[:10],
+        "start_at": row["start_at"],
         "time": start_time(row["start_at"]),
         "raw_title": row["raw_calendar_title"] or "",
         "suggested_client": suggested,
@@ -828,7 +841,6 @@ def list_candidate_only_rows(
         JOIN raw_calendar_snapshots r ON r.id = c.latest_raw_snapshot_id
         WHERE {" AND ".join(filters)}
         ORDER BY c.start_at DESC, c.title
-        LIMIT 50
         """,
         params,
     ).fetchall()
@@ -841,13 +853,15 @@ def candidate_only_summary(row: sqlite3.Row) -> dict[str, Any]:
         "candidate_id": row["id"],
         "status": row["review_status"],
         "date": text(row["start_at"])[:10],
+        "start_at": row["start_at"],
         "time": start_time(row["start_at"]),
         "raw_title": row["title"] or "",
-        "suggested_client": row["possible_referenced_person"] or row["classification"].replace("_", " ").title(),
+        "suggested_client": row["proposed_client_name"] or row["possible_referenced_person"] or row["classification"].replace("_", " ").title(),
         "account_name": "Personal/Admin" if row["classification"] in {"personal", "administrative", "nonbillable"} else "Unclassified",
         "account_code": "",
         "duration_minutes": row["proposed_duration_minutes"] or row["calendar_duration_minutes"] or "",
         "service_mode": row["service_mode"] or "unknown",
+        "billing_session_type": row["billing_session_type"],
         "time_category": row["time_category"] or "standard",
         "payment_status": "unpaid",
         "appointment_status": row["appointment_status"] or "unresolved",
@@ -889,6 +903,7 @@ def get_candidate_only(conn: sqlite3.Connection, candidate_id: str) -> dict[str,
         "duration_minutes": row["proposed_duration_minutes"] or row["calendar_duration_minutes"],
         "calendar_duration_minutes": row["calendar_duration_minutes"],
         "service_mode": row["service_mode"] or "unknown",
+        "billing_session_type": row["billing_session_type"],
         "time_category": row["time_category"] or "standard",
         "payment_status": "unpaid",
         "appointment_status": row["appointment_status"] or "unresolved",
@@ -6112,6 +6127,7 @@ def normalize_service_mode(value: str) -> str:
         "phone": "phone",
         "call": "phone",
         "facetime": "facetime",
+        "zoom": "zoom",
         "face_time": "facetime",
         "office": "office",
         "office_visit": "office",
@@ -6130,11 +6146,11 @@ def normalize_time_category(value: str) -> str:
 
 
 def rate_group_for(service_mode: str) -> str:
-    return {"phone": "remote", "facetime": "remote", "office": "office", "house_call": "house_call"}.get(service_mode, "")
+    return {"phone": "remote", "facetime": "remote", "zoom": "remote", "office": "office", "house_call": "house_call"}.get(service_mode, "")
 
 
 def derive_appointment_method_from_service(service_mode: str) -> str:
-    if service_mode in {"phone", "facetime", "office"}:
+    if service_mode in {"phone", "zoom", "facetime", "office"}:
         return service_mode
     if service_mode == "house_call":
         return "office"
@@ -7082,6 +7098,10 @@ def _reparse_unapproved_candidates(
     skipped = 0
 
     for row in rows:
+        from .historical_review import manually_excluded, historical_evidence
+        if manually_excluded(conn, row["id"]):
+            skipped += 1
+            continue
         snap = conn.execute(
             "SELECT * FROM raw_calendar_snapshots WHERE id = ?",
             (row["latest_raw_snapshot_id"],),
@@ -7090,13 +7110,16 @@ def _reparse_unapproved_candidates(
             skipped += 1
             continue
         if candidate_only and not re.search(
-            r"\b\d+\s+(?:min|mins|minute|minutes)\s*$",
+            r"(?:\b\d+\s+(?:min|mins|minute|minutes)|\bzoom)\s*$",
             text(snap["event_title"]),
             re.IGNORECASE,
         ):
             skipped += 1
             continue
 
+        if candidate_only and not historical_evidence(snap):
+            skipped += 1
+            continue
         parse_row = {
             "event_title": snap["event_title"],
             "start_at": snap["start_at"],
@@ -7218,7 +7241,7 @@ def reparse_candidate_only_duration_suffixes(
     conn: sqlite3.Connection,
 ) -> dict[str, Any]:
     """
-    Reparse only candidate-only records whose titles end in a minute unit.
+    Reparse candidate-only records ending in a minute unit or Zoom method.
 
     This targeted parser-upgrade repair is safe to run during sync because it
     cannot rewrite an existing session or an approved/excluded decision, and it

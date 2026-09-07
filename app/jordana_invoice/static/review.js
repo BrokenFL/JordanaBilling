@@ -439,8 +439,8 @@ const billingTypeShort = (v, customDescription = "") => {
   if (v === "custom" && customDescription) return escapeHtml(customDescription);
   return ({psychotherapy:"Standard", psychotherapy_house_call:"House Call", psychotherapy_weekend:"Weekend", psychotherapy_evening:"Evening", custom:"Custom"}[v] || escapeHtml(v) || "Standard");
 };
-const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", unknown:"Unknown"}[v] || escapeHtml(v) || "Unknown");
-const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || escapeHtml(v) || "Unknown");
+const appointmentMethodLabel = (v) => ({phone:"Phone", facetime:"FaceTime", zoom:"Zoom", office:"Office", unknown:"Unknown"}[v] || escapeHtml(v) || "Unknown");
+const serviceLabel = (v) => ({phone:"Phone", facetime:"FaceTime", zoom:"Zoom", office:"Office", house_call:"House Call", unknown:"Unknown"}[v] || escapeHtml(v) || "Unknown");
 const timeLabel = (v) => ({standard:"Standard", evening:"Evening", weekend:"Weekend", weekend_evening:"Weekend + Evening"}[v] || escapeHtml(v) || "Standard");
 const participantState = (p) => ({
   person_id: p.person_id,

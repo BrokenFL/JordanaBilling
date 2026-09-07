@@ -8,7 +8,7 @@ from .util import new_id, now_iso
 
 
 SEEDED_APPOINTMENT_METHODS = frozenset({
-    "office", "phone", "facetime", "house_call",
+    "office", "phone", "zoom", "facetime", "house_call",
     "correspondence", "preparation", "mediation", "other",
 })
 

@@ -12,7 +12,7 @@ from .util import new_id, now_iso, parse_int, text
 WEEKEND_EVENING_POLICY = "weekend_evening_policy"
 DEFAULT_WEEKEND_EVENING_POLICY = "manual_review"
 
-EQUIVALENT_APPOINTMENT_METHODS = {"office", "phone", "facetime"}
+EQUIVALENT_APPOINTMENT_METHODS = {"office", "phone", "zoom", "facetime"}
 EQUIVALENT_RATE_GROUPS = {"remote", "office"}
 
 

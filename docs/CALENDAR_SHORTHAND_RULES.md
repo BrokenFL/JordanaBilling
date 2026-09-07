@@ -143,3 +143,10 @@ Full Name | Time | Minutes | Session Type | No Show
 Legacy shorthand remains supported after structured parsing, including forms such as `Fred 830`, `Leah Grossman 630 30`, `Rebecca colon 630 90`, and `Bobsy and Fred 6`.
 
 Calendar start time remains authoritative. Optional title time is used only to create a warning when it disagrees exactly by hour/minute.
+
+### Zoom (prepared Test.37)
+
+`Alex Example 1130 zoom` and `Alex Example 1130 30 Zoom` recognize Zoom as the
+appointment method, with default 60 or explicit 30 minutes respectively. The
+calendar start remains authoritative. Unsupported trailing tokens keep a
+recognizable historical appointment in Review for classification.

@@ -313,6 +313,7 @@ def session_type_text(
         "office": "Office",
         "phone": "Phone",
         "facetime": "FaceTime",
+        "zoom": "Zoom",
         "house_call": "House Call",
         "unknown": "Unknown",
     }.get(service, service)

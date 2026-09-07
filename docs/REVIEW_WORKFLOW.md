@@ -407,3 +407,21 @@ evidence, and never edit raw snapshots or protected financial records.
 Missing/partial capture proof is handled conservatively: legacy batches use
 their observed event span, and explicit date-picker batches cannot remove
 observations beyond their demonstrated boundary coverage.
+
+### Prepared Test.37: Zoom and unresolved historical appointments
+
+Zoom is a distinct appointment method, equivalent to the other ordinary remote
+methods for billing-type/rate matching. `Alex Example 1130 zoom` proposes the
+calendar's actual start, 60 minutes, and Zoom. Explicit supported lengths win.
+
+Default Review also includes historical candidate-only records with a leading
+person-like name and valid title-time token even when other trailing text is
+unresolved. This is a review-routing hint, never an approval or permanent person
+creation. Obvious personal/admin reminders remain outside this route. Sessions
+remains the broader ledger; its visibility does not imply approval or billing.
+
+The combined session/candidate list is sorted and paginated together, so an
+unresolved appointment is not lost after page one. Sync repairs previously
+imported candidate-only Zoom entries, including when there are no new raw rows.
+Approved/excluded records, manual exclusions and existing saved sessions are
+preserved. Tests start from raw evidence and cover candidates without sessions.

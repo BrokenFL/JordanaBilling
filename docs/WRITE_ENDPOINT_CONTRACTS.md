@@ -1322,3 +1322,16 @@ enum-like choices) before the service layer is called.
 - unknown field pass-through
 - default values (confirmed=false, reason="", account_type="individual")
 - `RequestValidationError` recognized as safe validation error
+
+## Software updates (prepared Test.37)
+
+- `GET /api/updates`: cached public promotion-feed check plus local installation
+  status; no installation or financial mutation.
+- `POST /api/updates/check`: force refresh of the fixed promotion feed.
+- `POST /api/updates/install`: `{ "version": "0.1.0.post37" }`; rechecks the offer,
+  validates the installed path/platform, creates a verified private backup, then
+  starts a detached download/verification/installation worker. Browser-supplied
+  URLs or commands are never accepted. Both POST routes use the existing write
+  token, Origin, Host and JSON guards. Controlled validation errors return 400.
+
+See `SOFTWARE_UPDATES.md` for promotion and installed-Mac verification.

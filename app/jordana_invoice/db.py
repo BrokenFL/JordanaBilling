@@ -2147,6 +2147,7 @@ def seed_service_catalog(conn: sqlite3.Connection) -> None:
         ("office", "Office", "appointment_method", 1),
         ("phone", "Phone", "appointment_method", 1),
         ("facetime", "FaceTime", "appointment_method", 1),
+        ("zoom", "Zoom", "appointment_method", 1),
         ("house_call", "House Call", "appointment_method", 0),
         ("correspondence", "Correspondence", "appointment_method", 0),
         ("preparation", "Preparation", "appointment_method", 0),
