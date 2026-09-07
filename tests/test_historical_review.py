@@ -168,5 +168,5 @@ class HistoricalReviewTests(unittest.TestCase):
         self.load()
         self.assertEqual(self.conn.execute('SELECT duration_minutes FROM sessions').fetchone()[0],60)
         self.conn.execute('UPDATE sessions SET duration_minutes=90,approved_duration_minutes=90')
-        self.load()
+        self.load(event('later',captured='2026-08-12T12:00:00-04:00'))
         self.assertEqual(self.conn.execute('SELECT duration_minutes FROM sessions').fetchone()[0],90)

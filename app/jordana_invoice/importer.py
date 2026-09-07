@@ -1866,7 +1866,7 @@ def maybe_insert_session(
                 end_at = ?,
                 calendar_duration_minutes = ?,
                 parsed_duration_minutes = ?,
-                duration_minutes = ?,
+                duration_minutes = COALESCE(approved_duration_minutes, ?),
                 service_mode = ?,
                 rate_group = ?,
                 time_category = ?,
