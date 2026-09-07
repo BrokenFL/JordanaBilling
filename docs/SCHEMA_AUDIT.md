@@ -9,7 +9,7 @@ The schema is additive and local-first. The operational database is authoritativ
 The current migration head is:
 
 ```text
-024_month_close
+025_historical_review
 ```
 
 The registered migrations are:
@@ -227,3 +227,20 @@ Before changing the schema:
 10. document the new migration and secure rollback or recovery path
 
 Never test a migration by deleting or recreating `data/jordana_invoice.sqlite3`.
+
+## Test.36 historical Review rules
+
+Normal Review uses post-end past-calendar evidence for every payload version.
+Legacy future-only derived records remain preserved but inactive. A later
+historical capture covering an unapproved event can retire an obsolete entry;
+aging out of the rolling window cannot. Late cancellations stay eligible.
+Manual exclusions override import parsing and survive repeated syncs.
+Saved participants and approved aliases feed readiness after import.
+
+Migration `025_historical_review` adds only `calendar_review_state` on candidates.
+The authenticated Review reconciliation and sync paths populate it, including
+no-new-row upgrades. Eligibility changes are audited, reversible from later
+evidence, and never edit raw snapshots or protected financial records.
+Missing/partial capture proof is handled conservatively: legacy batches use
+their observed event span, and explicit date-picker batches cannot remove
+observations beyond their demonstrated boundary coverage.

@@ -483,6 +483,8 @@ def list_review_candidates(
     else:
         filters.append("s.review_status NOT IN ('excluded', 'approved')")
         filters.append(actionable_review_time_filter("s"))
+    if review_status not in {"approved", "excluded"}:
+        filters.append("c.calendar_review_state NOT IN ('future_only', 'absent', 'manual_exclusion', 'nonclient')")
     if billing_session_type:
         filters.append("s.billing_session_type = ?")
         params.append(billing_session_type)
@@ -815,6 +817,8 @@ def list_candidate_only_rows(
         filters.append("c.review_status NOT IN ('excluded', 'approved')")
     if actionable_only:
         filters.append(actionable_review_time_filter("c"))
+    if review_status not in {"approved", "excluded"}:
+        filters.append("c.calendar_review_state NOT IN ('future_only', 'absent', 'manual_exclusion', 'nonclient')")
     if calendar_filter:
         add_calendar_filter(filters, params, calendar_filter, "c")
     rows = conn.execute(
@@ -1119,6 +1123,9 @@ def save_interpretation(conn: sqlite3.Connection, candidate_id: str, payload: di
 
 def approve_candidate(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     init_db(conn)
+    eligibility = conn.execute("SELECT calendar_review_state, review_status FROM calendar_event_candidates WHERE id = ?", (candidate_id,)).fetchone()
+    if eligibility and eligibility["review_status"] != "approved" and eligibility["calendar_review_state"] in {"future_only", "absent", "manual_exclusion", "nonclient"}:
+        raise ValueError("This appointment is not in the current historical calendar review list. Sync Calendar before reviewing it.")
 
     # 1. Idempotency/recovery check for already approved session
     candidate_row = conn.execute("SELECT review_status FROM calendar_event_candidates WHERE id = ?", (candidate_id,)).fetchone()
@@ -5039,8 +5046,12 @@ def refresh_candidate_suggestions(
     candidate_id: str,
     *,
     preserve_approved_rate: bool = False,
+    record_review_event: bool = True,
 ) -> dict[str, Any]:
     session = session_for_candidate(conn, candidate_id)
+    if session["review_status"] in {"approved", "excluded"}:
+        return {"review_status": session["review_status"], "unresolved_fields": [], "rate_explanation": "Saved decision preserved."}
+    prior_candidate = conn.execute("SELECT unresolved_fields FROM calendar_event_candidates WHERE id=?", (candidate_id,)).fetchone()
     participants = get_session_participants(conn, session["id"])
     primary_person_id = next((p["person_id"] for p in participants if p.get("is_primary") and p.get("person_id")), None)
     now = now_iso()
@@ -5173,7 +5184,12 @@ def refresh_candidate_suggestions(
         "UPDATE calendar_event_candidates SET review_status = ?, unresolved_fields = ?, review_reasons = ?, updated_at = ? WHERE id = ?",
         (review_status, json_dumps(unresolved), json_dumps([suggestion.explanation]), now, candidate_id),
     )
-    add_review_item(conn, candidate_id, refreshed["id"], review_status, unresolved, [suggestion.explanation])
+    prior_unresolved = json.loads(prior_candidate["unresolved_fields"] or "[]") if prior_candidate else []
+    if session["review_status"] != review_status or sorted(prior_unresolved) != sorted(unresolved):
+        if record_review_event:
+            add_review_item(conn, candidate_id, refreshed["id"], review_status, unresolved, [suggestion.explanation])
+        else:
+            conn.execute("UPDATE review_items SET review_status=?, unresolved_fields=?, review_reasons=? WHERE candidate_id=? AND reviewed_at IS NULL", (review_status, json_dumps(unresolved), json_dumps([suggestion.explanation]), candidate_id))
     return {"review_status": review_status, "unresolved_fields": unresolved, "rate_explanation": suggestion.explanation}
 
 
@@ -5329,7 +5345,12 @@ def _auto_link_exact_name_participants(conn: sqlite3.Connection) -> tuple[int, s
         FROM session_participants sp
         JOIN sessions s ON s.id = sp.session_id
         WHERE sp.person_id IS NULL
-          AND s.review_status != 'approved'
+          AND s.review_status NOT IN ('approved', 'excluded')
+          AND NOT EXISTS (SELECT 1 FROM invoice_line_items il WHERE il.source_session_id=s.id)
+          AND NOT EXISTS (SELECT 1 FROM payment_allocations pa WHERE pa.session_id=s.id)
+          AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.source_session_id=s.id)
+          AND EXISTS (SELECT 1 FROM calendar_event_candidates c WHERE c.id = s.candidate_id
+                      AND c.calendar_review_state IN ('eligible', 'unverified'))
         """
     ).fetchall()
     linked = 0

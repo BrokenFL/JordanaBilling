@@ -369,6 +369,7 @@ CREATE TABLE IF NOT EXISTS calendar_event_candidates (
   calendar_is_preferred_work INTEGER NOT NULL DEFAULT 0,
   hidden_from_review INTEGER NOT NULL DEFAULT 0,
   reconciliation_status TEXT,
+  calendar_review_state TEXT NOT NULL DEFAULT 'unverified',
   sessions_archived_at TEXT,
   sessions_archive_reason TEXT,
   created_at TEXT NOT NULL,
@@ -1779,6 +1780,15 @@ def _apply_migration_024(conn: sqlite3.Connection) -> None:
     )
 
 
+MIGRATION_025_HISTORICAL_REVIEW = "025_historical_review"
+
+
+def _apply_migration_025(conn: sqlite3.Connection) -> None:
+    add_columns(conn, "calendar_event_candidates", {
+        "calendar_review_state": "TEXT NOT NULL DEFAULT 'unverified'",
+    })
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1804,6 +1814,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_022_CALENDAR_RECOVERY_ACTIONS, _apply_migration_022),
     (MIGRATION_023_CLIENT_INVOICE_TITLE, _apply_migration_023),
     (MIGRATION_024_MONTH_CLOSE, _apply_migration_024),
+    (MIGRATION_025_HISTORICAL_REVIEW, _apply_migration_025),
 ]
 
 
@@ -1977,6 +1988,7 @@ def migrate_phase2_columns(conn: sqlite3.Connection) -> None:
             "calendar_is_preferred_work": "INTEGER NOT NULL DEFAULT 0",
             "hidden_from_review": "INTEGER NOT NULL DEFAULT 0",
             "reconciliation_status": "TEXT",
+            "calendar_review_state": "TEXT NOT NULL DEFAULT 'unverified'",
             "billing_session_type": "TEXT",
             "appointment_method": "TEXT",
             "duration_choice": "TEXT",

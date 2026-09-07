@@ -35,7 +35,7 @@ def raw_row(snapshot_key, title, start):
         "snapshot_key": snapshot_key,
         "run_id": "run-org",
         "batch_name": "test",
-        "capture_window": "next_2_days",
+        "capture_window": "past_7_days",
         "captured_at": "2026-06-22T01:00:00.000Z",
         "source_device": "test",
         "timezone": "America/New_York",

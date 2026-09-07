@@ -398,7 +398,7 @@ class CalendarSnapshotReconciliationTests(unittest.TestCase):
         self.assertFalse(
             any(item["candidate_id"] == candidate_id for item in list_review_candidates(self.conn)["items"])
         )
-        with self.assertRaisesRegex(ValueError, "can be approved after"):
+        with self.assertRaisesRegex(ValueError, "historical calendar"):
             approve_candidate(self.conn, candidate_id, {})
 
     def test_review_queue_shows_session_after_its_end_time(self):

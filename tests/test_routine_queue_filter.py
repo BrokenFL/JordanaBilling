@@ -23,7 +23,7 @@ def make_row(key, title, calendar, start="2026-06-17T18:00:00-04:00", end=None):
         "snapshot_key": key,
         "run_id": "run-filter-test",
         "batch_name": "filter_test",
-        "capture_window": "next_2_days",
+        "capture_window": "past_7_days",
         "captured_at": "2026-06-22T01:00:00.000Z",
         "source_device": "test",
         "timezone": "America/New_York",

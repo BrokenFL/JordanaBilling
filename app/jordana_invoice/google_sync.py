@@ -402,6 +402,7 @@ def sync_with_connection(
             with conn:
                 before = count_raw_rows(conn)
                 review_before = count_review_rows(conn)
+                upsert_capture_runs(conn, capture_runs_by_id.values())
                 import_run_id = import_rows(
                     conn,
                     all_rows,
@@ -426,6 +427,8 @@ def sync_with_connection(
                         mode=mode,
                     )
                 backfill_phase2(conn)
+                from .historical_review import reconcile_historical_review
+                reconcile_historical_review(conn)
                 write_reports(conn, config.reports_dir)
             from .invoice_services import stage_approved_sessions_to_monthly_drafts
 

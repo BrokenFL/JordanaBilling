@@ -18,7 +18,7 @@ from .calendar_identity import (
     utc_datetime,
 )
 from .calendar_warnings import resolve_calendar_warning, upsert_calendar_warning
-from .capture_windows import completed_run_windows, is_past_capture_window
+from .capture_windows import completed_run_windows, is_past_capture_window, is_future_capture_window
 from .db import (
     OperationalImportAuthorization,
     _create_backup,
@@ -729,7 +729,12 @@ def collapse_raw_snapshot_rows(
             incoming_group,
             candidate_id=resolution.candidate_id if isinstance(resolution, CandidateIdentityResolution) else None,
         )
-        billing_evidence = [row for row in group if row_is_billing_evidence(row)]
+        from .historical_review import historical_evidence
+        billing_evidence = [row for row in group if historical_evidence(row)]
+        # Keep legacy derived storage compatible; eligibility reconciliation
+        # hides future-only legacy records and never permits their approval.
+        if not billing_evidence:
+            billing_evidence = [row for row in group if row_is_billing_evidence(row)]
         if not billing_evidence:
             # v3 future capture is deliberately raw scheduling/health
             # evidence.  It becomes a session candidate only after the event
@@ -785,17 +790,17 @@ def payload_version(row: sqlite3.Row | dict[str, object]) -> int:
 
 
 def row_is_billing_evidence(row: sqlite3.Row | dict[str, object]) -> bool:
-    """Return whether one raw snapshot may derive a billing candidate.
+    """Storage compatibility gate; historical_review controls actionable Review.
 
-    v2 and earlier payloads retain their historic behavior for compatibility.
-    Starting with v3, a future batch is raw-only scheduling evidence and a
-    past batch qualifies only after the appointment's offset-aware end time.
+    Legacy rows remain derivable for recovery compatibility. Their future-only
+    candidates are inactive. V3 future observations remain raw-only.
     """
-
     if payload_version(row) < 3:
         return True
-    if not is_past_capture_window(row["capture_window"]):
+    if is_future_capture_window(row["capture_window"]):
         return False
+    if not is_past_capture_window(row["capture_window"]):
+        return payload_version(row) < 3
     captured_at = utc_datetime(row["captured_at"])
     end_at = utc_datetime(row["end_at"])
     return bool(captured_at and end_at and captured_at >= end_at)
@@ -857,7 +862,8 @@ def suppress_pending_events_missing_from_newest_covering_snapshot(
         """
     ).fetchall()
     if not candidate_rows:
-        return 0
+        from .historical_review import reconcile_historical_review
+        return reconcile_historical_review(conn)
 
     now = now_iso()
     resolution = (
@@ -892,7 +898,8 @@ def suppress_pending_events_missing_from_newest_covering_snapshot(
             """,
             (now, candidate_id),
         )
-    return len(candidate_rows)
+    from .historical_review import reconcile_historical_review
+    return len(candidate_rows) + reconcile_historical_review(conn)
 
 
 def candidate_key(row: sqlite3.Row) -> str:
@@ -1242,6 +1249,9 @@ def insert_candidate(
     ).fetchone()
     if existing:
         candidate_id = existing["id"]
+        from .historical_review import manually_excluded
+        if manually_excluded(conn, candidate_id):
+            return candidate_id
         conn.execute(
             """
             UPDATE calendar_event_candidates
@@ -1825,6 +1835,9 @@ def maybe_insert_session(
     ).fetchone()
     billing_treatment = initial_billing_treatment(result)
     if existing:
+        from .historical_review import manually_excluded
+        if manually_excluded(conn, candidate_id):
+            return True
         if existing["review_status"] == "approved":
             maybe_create_source_change_warning(
                 conn,

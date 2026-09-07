@@ -36,7 +36,7 @@ def make_row(key, title, calendar="Jordana Calendar", start="2026-06-17T17:00:00
         "snapshot_key": key,
         "run_id": "run-reparse-test",
         "batch_name": "reparse_test",
-        "capture_window": "next_2_days",
+        "capture_window": "past_7_days",
         "captured_at": "2026-06-22T01:00:00.000Z",
         "source_device": "test",
         "timezone": "America/New_York",

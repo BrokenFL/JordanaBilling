@@ -1,4 +1,4 @@
-# Jordana Billing v0.1.0-test.35 Release Notes
+# Jordana Billing v0.1.0-test.36 Release Notes
 
 ## Release Status
 
@@ -6,18 +6,18 @@ This private release is approved for supervised Jordana beta testing. It remains
 a controlled pilot/test release and is not represented as final production
 software.
 
-Use the exact `v0.1.0-test.35` artifact published on GitHub. The release
+Use the exact `v0.1.0-test.36` artifact published on GitHub. The release
 manifest inside the DMG records the source commit, build ID, exact wheel path,
 and checksum facts.
 
 ```text
-JordanaBilling-v0.1.0-test.35-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.36-<commit>-macos-arm64.dmg
 ```
 
 Release facts:
 
-- **Release label:** v0.1.0-test.35
-- **Python package/application version:** 0.1.0.post35
+- **Release label:** v0.1.0-test.36
+- **Python package/application version:** 0.1.0.post36
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
 - **Source tree dirty:** false
@@ -29,8 +29,22 @@ Release facts:
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
 - **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post35` app wheel plus pinned production dependencies
+- **Wheelhouse:** exact `jordana_invoice-0.1.0.post36` app wheel plus pinned production dependencies
 - **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+
+## Historical Calendar Review In test.36
+
+- Review uses post-session past captures. Legacy future-only appointments no longer become actionable as time passes.
+- Superseded or removed unapproved entries leave normal Review when later historical coverage establishes their absence. Raw history remains intact and a later positive capture restores eligibility.
+- Late cancellations remain available for billing-treatment review; their obsolete scheduling versions do not compete for approval.
+- Manual exclusions survive sync. The upgrade repairs records previously reopened despite a recorded exclusion.
+- Confirmed participants and approved aliases are reused; sync recalculates readiness from saved session values instead of requiring repeated name matching.
+- Shorthand without an explicit length defaults to 60 minutes. Explicit title lengths and manually saved durations take precedence.
+- Recognizable personal entries such as hair appointments, massage appointments, and reunions stay outside normal billing Review unless confirmed participant evidence says otherwise.
+- Incomplete captures do not establish absence. Legacy or fixed-date captures use conservative observed boundaries, avoiding removal based on unverified date-picker coverage.
+- Approved sessions, invoice lines, invoices, payments, and raw evidence remain protected. No sessions are automatically approved.
+
+Install this DMG over the existing app, keep the existing private database and configuration, then open Review and Sync Calendar. Reconciliation also runs when sync returns no new rows. No replacement daily Shortcut is required. Installation on Jordana's Mac remains a supervised follow-up.
 
 ## Month Close And Service-Month Accounting In test.35
 

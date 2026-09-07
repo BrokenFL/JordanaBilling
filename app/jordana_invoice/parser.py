@@ -62,6 +62,9 @@ PERSONAL_KEYWORDS = {
     "pedicure",
     "cp reformer",
     "haircut",
+    "hair color",
+    "massage",
+    "reunion",
     "cleaners",
     "dry cleaner",
     "dinner",
@@ -948,8 +951,8 @@ def choose_duration(
 ) -> tuple[int, str]:
     if explicit_duration:
         return explicit_duration, "title"
-    if calendar_duration:
-        return calendar_duration, "calendar"
+    # Shorthand without an explicit length means a standard hour. Calendar
+    # block length is retained separately as source evidence.
     return 60, "default"
 
 
