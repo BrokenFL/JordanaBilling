@@ -124,9 +124,9 @@ class ApprovalStagingTests(unittest.TestCase):
     def test_future_approved_session_returns_skip_reason_without_draft(self):
         future_candidate_id = self._import_candidate("future1", "Avery Stone | 60 | Office", "2099-07-01T10:00:00-04:00")
         captured = self._approve_via_http(candidate_id=future_candidate_id)
-        # Future appointments cannot be approved until the session ends
+        # Future-only evidence cannot be approved without a historical capture
         self.assertEqual(captured["status"], 400)
-        self.assertIn("can be approved after", captured["payload"]["error"])
+        self.assertIn("historical calendar review list", captured["payload"]["error"])
 
     # 3. Staging summary errors produce status = "warning" and HTTP 200
     def test_staging_errors_produce_warning(self):

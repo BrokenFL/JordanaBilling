@@ -552,8 +552,8 @@ class TestFutureAppointmentApprovalGate(TestBase):
         payload = self._full_setup_for_approval(candidate_id)
         with self.assertRaises(ValueError) as ctx:
             approve_candidate(self.conn, candidate_id, payload)
-        self.assertIn("scheduled for", str(ctx.exception))
-        self.assertIn("can be approved after", str(ctx.exception))
+        self.assertIn("historical calendar review list", str(ctx.exception))
+        self.assertIn("Sync Calendar", str(ctx.exception))
 
     def test_past_appointment_approval_unaffected(self):
         """Past appointments should still be approvable normally."""

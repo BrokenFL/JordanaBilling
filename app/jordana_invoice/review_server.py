@@ -468,6 +468,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Amount exceeds the current invoice balance.",
             "This request has already been processed.",
             "Calendar sync is already running.",
+            "This appointment is not in the current historical calendar review list. Sync Calendar before reviewing it.",
             "Explicit rebuild confirmation is required.",
             # Billing parties
             "Billing name is required.",
