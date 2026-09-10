@@ -336,7 +336,7 @@
               <label class="field inline-field">Service month<input id="monthCloseMonth" type="month" /></label>
               <button id="runMonthCloseBtn" class="save">Run Month Close Check</button>
             </div>
-            <div class="help">Moved or deleted future appointments do not create warnings. Only past-3-days evidence is expected to become a session.</div>
+            <div class="help">Checks use calendar captures taken after appointments ended, including backfills. Future-only entries do not create missing-appointment warnings.</div>
           </section>
           <div id="monthCloseStatus" class="month-close-status" role="status"></div>
           <div class="summary-cards financial-summary-cards month-close-money" aria-live="polite">

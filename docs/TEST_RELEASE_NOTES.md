@@ -1,3 +1,37 @@
+# Jordana Billing v0.1.0-test.38
+
+This update fixes false missing-calendar warnings in Month Close. Package version:
+`0.1.0.post38`. Apple Silicon macOS; Python 3.14.x.
+
+## What changed
+
+- Month Close uses the same calendar identity matching as import, including aliases
+  and equivalent timezone representations. An existing appointment is no longer
+  reported as missing because a later capture has a different candidate key.
+- Past-evidence checks include historical backfill windows and require capture
+  after the appointment ended. Real unlinked records remain visible, with accurate
+  counts above 50 items.
+- Session review includes candidate-only appointments and follows the normal
+  Review eligibility rules, avoiding false passes and obsolete-event warnings.
+- The changes only read the database. They do not create, approve, exclude, or
+  modify sessions, invoices, payments, or raw calendar evidence.
+
+## Installation
+
+Quit Jordana Billing, open the DMG, and run **Install Jordana Billing.app** using
+her existing installation, database, and configuration. Reopen Month Close and
+select the month again. No replacement Shortcut or calendar backfill is needed
+for this reporting fix. Test.37 approval-speed and Zoom fixes remain included.
+Automatic update offers remain disabled; this release uses the manual installer.
+
+## Verification
+
+Focused Month Close and identity/Review regression tests and disposable-database
+acceptance cover the changes. On the supplied database, all 42 false missing-record
+warnings cleared, while the separate invoice-coverage warning remained. The entire
+database was unchanged by report generation. Real missing-record fixtures still
+produce warnings. Release artifacts include no private database or client evidence.
+
 # Jordana Billing v0.1.0-test.37
 
 This controlled test release updates Test.36 and preserves the existing private

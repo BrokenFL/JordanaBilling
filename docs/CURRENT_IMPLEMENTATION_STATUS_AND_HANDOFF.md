@@ -2,7 +2,17 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
-## Test.37 release preparation — September 10
+## Test.38 release preparation — September 10
+
+Month Close now uses the importer's identity resolution, including stored aliases
+and canonical calendar matching. It no longer reports an existing record as
+missing merely because its original candidate key differs from a later capture.
+Historical capture checks require post-session evidence and include backfill
+windows. Session review uses the same queue as Review, including candidate-only
+appointments. These report changes are read-only. The automatic update feed
+remains disabled; installation is manual.
+
+## Test.37 release — September 10
 
 Zoom parsing, historical candidate-only Review routing, targeted existing-record
 repair, and maintainer-controlled update notices/installation are implemented.

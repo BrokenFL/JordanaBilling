@@ -40,6 +40,60 @@ class MonthCloseTests(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
+    def past_row(self, key="past", **changes):
+        row = raw_row(key, capture_window="past_3_days")
+        row.update(captured_at="2026-08-01T10:00:00-04:00")
+        row.update(changes)
+        return row
+
+    def evidence_check(self):
+        report = get_month_close_report(self.conn, "2026-07", today=date(2026, 8, 4))
+        return next(item for item in report["checks"] if item["id"] == "raw_to_session")
+
+    def test_equivalent_capture_matches_existing_approved_record_without_writes(self):
+        import_rows(self.conn, [self.past_row()], "test")
+        self.conn.execute("UPDATE sessions SET review_status='approved'")
+        self.conn.execute("UPDATE calendar_event_candidates SET review_status='approved'")
+        import_rows(self.conn, [self.past_row("utc-copy", calendar_event_id="", event_fingerprint="",
+            start_at="2026-07-31T21:00:00Z", end_at="2026-07-31T22:00:00Z")], "test")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM calendar_event_candidates").fetchone()[0], 1)
+        before = list(self.conn.iterdump())
+        self.assertEqual(self.evidence_check()["count"], 0)
+        self.assertEqual(before, list(self.conn.iterdump()))
+
+    def test_alias_matches_when_original_candidate_key_differs(self):
+        import_rows(self.conn, [self.past_row()], "test")
+        self.conn.execute("UPDATE calendar_event_candidates SET candidate_key='retained-original-key'")
+        self.assertEqual(self.evidence_check()["count"], 0)
+
+    def test_real_unlinked_post_session_capture_is_still_reported(self):
+        import_rows(self.conn, [raw_row("missing")], "test")
+        self.conn.execute("UPDATE raw_calendar_snapshots SET capture_window='past_7_days', captured_at='2026-08-01T14:00:00Z'")
+        self.assertEqual(self.evidence_check()["count"], 1)
+
+    def test_pre_end_past_capture_is_not_a_missing_appointment(self):
+        import_rows(self.conn, [raw_row("pre-end", capture_window="past_3_days")], "test")
+        self.assertEqual(self.evidence_check()["count"], 0)
+
+    def test_real_missing_count_is_not_truncated_to_fifty(self):
+        rows = [raw_row(f"missing-{i}") for i in range(51)]
+        for i, row in enumerate(rows):
+            row.update(calendar_event_id=f"event-{i}", event_fingerprint=f"fp-{i}")
+        import_rows(self.conn, rows, "test")
+        self.conn.execute("UPDATE raw_calendar_snapshots SET capture_window='past_3_days', captured_at='2026-08-01T14:00:00Z'")
+        self.assertEqual(self.evidence_check()["count"], 51)
+
+    def test_candidate_only_review_cannot_produce_false_pass(self):
+        import_rows(self.conn, [self.past_row(event_title="Avery Stone 5 unknown")], "test")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
+        report = get_month_close_report(self.conn, "2026-07", today=date(2026, 8, 4))
+        review = next(item for item in report["checks"] if item["id"] == "review")
+        self.assertEqual(review["count"], 1)
+        self.conn.execute("UPDATE calendar_event_candidates SET calendar_review_state='absent'")
+        report = get_month_close_report(self.conn, "2026-07", today=date(2026, 8, 4))
+        review = next(item for item in report["checks"] if item["id"] == "review")
+        self.assertEqual(review["count"], 0)
+
     def test_additive_capture_run_migration_is_installed(self):
         table = self.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'calendar_capture_runs'"

@@ -10,8 +10,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .financial_summary import _month_bounds, get_financial_summary
-from .importer import calendar_reconciliation_buckets, candidate_key
+from .importer import calendar_reconciliation_buckets, candidate_key, resolve_candidate_identity
 from .capture_windows import is_past_capture_window
+from .historical_review import historical_evidence
 from .util import now_iso, text
 
 
@@ -105,11 +106,12 @@ def _capture_check(conn: sqlite3.Connection, month: str, today: date) -> dict[st
 def _unmapped_past_rows(conn: sqlite3.Connection, month: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         """SELECT * FROM raw_calendar_snapshots
-           WHERE capture_window = 'past_3_days'
            ORDER BY start_at, captured_at, ingested_at""").fetchall()
     seen: set[str] = set()
     missing: list[dict[str, Any]] = []
     for row in rows:
+        if not is_past_capture_window(row["capture_window"]) or not historical_evidence(row):
+            continue
         local_date = _as_local_date(row["start_at"])
         if not local_date or local_date.strftime("%Y-%m") != month:
             continue
@@ -117,25 +119,30 @@ def _unmapped_past_rows(conn: sqlite3.Connection, month: str) -> list[dict[str, 
         if key in seen:
             continue
         seen.add(key)
-        if conn.execute("SELECT 1 FROM calendar_event_candidates WHERE candidate_key = ? LIMIT 1", (key,)).fetchone():
+        # Import can link a changed identifier or timezone representation to an
+        # existing candidate. Its original candidate_key intentionally stays put.
+        resolution = resolve_candidate_identity(conn, row, key)
+        if resolution.candidate_id and not resolution.ambiguous:
             continue
         missing.append({"raw_snapshot_id": row["id"], "title": text(row["event_title"]),
                         "start_at": text(row["start_at"]), "calendar_name": text(row["calendar_name"])})
-    return missing[:50]
+    return missing
 
 
 def _review_items(conn: sqlite3.Connection, month: str) -> list[dict[str, Any]]:
-    return [dict(row) for row in conn.execute(
-        """SELECT s.id AS session_id, s.session_date, s.start_at,
-                  s.raw_calendar_title AS title, s.review_status
-           FROM sessions s
-           JOIN calendar_event_candidates c ON c.id = s.candidate_id
-           WHERE substr(s.session_date, 1, 7) = ?
-             AND s.review_status NOT IN ('approved', 'excluded')
-             AND (c.capture_windows LIKE '%past_3_days%'
-               OR c.capture_windows LIKE '%past_7_days%'
-               OR c.capture_windows LIKE '%backfill_%')
-           ORDER BY s.start_at LIMIT 50""", (month,)).fetchall()]
+    from .review_services import list_review_candidates
+
+    # Include candidate-only appointments and apply the same eligibility rules
+    # as Review, rather than reporting a false pass from the sessions table alone.
+    limit = conn.execute("SELECT COUNT(*) FROM calendar_event_candidates").fetchone()[0]
+    items = list_review_candidates(conn, limit=limit)["items"]
+    return [{"session_id": row["session_id"], "candidate_id": row["candidate_id"],
+             "session_date": row["date"], "start_at": row["start_at"],
+             "title": row["raw_title"], "review_status": row["status"]}
+            for row in items
+            if (local_date := _as_local_date(row["start_at"]))
+            and local_date.strftime("%Y-%m") == month
+            and _candidate_has_past_evidence(conn, row["candidate_id"])]
 
 
 def _candidate_has_past_evidence(conn: sqlite3.Connection, candidate_id: str) -> bool:
@@ -223,7 +230,7 @@ def get_month_close_report(
 
     checks = [_capture_check(conn, selected_month, today)]
     checks.append(_check("raw_to_session", "Past calendar evidence", "action_needed" if unmapped else "passed",
-        f"{len(unmapped)} past calendar item(s) did not reach a candidate." if unmapped else "Every captured past item reached the candidate ledger.",
+        f"{len(unmapped)} captured past calendar item(s) need an import-link check." if unmapped else "Every captured past item is linked to an existing calendar record.",
         count=len(unmapped), items=unmapped, action="reconciliation" if unmapped else ""))
     checks.append(_check("duplicates", "Duplicate protection", "action_needed" if duplicates else "passed",
         f"{len(duplicates)} UTC-equivalent session group(s) need review." if duplicates else "No duplicate session instants were found.",
