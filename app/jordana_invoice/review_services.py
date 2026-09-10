@@ -322,7 +322,11 @@ def effective_billing_party_lookup(
     participants: list[dict[str, Any]],
 ) -> tuple[str | None, str]:
     if session_billing_party_id:
-        return session_billing_party_id, "session"
+        payer = conn.execute("SELECT active FROM billing_parties WHERE billing_party_id=?",
+                             (session_billing_party_id,)).fetchone()
+        if payer and payer["active"]:
+            return session_billing_party_id, "session"
+        return None, "inactive_session_payer"
     if account_id:
         account = conn.execute(
             """
@@ -945,6 +949,16 @@ def _save_interpretation_locked(conn: sqlite3.Connection, candidate_id: str, pay
     participants = payload.get("participants", [])
     account_id = payload.get("account_id") or None
     billing_party_id = payload.get("billing_party_id") or None
+    if session["review_status"] != "approved":
+        from .billing_resolution import replacement_for_inactive_payer
+        replacement = replacement_for_inactive_payer(
+            conn, {**dict(session), "billing_party_id": billing_party_id}, participants,
+        )
+        if replacement:
+            record_audit(conn, "session", session_id, "inactive_pending_payer_replaced", {
+                "old_account_id": account_id, "old_billing_party_id": billing_party_id, **replacement,
+            })
+            account_id, billing_party_id = replacement["account_id"], replacement["billing_party_id"]
     approved_rate_cents = money_payload_to_cents(payload.get("approved_rate"))
     suggested_rate_cents = money_payload_to_cents(payload.get("suggested_rate"))
     duration = int(payload.get("approved_duration_minutes") or payload.get("duration_minutes") or session["duration_minutes"])
@@ -5072,6 +5086,16 @@ def refresh_candidate_suggestions(
     now = now_iso()
     account_id = session["account_id"]
     billing_party_id = session["billing_party_id"]
+    from .billing_resolution import replacement_for_inactive_payer
+    replacement = replacement_for_inactive_payer(conn, session, participants)
+    if replacement:
+        account_id, billing_party_id = replacement["account_id"], replacement["billing_party_id"]
+        conn.execute("UPDATE sessions SET account_id=?, billing_party_id=?, updated_at=? WHERE id=?",
+                     (account_id, billing_party_id, now, session["id"]))
+        record_audit(conn, "session", session["id"], "inactive_pending_payer_replaced", {
+            "old_account_id": session["account_id"], "old_billing_party_id": session["billing_party_id"],
+            **replacement,
+        })
     if not account_id and not billing_party_id:
         relationship = default_relationship_for_participants(conn, participants)
         if relationship:

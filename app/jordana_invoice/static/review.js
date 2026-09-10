@@ -1506,7 +1506,7 @@ async function save(approve) {
         } else if (staging.status === "not_required") {
           successMsg = "Session approved and paid-at-session payment confirmed. Invoice staging was not required.";
         } else if (staging.status === "warning") {
-          warningMsg = "Invoice staging warning: staging completed with errors — review invoices when ready.";
+          warningMsg = "Invoice staging warning: approval is saved, but invoice staging needs attention. Open Month Close and check Draft coverage.";
         } else if (staging.status === "unavailable") {
           warningMsg = "Invoice staging warning: database busy, session will stage later.";
         } else if (staging.status === "error") {
@@ -3087,7 +3087,7 @@ function monthCloseItemText(item) {
   if (item.sessions) return `${item.date || ""} ${item.start_at || ""} — ${item.sessions.length} possible duplicates`;
   if (item.receipt_number) return `${item.receipt_number} — expected ${item.expected_month}`;
   if (item.run_id) return `${item.started_at || item.completed_at || "Capture run"} — past ${item.past || "matched"}, future ${item.future || "matched"}`;
-  return `${item.session_date || item.start_at || ""}${item.title ? ` — ${item.title}` : ""}` || "Review item";
+  return `${item.session_date || item.start_at || ""}${item.title ? ` — ${item.title}` : ""}${item.reason ? ` — ${item.reason}` : ""}` || "Review item";
 }
 
 function openMonthCloseAction(action) {

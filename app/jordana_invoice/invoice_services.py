@@ -1264,6 +1264,9 @@ def invoice_ineligibility_reasons(
     count = conn.execute("SELECT COUNT(*) FROM session_participants WHERE session_id = ?", (s["id"],)).fetchone()[0]
     if not count: reasons.append("Participants are not confirmed")
     if not s.get("billing_party_id"): reasons.append("Bill-to party is not confirmed")
+    elif not conn.execute("SELECT 1 FROM billing_parties WHERE billing_party_id=? AND active=1",
+                          (s["billing_party_id"],)).fetchone():
+        reasons.append("Bill-to party is inactive or missing; confirm an active payer")
     if s.get("approved_rate_cents") is None and s.get("rate_cents_snapshot") is None: reasons.append("Approved charged amount is missing")
     amount = s.get("rate_cents_snapshot") if s.get("rate_cents_snapshot") is not None else s.get("approved_rate_cents")
     if amount is not None and int(amount) < 0: reasons.append("Approved amount cannot be negative")
@@ -2167,6 +2170,48 @@ def _find_or_create_monthly_draft(
     return conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone(), True
 
 
+def repair_unbilled_inactive_payers(conn, session_ids=None):
+    """Repair only unbilled approvals with one established active replacement.
+
+    Every invoice/payment-linked record stays untouched, including void history.
+    A replacement relationship must already have existed at approval time.
+    """
+    from .billing_resolution import replacement_for_inactive_payer
+    rows = conn.execute("""SELECT s.* FROM sessions s
+        JOIN billing_parties bp ON bp.billing_party_id=s.billing_party_id
+        WHERE s.review_status='approved' AND bp.active=0
+          AND s.payment_status!='paid_at_session'
+          AND s.billable_status NOT IN ('excluded','nonbillable')
+          AND NOT EXISTS(SELECT 1 FROM invoice_line_items li WHERE li.source_session_id=s.id)
+          AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.source_session_id=s.id)
+          AND NOT EXISTS(SELECT 1 FROM payment_allocations pa WHERE pa.session_id=s.id)
+    """).fetchall()
+    allowed = set(session_ids) if session_ids is not None else None
+    repairs = []
+    for session in rows:
+        if allowed is not None and session["id"] not in allowed:
+            continue
+        approval = conn.execute("SELECT created_at FROM audit_log WHERE entity_id=? AND action='approved' ORDER BY created_at DESC LIMIT 1",
+                                (session["id"],)).fetchone()
+        if not approval:
+            continue
+        participants = [dict(p) for p in conn.execute("SELECT person_id FROM session_participants WHERE session_id=?", (session["id"],))]
+        replacement = replacement_for_inactive_payer(conn, session, participants, configured_before=approval[0])
+        if replacement:
+            repairs.append((session, replacement))
+    if repairs:
+        _backup_operational_database_before(conn, "repair_inactive_unbilled_payers")
+        with conn:
+            for session, replacement in repairs:
+                conn.execute("UPDATE sessions SET account_id=?, billing_party_id=?, updated_at=? WHERE id=?",
+                    (replacement["account_id"], replacement["billing_party_id"], now_iso(), session["id"]))
+                _audit(conn, "session", session["id"], "unbilled_inactive_payer_repaired", {
+                    "old_account_id": session["account_id"], "old_billing_party_id": session["billing_party_id"],
+                    **replacement, "reason": "Unique active relationship established before approval",
+                })
+    return len(repairs)
+
+
 def stage_approved_sessions_to_monthly_drafts(
     conn: sqlite3.Connection,
     session_ids: list[str] | None = None,
@@ -2184,6 +2229,8 @@ def stage_approved_sessions_to_monthly_drafts(
     """
     init_db(conn)
 
+    repaired_payers = repair_unbilled_inactive_payers(conn, session_ids)
+
     result: dict[str, Any] = {
         "drafts_created": 0,
         "drafts_reused": 0,
@@ -2195,6 +2242,7 @@ def stage_approved_sessions_to_monthly_drafts(
         "sessions_skipped": [],
         "errors": [],
         "drafts_consolidated": 0,
+        "payer_links_repaired": repaired_payers,
     }
 
     # --- Step 0: Consolidate drafts for duplicate person-linked billing parties ---
@@ -2339,6 +2387,11 @@ def stage_approved_sessions_to_monthly_drafts(
                     else:
                         reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=draft_id)
                         if reasons:
+                            if "Bill-to party is inactive or missing; confirm an active payer" in reasons:
+                                # A retired payer needs an explicit billing correction;
+                                # preserve an existing draft line while reporting it.
+                                result["sessions_skipped"].append({"session_id": session["id"], "reasons": reasons})
+                                continue
                             conn.execute(
                                 "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
                                 (line["invoice_line_item_id"],),
@@ -3004,7 +3057,8 @@ def _next_invoice_number(conn: sqlite3.Connection, year: int, pattern: str) -> s
 
 def _participant_names(conn: sqlite3.Connection, session_id: str) -> str:
     rows = conn.execute(
-        """SELECT COALESCE(p.display_name, sp.participant_name) AS name,
+        """SELECT sp.person_id, sp.session_participant_id,
+                  COALESCE(p.display_name, sp.participant_name) AS name,
                   COALESCE(p.use_dr_on_invoices, 0) AS use_dr_on_invoices
            FROM session_participants sp
            LEFT JOIN people p ON p.person_id = sp.person_id
@@ -3012,11 +3066,13 @@ def _participant_names(conn: sqlite3.Connection, session_id: str) -> str:
            ORDER BY sp.created_at""",
         (session_id,),
     ).fetchall()
-    return " & ".join(
-        format_invoice_person_name(row["name"], row["use_dr_on_invoices"])
-        for row in rows
-        if row["name"]
-    )
+    names, seen = [], set()
+    for row in rows:
+        identity = row["person_id"] or row["session_participant_id"]
+        if row["name"] and identity not in seen:
+            names.append(format_invoice_person_name(row["name"], row["use_dr_on_invoices"]))
+            seen.add(identity)
+    return " & ".join(names)
 
 
 def _service_description(session: sqlite3.Row, service_name: str) -> str:

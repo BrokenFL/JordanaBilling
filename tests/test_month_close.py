@@ -50,6 +50,91 @@ class MonthCloseTests(unittest.TestCase):
         report = get_month_close_report(self.conn, "2026-07", today=date(2026, 8, 4))
         return next(item for item in report["checks"] if item["id"] == "raw_to_session")
 
+    def approved_month_session(self, key="invoice-gap", *, payment="unpaid", treatment="billable", payer="payer-1", appointment="completed"):
+        row = self.past_row(key, event_title="Avery Stone | 60 | Office")
+        row.update(start_at="2026-07-31T17:00:00-04:00", end_at="2026-07-31T18:00:00-04:00")
+        import_rows(self.conn, [row], "test")
+        session_id = self.conn.execute("SELECT id FROM sessions ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+        self.conn.execute(
+            "UPDATE sessions SET session_date='2026-07-31', review_status='approved', appointment_status=?, "
+            "billing_treatment=?, billable_status='billable', payment_status=?, approved_rate_cents=15000, "
+            "rate_cents_snapshot=15000, billing_party_id=? WHERE id=?",
+            (appointment, treatment, payment, payer, session_id),
+        )
+        return session_id
+
+    def active_payer(self, payer="payer-1", active=1):
+        self.conn.execute(
+            """INSERT INTO billing_parties
+               (billing_party_id, billing_party_type, billing_name, preferred_delivery_method,
+                active, created_at, updated_at)
+               VALUES (?, 'person', 'Avery Stone', 'unresolved', ?, '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')""",
+            (payer, active),
+        )
+
+    def active_invoice_line(self, session_id, status="draft", payer="payer-1"):
+        self.conn.execute(
+            """INSERT INTO invoices
+               (invoice_id, status, bill_to_party_id, billing_period_start, billing_period_end,
+                invoice_date, billing_month, created_at, updated_at)
+               VALUES (?, ?, ?, '2026-07-01', '2026-07-31', '2026-07-31', '2026-07',
+                       '2026-07-31T00:00:00Z', '2026-07-31T00:00:00Z')""",
+               (f"invoice-{status}-{session_id}", status, payer),
+        )
+        self.conn.execute(
+            """INSERT INTO invoice_line_items
+               (invoice_line_item_id, invoice_id, source_session_id, service_date,
+                participants_snapshot, service_name_snapshot, description_snapshot,
+                unit_amount_cents, line_amount_cents, created_at, updated_at)
+               VALUES (?, ?, ?, '2026-07-31', 'Avery Stone', 'Therapy', 'Therapy',
+                       15000, 15000, '2026-07-31T00:00:00Z', '2026-07-31T00:00:00Z')""",
+            (f"line-{status}-{session_id}", f"invoice-{status}-{session_id}", session_id),
+        )
+
+    def staging_check(self):
+        report = get_month_close_report(self.conn, "2026-07", today=date(2026, 8, 4))
+        return next(item for item in report["checks"] if item["id"] == "invoice_staging")
+
+    def test_approved_session_missing_active_invoice_is_staging_gap(self):
+        self.active_payer()
+        self.approved_month_session()
+        self.assertEqual(self.staging_check()["count"], 1)
+        self.assertIn("Not staged", self.staging_check()["items"][0]["reason"])
+
+    def test_approved_session_on_draft_or_finalized_invoice_is_covered(self):
+        for status in ("draft", "finalized"):
+            with self.subTest(status=status):
+                self.active_payer(payer=f"payer-{status}")
+                session_id = self.approved_month_session(key=f"invoice-{status}", payer=f"payer-{status}")
+                self.active_invoice_line(session_id, status=status, payer=f"payer-{status}")
+                self.assertEqual(self.staging_check()["count"], 0)
+
+    def test_paid_at_session_is_not_an_invoice_staging_gap(self):
+        self.active_payer()
+        self.approved_month_session(payment="paid_at_session")
+        self.assertEqual(self.staging_check()["count"], 0)
+
+    def test_waived_session_is_not_an_invoice_staging_gap(self):
+        self.active_payer()
+        self.approved_month_session(treatment="waived")
+        self.assertEqual(self.staging_check()["count"], 0)
+
+    def test_future_scheduled_session_is_not_an_invoice_staging_gap(self):
+        self.active_payer()
+        self.approved_month_session(appointment="scheduled")
+        self.assertEqual(self.staging_check()["count"], 0)
+
+    def test_missing_or_inactive_payer_remains_actionable_staging_gap(self):
+        self.approved_month_session(payer=None)
+        missing = self.staging_check()
+        self.assertEqual(missing["count"], 1)
+        self.assertEqual(missing["items"][0]["reason"], "Missing bill-to party")
+        self.active_payer(active=0)
+        self.conn.execute("UPDATE sessions SET billing_party_id='payer-1'")
+        inactive = self.staging_check()
+        self.assertEqual(inactive["count"], 1)
+        self.assertEqual(inactive["items"][0]["reason"], "Bill-to party is inactive")
+
     def test_equivalent_capture_matches_existing_approved_record_without_writes(self):
         import_rows(self.conn, [self.past_row()], "test")
         self.conn.execute("UPDATE sessions SET review_status='approved'")

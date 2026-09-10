@@ -1574,7 +1574,11 @@ def make_handler(
                                         for err in staging["errors"]:
                                             err["error"] = sanitize_staging_error_message(err.get("error", ""))
                                     result["invoice_staging"] = {
-                                        "status": "success" if not staging.get("errors") else "warning",
+                                        "status": "warning" if staging.get("errors") or any(
+                                            reason.startswith("Bill-to party")
+                                            for item in staging.get("sessions_skipped", [])
+                                            for reason in item.get("reasons", [])
+                                        ) else "success",
                                         "summary": staging,
                                     }
                                 except DatabaseBusyError:

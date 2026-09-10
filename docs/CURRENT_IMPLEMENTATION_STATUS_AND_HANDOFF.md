@@ -2,6 +2,14 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Test.39 release preparation — September 10
+
+Repairs unbilled approvals tied to retired payers using one active, confirmed
+relationship established before approval. Financially linked sessions are
+protected. Pending approval validates active payers, Month Close checks draft
+coverage, and editable draft labels deduplicate repeated person UUIDs. Sync
+applies the guarded repair; installation and update delivery remain manual.
+
 ## Test.38 release preparation — September 10
 
 Month Close now uses the importer's identity resolution, including stored aliases

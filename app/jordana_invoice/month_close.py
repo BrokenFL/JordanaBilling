@@ -163,12 +163,48 @@ def _uninvoiced_sessions(conn: sqlite3.Connection, month: str) -> list[dict[str,
            FROM sessions s WHERE substr(s.session_date, 1, 7) = ?
              AND s.review_status = 'approved' AND s.payment_status != 'paid_at_session'
              AND s.billable_status NOT IN ('excluded', 'nonbillable')
+             AND COALESCE(s.billing_treatment, '') != 'waived'
              AND s.appointment_status != 'scheduled'
              AND NOT (s.appointment_status IN ('cancelled', 'no_show') AND s.billing_treatment != 'billable')
              AND NOT EXISTS (
                SELECT 1 FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
                WHERE li.source_session_id = s.id AND i.status = 'finalized')
            ORDER BY s.start_at LIMIT 50""", (month,)).fetchall()]
+
+
+def _invoice_staging_gaps(conn: sqlite3.Connection, month: str) -> list[dict[str, Any]]:
+    """Return approved, invoice-intended sessions absent from every active invoice."""
+    rows = conn.execute(
+        """SELECT s.id AS session_id, s.session_date, s.start_at,
+                  s.raw_calendar_title AS title, s.billing_party_id,
+                  bp.billing_name, bp.active AS billing_party_active
+           FROM sessions s
+           LEFT JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id
+           WHERE substr(s.session_date, 1, 7) = ?
+             AND s.review_status = 'approved'
+             AND s.payment_status != 'paid_at_session'
+             AND s.billable_status NOT IN ('excluded', 'nonbillable')
+             AND COALESCE(s.billing_treatment, '') != 'waived'
+             AND s.appointment_status != 'scheduled'
+             AND NOT (s.appointment_status IN ('cancelled', 'no_show')
+                      AND s.billing_treatment != 'billable')
+             AND NOT EXISTS (
+               SELECT 1 FROM invoice_line_items li
+               JOIN invoices i ON i.invoice_id = li.invoice_id
+               WHERE li.source_session_id = s.id
+                 AND i.status IN ('draft', 'finalized'))
+           ORDER BY s.start_at""", (month,)).fetchall()
+    gaps = []
+    for row in rows:
+        if not row["billing_party_id"]:
+            reason = "Missing bill-to party"
+        elif row["billing_party_active"] != 1:
+            reason = "Bill-to party is inactive"
+        else:
+            reason = "Not staged on an active invoice"
+        gaps.append({"session_id": row["session_id"], "session_date": row["session_date"],
+                     "start_at": row["start_at"], "title": row["title"], "reason": reason})
+    return gaps
 
 
 def _duplicate_finalized_lines(conn: sqlite3.Connection, month: str) -> list[dict[str, Any]]:
@@ -225,6 +261,7 @@ def get_month_close_report(
             duplicates.append({**group, "sessions": evidenced})
     review = _review_items(conn, selected_month)
     uninvoiced = _uninvoiced_sessions(conn, selected_month)
+    staging_gaps = _invoice_staging_gaps(conn, selected_month)
     duplicate_lines = _duplicate_finalized_lines(conn, selected_month)
     receipt_issues = _receipt_issues(conn, selected_month)
 
@@ -243,6 +280,10 @@ def get_month_close_report(
         (f"{len(uninvoiced)} approved session(s) are not finalized; {len(duplicate_lines)} appear on multiple finalized invoices."
          if invoice_items else "Every invoice-eligible approved session is on one finalized invoice."),
         count=len(invoice_items), items=invoice_items, action="invoices" if invoice_items else ""))
+    checks.append(_check("invoice_staging", "Draft coverage", "action_needed" if staging_gaps else "passed",
+        f"{len(staging_gaps)} approved invoice-intended session(s) are not on an active draft or finalized invoice." if staging_gaps
+        else "Every approved invoice-intended session is staged on an active invoice.",
+        count=len(staging_gaps), items=staging_gaps, action="invoices" if staging_gaps else ""))
     checks.append(_check("payments", "Payments", "informational",
         f"{_money(financial['payments_applied_cents'])} applied; {_money(financial['outstanding_cents'])} remains outstanding. Unpaid balances do not block month close."))
     checks.append(_check("receipts", "Receipt filing", "action_needed" if receipt_issues else "passed",

@@ -1,3 +1,43 @@
+# Jordana Billing v0.1.0-test.39
+
+Fixes approved sessions failing to reach a draft when an older saved bill-to
+record has been deactivated. Package version `0.1.0.post39`.
+
+## Changes
+
+- Pending sessions can resolve a retired payer to one unambiguous active billing
+  relationship covering their confirmed participants. Inactive payers no longer
+  pass approval validation just because an ID is saved.
+- Sync repairs unbilled approved sessions with an inactive payer only when one
+  active replacement relationship was already established before approval.
+  Ambiguous replacements require review. Approved charges and durations remain
+  unchanged. Any invoice or payment link prevents this automatic repair.
+- Existing draft lines are preserved when a retired payer needs investigation.
+- Month Close includes a separate Draft coverage check for approved sessions
+  missing from every active invoice, with missing/inactive payer reasons.
+  Paid-at-session and other non-invoice sessions do not trigger this warning.
+- Draft participant labels list the same person UUID once. This prevents a
+  duplicate saved participant row from repeating a name; it does not change
+  charges, approved participant records, or finalized invoice snapshots.
+- Approval warnings clearly identify invoice staging that still needs attention.
+
+## Install and verify
+
+Quit Jordana Billing and run **Install Jordana Billing.app** from the DMG,
+preserving the existing database and configuration. Reopen the app and run
+**Sync Calendar**, then inspect the affected payer's draft and Month Close.
+No replacement Shortcut is needed. Test.37 and Test.38 fixes are included.
+Automatic update offers remain disabled; use this manual installer.
+
+## Validation
+
+Focused billing, approval, sync, invoice, and Month Close tests cover the changes.
+Supplied-data testing recovered one unbilled session into the existing correct
+payer draft exactly once. All 341 approved session charges and statuses, finalized
+and void invoice history, payment history, raw calendar evidence, people, and
+billing relationships were preserved. Repeated sync created no duplicate line.
+No private database or client evidence is included in the release.
+
 # Jordana Billing v0.1.0-test.38
 
 This update fixes false missing-calendar warnings in Month Close. Package version:
