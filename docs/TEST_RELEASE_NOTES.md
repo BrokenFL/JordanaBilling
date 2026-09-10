@@ -34,7 +34,7 @@ Package version: `0.1.0.post37`. Apple Silicon macOS; Python 3.14.x.
 
 Quit Jordana Billing, open the DMG, and run **Install Jordana Billing.app** using
 the existing installation and database. Then open Review and run Sync Calendar.
-Do not choose an empty database or rebuild from the supplied June test CSV.
+Keep the existing database; raw calendar exports cannot replace saved billing decisions.
 No replacement Shortcut is needed for these app fixes.
 
 ## Verification
