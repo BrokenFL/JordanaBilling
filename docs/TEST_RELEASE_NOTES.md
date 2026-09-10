@@ -1,50 +1,54 @@
-# Jordana Billing v0.1.0-test.36 Release Notes
+# Jordana Billing v0.1.0-test.37
 
-## Release Status
+This controlled test release updates Test.36 and preserves the existing private
+SQLite database, configuration, invoices, payments, and raw calendar history.
+Package version: `0.1.0.post37`. Apple Silicon macOS; Python 3.14.x.
 
-This private release is approved for supervised Jordana beta testing. It remains
-a controlled pilot/test release and is not represented as final production
-software.
+## What changed
 
-Use the exact `v0.1.0-test.36` artifact published on GitHub. The release
-manifest inside the DMG records the source commit, build ID, exact wheel path,
-and checksum facts.
+- **Faster approval:** routine list refreshes no longer replay the full calendar
+  history. Reconciliation reads manual decisions once instead of scanning the
+  audit log for each appointment. A supplied-data benchmark reduced that step
+  from 3.2 seconds to 0.16 seconds; browser approval completed in 274 ms on the
+  development Mac. Timing on other Macs may differ.
+- **Visible button feedback:** approval, client creation/confirmation, and future
+  client-rate saves show a busy label, prevent duplicate clicks, and recover for
+  retry after an error. Approval success is retained if a later list refresh fails.
+- **Zoom appointments:** recognized as client appointments with their calendar
+  start time, explicit session length or default 60 minutes, and Zoom method.
+- **Recover prior parser exclusions:** pending appointments automatically excluded
+  solely because their title was unresolved can return to Review when the parser
+  now recognizes them. Human exclusions and financially linked records remain
+  protected. Opening Review also runs the targeted repair using existing local
+  evidence, so a fresh download is not needed for that recovery.
+- **Keep uncertain appointments reviewable:** unsupported trailing text does not
+  erase a promoted appointment or its participants. Recognizable historical
+  candidate-only appointments appear in Review; future-only and personal entries
+  stay outside the normal queue.
+- **Prepared update notices:** the app can check a maintainer-controlled feed and
+  offer Update and restart / Later. The feed remains disabled. This release uses
+  the normal manual installer; automated installation still requires isolated-Mac
+  end-to-end validation before an offer is promoted.
 
-```text
-JordanaBilling-v0.1.0-test.36-<commit>-macos-arm64.dmg
-```
+## Installation
 
-Release facts:
+Quit Jordana Billing, open the DMG, and run **Install Jordana Billing.app** using
+the existing installation and database. Then open Review and run Sync Calendar.
+Do not choose an empty database or rebuild from the supplied June test CSV.
+No replacement Shortcut is needed for these app fixes.
 
-- **Release label:** v0.1.0-test.36
-- **Python package/application version:** 0.1.0.post36
-- **Manifest commit:** recorded in `release_manifest.json`
-- **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
-- **Source tree dirty:** false
-- **Builder Python:** 3.14.x
-- **Required Python family:** 3.14.x
-- **Architecture:** arm64
-- **DMG checksum verification:** required before publication; verify the matching `.sha256` asset again after download
-- **DMG SHA-256:** recorded in the published `.sha256` asset
-- **hdiutil verify:** required before publication
-- **Private-file scan:** no `.env`, SQLite, PDF, report, invoice, receipt, or private data files
-- **Contains private data:** false
-- **Wheelhouse:** exact `jordana_invoice-0.1.0.post36` app wheel plus pinned production dependencies
-- **Focused tests, packaging checks, privacy checks, and Git safety checks:** required before publication
+## Verification
 
-## Historical Calendar Review In test.36
+Affected Python and browser-behavior tests, disposable-database acceptance, and
+privacy/Git safety checks are required. Supplied-data recovery preserved all 325
+approved sessions, invoice/payment tables, people/accounts and raw evidence;
+repeat sync produced the same Review list. Actual browser checks covered approval,
+client creation, future-rate save, and the recovered Zoom appointment.
 
-- Review uses post-session past captures. Legacy future-only appointments no longer become actionable as time passes.
-- Superseded or removed unapproved entries leave normal Review when later historical coverage establishes their absence. Raw history remains intact and a later positive capture restores eligibility.
-- Late cancellations remain available for billing-treatment review; their obsolete scheduling versions do not compete for approval.
-- Manual exclusions survive sync. The upgrade repairs records previously reopened despite a recorded exclusion.
-- Confirmed participants and approved aliases are reused; sync recalculates readiness from saved session values instead of requiring repeated name matching.
-- Shorthand without an explicit length defaults to 60 minutes. Explicit title lengths and manually saved durations take precedence.
-- Recognizable personal entries such as hair appointments, massage appointments, and reunions stay outside normal billing Review unless confirmed participant evidence says otherwise.
-- Incomplete captures do not establish absence. Legacy or fixed-date captures use conservative observed boundaries, avoiding removal based on unverified date-picker coverage.
-- Approved sessions, invoice lines, invoices, payments, and raw evidence remain protected. No sessions are automatically approved.
-
-Install this DMG over the existing app, keep the existing private database and configuration, then open Review and Sync Calendar. Reconciliation also runs when sync returns no new rows. No replacement daily Shortcut is required. Installation on Jordana's Mac remains a supervised follow-up.
+Build identity and file hashes are embedded in `release_manifest.json`. Checksum,
+disk-image integrity, embedded file checks and strict bundle signatures must pass
+before publication; published assets are downloaded and reverified afterward.
+No private database or client evidence is included in the release.
 
 ## Month Close And Service-Month Accounting In test.35
 

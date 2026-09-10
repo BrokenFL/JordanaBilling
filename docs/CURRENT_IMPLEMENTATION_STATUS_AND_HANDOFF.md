@@ -2,12 +2,13 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
-## Prepared next update — Test.37 (unpublished)
+## Test.37 release preparation — September 10
 
 Zoom parsing, historical candidate-only Review routing, targeted existing-record
 repair, and maintainer-controlled update notices/installation are implemented.
-The last distributed release remains Test.36. The update feed is disabled; no
-new release or installation has been performed. See `SOFTWARE_UPDATES.md`.
+The release also fixes redundant per-action reconciliation and button feedback,
+and repairs proven automatic exclusions from the old parser. The automatic update
+feed remains disabled. See `TEST_RELEASE_NOTES.md` and `SOFTWARE_UPDATES.md`.
 
 ## Verified Baseline
 

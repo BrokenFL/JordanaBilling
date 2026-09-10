@@ -60,3 +60,42 @@ class ZoomReviewTests(HistoricalReviewTests):
         result=list_review_candidates(self.conn)
         self.assertEqual(result['total'],1)
         self.assertEqual(result['status']['needs_review'],1)
+
+    def test_repair_old_automatic_exclusion_preserves_saved_values(self):
+        from jordana_invoice.review_services import repair_automatic_parser_exclusions
+        from jordana_invoice.util import new_id, now_iso
+        self.load(event('a','Alex Example 2 zoom'))
+        cid=self.candidate('Alex Example 2 zoom')['id']
+        sid=self.conn.execute('select id from sessions where candidate_id=?',(cid,)).fetchone()[0]
+        self.conn.execute("update sessions set review_status='excluded',billable_status='excluded',hidden_from_review=1,approved_rate_cents=17500,approved_duration_minutes=90 where id=?",(sid,))
+        self.conn.execute("update calendar_event_candidates set classification='unresolved',review_status='needs_classification' where id=?",(cid,))
+        self.conn.execute("insert into audit_log(id,entity_type,entity_id,action,details,created_at) values (?,'session',?,'excluded_from_latest_calendar_snapshot',?,?)",(new_id(),sid,'{"latest_classification":"unresolved"}',now_iso()))
+        self.assertEqual(repair_automatic_parser_exclusions(self.conn),1)
+        row=self.conn.execute('select * from sessions where id=?',(sid,)).fetchone()
+        self.assertEqual(row['billable_status'],'proposed');self.assertEqual(row['approved_rate_cents'],17500)
+        self.assertEqual(row['duration_minutes'],90);self.assertEqual(row['service_mode'],'zoom')
+        self.assertNotIn(row['review_status'],('approved','excluded'))
+        self.assertEqual(repair_automatic_parser_exclusions(self.conn),0)
+
+    def test_unknown_parser_result_keeps_promoted_session_and_participants(self):
+        from jordana_invoice.importer import maybe_exclude_pending_session
+        self.load(event('a','Alex Example 2'))
+        cid=self.candidate()['id'];raw=self.conn.execute('select * from raw_calendar_snapshots').fetchone()
+        before=[tuple(r) for r in self.conn.execute('select * from session_participants')]
+        result=parse_event({**dict(raw),'event_title':'Alex Example 2 unexpected'})
+        self.assertEqual(result.classification,'unresolved')
+        maybe_exclude_pending_session(self.conn,cid,raw,result)
+        self.assertNotEqual(self.conn.execute('select review_status from sessions').fetchone()[0],'excluded')
+        self.assertEqual(before,[tuple(r) for r in self.conn.execute('select * from session_participants')])
+
+    def test_manual_exclusion_is_not_repaired_as_parser_error(self):
+        from jordana_invoice.review_services import repair_automatic_parser_exclusions
+        from jordana_invoice.util import new_id, now_iso
+        self.load(event('a','Alex Example 2 zoom'))
+        cid=self.candidate('Alex Example 2 zoom')['id'];sid=self.conn.execute('select id from sessions where candidate_id=?',(cid,)).fetchone()[0]
+        mark_candidate(self.conn,cid,classification='nonbillable')
+        # Older syncs could reopen the candidate while leaving a human decision in audit.
+        self.conn.execute("update calendar_event_candidates set review_status='needs_classification',calendar_review_state='eligible' where id=?",(cid,))
+        self.conn.execute("insert into audit_log(id,entity_type,entity_id,action,details,created_at) values (?,'session',?,'excluded_from_latest_calendar_snapshot',?,?)",(new_id(),sid,'{"latest_classification":"unresolved"}',now_iso()))
+        self.assertEqual(repair_automatic_parser_exclusions(self.conn),0)
+        self.assertEqual(self.conn.execute('select review_status from sessions where id=?',(sid,)).fetchone()[0],'excluded')

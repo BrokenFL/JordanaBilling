@@ -512,6 +512,17 @@ async function loadFinancialSummary() {
   }
 }
 
+// Reconcile once when opening the app. Sync already reconciles new captures;
+// refreshing a list after each save must not replay all calendar history.
+let reviewCalendarPreparation = null;
+async function prepareReviewCalendar() {
+  if (!reviewCalendarPreparation) {
+    reviewCalendarPreparation = api("/api/review/reconcile-calendar", { method: "POST", body: "{}" })
+      .catch(error => { reviewCalendarPreparation = null; throw error; });
+  }
+  return reviewCalendarPreparation;
+}
+
 async function loadList() {
   const params = new URLSearchParams({
     q: $("searchBox").value,
@@ -521,7 +532,7 @@ async function loadList() {
     limit: state.limit,
     offset: state.offset
   });
-  await api("/api/review/reconcile-calendar", { method: "POST", body: "{}" });
+  await prepareReviewCalendar();
   const data = await api(`/api/review/candidates?${params}`);
   state.items = data.items;
   renderStatus(data.status);
@@ -772,9 +783,43 @@ function renderInspector(data) {
 
 function wireInspector() {
   if ($("personInput")) $("personInput").addEventListener("input", debounce(e => showPersonSearchResults(e.target.value), 160));
-  if ($("addPerson")) $("addPerson").onclick = createPersonFromInput;
+  if ($("addPerson")) $("addPerson").onclick = async () => {
+    const button = $("addPerson");
+    if (!button || button.disabled) return;
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "…";
+    clearReviewActionError();
+    try {
+      await createPersonFromInput();
+    } catch (error) {
+      showReviewActionError(sanitizeUiErrorMessage(error.message, "Could not search for or add this client. Please try again."));
+    } finally {
+      if (document.body.contains(button)) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+    }
+  };
   if ($("approveBtn")) $("approveBtn").onclick = () => save(true);
-  if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = saveRelationshipSection;
+  if ($("saveRelationshipBtn")) $("saveRelationshipBtn").onclick = async () => {
+    const button = $("saveRelationshipBtn");
+    if (!button || button.disabled) return;
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Saving clients…";
+    clearReviewActionError();
+    try {
+      await saveRelationshipSection();
+    } catch (error) {
+      showReviewActionError(sanitizeUiErrorMessage(error.message, "Could not save the clients. Please try again."));
+    } finally {
+      if (document.body.contains(button)) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+    }
+  };
   if ($("changeClientsBtn")) $("changeClientsBtn").onclick = () => { state.editSteps.clients = true; markDirty("relationship"); renderInspector(state.detail); };
   if ($("saveBillingBtn")) $("saveBillingBtn").onclick = saveBillingSection;
   if ($("setSelfPayBtn")) $("setSelfPayBtn").onclick = saveSelfPayBilling;
@@ -1430,10 +1475,11 @@ async function save(approve) {
     approvalState.submitting = true;
     approvalState.candidateId = state.selected;
     clearReviewActionError();
+    if ($("approveBtn")) { $("approveBtn").disabled = true; $("approveBtn").textContent = "Approving…"; }
     if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn", "duplicateBtn"]);
   }
-  await resolveTypedSelections();
   try {
+    await resolveTypedSelections();
     validateCancellationBillingChoice();
     const updated = await api(`/api/review/candidates/${state.selected}/${approve ? "approve" : "save"}`, {
       method: "POST",
@@ -1442,10 +1488,15 @@ async function save(approve) {
     state.detail = updated;
     state.editSteps = { clients: false, session: false };
     state.dirty.clear();
-    await loadList();
+    if (approve) {
+      completeReviewOverlayAction();
+      try { await loadList(); }
+      catch { showReviewWarning("Session was approved. Refresh Review to update the list."); }
+    } else {
+      await loadList();
+    }
     if (approve) {
       const staging = updated.invoice_staging;
-      completeReviewOverlayAction();
       
       let successMsg = "Session approved.";
       let warningMsg = null;
@@ -1496,6 +1547,7 @@ async function save(approve) {
       approvalState.submitting = false;
       approvalState.candidateId = null;
       if (reviewOverlayCtrl) reviewOverlayCtrl.endPending();
+      if ($("approveBtn")) { $("approveBtn").disabled = false; $("approveBtn").textContent = "Approve Session"; }
       const msg = error.message || "";
       showReviewActionError(sanitizeUiErrorMessage(msg, "Could not approve session. Please check required fields and try again."));
     } else {
@@ -7220,7 +7272,9 @@ async function openPersonRecord(personId, options = {}) {
     const btn = $("savePersonRateRule");
     const message = $("personRateMessage");
     if (btn.disabled) return;
+    const originalLabel = btn.textContent;
     btn.disabled = true;
+    btn.textContent = "Saving rate…";
     if (message) {
       message.textContent = "";
       message.className = "billing-setup-message";
@@ -7250,7 +7304,10 @@ async function openPersonRecord(personId, options = {}) {
         message.className = "billing-setup-message error";
       }
     } finally {
-      btn.disabled = false;
+      if (document.body.contains(btn)) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
     }
   };
   if ($("savePersonAlias")) $("savePersonAlias").onclick = async () => {
@@ -7531,9 +7588,23 @@ $("newAccountBtn").onclick = () => {
 $("newPersonBtn").onclick = async () => {
   const name = prompt("Client display name");
   if (!name) return;
-  const person = await api("/api/people", { method: "POST", body: JSON.stringify({ display_name: name }) });
-  await loadPeople();
-  location.hash = "people/" + person.person_id;
+  const button = $("newPersonBtn");
+  if (!button || button.disabled) return;
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Creating client…";
+  try {
+    const person = await api("/api/people", { method: "POST", body: JSON.stringify({ display_name: name }) });
+    await loadPeople();
+    location.hash = "people/" + person.person_id;
+  } catch (error) {
+    alert(sanitizeUiErrorMessage(error.message, "Could not create this client. Please try again."));
+  } finally {
+    if (document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  }
 };
 document.getElementById("syncNowBtn").onclick = runSyncNow;
 document.getElementById("syncRebuildBtn").onclick = rebuildCalendarDataFromSheet;

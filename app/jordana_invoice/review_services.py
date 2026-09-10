@@ -7071,6 +7071,7 @@ def _reparse_unapproved_candidates(
     conn: sqlite3.Connection,
     *,
     candidate_only: bool,
+    candidate_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Reparse unapproved, non-excluded candidates using the current parser.
@@ -7081,6 +7082,7 @@ def _reparse_unapproved_candidates(
     """
     now = now_iso()
     candidate_only_clause = "AND s.id IS NULL" if candidate_only else ""
+    selected_clause = "AND c.id IN (" + ",".join("?" for _ in candidate_ids) + ")" if candidate_ids else ""
     rows = conn.execute(
         f"""
         SELECT
@@ -7090,7 +7092,9 @@ def _reparse_unapproved_candidates(
         LEFT JOIN sessions s ON s.candidate_id = c.id
         WHERE COALESCE(s.review_status, c.review_status) NOT IN ('approved', 'excluded')
           {candidate_only_clause}
-        """
+          {selected_clause}
+        """,
+        tuple(candidate_ids or []),
     ).fetchall()
 
     reparsed = 0
@@ -7237,6 +7241,44 @@ def reparse_unapproved_candidates(
     return result
 
 
+def repair_automatic_parser_exclusions(conn: sqlite3.Connection) -> int:
+    """Recover only proven automatic parser exclusions now recognized as clients.
+    Human exclusions and any financially linked record remain protected.
+    """
+    from .historical_review import historical_evidence, latest_manual_decisions, MANUAL_MARKS
+    decisions = latest_manual_decisions(conn)
+    repaired = 0
+    rows = conn.execute("""
+        SELECT c.*, s.id session_id FROM calendar_event_candidates c
+        JOIN sessions s ON s.candidate_id=c.id
+        WHERE (s.review_status='excluded' OR s.billable_status='excluded') AND s.review_status!='approved'
+          AND c.review_status NOT IN ('approved','excluded')
+          AND c.calendar_review_state='eligible'
+          AND NOT EXISTS (SELECT 1 FROM invoice_line_items WHERE source_session_id=s.id)
+          AND NOT EXISTS (SELECT 1 FROM payment_allocations WHERE session_id=s.id)
+          AND NOT EXISTS (SELECT 1 FROM payments WHERE source_session_id=s.id)
+    """).fetchall()
+    for row in rows:
+        if decisions.get(row['id']) in MANUAL_MARKS or decisions.get(row['session_id']) in MANUAL_MARKS:
+            continue
+        evidence = conn.execute("SELECT details FROM audit_log WHERE entity_id=? AND action='excluded_from_latest_calendar_snapshot' ORDER BY created_at DESC, rowid DESC LIMIT 1", (row['session_id'],)).fetchone()
+        if not evidence or json.loads(evidence['details']).get('latest_classification') != 'unresolved':
+            continue
+        snap = conn.execute("SELECT * FROM raw_calendar_snapshots WHERE id=?", (row['latest_raw_snapshot_id'],)).fetchone()
+        if not snap or not historical_evidence(snap):
+            continue
+        parsed = apply_calendar_signal(parse_event(dict(snap)), classify_calendar(conn, row['calendar_name']))
+        if parsed.classification != 'client_session':
+            continue
+        conn.execute("UPDATE sessions SET review_status='needs_classification',billable_status='proposed',hidden_from_review=0 WHERE id=?", (row['session_id'],))
+        _reparse_unapproved_candidates(conn, candidate_only=False, candidate_ids=[row['id']])
+        maybe_insert_session(conn, row['id'], snap, parsed)
+        record_audit(conn, 'session', row['session_id'], 'automatic_parser_exclusion_repaired',
+                     {'reason': 'Previously unresolved calendar title is now recognized; restored for review, not approved.'})
+        repaired += 1
+    return repaired
+
+
 def reparse_candidate_only_duration_suffixes(
     conn: sqlite3.Connection,
 ) -> dict[str, Any]:
@@ -7247,7 +7289,10 @@ def reparse_candidate_only_duration_suffixes(
     cannot rewrite an existing session or an approved/excluded decision, and it
     ignores unrelated ambiguous records. The caller owns the transaction.
     """
-    return _reparse_unapproved_candidates(conn, candidate_only=True)
+    repaired = repair_automatic_parser_exclusions(conn)
+    result = _reparse_unapproved_candidates(conn, candidate_only=True)
+    result["automatic_exclusions_repaired"] = repaired
+    return result
 
 
 def analyze_billing_relationship_duplicates(conn: sqlite3.Connection) -> dict[str, Any]:

@@ -1143,6 +1143,10 @@ def make_handler(
 
                     conn = self.conn()
                     changed = suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    from .review_services import reparse_candidate_only_duration_suffixes
+                    repair = reparse_candidate_only_duration_suffixes(conn)
+                    if repair["sessions_created"] or repair.get("automatic_exclusions_repaired"):
+                        changed += suppress_pending_events_missing_from_newest_covering_snapshot(conn)
                     conn.commit()
                     self.send_json({"reconciled": changed})
                     return

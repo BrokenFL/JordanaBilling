@@ -2051,6 +2051,15 @@ def maybe_exclude_pending_session(
             },
         )
         return False
+    from .historical_review import manually_excluded
+    if manually_excluded(conn, candidate_id):
+        return False
+    if result.classification == "unresolved":
+        # An unsupported title is uncertainty, not a decision to exclude a
+        # previously promoted appointment or erase its confirmed participants.
+        conn.execute("UPDATE sessions SET review_status='needs_classification', updated_at=? WHERE id=? AND review_status!='excluded'",
+                     (now_iso(), existing["id"]))
+        return False
     now = now_iso()
     reason = (
         "Latest calendar evidence is not an eligible client session; "

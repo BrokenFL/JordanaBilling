@@ -28,6 +28,22 @@ def manually_excluded(conn: sqlite3.Connection, candidate_id: str) -> bool:
     return bool(row and row["action"] in MANUAL_MARKS)
 
 
+def latest_manual_decisions(conn: sqlite3.Connection) -> dict[str, str]:
+    """Read decision history once for a reconciliation batch, newest first.
+
+    Equivalent to manually_excluded for each entity, including same-time ties.
+    Avoid repeatedly scanning the entire audit log for every appointment.
+    """
+    marks = ",".join("?" for _ in DECISIONS)
+    decisions = {}
+    for row in conn.execute(
+        f"SELECT entity_id, action FROM audit_log WHERE action IN ({marks}) ORDER BY created_at DESC, rowid DESC",
+        tuple(DECISIONS),
+    ):
+        decisions.setdefault(row["entity_id"], row["action"])
+    return decisions
+
+
 def historical_evidence(row):
     if is_future_capture_window(row["capture_window"]):
         return False
@@ -122,6 +138,7 @@ def reconcile_historical_review(conn: sqlite3.Connection) -> int:
     protected = {r[0] for r in conn.execute("SELECT source_session_id FROM invoice_line_items WHERE source_session_id IS NOT NULL UNION SELECT session_id FROM payment_allocations UNION SELECT source_session_id FROM payments WHERE source_session_id IS NOT NULL")}
     changed = 0
     eligible = []
+    manual_decisions = latest_manual_decisions(conn)
     for c in conn.execute("SELECT * FROM calendar_event_candidates").fetchall():
         session = conn.execute("SELECT * FROM sessions WHERE candidate_id=?", (c["id"],)).fetchone()
         if c["review_status"] == "approved" or (session and (session["review_status"] == "approved" or session["id"] in protected)):
@@ -133,7 +150,7 @@ def reconcile_historical_review(conn: sqlite3.Connection) -> int:
         if not linked:
             continue  # Manually entered or fixture records have no capture evidence.
         positive = [r for r in linked.values() if historical_evidence(r)]
-        manual = manually_excluded(conn, c["id"])
+        manual = manual_decisions.get(c["id"]) in MANUAL_MARKS
         state = "manual_exclusion" if manual else "eligible" if positive else "future_only"
         if positive and not manual:
             latest = max(positive, key=lambda r: (utc_datetime(r["captured_at"]) or utc_datetime("1900-01-01T00:00:00Z"), text(r["ingested_at"])))
