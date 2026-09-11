@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "version": "0.1.0.post40",
+  "release_label": "v0.1.0-test.40",
+  "commit": "dee41f75ef87f5d69a709f22bdfa921d3d7f3d5e",
+  "sha256": "2b763f4fc33f4e1dabb1374e832f3c68b823b3906de1fdefbf1593f2bcfe37ea",
+  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.40/JordanaBilling-v0.1.0-test.40-dee41f75ef87-macos-arm64.dmg",
+  "notes": "Prevents duplicate client billing setups and adds a safe repair for existing draft-only duplicates. Waived cancellation fees now appear as $0.00 invoice lines. Paid-at-session sessions now receive invoice lines with their existing payments applied.\n"
+}
