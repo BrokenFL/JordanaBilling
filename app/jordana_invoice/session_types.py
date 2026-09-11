@@ -306,6 +306,7 @@ def normalize_billing_treatment_for_outcome(
             "custom_fee": "custom_fee",
             "waive": "waived",
             "waived": "waived",
+            "fee_waived": "waived",
             "not_billable": "waived",
             "unresolved": "unresolved",
             "": "unresolved",
@@ -318,6 +319,7 @@ def normalize_billing_treatment_for_outcome(
             "billable": "billable",
             "not_billable": "not_billable",
             "waived": "waived",
+            "fee_waived": "waived",
             "unresolved": "unresolved",
             "": "unresolved",
         }

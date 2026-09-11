@@ -2,6 +2,15 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Test.40 release preparation — September 10
+
+Prevents a second person-linked billing setup for the same client, blocks an
+in-use setup from being deactivated, and provides an audited repair for the
+legacy active/inactive duplicate pattern found in the supplied database. Waived
+cancellations now remain visible as `$0.00` invoice lines. Paid-at-session
+sessions now stage to invoice lines and carry their existing payment allocation,
+so the invoice preserves both the charge and the payment.
+
 ## Test.39 release preparation — September 10
 
 Repairs unbilled approvals tied to retired payers using one active, confirmed
@@ -34,11 +43,11 @@ feed remains disabled. See `TEST_RELEASE_NOTES.md` and `SOFTWARE_UPDATES.md`.
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `024_month_close`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.35`
+- **Current test release target:** `v0.1.0-test.40`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post35`
+- **Current package/application version:** `0.1.0.post40`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.34` is superseded by test.35 for installation and update testing
+- **Prior test release:** `v0.1.0-test.39` is superseded by test.40 for installation and update testing
 
 ## Architecture
 
@@ -105,12 +114,12 @@ This is not yet a final production declaration. Brooke should remain available d
 - Optional invoice-specific insurance coding entered deliberately by Jordana
 - Void and reissue workflow
 - Searchable invoice library
-- Waived late-cancellation lines can correctly persist as $0.00 without permitting arbitrary zero-dollar invoice lines
+- Waived cancellation, late-cancellation, timely-cancellation, and no-show lines persist as explicit $0.00 invoice lines without permitting arbitrary zero-dollar invoice lines
 
 ### Payments
 
 - Payment ledger and allocations
-- Paid-at-session approval workflow with idempotent payment creation/allocation
+- Paid-at-session approval workflow with idempotent payment creation/allocation and invoice-line linkage
 - Available-funds application
 - Allocation reversal and payment voiding
 - Correction history
@@ -139,17 +148,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.35 supersedes test.34):
+The current controlled-beta release target is (test.40 supersedes test.39):
 
 ```text
-JordanaBilling-v0.1.0-test.35-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.40-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.35`
-- Python package/application version: `0.1.0.post35`
+- Release label: `v0.1.0-test.40`
+- Python package/application version: `0.1.0.post40`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -159,7 +168,7 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post35` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post40` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
@@ -275,12 +284,12 @@ v3 Calendar Sync Shortcut remains compatible and does not require replacement.
 
 ### Bug Fixes In test.13
 
-14. **Paid-at-session review persistence and approval** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Completed paid-at-session reviews approve normally even when the cancellation-billing field is hidden; the backend normalizes that completed-session treatment to billable. If the paid-at-session detail form has already been saved and collapsed, approval reuses the stored payment detail instead of sending blank fields. Approval continues to create or validate one provenance-linked payment/allocation idempotently and remains excluded from invoice staging.
+14. **Paid-at-session review persistence and approval** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Completed paid-at-session reviews approve normally even when the cancellation-billing field is hidden; the backend normalizes that completed-session treatment to billable. If the paid-at-session detail form has already been saved and collapsed, approval reuses the stored payment detail instead of sending blank fields. Approval creates or validates one provenance-linked payment/allocation idempotently, stages the session charge, and links the payment to the invoice line.
 15. **Chronological invoice line order** — Draft editor rows, in-app HTML previews, exact PDF previews, finalized PDFs, and canonical invoice serialization now order session lines by service date, source start time, and stable line UUID rather than import, approval, insertion, or row order.
 16. **Model-backed HTML invoice preview restored** — Draft, finalization, and finalized/void invoice screens use a clean in-app HTML card built from the current canonical invoice render model. Exact PDF open/download/print actions remain available, and the stored PDF remains the official customer-facing artifact.
 17. **Invoice and review layout polish** — The Review queue uses the required Status, Date, Day, Time, RAW CLIENT, Clients, Duration, Rate, Review order and shows the original raw calendar title in the RAW CLIENT column. The draft invoice editor separates Date and Participants. The invoice library exposes only Status and Service Period filters, dynamically lists current service periods, shows filtered Draft/Finalized counts and totals, and sorts by Bill To/client first name.
 18. **Invoice header presentation** — Draft previews, finalization previews, and finalized PDFs show the invoice header as `INVOICE`, an unlabeled uppercase short invoice date, and an unlabeled invoice number or draft placeholder. Billing Period is not displayed in the invoice header.
-19. **Payments period filtering** — The Payments screen now filters Outstanding, Paid, and All Payments by Invoice Period rather than invoice date. Outstanding and Paid invoice tables display Invoice Period, rows sort by Bill To/client first name, and paid-at-session posted payments appear in the Paid tab as session-payment rows without creating invoices or changing finalized invoice history.
+19. **Payments period filtering** — The Payments screen now filters Outstanding, Paid, and All Payments by Invoice Period rather than invoice date. Outstanding and Paid invoice tables display Invoice Period, rows sort by Bill To/client first name, and paid-at-session posted payments appear in the Paid tab as session-payment rows. Current paid-at-session records also stage to invoice lines without changing finalized invoice history.
 20. **Reports browser smoke** — `/reports` and `/api/reports` were verified in a real browser during release prep after the local debug session; report metadata loads and cards render.
 21. **Beta invoice polish** — Draft invoices can be batch-printed as a draft packet, edited inline for Bill To/File Under/delivery scope, and corrected back to linked approved sessions only with an explicit reason. Finalization repair actions return to the same invoice after missing billing contact details are saved.
 22. **Verified backup workflow** — App-launch daily backup, manual backup, migration backup, operational sync/rebuild backup, and finalization/void backup paths now use the verified backup module with manifests, retention, optional private-config copy, and optional secondary copy.

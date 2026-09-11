@@ -641,6 +641,16 @@ for (const [args, expected] of cases) {
         self.assertIn('$("billingTreatmentInput")?.value || state.detail?.session?.billing_treatment || ""', js)
         self.assertIn('if (billingTreatment === "waived")', js)
 
+    def test_all_waived_cancellations_show_zero_read_only_rate(self):
+        js = Path("app/jordana_invoice/static/review.js").read_text()
+        self.assertIn(
+            '["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome)',
+            js,
+        )
+        self.assertIn('(isCancellationOutcome && billingTreatment === "waived")', js)
+        self.assertIn('$("approvedRateInput").value = "0.00";', js)
+        self.assertIn('$("sessionRatePreview").textContent = "Cancellation fee waived.";', js)
+
     def test_confirmed_client_summary_renders_without_participant_chips(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
         self.assertIn("if (!chips) return;", js)
@@ -1631,6 +1641,16 @@ for (const [args, expected] of cases) {
         js = self._person_record_js()
         self.assertIn('id="addBillingSetupBtn"', js)
         self.assertIn("Add Billing Setup", js)
+
+    def test_person_billing_setup_prevents_duplicate_and_offers_repair(self):
+        js = self._person_record_js()
+        self.assertIn("billingSetup.length === 0", js)
+        self.assertIn("One billing setup is allowed per client", js)
+        self.assertIn('id="repairDuplicateBillingSetupBtn"', js)
+        self.assertIn('box.id = "billingRepairConfirm"', js)
+        self.assertIn('id="billingRepairYes"', js)
+        self.assertIn("/api/billing-relationships/normalize-payer", js)
+        self.assertIn("Finalized invoices and payments will remain unchanged", js)
 
     def test_existing_billing_cards_have_edit(self):
         js = self._person_record_js()

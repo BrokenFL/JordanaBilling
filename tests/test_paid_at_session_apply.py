@@ -8,6 +8,7 @@ from unittest.mock import patch
 from jordana_invoice.db import connect, migrate_database
 from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_services import (
+    get_invoice,
     invoice_ineligibility_reasons,
     save_business_profile,
     stage_approved_sessions_to_monthly_drafts,
@@ -170,8 +171,8 @@ class PaidAtSessionApplyTests(unittest.TestCase):
         queue = list_review_candidates(self.conn)
         self.assertNotIn(cid, {item["candidate_id"] for item in queue["items"]})
 
-    # 2. Approved paid_at_session session is excluded from monthly invoice staging
-    def test_session_excluded_from_invoice_staging(self):
+    # 2. Approved paid_at_session session stages with its payment applied
+    def test_session_stages_to_zero_balance_invoice(self):
         cid = self._import_candidate("s1")
         payload = {
             "participants": [{"person_id": self.person["person_id"], "display_name": "Casey Sample"}],
@@ -189,13 +190,25 @@ class PaidAtSessionApplyTests(unittest.TestCase):
         res = approve_candidate(self.conn, cid, payload)
         session_id = res["session"]["id"]
         
-        # Verify exclusion from staging
         reasons = invoice_ineligibility_reasons(self.conn, res["session"])
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
         staging = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session_id])
-        self.assertEqual(staging.get("drafts_created"), 0)
-        self.assertEqual(staging.get("sessions_staged"), 0)
+        self.assertEqual(staging.get("drafts_created"), 1)
+        self.assertEqual(staging.get("sessions_staged"), 1)
+        line = self.conn.execute(
+            "SELECT invoice_id, invoice_line_item_id FROM invoice_line_items WHERE source_session_id = ?",
+            (session_id,),
+        ).fetchone()
+        invoice = get_invoice(self.conn, line["invoice_id"])["invoice"]
+        self.assertEqual(invoice["total_cents"], 20000)
+        self.assertEqual(invoice["paid_cents"], 20000)
+        self.assertEqual(invoice["balance_cents"], 0)
+        allocation = self.conn.execute(
+            "SELECT invoice_line_item_id FROM payment_allocations WHERE session_id = ? AND status = 'active'",
+            (session_id,),
+        ).fetchone()
+        self.assertEqual(allocation["invoice_line_item_id"], line["invoice_line_item_id"])
 
     # 3. Repeated approval is idempotent
     def test_repeated_approval_is_idempotent(self):

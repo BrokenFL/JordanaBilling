@@ -1,3 +1,39 @@
+# Jordana Billing v0.1.0-test.40
+
+Prevents duplicate client billing setups, repairs the existing draft-only payer
+split, and makes waived and paid-at-session billing events visible on invoices.
+Package version `0.1.0.post40`.
+
+## Changes
+
+- A client can have only one person-linked billing setup. Add and reactivate
+  actions now direct Jordana to edit the existing setup instead of creating a
+  second one.
+- A billing setup cannot be deactivated while an active billing relationship,
+  draft invoice, or approved unfinalized session still depends on it.
+- Client Details offers an audited **Repair Duplicate Setup** action for legacy
+  duplicates. It moves safe draft/session references to the active setup,
+  merges matching monthly drafts, and preserves finalized invoices, payments,
+  and the inactive historical record.
+- Waived late, ordinary, timely, and no-show cancellations stage as explicit
+  `$0.00` invoice lines with a `Fee Waived` description. Month Close reports a
+  missing waived line instead of hiding it.
+- Paid-at-session approvals now stage the normal session charge and attach the
+  already recorded payment to that invoice line. The invoice shows the charge,
+  payment applied, and correct remaining balance; repeated staging is
+  idempotent.
+
+## Supplied-data verification
+
+On a temporary copy of the supplied database, the duplicate-payer repair moved
+five approved sessions and two draft references to the active billing setup,
+producing one consolidated draft for each affected service month. No finalized
+invoice or payment history was changed. The same copy staged all eight
+paid-at-session records and linked all eight existing payments to their invoice
+lines. All three existing waived cancellations remained present. SQLite
+integrity and foreign-key checks passed; the supplied source file remained
+unchanged.
+
 # Jordana Billing v0.1.0-test.39
 
 Fixes approved sessions failing to reach a draft when an older saved bill-to

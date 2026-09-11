@@ -129,7 +129,7 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertEqual(invoice_ineligibility_reasons(self.conn, normal), [])
         self.assertTrue(invoice_ineligibility_reasons(self.conn, cancelled))
         self.assertEqual(invoice_ineligibility_reasons(self.conn, cancelled_billable), [])
-        self.assertTrue(invoice_ineligibility_reasons(self.conn, no_show_waived))
+        self.assertEqual(invoice_ineligibility_reasons(self.conn, no_show_waived), [])
         draft = self.draft([normal])
         self.assertIn("already attached", " ".join(invoice_ineligibility_reasons(self.conn, normal)).lower())
         with self.assertRaises(ValueError):

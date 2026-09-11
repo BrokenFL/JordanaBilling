@@ -130,9 +130,13 @@ def _coerce_charge_for_attendance(
     if scheduled_rate_cents is None:
         scheduled_rate_cents = session["suggested_rate_cents"]
 
+    if (
+        outcome in {"late_cancellation", "cancelled", "no_show", "timely_cancellation"}
+        and treatment == "waived"
+    ):
+        return outcome, treatment, 0, scheduled_rate_cents
+
     if outcome == "late_cancellation":
-        if treatment == "waived":
-            return outcome, treatment, 0, scheduled_rate_cents
         if treatment == "bill_full_fee":
             full_fee = scheduled_rate_cents if scheduled_rate_cents is not None else approved_rate_cents
             return outcome, treatment, full_fee, scheduled_rate_cents
@@ -2583,8 +2587,22 @@ def _person_billing_setup(conn: sqlite3.Connection, person_id: str) -> list[dict
         SELECT billing_party_id, billing_party_type, person_id, organization_name,
                billing_name, billing_email, billing_phone, billing_address_line_1,
                billing_address_line_2, billing_city, billing_state, billing_postal_code,
-               preferred_delivery_method, active
-        FROM billing_parties
+               preferred_delivery_method, active,
+               (SELECT COUNT(*) FROM invoices i
+                WHERE i.bill_to_party_id = bp.billing_party_id AND i.status = 'draft')
+                 AS draft_invoice_count,
+               (SELECT COUNT(*) FROM client_accounts ca
+                WHERE ca.default_billing_party_id = bp.billing_party_id AND ca.active = 1)
+                 AS active_account_count,
+               (SELECT COUNT(*) FROM sessions s
+                WHERE s.billing_party_id = bp.billing_party_id
+                  AND s.review_status = 'approved'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM invoice_line_items li
+                    JOIN invoices fi ON fi.invoice_id = li.invoice_id
+                    WHERE li.source_session_id = s.id AND fi.status IN ('finalized', 'void')
+                  )) AS mutable_approved_session_count
+        FROM billing_parties bp
         WHERE person_id = ?
         ORDER BY active DESC, billing_name
         """,
@@ -4353,7 +4371,13 @@ def _account_duplicate_probe(
     return payer_kind, row["payer_person_id"], organization_billing_party_id, covered_client_ids
 
 
-def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, commit: bool = True) -> dict[str, Any]:
+def create_billing_party(
+    conn: sqlite3.Connection,
+    data: dict[str, Any],
+    *,
+    commit: bool = True,
+    allow_duplicate_person: bool = True,
+) -> dict[str, Any]:
     if commit:
         init_db(conn)
     now = now_iso()
@@ -4373,6 +4397,22 @@ def create_billing_party(conn: sqlite3.Connection, data: dict[str, Any], *, comm
         ).fetchone()
         if not person:
             raise ValueError("Referenced person does not exist or is not active.")
+        existing_person_party = conn.execute(
+            """
+            SELECT billing_party_id, active
+            FROM billing_parties
+            WHERE person_id = ? AND billing_party_type = 'person'
+            ORDER BY active DESC, updated_at DESC, billing_party_id
+            LIMIT 1
+            """,
+            (person_id,),
+        ).fetchone()
+        if existing_person_party and not allow_duplicate_person:
+            state = "active" if existing_person_party["active"] else "inactive"
+            raise ValueError(
+                f"This client already has an {state} billing setup. "
+                "Edit or reactivate the existing setup instead of adding a duplicate."
+            )
     delivery_contact_person_id = data.get("delivery_contact_person_id") or None
     if delivery_contact_person_id:
         dc_person = conn.execute(
@@ -4455,6 +4495,36 @@ def billing_party_for_person(conn: sqlite3.Connection, person_id: str, *, commit
     ).fetchone()
     if existing:
         return existing["billing_party_id"]
+    inactive = conn.execute(
+        """
+        SELECT billing_party_id
+        FROM billing_parties
+        WHERE person_id = ? AND active = 0 AND billing_party_type = 'person'
+        ORDER BY updated_at DESC, billing_party_id
+        """,
+        (person_id,),
+    ).fetchall()
+    if len(inactive) == 1:
+        billing_party_id = inactive[0]["billing_party_id"]
+        conn.execute(
+            "UPDATE billing_parties SET active = 1, updated_at = ? WHERE billing_party_id = ?",
+            (now_iso(), billing_party_id),
+        )
+        record_audit(
+            conn,
+            "billing_party",
+            billing_party_id,
+            "reactivated_instead_of_duplicate",
+            {"person_id": person_id},
+        )
+        if commit:
+            conn.commit()
+        return billing_party_id
+    if len(inactive) > 1:
+        raise ValueError(
+            "This client has multiple inactive billing setups. Repair those existing setups "
+            "before creating or reactivating another one."
+        )
     created = create_billing_party(
         conn,
         {
@@ -4469,7 +4539,14 @@ def billing_party_for_person(conn: sqlite3.Connection, person_id: str, *, commit
     return created["billing_party_id"]
 
 
-def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: dict[str, Any], *, commit: bool = True) -> dict[str, Any]:
+def update_billing_party(
+    conn: sqlite3.Connection,
+    billing_party_id: str,
+    data: dict[str, Any],
+    *,
+    commit: bool = True,
+    allow_in_use_deactivation: bool = True,
+) -> dict[str, Any]:
     if commit:
         init_db(conn)
     existing = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (billing_party_id,)).fetchone()
@@ -4558,6 +4635,74 @@ def update_billing_party(conn: sqlite3.Connection, billing_party_id: str, data: 
         active = 1 if data.get("active") else 0
     else:
         active = existing["active"]
+
+    if (
+        int(existing["active"] or 0) == 1
+        and active == 0
+        and not allow_in_use_deactivation
+    ):
+        active_account_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM client_accounts
+            WHERE default_billing_party_id = ? AND active = 1
+            """,
+            (billing_party_id,),
+        ).fetchone()[0]
+        draft_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM invoices
+            WHERE bill_to_party_id = ? AND status = 'draft'
+            """,
+            (billing_party_id,),
+        ).fetchone()[0]
+        open_approved_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM sessions s
+            WHERE s.billing_party_id = ?
+              AND s.review_status = 'approved'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM invoice_line_items li
+                JOIN invoices i ON i.invoice_id = li.invoice_id
+                WHERE li.source_session_id = s.id
+                  AND i.status IN ('finalized', 'void')
+              )
+            """,
+            (billing_party_id,),
+        ).fetchone()[0]
+        if active_account_count or draft_count or open_approved_count:
+            raise ValueError(
+                "This billing setup cannot be deactivated while an active billing relationship, "
+                "draft invoice, or approved unfinalized session still uses it. Update the billing "
+                "relationship or repair the duplicate setup first."
+            )
+
+    if (
+        int(existing["active"] or 0) == 0
+        and active == 1
+        and existing["billing_party_type"] == "person"
+        and existing["person_id"]
+    ):
+        other_active = conn.execute(
+            """
+            SELECT 1
+            FROM billing_parties
+            WHERE person_id = ?
+              AND billing_party_type = 'person'
+              AND active = 1
+              AND billing_party_id != ?
+            LIMIT 1
+            """,
+            (existing["person_id"], billing_party_id),
+        ).fetchone()
+        if other_active:
+            raise ValueError(
+                "This client already has an active billing setup. "
+                "Edit it or repair the duplicate setup instead of reactivating another one."
+            )
 
     conn.execute(
         """
@@ -7567,7 +7712,7 @@ def normalize_duplicate_payer_billing_parties(
     *,
     canonical_billing_party_id: str | None = None,
 ) -> dict[str, Any]:
-    """Audited normalization of duplicate active person-linked billing parties.
+    """Audited normalization of duplicate person-linked billing parties.
 
     Selects or establishes one canonical active billing-party record for the
     given payer person, copies missing contact/delivery fields from redundant
@@ -7586,27 +7731,33 @@ def normalize_duplicate_payer_billing_parties(
     if not person:
         raise ValueError("Person does not exist or is not active.")
 
-    active_parties = conn.execute(
+    all_parties = conn.execute(
         """
         SELECT * FROM billing_parties
-        WHERE person_id = ? AND active = 1 AND billing_party_type = 'person'
-        ORDER BY updated_at DESC
+        WHERE person_id = ? AND billing_party_type = 'person'
+        ORDER BY active DESC, updated_at DESC, billing_party_id
         """,
         (person_id,),
     ).fetchall()
+    active_parties = [party for party in all_parties if int(party["active"] or 0) == 1]
 
-    if len(active_parties) <= 1:
+    if len(all_parties) <= 1:
         return {
             "person_id": person_id,
             "canonical_billing_party_id": active_parties[0]["billing_party_id"] if active_parties else None,
             "deactivated_count": 0,
+            "consolidated_count": 0,
             "fields_copied": [],
             "conflicts": [],
             "repointed_accounts": [],
             "repointed_drafts": [],
             "repointed_sessions": [],
-            "skipped": "No duplicate active billing parties found.",
+            "skipped": "No duplicate billing parties found.",
         }
+    if not active_parties:
+        raise ValueError(
+            "No active billing setup is available to keep. Reactivate the correct setup first."
+        )
 
     # --- Select canonical record ---
     if canonical_billing_party_id:
@@ -7631,7 +7782,59 @@ def normalize_duplicate_payer_billing_parties(
         ))
 
     canonical_id = canonical["billing_party_id"]
-    redundant = [p for p in active_parties if p["billing_party_id"] != canonical_id]
+    redundant = [p for p in all_parties if p["billing_party_id"] != canonical_id]
+    deactivated_count = sum(1 for party in redundant if int(party["active"] or 0) == 1)
+    has_mutable_references = bool(deactivated_count)
+    if not has_mutable_references:
+        redundant_ids = [party["billing_party_id"] for party in redundant]
+        placeholders = ", ".join("?" for _ in redundant_ids)
+        has_mutable_references = bool(conn.execute(
+            f"""
+            SELECT 1
+            WHERE EXISTS (
+              SELECT 1 FROM client_accounts
+              WHERE active = 1 AND default_billing_party_id IN ({placeholders})
+            ) OR EXISTS (
+              SELECT 1 FROM invoices
+              WHERE status = 'draft' AND bill_to_party_id IN ({placeholders})
+            ) OR EXISTS (
+              SELECT 1 FROM sessions s
+              WHERE s.billing_party_id IN ({placeholders})
+                AND s.review_status != 'approved'
+            ) OR EXISTS (
+              SELECT 1 FROM sessions s
+              WHERE s.billing_party_id IN ({placeholders})
+                AND s.review_status = 'approved'
+                AND NOT EXISTS (
+                  SELECT 1 FROM invoice_line_items li
+                  JOIN invoices i ON i.invoice_id = li.invoice_id
+                  WHERE li.source_session_id = s.id AND i.status IN ('finalized', 'void')
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM payments p
+                  WHERE p.source_session_id = s.id AND p.status = 'posted'
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM payment_allocations pa
+                  WHERE pa.session_id = s.id AND pa.status = 'active'
+                )
+            )
+            """,
+            redundant_ids + redundant_ids + redundant_ids + redundant_ids,
+        ).fetchone())
+    if not has_mutable_references:
+        return {
+            "person_id": person_id,
+            "canonical_billing_party_id": canonical_id,
+            "deactivated_count": 0,
+            "consolidated_count": 0,
+            "fields_copied": [],
+            "conflicts": [],
+            "repointed_accounts": [],
+            "repointed_drafts": [],
+            "repointed_sessions": [],
+            "skipped": "No duplicate billing references need repair.",
+        }
 
     # --- Copy missing fields from redundant records (field-level safe rules) ---
     contact_fields = [
@@ -7642,12 +7845,18 @@ def normalize_duplicate_payer_billing_parties(
     fields_copied: list[str] = []
     conflicts: list[dict[str, str]] = []
 
+    def meaningful_contact_value(party: sqlite3.Row, field: str) -> str:
+        value = str(party[field] or "").strip() if party[field] is not None else ""
+        if field == "preferred_delivery_method" and value == "unresolved":
+            return ""
+        return value
+
     canonical_updates: dict[str, Any] = {}
     for field in contact_fields:
-        canonical_val = str(canonical[field] or "").strip() if canonical[field] is not None else ""
+        canonical_val = meaningful_contact_value(canonical, field)
         if not canonical_val:
             for r in redundant:
-                redundant_val = str(r[field] or "").strip() if r[field] is not None else ""
+                redundant_val = meaningful_contact_value(r, field)
                 if redundant_val:
                     if field not in canonical_updates:
                         canonical_updates[field] = redundant_val
@@ -7660,12 +7869,17 @@ def normalize_duplicate_payer_billing_parties(
                         })
                     break  # only check first redundant with a value for this field
 
+    canonical_delivery_method = canonical_updates.get(
+        "preferred_delivery_method",
+        canonical["preferred_delivery_method"],
+    )
+
     # Detect conflicts: canonical has a value and a redundant has a different value
     for field in contact_fields:
-        canonical_val = str(canonical[field] or "").strip() if canonical[field] is not None else ""
+        canonical_val = meaningful_contact_value(canonical, field)
         if canonical_val:
             for r in redundant:
-                redundant_val = str(r[field] or "").strip() if r[field] is not None else ""
+                redundant_val = meaningful_contact_value(r, field)
                 if redundant_val and redundant_val != canonical_val:
                     conflicts.append({
                         "field": field,
@@ -7673,20 +7887,18 @@ def normalize_duplicate_payer_billing_parties(
                         "conflicting_values": redundant_val,
                     })
 
-    # Apply canonical updates
-    if canonical_updates:
-        now = now_iso()
-        set_clauses = ", ".join(f"{k} = ?" for k in canonical_updates)
-        params = list(canonical_updates.values()) + [now, canonical_id]
-        conn.execute(
-            f"UPDATE billing_parties SET {set_clauses}, updated_at = ? WHERE billing_party_id = ?",
-            params,
-        )
-
     # --- Begin transaction for structural changes ---
     _begin_immediate(conn)
     try:
         now = now_iso()
+
+        if canonical_updates:
+            set_clauses = ", ".join(f"{key} = ?" for key in canonical_updates)
+            params = list(canonical_updates.values()) + [now, canonical_id]
+            conn.execute(
+                f"UPDATE billing_parties SET {set_clauses}, updated_at = ? WHERE billing_party_id = ?",
+                params,
+            )
 
         # Repoint active account defaults
         repointed_accounts: list[str] = []
@@ -7708,71 +7920,204 @@ def normalize_duplicate_payer_billing_parties(
         for r in redundant:
             r_id = r["billing_party_id"]
             draft_invoices = conn.execute(
-                "SELECT invoice_id FROM invoices WHERE bill_to_party_id = ? AND status = 'draft'",
+                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND status = 'draft'",
                 (r_id,),
             ).fetchall()
             for inv in draft_invoices:
-                # Check if canonical already has a draft for the same billing month
-                existing_month = conn.execute(
-                    "SELECT billing_month FROM invoices WHERE invoice_id = ?",
+                protected = conn.execute(
+                    """
+                    SELECT 1
+                    FROM invoice_line_items li
+                    LEFT JOIN payment_allocations pa
+                      ON pa.invoice_line_item_id = li.invoice_line_item_id
+                     AND pa.status = 'active'
+                    LEFT JOIN payments p
+                      ON p.source_session_id = li.source_session_id
+                     AND p.status = 'posted'
+                    WHERE li.invoice_id = ?
+                      AND (pa.allocation_id IS NOT NULL OR p.payment_id IS NOT NULL)
+                    LIMIT 1
+                    """,
                     (inv["invoice_id"],),
                 ).fetchone()
-                bm = existing_month["billing_month"] if existing_month else None
+                if protected:
+                    raise ValueError(
+                        "A duplicate billing setup has payment-linked draft work. "
+                        "It cannot be repaired automatically."
+                    )
+                # Check if canonical already has a draft for the same billing month
+                bm = inv["billing_month"]
                 if bm:
                     target = conn.execute(
-                        "SELECT invoice_id FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft' AND invoice_id != ?",
+                        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft' AND invoice_id != ?",
                         (canonical_id, bm, inv["invoice_id"]),
                     ).fetchone()
                     if target:
-                        # Move lines to the target draft instead of repointing
+                        if int(inv["adjustment_cents"] or 0) != 0 or int(target["adjustment_cents"] or 0) != 0:
+                            raise ValueError(
+                                "Duplicate drafts with manual adjustments require review before they can be merged."
+                            )
+                        source_lines = conn.execute(
+                            "SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order",
+                            (inv["invoice_id"],),
+                        ).fetchall()
+                        for line in source_lines:
+                            existing_line = conn.execute(
+                                """
+                                SELECT * FROM invoice_line_items
+                                WHERE invoice_id = ? AND source_session_id = ?
+                                """,
+                                (target["invoice_id"], line["source_session_id"]),
+                            ).fetchone()
+                            if existing_line:
+                                if (
+                                    int(existing_line["line_amount_cents"] or 0)
+                                    != int(line["line_amount_cents"] or 0)
+                                    or int(existing_line["duration_minutes"] or 0)
+                                    != int(line["duration_minutes"] or 0)
+                                ):
+                                    raise ValueError(
+                                        "Duplicate drafts contain conflicting copies of the same session."
+                                    )
+                                conn.execute(
+                                    "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
+                                    (line["invoice_line_item_id"],),
+                                )
+                                continue
+                            next_order = conn.execute(
+                                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
+                                (target["invoice_id"],),
+                            ).fetchone()[0]
+                            conn.execute(
+                                """
+                                UPDATE invoice_line_items
+                                SET invoice_id = ?, sort_order = ?, updated_at = ?
+                                WHERE invoice_line_item_id = ?
+                                """,
+                                (target["invoice_id"], next_order, now, line["invoice_line_item_id"]),
+                            )
+                        subtotal = conn.execute(
+                            "SELECT COALESCE(SUM(line_amount_cents), 0) FROM invoice_line_items WHERE invoice_id = ?",
+                            (target["invoice_id"],),
+                        ).fetchone()[0]
                         conn.execute(
-                            "UPDATE invoice_line_items SET invoice_id = ? WHERE invoice_id = ?",
-                            (target["invoice_id"], inv["invoice_id"]),
+                            """
+                            UPDATE invoices
+                            SET subtotal_cents = ?, total_cents = ? + adjustment_cents,
+                                delivery_method = ?, revision = revision + 1, updated_at = ?
+                            WHERE invoice_id = ?
+                            """,
+                            (
+                                subtotal,
+                                subtotal,
+                                canonical_delivery_method,
+                                now,
+                                target["invoice_id"],
+                            ),
                         )
                         conn.execute(
                             "DELETE FROM invoices WHERE invoice_id = ?",
                             (inv["invoice_id"],),
                         )
+                        record_audit(
+                            conn,
+                            "invoice",
+                            inv["invoice_id"],
+                            "duplicate_payer_draft_merged",
+                            {
+                                "canonical_invoice_id": target["invoice_id"],
+                                "canonical_billing_party_id": canonical_id,
+                                "billing_month": bm,
+                            },
+                        )
                         repointed_drafts.append(inv["invoice_id"])
                         continue
                 conn.execute(
-                    "UPDATE invoices SET bill_to_party_id = ?, updated_at = ? WHERE invoice_id = ?",
-                    (canonical_id, now, inv["invoice_id"]),
+                    """
+                    UPDATE invoices
+                    SET bill_to_party_id = ?, delivery_method = ?,
+                        revision = revision + 1, updated_at = ?
+                    WHERE invoice_id = ?
+                    """,
+                    (
+                        canonical_id,
+                        canonical_delivery_method,
+                        now,
+                        inv["invoice_id"],
+                    ),
+                )
+                record_audit(
+                    conn,
+                    "invoice",
+                    inv["invoice_id"],
+                    "duplicate_payer_draft_repointed",
+                    {"old_billing_party_id": r_id, "canonical_billing_party_id": canonical_id},
                 )
                 repointed_drafts.append(inv["invoice_id"])
 
-        # Repoint non-approved session references
+        # Repoint mutable session references. Sessions frozen by finalized/void
+        # invoices or posted payments retain their historical payer.
         repointed_sessions: list[str] = []
         for r in redundant:
             r_id = r["billing_party_id"]
             sessions = conn.execute(
-                "SELECT id FROM sessions WHERE billing_party_id = ? AND review_status != 'approved'",
+                "SELECT id, review_status FROM sessions WHERE billing_party_id = ?",
                 (r_id,),
             ).fetchall()
             for sess in sessions:
+                if sess["review_status"] == "approved":
+                    protected = conn.execute(
+                        """
+                        SELECT 1
+                        FROM invoice_line_items li
+                        JOIN invoices i ON i.invoice_id = li.invoice_id
+                        WHERE li.source_session_id = ? AND i.status IN ('finalized', 'void')
+                        UNION ALL
+                        SELECT 1 FROM payments
+                        WHERE source_session_id = ? AND status = 'posted'
+                        UNION ALL
+                        SELECT 1 FROM payment_allocations
+                        WHERE session_id = ? AND status = 'active'
+                        LIMIT 1
+                        """,
+                        (sess["id"], sess["id"], sess["id"]),
+                    ).fetchone()
+                    if protected:
+                        continue
                 conn.execute(
                     "UPDATE sessions SET billing_party_id = ?, updated_at = ? WHERE id = ?",
                     (canonical_id, now, sess["id"]),
+                )
+                record_audit(
+                    conn,
+                    "session",
+                    sess["id"],
+                    "duplicate_payer_reference_repointed",
+                    {"old_billing_party_id": r_id, "canonical_billing_party_id": canonical_id},
                 )
                 repointed_sessions.append(sess["id"])
 
         # Deactivate redundant records
         for r in redundant:
             r_id = r["billing_party_id"]
-            conn.execute(
-                "UPDATE billing_parties SET active = 0, updated_at = ? WHERE billing_party_id = ?",
-                (now, r_id),
-            )
-            record_audit(conn, "billing_party", r_id, "deactivated_by_payer_normalization", {
-                "canonical_billing_party_id": canonical_id,
-                "person_id": person_id,
-            })
+            if int(r["active"] or 0) == 1:
+                conn.execute(
+                    "UPDATE billing_parties SET active = 0, updated_at = ? WHERE billing_party_id = ?",
+                    (now, r_id),
+                )
+                record_audit(conn, "billing_party", r_id, "deactivated_by_payer_normalization", {
+                    "canonical_billing_party_id": canonical_id,
+                    "person_id": person_id,
+                })
 
         record_audit(conn, "billing_party", canonical_id, "canonical_payer_normalization", {
             "person_id": person_id,
-            "deactivated_count": len(redundant),
+            "deactivated_count": deactivated_count,
+            "consolidated_count": len(redundant),
             "fields_copied": fields_copied,
             "conflict_count": len(conflicts),
+            "repointed_draft_count": len(repointed_drafts),
+            "repointed_session_count": len(repointed_sessions),
         })
 
         conn.commit()
@@ -7783,7 +8128,8 @@ def normalize_duplicate_payer_billing_parties(
     return {
         "person_id": person_id,
         "canonical_billing_party_id": canonical_id,
-        "deactivated_count": len(redundant),
+        "deactivated_count": deactivated_count,
+        "consolidated_count": len(redundant),
         "fields_copied": fields_copied,
         "conflicts": conflicts,
         "repointed_accounts": repointed_accounts,

@@ -14,6 +14,7 @@ from jordana_invoice.invoice_services import (
     get_invoice,
     save_business_profile,
     stage_approved_sessions_to_monthly_drafts,
+    validate_invoice_readiness,
     void_invoice,
 )
 from jordana_invoice.review_services import approve_candidate, create_account, create_billing_party, create_person
@@ -499,15 +500,126 @@ class InvoiceStagingTests(unittest.TestCase):
         draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
         self.assertEqual(self.count_lines(draft["invoice_id"]), 2)
 
-    # 17. Paid-at-session remains excluded for now
-    def test_paid_at_session_excluded(self):
-        self.approved_session("s1", day=10, payment_status="paid_at_session")
+    def test_duplicate_payer_repoint_closes_transaction_before_staging(self):
+        duplicate = create_billing_party(self.conn, {
+            "billing_name": "Avery Stone",
+            "person_id": self.person["person_id"],
+            "billing_email": "avery-duplicate@example.test",
+            "preferred_delivery_method": "email",
+        })
+        self.conn.execute(
+            "UPDATE billing_parties SET updated_at = ? WHERE billing_party_id = ?",
+            ("2026-05-01T00:00:00Z", self.party["billing_party_id"]),
+        )
+        self.conn.execute(
+            "UPDATE billing_parties SET updated_at = ? WHERE billing_party_id = ?",
+            ("2026-05-02T00:00:00Z", duplicate["billing_party_id"]),
+        )
+        self.conn.commit()
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_month": "2026-05",
+        })
+
         result = stage_approved_sessions_to_monthly_drafts(self.conn)
-        self.assertEqual(result["sessions_staged"], 0)
-        self.assertEqual(result["drafts_created"], 0)
-        # Session should be in skipped list
-        skipped_ids = [s["session_id"] for s in result["sessions_skipped"]]
-        self.assertTrue(len(skipped_ids) > 0)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["drafts_consolidated"], 1)
+        self.assertFalse(self.conn.in_transaction)
+        repointed = self.conn.execute(
+            "SELECT bill_to_party_id FROM invoices WHERE invoice_id = ?",
+            (draft["invoice"]["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(repointed["bill_to_party_id"], duplicate["billing_party_id"])
+
+    def test_payment_linked_duplicate_draft_is_skipped_without_cross_payer_mutation(self):
+        duplicate = create_billing_party(self.conn, {
+            "billing_name": "Avery Stone",
+            "person_id": self.person["person_id"],
+            "billing_email": "avery-duplicate@example.test",
+            "preferred_delivery_method": "email",
+        })
+        self.conn.execute(
+            "UPDATE billing_parties SET updated_at = ? WHERE billing_party_id = ?",
+            ("2026-05-01T00:00:00Z", self.party["billing_party_id"]),
+        )
+        self.conn.execute(
+            "UPDATE billing_parties SET updated_at = ? WHERE billing_party_id = ?",
+            ("2026-05-02T00:00:00Z", duplicate["billing_party_id"]),
+        )
+        self.conn.commit()
+
+        session = self.approved_session(
+            "duplicate-paid",
+            day=10,
+            party_id=self.party["billing_party_id"],
+            payment_status="paid_at_session",
+        )
+        first = stage_approved_sessions_to_monthly_drafts(self.conn)
+        self.assertEqual(first["sessions_staged"], 1)
+        source = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        source_line = self.conn.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+            (source["invoice_id"], session["id"]),
+        ).fetchone()
+        allocation_before = self.conn.execute(
+            "SELECT * FROM payment_allocations WHERE session_id = ? AND status = 'active'",
+            (session["id"],),
+        ).fetchone()
+        payment_before = self.conn.execute(
+            "SELECT billing_party_id FROM payments WHERE source_session_id = ?",
+            (session["id"],),
+        ).fetchone()
+        target = create_invoice_draft(self.conn, {
+            "bill_to_party_id": duplicate["billing_party_id"],
+            "billing_month": "2026-05",
+        })
+
+        result = stage_approved_sessions_to_monthly_drafts(self.conn)
+
+        self.assertEqual(result["drafts_consolidated"], 0)
+        self.assertEqual(len(result["drafts_consolidation_skipped"]), 1)
+        self.assertEqual(
+            result["drafts_consolidation_skipped"][0]["invoice_id"],
+            source["invoice_id"],
+        )
+        self.assertTrue(any(error["outcome"] == "skipped" for error in result["errors"]))
+        source_after = self.conn.execute(
+            "SELECT invoice_id, invoice_line_item_id FROM invoice_line_items "
+            "WHERE source_session_id = ?",
+            (session["id"],),
+        ).fetchone()
+        self.assertEqual(source_after["invoice_id"], source["invoice_id"])
+        self.assertEqual(source_after["invoice_line_item_id"], source_line["invoice_line_item_id"])
+        self.assertEqual(self.count_lines(target["invoice"]["invoice_id"]), 0)
+        allocation_after = self.conn.execute(
+            "SELECT invoice_line_item_id FROM payment_allocations WHERE session_id = ? AND status = 'active'",
+            (session["id"],),
+        ).fetchone()
+        payment_after = self.conn.execute(
+            "SELECT billing_party_id FROM payments WHERE source_session_id = ?",
+            (session["id"],),
+        ).fetchone()
+        self.assertEqual(allocation_after["invoice_line_item_id"], allocation_before["invoice_line_item_id"])
+        self.assertEqual(payment_after["billing_party_id"], payment_before["billing_party_id"])
+        self.assertFalse(self.conn.in_transaction)
+
+    # 17. Paid-at-session is invoiced and its existing payment is applied
+    def test_paid_at_session_staged_with_zero_balance(self):
+        session = self.approved_session("s1", day=10, payment_status="paid_at_session")
+        result = stage_approved_sessions_to_monthly_drafts(self.conn)
+        self.assertEqual(result["sessions_staged"], 1)
+        self.assertEqual(result["drafts_created"], 1)
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        invoice = get_invoice(self.conn, draft["invoice_id"])["invoice"]
+        self.assertEqual(invoice["total_cents"], 15000)
+        self.assertEqual(invoice["paid_cents"], 15000)
+        self.assertEqual(invoice["balance_cents"], 0)
+        allocation = self.conn.execute(
+            "SELECT invoice_line_item_id FROM payment_allocations WHERE session_id = ? AND status = 'active'",
+            (session["id"],),
+        ).fetchone()
+        self.assertIsNotNone(allocation["invoice_line_item_id"])
 
     def test_late_cancellation_full_fee_line_uses_fee_description(self):
         session = self.approved_session(
@@ -569,6 +681,34 @@ class InvoiceStagingTests(unittest.TestCase):
         self.assertEqual(line["description_snapshot"], "Late Cancellation - Fee Waived")
         self.assertEqual(line["line_amount_cents"], 0)
         self.assertEqual(draft["total_cents"], 0)
+
+    def test_other_waived_cancellation_outcomes_stage_and_finalize_at_zero(self):
+        cases = {
+            "cancelled": "Cancelled Session - Fee Waived",
+            "no_show": "No-Show - Fee Waived",
+            "timely_cancellation": "Timely Cancellation - Fee Waived",
+        }
+        for index, (outcome, description) in enumerate(cases.items(), start=1):
+            with self.subTest(outcome=outcome):
+                session = self.approved_session(
+                    f"{outcome}-waived",
+                    day=20 + index,
+                    title=f"Avery Stone 10 {outcome}",
+                    appointment=outcome,
+                    treatment="waived",
+                    amount="150.00",
+                )
+                self.assertEqual(session["approved_rate_cents"], 0)
+                result = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+                self.assertEqual(result["sessions_staged"], 1)
+                line = self.conn.execute(
+                    "SELECT * FROM invoice_line_items WHERE source_session_id = ?",
+                    (session["id"],),
+                ).fetchone()
+                self.assertEqual(line["description_snapshot"], description)
+                self.assertEqual(line["line_amount_cents"], 0)
+        draft = self.get_monthly_draft(self.party["billing_party_id"], "2026-05")
+        self.assertTrue(validate_invoice_readiness(self.conn, draft["invoice_id"])["ready"])
 
     def test_future_scheduled_session_skipped_with_exact_reason(self):
         session = self.approved_session("future1", day=10)
@@ -667,19 +807,18 @@ class InvoiceStagingTests(unittest.TestCase):
         result = stage_approved_sessions_to_monthly_drafts(self.conn)
         self.assertEqual(result["drafts_created"], 2)
         self.assertEqual(result["drafts_reused"], 0)
-        self.assertEqual(result["sessions_staged"], 3)
+        self.assertEqual(result["sessions_staged"], 4)
         self.assertEqual(result["sessions_already_staged"], 0)
         self.assertEqual(result["sessions_moved"], 0)
         self.assertEqual(result["sessions_removed_ineligible"], 0)
         self.assertEqual(result["errors"], [])
-        # Paid-at-session should be in skipped
-        self.assertTrue(len(result["sessions_skipped"]) >= 1)
+        self.assertEqual(result["sessions_skipped"], [])
         # Run again
         result2 = stage_approved_sessions_to_monthly_drafts(self.conn)
         self.assertEqual(result2["drafts_created"], 0)
         self.assertEqual(result2["drafts_reused"], 2)
         self.assertEqual(result2["sessions_staged"], 0)
-        self.assertEqual(result2["sessions_already_staged"], 3)
+        self.assertEqual(result2["sessions_already_staged"], 4)
         self.assertEqual(result2["errors"], [])
 
     # Additional: session_ids filter works

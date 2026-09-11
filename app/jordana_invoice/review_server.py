@@ -479,6 +479,13 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Billing party not found.",
             "billing_name must not be blank.",
             "Cannot reassign billing party to a different person through this operation.",
+            "This billing setup cannot be deactivated while an active billing relationship, draft invoice, or approved unfinalized session still uses it. Update the billing relationship or repair the duplicate setup first.",
+            "No active billing setup is available to keep. Reactivate the correct setup first.",
+            "A duplicate billing setup has payment-linked draft work. It cannot be repaired automatically.",
+            "Duplicate drafts with manual adjustments require review before they can be merged.",
+            "Duplicate drafts contain conflicting copies of the same session.",
+            "This client has multiple inactive billing setups. Repair those existing setups before creating or reactivating another one.",
+            "Paid-at-session payment could not be linked to the invoice because its billing record is inconsistent.",
             # Reports
             "Invalid year",
             "Year out of range",
@@ -490,6 +497,7 @@ def is_safe_validation_error(error: Exception) -> bool:
         safe_prefixes = (
             "Cannot approve until required fields are complete:",
             "No active billing party found for ",
+            "This client already has an ",
             "Session is not invoice eligible: ",
             "Return to Review is blocked: ",
             "This appointment is scheduled for ",
@@ -1228,7 +1236,13 @@ def make_handler(
                     return
                 if parsed.path == "/api/billing-parties":
                     req = parse_create_billing_party_request(data)
-                    self.send_json(create_billing_party(self.conn(), req.to_payload()))
+                    self.send_json(
+                        create_billing_party(
+                            self.conn(),
+                            req.to_payload(),
+                            allow_duplicate_person=False,
+                        )
+                    )
                     return
                 if parsed.path.startswith("/api/billing-parties/") and parsed.path.endswith("/copy-contact"):
                     parts = parsed.path.strip("/").split("/")
@@ -1246,7 +1260,14 @@ def make_handler(
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
                     req = parse_update_billing_party_request(data)
-                    self.send_json(update_billing_party(self.conn(), billing_party_id, req.to_payload()))
+                    self.send_json(
+                        update_billing_party(
+                            self.conn(),
+                            billing_party_id,
+                            req.to_payload(),
+                            allow_in_use_deactivation=False,
+                        )
+                    )
                     return
                 if parsed.path == "/api/rate-rules":
                     req = parse_create_rate_rule_request(data)
@@ -1556,35 +1577,25 @@ def make_handler(
                         result = approve_candidate(self.conn(), candidate_id, req.to_payload())
                         approved_session_id = result.get("session", {}).get("id")
                         if approved_session_id:
-                            session_row = self.conn().execute("SELECT payment_status FROM sessions WHERE id = ?", (approved_session_id,)).fetchone()
-                            if session_row and session_row["payment_status"] == "paid_at_session":
+                            try:
+                                staging = stage_approved_sessions_to_monthly_drafts(
+                                    self.conn(), session_ids=[approved_session_id],
+                                )
+                                if staging.get("errors"):
+                                    for err in staging["errors"]:
+                                        err["error"] = sanitize_staging_error_message(err.get("error", ""))
                                 result["invoice_staging"] = {
-                                    "status": "not_required",
-                                    "summary": {
-                                        "errors": [],
-                                        "message": "Paid-at-session session; invoice staging was not required."
-                                    }
+                                    "status": "warning" if staging.get("errors") or any(
+                                        reason.startswith("Bill-to party")
+                                        for item in staging.get("sessions_skipped", [])
+                                        for reason in item.get("reasons", [])
+                                    ) else "success",
+                                    "summary": staging,
                                 }
-                            else:
-                                try:
-                                    staging = stage_approved_sessions_to_monthly_drafts(
-                                        self.conn(), session_ids=[approved_session_id],
-                                    )
-                                    if staging.get("errors"):
-                                        for err in staging["errors"]:
-                                            err["error"] = sanitize_staging_error_message(err.get("error", ""))
-                                    result["invoice_staging"] = {
-                                        "status": "warning" if staging.get("errors") or any(
-                                            reason.startswith("Bill-to party")
-                                            for item in staging.get("sessions_skipped", [])
-                                            for reason in item.get("reasons", [])
-                                        ) else "success",
-                                        "summary": staging,
-                                    }
-                                except DatabaseBusyError:
-                                    result["invoice_staging"] = {"status": "unavailable", "summary": None}
-                                except Exception:
-                                    result["invoice_staging"] = {"status": "error", "summary": None}
+                            except DatabaseBusyError:
+                                result["invoice_staging"] = {"status": "unavailable", "summary": None}
+                            except Exception:
+                                result["invoice_staging"] = {"status": "error", "summary": None}
                         self.send_json(result)
                         return
                     if action == "mark":

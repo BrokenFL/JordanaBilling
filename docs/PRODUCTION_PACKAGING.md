@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build — v0.1.0-test.35
+### Current Test Build — v0.1.0-test.40
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.35
-- **Python package/application version:** 0.1.0.post35
+- **Release label:** v0.1.0-test.40
+- **Python package/application version:** 0.1.0.post40
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,16 +36,16 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post35` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post40` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.35 preserves the prior safeguards and adds Month Close, service-month
-financial totals, capture-run proof synced from `Run_Log`, and invoice-month
-receipt filing. The existing v3 Shortcut remains compatible; only the existing
-Apps Script Web App source needs redeployment for capture-run sync.
+test.40 preserves the prior safeguards and prevents duplicate person billing
+setups, adds an audited legacy-duplicate repair, stages waived cancellations as
+visible `$0.00` invoice lines, and attaches paid-at-session payments to staged
+invoice lines. The existing v3 Shortcut remains compatible.
 
 ### Calendar Reliability And Client Presentation In test.34
 
@@ -149,7 +149,7 @@ contract; Jordana does not need another Shortcut before its first run.
 
 1. **Paid-at-session approval after saved session details** — Approval reuses the saved payment amount, date, method, reference, and administrative note when the detail form is collapsed, avoiding blank-payment validation failures and duplicate payment creation.
 2. **Invoice and Review presentation** — Invoices use only Status and Service Period filters, draft session rows separate Date and Participants, the Review queue displays RAW CLIENT from the raw calendar title, and invoice headers show only `INVOICE`, date, and invoice number with Billing Period removed.
-3. **Payments workspace period filtering** — Outstanding, Paid, and All Payments use an Invoice Period filter, sort by Bill To/client first name, display Invoice Period instead of Invoice Date, and include posted paid-at-session session payments in Paid without creating invoices or modifying finalized invoice history.
+3. **Payments workspace period filtering** — Outstanding, Paid, and All Payments use an Invoice Period filter, sort by Bill To/client first name, display Invoice Period instead of Invoice Date, and include posted paid-at-session session payments in Paid. Current paid-at-session records also stage to invoice lines without modifying finalized invoice history.
 4. **Local Reports smoke** — `/reports` and `/api/reports` were browser-smoked during release prep; report cards render and the API returns metadata.
 
 ### Bug Fixes Inherited from test.12

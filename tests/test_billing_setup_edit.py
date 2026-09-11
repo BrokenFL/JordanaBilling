@@ -16,6 +16,7 @@ from jordana_invoice.invoice_services import (
 from jordana_invoice.review_server import make_handler
 from jordana_invoice.review_services import (
     approve_candidate,
+    create_account,
     create_billing_party,
     create_person,
     get_account_record,
@@ -578,6 +579,83 @@ class BillingSetupAPITests(unittest.TestCase):
         after_audit = count(self.conn, "audit_log")
         self.assertEqual(after_audit, before_audit + 1)
         self.assertIn("billing_party_id", captured["payload"])
+
+    def test_api_blocks_second_billing_setup_for_same_person(self):
+        person = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})
+        create_billing_party(self.conn, {
+            "billing_name": "Robin Rivers",
+            "billing_party_type": "person",
+            "person_id": person["person_id"],
+        })
+        before = count(self.conn, "billing_parties")
+        body = json.dumps({
+            "billing_name": "Robin Rivers Duplicate",
+            "billing_party_type": "person",
+            "person_id": person["person_id"],
+        })
+        handler, captured = self._post_handler("/api/billing-parties", body)
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        self.assertEqual(count(self.conn, "billing_parties"), before)
+        self.assertIn("already has an active billing setup", captured["payload"]["error"])
+
+    def test_api_blocks_deactivation_while_active_relationship_uses_setup(self):
+        person = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})
+        bp = create_billing_party(self.conn, {
+            "billing_name": "Robin Rivers",
+            "billing_party_type": "person",
+            "person_id": person["person_id"],
+        })
+        account = create_account(self.conn, "Robin Rivers", "individual")
+        self.conn.execute(
+            "UPDATE client_accounts SET default_billing_party_id = ? WHERE account_id = ?",
+            (bp["billing_party_id"], account["account_id"]),
+        )
+        self.conn.commit()
+        handler, captured = self._post_handler(
+            f"/api/billing-parties/{bp['billing_party_id']}",
+            json.dumps({"active": False}),
+        )
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        active = self.conn.execute(
+            "SELECT active FROM billing_parties WHERE billing_party_id = ?",
+            (bp["billing_party_id"],),
+        ).fetchone()["active"]
+        self.assertEqual(active, 1)
+        self.assertIn("cannot be deactivated", captured["payload"]["error"])
+
+    def test_api_blocks_reactivating_a_second_billing_setup(self):
+        person = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})
+        active_bp = create_billing_party(self.conn, {
+            "billing_name": "Robin Rivers Current",
+            "billing_party_type": "person",
+            "person_id": person["person_id"],
+        })
+        inactive_bp = create_billing_party(self.conn, {
+            "billing_name": "Robin Rivers Old",
+            "billing_party_type": "person",
+            "person_id": person["person_id"],
+        })
+        update_billing_party(self.conn, inactive_bp["billing_party_id"], {"active": False})
+
+        handler, captured = self._post_handler(
+            f"/api/billing-parties/{inactive_bp['billing_party_id']}",
+            json.dumps({"active": True}),
+        )
+        handler.conn = lambda: self.conn
+        handler.do_POST()
+
+        statuses = self.conn.execute(
+            "SELECT billing_party_id, active FROM billing_parties WHERE person_id = ?",
+            (person["person_id"],),
+        ).fetchall()
+        by_id = {row["billing_party_id"]: row["active"] for row in statuses}
+        self.assertEqual(by_id[active_bp["billing_party_id"]], 1)
+        self.assertEqual(by_id[inactive_bp["billing_party_id"]], 0)
+        self.assertIn("already has an active billing setup", captured["payload"]["error"])
 
     def test_api_update_billing_party_records_audit(self):
         person = create_person(self.conn, {"display_name": "Robin Rivers", "first_name": "Robin", "last_name": "Rivers"})

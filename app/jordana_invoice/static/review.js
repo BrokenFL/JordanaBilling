@@ -878,6 +878,7 @@ function syncSessionCustomFields() {
   const durationChoice = $("durationChoiceInput")?.value;
   const attendanceOutcome = $("attendanceOutcomeInput")?.value || state.detail?.session?.appointment_status || "completed";
   const billingTreatment = $("billingTreatmentInput")?.value || "";
+  const isCancellationOutcome = ["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(attendanceOutcome);
   if ($("customDurationField")) $("customDurationField").hidden = durationChoice !== "custom";
   if ($("customDescField")) $("customDescField").hidden = billingType !== "custom";
   if ($("customCodeField")) $("customCodeField").hidden = billingType !== "custom";
@@ -892,13 +893,13 @@ function syncSessionCustomFields() {
   if ($("sessionRateField")) $("sessionRateField").hidden = isCustomCancellation;
   if ($("customCancellationFeeField")) $("customCancellationFeeField").hidden = !isCustomCancellation;
   if ($("approvedRateInput")) {
-    $("approvedRateInput").readOnly = attendanceOutcome === "late_cancellation";
+    $("approvedRateInput").readOnly = attendanceOutcome === "late_cancellation" || (isCancellationOutcome && billingTreatment === "waived");
   }
-  if ($("approvedRateInput") && attendanceOutcome === "late_cancellation") {
+  if ($("approvedRateInput") && isCancellationOutcome) {
     const scheduledRate = $("approvedRateInput").dataset.scheduledRate || $("approvedRateInput").dataset.suggestedRate || "";
     if (billingTreatment === "waived") {
       $("approvedRateInput").value = "0.00";
-    } else if (billingTreatment === "bill_full_fee" && scheduledRate) {
+    } else if (attendanceOutcome === "late_cancellation" && billingTreatment === "bill_full_fee" && scheduledRate) {
       $("approvedRateInput").value = scheduledRate;
     }
   }
@@ -1637,6 +1638,7 @@ async function updateSessionRatePreview() {
   if (!$("sessionRatePreview") || !state.detail?.session?.id) return;
   const appointmentStatus = $("attendanceOutcomeInput")?.value || state.detail.session.appointment_status || "scheduled";
   const billingTreatment = $("billingTreatmentInput")?.value || state.detail.session.billing_treatment || "";
+  const isCancellationOutcome = ["late_cancellation", "timely_cancellation", "cancelled", "no_show"].includes(appointmentStatus);
   const participantIds = confirmedSessionClients().map(p => p.person_id).filter(Boolean);
   const billingType = $("billingTypeInput")?.value || state.detail.session.billing_session_type || "psychotherapy";
   const durationChoice = $("durationChoiceInput")?.value || durationToChoice(state.detail.session.approved_duration_minutes || state.detail.session.duration_minutes);
@@ -1656,6 +1658,20 @@ async function updateSessionRatePreview() {
   };
   try {
     const preview = await api("/api/rate-rules/preview", { method: "POST", body: JSON.stringify(payload) });
+    if (isCancellationOutcome && billingTreatment === "waived") {
+      const rateInput = $("approvedRateInput");
+      if (preview.amount && rateInput) {
+        rateInput.dataset.scheduledRate = preview.amount;
+        rateInput.dataset.suggestedRate = preview.amount;
+        state.detail.session.scheduled_rate_cents = parseMoneyToCents(preview.amount);
+        state.detail.session.suggested_rate_cents = parseMoneyToCents(preview.amount);
+        state.detail.session.rate_rule_id = preview.rate_rule_id || null;
+        state.detail.session.rate_source = preview.rate_source || "none";
+      }
+      if (rateInput) rateInput.value = "0.00";
+      $("sessionRatePreview").textContent = "Cancellation fee waived.";
+      return;
+    }
     if (appointmentStatus === "late_cancellation") {
       const rateInput = $("approvedRateInput");
       const scheduledRate = preview.amount || rateInput?.dataset.scheduledRate || rateInput?.dataset.suggestedRate || "";
@@ -1674,9 +1690,6 @@ async function updateSessionRatePreview() {
         $("sessionRatePreview").textContent = scheduledRate
           ? `Scheduled session fee is $${scheduledRate}. Enter the custom fee above.`
           : "Enter the custom late-cancellation fee above.";
-      } else if (billingTreatment === "waived") {
-        if (rateInput) rateInput.value = "0.00";
-        $("sessionRatePreview").textContent = "Late-cancellation fee waived.";
       } else {
         $("sessionRatePreview").textContent = "Choose how to bill this late cancellation.";
       }
@@ -1688,6 +1701,11 @@ async function updateSessionRatePreview() {
     applyMatchedRatePreview(preview);
     $("sessionRatePreview").textContent = previewText;
   } catch (err) {
+    if (isCancellationOutcome && billingTreatment === "waived") {
+      $("approvedRateInput").value = "0.00";
+      $("sessionRatePreview").textContent = "Cancellation fee waived.";
+      return;
+    }
     if (appointmentStatus === "late_cancellation") {
       const scheduledRate = $("approvedRateInput")?.dataset.scheduledRate || $("approvedRateInput")?.dataset.suggestedRate || "";
       if (billingTreatment === "bill_full_fee" && scheduledRate) {
@@ -1695,9 +1713,6 @@ async function updateSessionRatePreview() {
         $("sessionRatePreview").textContent = `Full scheduled session fee: $${scheduledRate}`;
       } else if (billingTreatment === "custom_fee") {
         $("sessionRatePreview").textContent = "Enter the custom late-cancellation fee above.";
-      } else if (billingTreatment === "waived") {
-        $("approvedRateInput").value = "0.00";
-        $("sessionRatePreview").textContent = "Late-cancellation fee waived.";
       } else {
         $("sessionRatePreview").textContent = "Choose how to bill this late cancellation.";
       }
@@ -6946,6 +6961,19 @@ async function openPersonRecord(personId, options = {}) {
   const deliveryLabels = { email: "Email", mail: "Mail", both: "Email and mail", unresolved: "Unresolved" };
   const activeSetups = billingSetup.filter(b => b.active);
   const inactiveSetups = billingSetup.filter(b => !b.active);
+  const hasRepairableBillingSetup = activeSetups.length > 1 || inactiveSetups.some(b =>
+    Number(b.draft_invoice_count || 0) > 0 ||
+    Number(b.active_account_count || 0) > 0 ||
+    Number(b.mutable_approved_session_count || 0) > 0
+  );
+  const billingSetupControlsHtml = billingSetup.length === 0
+    ? `<button class="mini" id="addBillingSetupBtn">Add Billing Setup</button>`
+    : billingSetup.length > 1 && activeSetups.length && hasRepairableBillingSetup
+      ? `<button class="mini" id="repairDuplicateBillingSetupBtn">Repair Duplicate Setup</button>`
+      : "";
+  const billingSetupGuardHtml = billingSetup.length
+    ? `<div class="billing-card-warning billing-card-warning-compact">One billing setup is allowed per client. Edit or reactivate the existing setup instead of adding another.${billingSetup.length > 1 ? " Legacy duplicates can be repaired here without changing finalized invoices or payments." : ""}</div>`
+    : "";
   const billingSetupHtml = billingSetup.length
     ? billingSetup.map(b => {
         const addr = billingAddressSummary(b);
@@ -7091,7 +7119,8 @@ async function openPersonRecord(personId, options = {}) {
       </section>
 
       <section class="client-section">
-        <h3>Billing Setup <button class="mini" id="addBillingSetupBtn">Add Billing Setup</button></h3>
+        <h3>Billing Setup ${billingSetupControlsHtml}</h3>
+        ${billingSetupGuardHtml}
         <div id="billingSetupMessage" class="billing-setup-message"></div>
         <div id="billingSetupFormContainer"></div>
         <div class="billing-cards">${billingSetupHtml}</div>
@@ -7333,6 +7362,46 @@ async function openPersonRecord(personId, options = {}) {
   if ($("addBillingSetupBtn")) $("addBillingSetupBtn").onclick = () => {
     showBillingSetupForm(null, data.person.display_name || "");
   };
+  if ($("repairDuplicateBillingSetupBtn")) $("repairDuplicateBillingSetupBtn").onclick = () => {
+    const canonical = activeSetups.length === 1 ? activeSetups[0] : null;
+    const button = $("repairDuplicateBillingSetupBtn");
+    const existing = document.getElementById("billingRepairConfirm");
+    if (existing) existing.remove();
+    const box = document.createElement("div");
+    box.id = "billingRepairConfirm";
+    box.className = "lifecycle-confirm-box";
+    box.style.display = "block";
+    box.innerHTML = `
+      <p>Repair this client's duplicate billing setups? Open draft invoices and safe session references will move to the active setup. Finalized invoices and payments will remain unchanged.</p>
+      <div class="wizard-confirm-actions">
+        <button type="button" id="billingRepairNo" class="modal-cancel">Cancel</button>
+        <button type="button" id="billingRepairYes" class="modal-submit">Repair Duplicate Setup</button>
+      </div>`;
+    button.closest(".client-section")?.querySelector(".billing-cards")?.before(box);
+    document.getElementById("billingRepairNo").onclick = () => { box.remove(); button.focus(); };
+    document.getElementById("billingRepairYes").onclick = async () => {
+      button.disabled = true;
+      document.getElementById("billingRepairYes").disabled = true;
+      try {
+        const result = await api("/api/billing-relationships/normalize-payer", {
+          method: "POST",
+          body: JSON.stringify({
+            person_id: personId,
+            canonical_billing_party_id: canonical?.billing_party_id || null,
+          }),
+        });
+        await openPersonRecord(personId, { showAllSessions });
+        showBillingSetupMessage(
+          `Duplicate billing repaired: ${result.repointed_sessions.length} session(s) and ${result.repointed_drafts.length} draft(s) moved to the active setup.`,
+          "success",
+        );
+      } catch (err) {
+        showBillingSetupMessage(err.message || "Failed to repair duplicate billing setup.", "error");
+        button.disabled = false;
+        document.getElementById("billingRepairYes").disabled = false;
+      }
+    };
+  };
   document.querySelectorAll("[data-edit-billing]").forEach(button => {
     button.onclick = () => {
       const bp = billingSetup.find(b => b.billing_party_id === button.dataset.editBilling);
@@ -7348,7 +7417,7 @@ async function openPersonRecord(personId, options = {}) {
       box.className = "lifecycle-confirm-box";
       box.style.display = "block";
       box.innerHTML = `
-        <p>Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged.</p>
+        <p>Deactivating this billing setup prevents it from being suggested for future billing. Historical sessions and invoices will remain unchanged. The app will block this action if an active billing relationship, draft invoice, or approved unfinalized session still uses it.</p>
         <div class="wizard-confirm-actions">
           <button type="button" id="billingDeactNo" class="modal-cancel">Cancel</button>
           <button type="button" id="billingDeactYes" class="modal-submit">Deactivate</button>

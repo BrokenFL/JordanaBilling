@@ -161,7 +161,7 @@ A single authoritative function `validate_invoice_readiness` is used in both pre
 
 - Bill-to party exists and is active
 - At least one eligible invoice line
-- All line amounts are positive, except waived late-cancellation lines which are valid at exactly $0.00 (identified by structured `appointment_status_snapshot="late_cancellation"` and `billing_treatment_snapshot="waived"` on the line item, not by description text)
+- All line amounts are positive, except waived cancellation outcomes which are valid at exactly $0.00 (identified by a structured cancellation `appointment_status_snapshot` and `billing_treatment_snapshot="waived"` on the line item, not by description text)
 - Finalization date is generated transactionally from `finalized_at`
 - Active business profile
 - Required bill-to contact details for the selected delivery method (email for email/both, mailing address for mail/both)
@@ -439,7 +439,7 @@ API endpoints added:
 
 - No apply mode exists — only the read-only dry-run analyzer and its CLI are available.
 - No historical payment records have been created — provenance schema, service validation, and dry-run analysis exist but the backfill has not been run.
-- No paid-at-session eligibility transition — paid-at-session sessions remain excluded from invoicing.
+- Paid-at-session sessions with a matching posted payment and allocation are invoice eligible. Staging links the allocation to the new invoice line so the charge and payment are both visible and the remaining balance is accurate.
 - No invoice totals changes (no `paid_cents`, `balance_cents`, or settlement-status columns on invoices).
 - Payment tracking beyond Round 3 remains unfinished: credits, multi-invoice payments, reconciliation, and month-close workflows still belong to later rounds. The implemented payment ledger, allocations, invoice payment history, and applying available funds are all functional.
 

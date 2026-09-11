@@ -326,8 +326,8 @@ class PaymentSchemaTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(payment_row2)
 
-    # 20. Existing invoice, staging, and approval behavior remains unchanged
-    def test_existing_behavior_unchanged(self):
+    # 20. Existing invoice behavior includes complete paid-at-session records
+    def test_existing_and_paid_at_session_records_are_eligible(self):
         session = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (self.session_id,)).fetchone()
         self.assertEqual(session["review_status"], "approved")
         reasons = invoice_ineligibility_reasons(self.conn, session)
@@ -351,7 +351,7 @@ class PaymentSchemaTests(unittest.TestCase):
             "SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)
         ).fetchone()
         paid_reasons = invoice_ineligibility_reasons(self.conn, paid_session_row)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in paid_reasons))
+        self.assertEqual(paid_reasons, [])
 
         draft = create_invoice_draft(self.conn, {
             "bill_to_party_id": self.party["billing_party_id"],

@@ -174,7 +174,7 @@ fixtures, screenshots, logs, demo data, examples, or documentation.
 - `receipt_sequences` — annual receipt numbering state
 - `idempotency_keys` — protection against repeated financial actions
 
-New paid-at-session approvals create or validate one posted payment and allocation transactionally and idempotently. They bypass monthly invoice staging.
+New paid-at-session approvals create or validate one posted payment and allocation transactionally and idempotently. Monthly staging creates the normal charge line and links that allocation to it, so the invoice shows the payment and remaining balance.
 
 The legacy paid-at-session backfill analyzer remains dry-run only. No migration itself creates historical payments or allocations.
 

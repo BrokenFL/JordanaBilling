@@ -1,9 +1,10 @@
-# Software updates (prepared for Test.37; not rolled out)
+# Software updates
 
 The app checks an explicit promotion feed on launch and at most once daily.
 A manual **Check for updates** button can refresh it sooner. Only a newer
 version explicitly enabled in `updates/jordana.json` is offered. Publishing a
-GitHub release alone does not offer it to Jordana. The feed is currently disabled.
+GitHub release alone does not offer it to Jordana. Test.40 is the first planned
+promotion through this feed after its published DMG is independently verified.
 
 The default feed is the `main` branch's `updates/jordana.json` on
 `raw.githubusercontent.com/BrokenFL/JordanaBilling`. Checks send no calendar,
@@ -44,9 +45,7 @@ currently relies on HTTPS and control of the fixed GitHub repository/feed.
    publish that file to `main` when Jordana should receive the notice. Preparing
    the file does not publish it. Setting `enabled` to false withdraws an offer
    before installation starts; it does not interrupt an already running update.
-4. One manual installation is needed to introduce this feature. Validate a real
-   upgrade/restart on an isolated installed Mac before first promotion. The new
-   discovery, worker, routing and failure paths have automated tests; that does
-   not substitute for this installed-Mac handoff check.
-
-No release or enabled feed is published as part of this implementation.
+4. Test.39 and newer installations already contain the updater. Jordana can use
+   **Check for Updates**, then **Update and restart**, after a verified offer is
+   promoted. The discovery, worker, routing and failure paths have automated
+   tests; installed-Mac confirmation remains separate evidence.

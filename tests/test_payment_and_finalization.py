@@ -101,11 +101,10 @@ class PaymentStatusTests(unittest.TestCase):
         self.assertEqual(normalize_payment_status("unpaid"), "unpaid")
         self.assertEqual(normalize_payment_status("paid_at_session"), "paid_at_session")
 
-    def test_paid_at_session_excluded_from_invoicing(self):
-        """Sessions marked paid_at_session should be ineligible for invoicing."""
+    def test_paid_at_session_is_invoice_eligible_with_matching_payment(self):
         session = self._approved_session("paid1", payment_status="paid_at_session")
         reasons = invoice_ineligibility_reasons(self.conn, session)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
     def test_unpaid_session_remains_eligible(self):
         """Unpaid sessions should remain invoice eligible."""
@@ -114,26 +113,38 @@ class PaymentStatusTests(unittest.TestCase):
         self.assertEqual(reasons, [])
 
     def test_legacy_paid_normalized_to_paid_at_session(self):
-        """Legacy 'paid' value should be normalized and block invoicing."""
+        """Legacy 'paid' normalizes and remains invoice eligible with its payment."""
         session = self._approved_session("legacy", payment_status="paid")
         self.assertEqual(session["payment_status"], "paid_at_session")
         reasons = invoice_ineligibility_reasons(self.conn, session)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
     def test_payment_status_not_required_for_approval(self):
         """Payment status should not block review readiness."""
         session = self._approved_session("no_payment", payment_status="unpaid")
         self.assertEqual(session["review_status"], "approved")
 
-    def test_draft_with_paid_at_session_session_fails(self):
-        """Adding a paid_at_session session to a draft should fail."""
+    def test_draft_with_paid_at_session_session_applies_payment(self):
         session = self._approved_session("draft_fail", payment_status="paid_at_session")
-        with self.assertRaises(ValueError):
-            create_invoice_draft(self.conn, {
-                "bill_to_party_id": self.party["billing_party_id"],
-                "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
-                "invoice_date": "2026-05-31", "session_ids": [session["id"]],
-            })
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session["id"]],
+        })
+        self.assertEqual(draft["invoice"]["total_cents"], 15000)
+        self.assertEqual(draft["invoice"]["paid_cents"], 15000)
+        self.assertEqual(draft["invoice"]["balance_cents"], 0)
+
+    def test_paid_at_session_without_matching_payment_is_blocked(self):
+        session = self._approved_session("missingpay", payment_status="unpaid")
+        self.conn.execute(
+            "UPDATE sessions SET payment_status = 'paid_at_session' WHERE id = ?",
+            (session["id"],),
+        )
+        self.conn.commit()
+        changed = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (session["id"],)).fetchone()
+        reasons = invoice_ineligibility_reasons(self.conn, changed)
+        self.assertTrue(any("payment record is missing" in reason.lower() for reason in reasons))
 
 
 class SafeFinalizationTests(unittest.TestCase):

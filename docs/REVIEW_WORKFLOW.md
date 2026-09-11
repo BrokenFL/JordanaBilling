@@ -132,7 +132,7 @@ Approval permanently stores the charged rate. Later rate changes do not rewrite 
 The visible choices are:
 
 - **Invoice billing** — after approval, the session is eligible for monthly draft invoice staging
-- **Paid at session** — approval requires the received amount, payment date, and supported method; approval idempotently creates or validates one posted payment and allocation and skips invoice staging
+- **Paid at session** — approval requires the received amount, payment date, and supported method; approval idempotently creates or validates one posted payment and allocation, stages the session charge, and applies the payment to the invoice line
 
 Payment Handling is separate from appointment status and cancelled or no-show billing treatment.
 For completed sessions, the hidden cancellation-billing field is treated as
@@ -165,7 +165,7 @@ Details grid. Choosing `bill_full_fee` restores the preserved scheduled session
 rate; choosing `custom_fee` requires a positive entered amount; choosing `waived`
 sets the charge to `$0.00`.
 
-When billing treatment is `waived` or `not_billable` and the approved rate is `$0.00`, the zero rate is valid and persists through save, reload, approval, invoice staging, and finalization. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
+When billing treatment is `waived`, the approved rate is `$0.00` and the waiver persists through save, reload, approval, invoice staging, and finalization as an explicit `Fee Waived` line. A `not_billable` cancellation remains preserved but does not stage to an invoice. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
 
 Calendar start time is authoritative. Parsed title time remains evidence and may create a warning.
 

@@ -161,11 +161,11 @@ def _uninvoiced_sessions(conn: sqlite3.Connection, month: str) -> list[dict[str,
         """SELECT s.id AS session_id, s.session_date, s.start_at, s.raw_calendar_title AS title,
                   COALESCE(s.rate_cents_snapshot, s.approved_rate_cents, 0) AS amount_cents
            FROM sessions s WHERE substr(s.session_date, 1, 7) = ?
-             AND s.review_status = 'approved' AND s.payment_status != 'paid_at_session'
+             AND s.review_status = 'approved'
              AND s.billable_status NOT IN ('excluded', 'nonbillable')
-             AND COALESCE(s.billing_treatment, '') != 'waived'
              AND s.appointment_status != 'scheduled'
-             AND NOT (s.appointment_status IN ('cancelled', 'no_show') AND s.billing_treatment != 'billable')
+             AND NOT (s.appointment_status IN ('cancelled', 'no_show', 'timely_cancellation')
+                      AND s.billing_treatment NOT IN ('billable', 'waived'))
              AND NOT EXISTS (
                SELECT 1 FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
                WHERE li.source_session_id = s.id AND i.status = 'finalized')
@@ -182,12 +182,10 @@ def _invoice_staging_gaps(conn: sqlite3.Connection, month: str) -> list[dict[str
            LEFT JOIN billing_parties bp ON bp.billing_party_id = s.billing_party_id
            WHERE substr(s.session_date, 1, 7) = ?
              AND s.review_status = 'approved'
-             AND s.payment_status != 'paid_at_session'
              AND s.billable_status NOT IN ('excluded', 'nonbillable')
-             AND COALESCE(s.billing_treatment, '') != 'waived'
              AND s.appointment_status != 'scheduled'
-             AND NOT (s.appointment_status IN ('cancelled', 'no_show')
-                      AND s.billing_treatment != 'billable')
+             AND NOT (s.appointment_status IN ('cancelled', 'no_show', 'timely_cancellation')
+                      AND s.billing_treatment NOT IN ('billable', 'waived'))
              AND NOT EXISTS (
                SELECT 1 FROM invoice_line_items li
                JOIN invoices i ON i.invoice_id = li.invoice_id

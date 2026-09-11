@@ -109,15 +109,15 @@ class MonthCloseTests(unittest.TestCase):
                 self.active_invoice_line(session_id, status=status, payer=f"payer-{status}")
                 self.assertEqual(self.staging_check()["count"], 0)
 
-    def test_paid_at_session_is_not_an_invoice_staging_gap(self):
+    def test_paid_at_session_requires_invoice_staging(self):
         self.active_payer()
         self.approved_month_session(payment="paid_at_session")
-        self.assertEqual(self.staging_check()["count"], 0)
+        self.assertEqual(self.staging_check()["count"], 1)
 
-    def test_waived_session_is_not_an_invoice_staging_gap(self):
+    def test_waived_session_requires_invoice_staging(self):
         self.active_payer()
         self.approved_month_session(treatment="waived")
-        self.assertEqual(self.staging_check()["count"], 0)
+        self.assertEqual(self.staging_check()["count"], 1)
 
     def test_future_scheduled_session_is_not_an_invoice_staging_gap(self):
         self.active_payer()

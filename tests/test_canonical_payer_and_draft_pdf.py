@@ -10,6 +10,7 @@ from jordana_invoice.importer import import_rows
 from jordana_invoice.invoice_pdf import generate_draft_pdf_bytes
 from jordana_invoice.invoice_rendering import build_invoice_render_model
 from jordana_invoice.invoice_services import (
+    create_invoice_draft,
     get_invoice,
     save_business_profile,
     stage_approved_sessions_to_monthly_drafts,
@@ -193,6 +194,104 @@ class CanonicalPayerTests(unittest.TestCase):
             (bp1["billing_party_id"],),
         ).fetchone()
         self.assertEqual(canonical["billing_email"], "fred_canonical@example.test")
+
+    def test_normalize_repairs_inactive_payer_drafts_and_is_idempotent(self):
+        old_party = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "person_id": self.fred["person_id"],
+            "preferred_delivery_method": "unresolved",
+        })
+        import_rows(
+            self.conn,
+            [
+                raw_row("old-draft", "Fred Colin | 60 | Office", "2026-05-10T10:00:00-04:00"),
+                raw_row("new-draft", "Fred Colin | 60 | Office", "2026-05-20T10:00:00-04:00"),
+            ],
+            "test",
+        )
+        candidates = self.conn.execute(
+            "SELECT id, candidate_key FROM calendar_event_candidates ORDER BY candidate_key"
+        ).fetchall()
+        by_key = {row["candidate_key"]: row["id"] for row in candidates}
+        for key in ("old-draft", "new-draft"):
+            approve_candidate(self.conn, by_key[stable_hash(f"calendar_event_id:event-{key}")], {
+                "participants": [{"person_id": self.fred["person_id"], "display_name": "Fred Colin"}],
+                "billing_party_id": old_party["billing_party_id"],
+                "approved_duration_minutes": 60,
+                "service_mode": "office",
+                "time_category": "standard",
+                "approved_rate": "150.00",
+                "payment_status": "unpaid",
+                "billing_treatment": "billable",
+            })
+        stage_approved_sessions_to_monthly_drafts(self.conn)
+        new_party = create_billing_party(self.conn, {
+            "billing_name": "Fred Colin",
+            "person_id": self.fred["person_id"],
+            "billing_email": "fred@example.test",
+            "preferred_delivery_method": "email",
+        })
+        update_billing_party(
+            self.conn,
+            old_party["billing_party_id"],
+            {"active": False},
+            allow_in_use_deactivation=True,
+        )
+        moved_session = self.conn.execute(
+            "SELECT id FROM sessions ORDER BY session_date DESC LIMIT 1"
+        ).fetchone()["id"]
+        self.conn.execute(
+            "UPDATE sessions SET billing_party_id = ? WHERE id = ?",
+            (new_party["billing_party_id"], moved_session),
+        )
+        self.conn.execute(
+            "DELETE FROM invoice_line_items WHERE source_session_id = ?",
+            (moved_session,),
+        )
+        self.conn.commit()
+        create_invoice_draft(self.conn, {
+            "bill_to_party_id": new_party["billing_party_id"],
+            "billing_month": "2026-05",
+            "session_ids": [moved_session],
+        })
+
+        result = normalize_duplicate_payer_billing_parties(
+            self.conn,
+            self.fred["person_id"],
+            canonical_billing_party_id=new_party["billing_party_id"],
+        )
+
+        drafts = self.conn.execute(
+            "SELECT * FROM invoices WHERE billing_month = '2026-05' AND status = 'draft'"
+        ).fetchall()
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0]["bill_to_party_id"], new_party["billing_party_id"])
+        self.assertEqual(drafts[0]["total_cents"], 30000)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = ?",
+                (drafts[0]["invoice_id"],),
+            ).fetchone()[0],
+            2,
+        )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE billing_party_id = ? AND review_status = 'approved'",
+                (new_party["billing_party_id"],),
+            ).fetchone()[0],
+            2,
+        )
+        self.assertEqual(len(result["repointed_sessions"]), 1)
+        self.assertEqual(result["conflicts"], [])
+
+        repeated = normalize_duplicate_payer_billing_parties(
+            self.conn,
+            self.fred["person_id"],
+            canonical_billing_party_id=new_party["billing_party_id"],
+        )
+        self.assertEqual(repeated["consolidated_count"], 0)
+        self.assertEqual(repeated["repointed_drafts"], [])
+        self.assertEqual(repeated["repointed_sessions"], [])
 
     # 8. Finalized invoices remain unchanged during cleanup.
     def test_finalized_invoices_unchanged_during_cleanup(self):
