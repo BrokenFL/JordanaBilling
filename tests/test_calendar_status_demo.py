@@ -2,6 +2,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from jordana_invoice.calendar_preferences import upsert_calendar_preference
@@ -9,6 +10,7 @@ from jordana_invoice.db import connect, init_db
 from jordana_invoice.importer import import_rows
 from jordana_invoice.parser import parse_event
 from jordana_invoice.review_services import dashboard_status, list_review_candidates
+from jordana_invoice.review_services import calendar_freshness_status
 
 
 def event(title, start="2026-06-18T20:30:00-04:00", end="2026-06-18T21:30:00-04:00", calendar="Jordana Work"):
@@ -127,6 +129,21 @@ class CalendarStatusDemoTests(unittest.TestCase):
             finally:
                 for suffix in ("", "-shm", "-wal"):
                     Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+
+    def test_calendar_freshness_warns_only_after_eighteen_hours(self):
+        now = datetime(2026, 7, 11, 20, 0, tzinfo=timezone.utc)
+        fresh = calendar_freshness_status("2026-07-11T08:00:00Z", now=now)
+        stale = calendar_freshness_status("2026-07-10T20:00:00Z", now=now)
+
+        self.assertFalse(fresh["calendar_sync_stale"])
+        self.assertEqual(fresh["calendar_sync_warning"], "")
+        self.assertTrue(stale["calendar_sync_stale"])
+        self.assertEqual(stale["calendar_sync_age_hours"], 24.0)
+        self.assertIn("24 hours", stale["calendar_sync_warning"])
+
+    def test_calendar_freshness_warns_when_success_time_is_missing_or_invalid(self):
+        self.assertTrue(calendar_freshness_status("")["calendar_sync_stale"])
+        self.assertTrue(calendar_freshness_status("not-a-date")["calendar_sync_stale"])
 
 
 def count(conn, table):

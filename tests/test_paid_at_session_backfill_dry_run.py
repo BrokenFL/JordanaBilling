@@ -334,13 +334,13 @@ class DryRunBackfillTests(unittest.TestCase):
             after_list = [dict(r) for r in after_rows]
             self.assertEqual(after_list, snapshots[t], f"Data changed for {t}")
 
-    # 22. Existing paid-at-session invoice exclusion remains unchanged
-    def test_paid_at_session_exclusion_unchanged(self):
+    # 22. Dry-run-only records remain blocked until payment data is actually created
+    def test_paid_at_session_without_payment_remains_ineligible(self):
         s = self._make_paid_at_session("s1")
         report = dry_run_paid_at_session_backfill(self.conn)
         self.assertEqual(report["sessions_eligible"], 1)
         reasons = invoice_ineligibility_reasons(self.conn, s)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertTrue(any("payment record is missing" in r.lower() for r in reasons))
 
 
 if __name__ == "__main__":

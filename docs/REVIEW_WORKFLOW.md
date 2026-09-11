@@ -17,6 +17,16 @@ The visible workflow is:
 
 Routine review does not expose backend Client / Family Account fields, account codes, household labels, or membership roles.
 
+Calendar-presence, identity, and duplicate-billing warnings are reversible
+queue warnings. They never silently change approval, billability, payment, or
+the raw calendar evidence. When later positive calendar evidence resolves a
+presence warning, the warning closes automatically.
+
+A legacy suppression recovery can return a post-session-evidenced appointment
+to the normal queue, but it never approves it, creates an invoice line, or
+overwrites its raw evidence. A duration/end-time conflict remains a warning,
+not a chosen billable session.
+
 ## Participants
 
 Participants are permanent people connected to the session as attendees.
@@ -122,7 +132,7 @@ Approval permanently stores the charged rate. Later rate changes do not rewrite 
 The visible choices are:
 
 - **Invoice billing** — after approval, the session is eligible for monthly draft invoice staging
-- **Paid at session** — approval requires the received amount, payment date, and supported method; approval idempotently creates or validates one posted payment and allocation and skips invoice staging
+- **Paid at session** — approval requires the received amount, payment date, and supported method; approval idempotently creates or validates one posted payment and allocation, stages the session charge, and applies the payment to the invoice line
 
 Payment Handling is separate from appointment status and cancelled or no-show billing treatment.
 For completed sessions, the hidden cancellation-billing field is treated as
@@ -150,8 +160,12 @@ Cancelled and no-show appointments remain preserved and reviewable. They require
 - `unresolved`
 
 Late cancellation supports an additional `bill_full_fee` and `custom_fee` treatment.
+Attendance Outcome and Cancellation Billing are visible in the main Session
+Details grid. Choosing `bill_full_fee` restores the preserved scheduled session
+rate; choosing `custom_fee` requires a positive entered amount; choosing `waived`
+sets the charge to `$0.00`.
 
-When billing treatment is `waived` or `not_billable` and the approved rate is `$0.00`, the zero rate is valid and persists through save, reload, approval, invoice staging, and finalization. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
+When billing treatment is `waived`, the approved rate is `$0.00` and the waiver persists through save, reload, approval, invoice staging, and finalization as an explicit `Fee Waived` line. A `not_billable` cancellation remains preserved but does not stage to an invoice. The rate card suggestion may still show the standard fee informationally, but it never replaces the saved zero. Zero rates for ordinary billable sessions, full-fee cancellations, or custom-fee cancellations remain invalid.
 
 Calendar start time is authoritative. Parsed title time remains evidence and may create a warning.
 
@@ -232,6 +246,17 @@ Eligibility is intentionally narrow:
   `paid_at_session` selection with no actual payment, allocation, or receipt can
   still be returned for correction.
 
+An unpaid **Correction Draft** has one explicit exception. Its original invoice
+remains finalized and immutable while the replacement is being prepared. From
+that linked replacement draft only, **Edit Session** can return a line's source
+session to Review after verifying the draft, original finalized invoice, and
+session relationship, and confirming that no payment, allocation, or receipt
+history exists. The replacement line stays in place while the session is under
+review, so replacement finalization remains blocked until the session is either
+reapproved (which refreshes that same replacement line) or marked nonbillable
+(which removes only that replacement line). This never changes the original
+invoice, stored PDF, number, or snapshots.
+
 If the session exists only on a draft invoice, Edit Session / Return to Review removes that
 session's draft line, recalculates that draft, and increments the draft
 revision as part of the same transaction. Finalized invoices, payment history,
@@ -281,6 +306,9 @@ The same appointment may be edited in Apple Calendar and arrive later with a cha
 - Approved sessions are not silently overwritten.
 - If an already-approved session's source event later changes, a visible source-change warning review item is created instead of rewriting approved values.
 - Event absence from one capture window alone does not prove deletion/cancellation.
+- Routine absence never creates a calendar-presence warning: future-only rows
+  remain raw scheduling evidence, and post-session rows persist for Review when
+  they later age out of the rolling capture window.
 - The logic is additive, idempotent, and reversible.
 
 ### Ambiguous Title Review Routing
@@ -334,8 +362,12 @@ Client Sessions reports.
 
 The Review Queue offers Needs Review, Approved, and Excluded filters. Needs Review excludes approved and excluded records.
 
-The Sessions workspace is a read-only ledger. Its review-status filter is
-intentionally limited to `All` and `Needs Classification`. Eligible
+The Sessions workspace is a read-only ledger with a separate inbox-style archive
+state. Jordana may select any visible rows, archive them from the default Current
+view, inspect them under Archived, and restore them later. This changes only
+Sessions visibility: review status, classification, approval, rate, payment,
+invoice links, and raw calendar evidence remain unchanged. The review-status
+filter is intentionally limited to `All` and `Needs Classification`. Eligible
 candidate-only records may be sent to review, and excluded sessions may be
 returned to review. Approved or invoiced records are not silently reopened.
 
@@ -358,3 +390,38 @@ The review overlay, duplicate confirmation, restore candidate, and billing relat
 - `docs/RATE_RULES.md`
 - `docs/INVOICE_LIFECYCLE.md`
 - `docs/SCHEMA_AUDIT.md`
+
+## Test.36 historical Review rules
+
+Normal Review uses post-end past-calendar evidence for every payload version.
+Legacy future-only derived records remain preserved but inactive. A later
+historical capture covering an unapproved event can retire an obsolete entry;
+aging out of the rolling window cannot. Late cancellations stay eligible.
+Manual exclusions override import parsing and survive repeated syncs.
+Saved participants and approved aliases feed readiness after import.
+
+Migration `025_historical_review` adds only `calendar_review_state` on candidates.
+The authenticated Review reconciliation and sync paths populate it, including
+no-new-row upgrades. Eligibility changes are audited, reversible from later
+evidence, and never edit raw snapshots or protected financial records.
+Missing/partial capture proof is handled conservatively: legacy batches use
+their observed event span, and explicit date-picker batches cannot remove
+observations beyond their demonstrated boundary coverage.
+
+### Prepared Test.37: Zoom and unresolved historical appointments
+
+Zoom is a distinct appointment method, equivalent to the other ordinary remote
+methods for billing-type/rate matching. `Alex Example 1130 zoom` proposes the
+calendar's actual start, 60 minutes, and Zoom. Explicit supported lengths win.
+
+Default Review also includes historical candidate-only records with a leading
+person-like name and valid title-time token even when other trailing text is
+unresolved. This is a review-routing hint, never an approval or permanent person
+creation. Obvious personal/admin reminders remain outside this route. Sessions
+remains the broader ledger; its visibility does not imply approval or billing.
+
+The combined session/candidate list is sorted and paginated together, so an
+unresolved appointment is not lost after page one. Sync repairs previously
+imported candidate-only Zoom entries, including when there are no new raw rows.
+Approved/excluded records, manual exclusions and existing saved sessions are
+preserved. Tests start from raw evidence and cover candidates without sessions.

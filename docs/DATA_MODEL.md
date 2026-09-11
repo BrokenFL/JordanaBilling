@@ -98,7 +98,7 @@ still match the repair-applied state.
 
 ## `people`
 
-Actual humans with permanent UUIDs. Person codes are optional human-readable helpers and are generated only after first and last names are confirmed. The code is not the primary key and is not silently changed when a name changes.
+Actual humans with permanent UUIDs. Person codes are optional human-readable helpers and are generated only after first and last names are confirmed. The code is not the primary key and is not silently changed when a name changes. `use_dr_on_invoices` is an explicit client-level presentation preference: it adds `Dr.` to invoice-facing Bill To and participant names without changing calendar identity, aliases, search names, or filing folders. Editable drafts refresh when it changes; finalized and void snapshots remain frozen.
 
 ## `client_accounts`
 
@@ -425,3 +425,10 @@ Finalized invoices store an immutable historical snapshot of the payer's prior u
 - **prior_unpaid_balance_cents** (integer): Sum of the remaining unpaid balances of prior finalized, non-void invoices for the same payer responsibility.
 - **total_amount_due_cents** (integer): `current_invoice_balance_cents + prior_unpaid_balance_cents`.
 - **prior_invoices** (list): Detail list of each prior invoice included in the balance calculation.
+
+Prior-invoice eligibility is ordered by service period before customer-facing
+invoice date. Complete `billing_month` values are compared first, then
+nonoverlapping billing-period boundaries. Same-month supplements and legacy
+overlaps use supplement sequence and the deterministic invoice-date/finalization
+fallback. This prevents a late-finalized earlier service month from disappearing
+from a newer draft's prior balance.

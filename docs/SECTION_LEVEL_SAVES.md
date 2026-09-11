@@ -123,7 +123,7 @@ Approval snapshots the charged rate and approved values, writes audit history, a
 
 For invoice billing, successful approval attempts monthly invoice staging. A staging warning does not roll back approval and is shown separately.
 
-For paid-at-session, successful approval idempotently creates or validates one posted payment and allocation, and invoice staging is not required.
+For paid-at-session, successful approval idempotently creates or validates one posted payment and allocation, stages the normal charge, and links the payment allocation to the invoice line.
 
 After successful approval, the overlay closes, stale state clears, the item refreshes or is removed, focus is restored, and no resubmittable form remains. On genuine failure, the overlay stays open, controls re-enable, and a sanitized error is shown.
 

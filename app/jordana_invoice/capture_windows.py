@@ -13,7 +13,9 @@ PAST_CAPTURE_WINDOWS = frozenset(
 FUTURE_CAPTURE_WINDOWS = frozenset({"next_7_days", "next_2_days"})
 BACKFILL_CAPTURE_WINDOWS = frozenset({"backfill_2026_06_01_through_2026_06_14"})
 SUPPORTED_CAPTURE_WINDOWS = PAST_CAPTURE_WINDOWS | FUTURE_CAPTURE_WINDOWS | frozenset({"legacy"})
-DEPRECATED_CAPTURE_WINDOWS = frozenset({"past_7_days", "next_2_days", "legacy"})
+# The normal v3 Shortcut uses the short two-day future health window.  The
+# former seven-day window remains readable as raw historical evidence.
+DEPRECATED_CAPTURE_WINDOWS = frozenset({"past_7_days", "next_7_days", "legacy"})
 
 
 def normalize_capture_window(value: object) -> str:

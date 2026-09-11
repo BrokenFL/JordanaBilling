@@ -18,6 +18,7 @@ from jordana_invoice.invoice_services import (
     create_invoice_draft,
     finalize_invoice,
     get_invoice,
+    preview_finalization,
     save_business_profile,
 )
 from jordana_invoice.review_server import make_handler
@@ -190,6 +191,21 @@ class DraftPreviewAccountSummaryTests(unittest.TestCase):
         self.assertEqual(captured.get("response_code"), 200)
         summary = captured_summary.get("account_summary")
         self.assertIsNotNone(summary, "account_summary was not passed to build_invoice_render_model")
+        self.assertEqual(summary["prior_unpaid_balance_cents"], 15000)
+        self.assertEqual(summary["total_amount_due_cents"], 30000)
+
+    def test_review_and_finalize_preview_passes_account_summary(self):
+        """Review & Finalize must use the same calculated prior balance."""
+        prior_session = self._approved_session("preview-prior", "2026-07-10T10:00:00-04:00")
+        prior_draft = self._draft([prior_session], "2026-07-31")
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-08-12T14:00:00+00:00"):
+            self._finalize(prior_draft)
+
+        current_session = self._approved_session("preview-current", "2026-08-05T10:00:00-04:00")
+        current_draft = self._draft([current_session], "2026-08-31")
+        preview = preview_finalization(self.conn, current_draft["invoice"]["invoice_id"])
+
+        summary = preview["render_model"]["account_summary"]
         self.assertEqual(summary["prior_unpaid_balance_cents"], 15000)
         self.assertEqual(summary["total_amount_due_cents"], 30000)
 

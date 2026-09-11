@@ -154,7 +154,7 @@ The UI may display the derived category for clarity. Approval validates the stor
 The visible label is **Payment Handling**:
 
 - **Invoice billing** — session is eligible for monthly invoice staging after approval
-- **Paid at session** — approval requires the received amount, payment date, and supported payment method; approval records one payment and allocation and skips invoice staging
+- **Paid at session** — approval requires the received amount, payment date, and supported payment method; approval records one payment and allocation, stages the normal charge, and applies the payment to the invoice line
 
 Appointment status is separate from payment handling.
 
@@ -216,7 +216,7 @@ On success:
 
 For invoice billing, approval then attempts monthly invoice staging. Approval remains successful if staging warns or is temporarily unavailable; the staging warning is shown separately.
 
-For paid-at-session, approval creates or validates the payment/allocation idempotently and reports invoice staging as not required.
+For paid-at-session, approval creates or validates the payment/allocation idempotently, stages the normal charge, and reports the invoice staging result.
 
 On genuine approval failure:
 

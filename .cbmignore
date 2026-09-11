@@ -1,0 +1,47 @@
+# codebase-memory-mcp should index source code and sanitized docs only.
+# Keep live operational data, generated client artifacts, secrets, and local
+# runtime state out of the persistent knowledge graph.
+
+.git/
+.codex/
+.devin/
+.venv/
+.pytest_cache/
+.qodo/
+__pycache__/
+
+.env
+.env.*
+!.env.example
+*credentials*
+credentials*.json
+
+data/
+!data/samples/
+!data/demo/
+Reports/
+Session Lists/
+Invoices/
+Receipts/
+Client Files/
+logs/
+backups/
+build/
+output/
+shortcut-backups/
+
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.lock
+*.sqlite3.backup-*
+*.db
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.heic
+*.log
+*.pid
+*.meta
+
+Jordana Billing.app/

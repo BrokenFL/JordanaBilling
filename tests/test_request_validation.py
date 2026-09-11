@@ -50,6 +50,7 @@ from jordana_invoice.request_validation import (
     parse_save_session_draft_request,
     parse_mark_candidate_request,
     parse_restore_candidate_request,
+    parse_return_to_review_request,
 )
 from jordana_invoice.util import stable_hash
 
@@ -567,6 +568,25 @@ class TestParseRestoreCandidateRequest(unittest.TestCase):
     def test_unknown_field_passed_through(self):
         req = parse_restore_candidate_request({"extra": "ok"})
         self.assertEqual(req.to_payload()["extra"], "ok")
+
+
+class TestParseReturnToReviewRequest(unittest.TestCase):
+
+    def test_correction_invoice_id_is_optional_and_typed(self):
+        req = parse_return_to_review_request({
+            "reason": "Correct this appointment",
+            "action_source": "review_ui",
+            "correction_invoice_id": "draft-id",
+        })
+        self.assertEqual(req.reason, "Correct this appointment")
+        self.assertEqual(req.action_source, "review_ui")
+        self.assertEqual(req.correction_invoice_id, "draft-id")
+
+    def test_correction_invoice_id_rejects_blank_or_non_string_values(self):
+        with self.assertRaises(RequestValidationError):
+            parse_return_to_review_request({"correction_invoice_id": ""})
+        with self.assertRaises(RequestValidationError):
+            parse_return_to_review_request({"correction_invoice_id": 10})
 
 
 # ---------------------------------------------------------------------------

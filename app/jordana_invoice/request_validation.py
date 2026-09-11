@@ -272,6 +272,24 @@ class RestoreCandidateRequest:
         return self.payload
 
 
+@dataclass(frozen=True)
+class ReturnToReviewRequest:
+    """Validated request for POST /api/review/candidates/{id}/return-to-review.
+
+    ``correction_invoice_id`` is optional. When present, the service verifies
+    that it is the open correction draft for the session before allowing the
+    narrowly scoped correction-edit transition.
+    """
+
+    reason: str
+    action_source: str
+    correction_invoice_id: str | None
+    payload: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
+
 # ---------------------------------------------------------------------------
 # Parser functions
 # ---------------------------------------------------------------------------
@@ -509,6 +527,25 @@ def parse_restore_candidate_request(payload: Any) -> RestoreCandidateRequest:
     return RestoreCandidateRequest(reason=reason, payload=data)
 
 
+def parse_return_to_review_request(payload: Any) -> ReturnToReviewRequest:
+    """Parse an approved-session return-to-review request.
+
+    The correction invoice is optional so the ordinary protected workflow
+    remains backward compatible. Its relationship to the candidate/session is
+    deliberately validated in the service layer.
+    """
+    data = _require_object(payload)
+    reason = _optional_str(data, "reason") or ""
+    action_source = _optional_str(data, "action_source") or "review_ui"
+    correction_invoice_id = _optional_nonempty_str(data, "correction_invoice_id")
+    return ReturnToReviewRequest(
+        reason=reason,
+        action_source=action_source,
+        correction_invoice_id=correction_invoice_id,
+        payload=data,
+    )
+
+
 # ===========================================================================
 # Round 4A.3: Remaining write-endpoint request types and parsers
 # ===========================================================================
@@ -565,6 +602,7 @@ def parse_create_person_request(payload: Any) -> CreatePersonRequest:
     """Parse POST /api/people.
 
     Accepted fields: display_name, first_name, last_name, preferred_name,
+    use_dr_on_invoices,
     billing_email, email, billing_phone, phone, administrative_notes.
     """
     data = _require_object(payload)
@@ -572,6 +610,7 @@ def parse_create_person_request(payload: Any) -> CreatePersonRequest:
     _optional_str(data, "first_name")
     _optional_str(data, "last_name")
     _optional_str(data, "preferred_name")
+    _optional_bool(data, "use_dr_on_invoices")
     _optional_str(data, "billing_email")
     _optional_str(data, "email")
     _optional_str(data, "billing_phone")
@@ -584,6 +623,7 @@ def parse_update_person_request(payload: Any) -> UpdatePersonRequest:
     """Parse POST /api/people/{id}.
 
     Accepted fields: display_name, first_name, last_name, preferred_name,
+    use_dr_on_invoices,
     person_code, billing_email, billing_phone, administrative_notes,
     active_status, active, account_id.
     """
@@ -592,6 +632,7 @@ def parse_update_person_request(payload: Any) -> UpdatePersonRequest:
     _optional_str(data, "first_name")
     _optional_str(data, "last_name")
     _optional_str(data, "preferred_name")
+    _optional_bool(data, "use_dr_on_invoices")
     _optional_str(data, "person_code")
     _optional_str(data, "billing_email")
     _optional_str(data, "billing_phone")
@@ -1197,6 +1238,17 @@ class VoidInvoiceRequest:
 
 
 @dataclass(frozen=True)
+class CorrectInvoiceRequest:
+    """Validated request for POST /api/invoices/{id}/correct."""
+
+    reason: str
+    payload: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
+
+@dataclass(frozen=True)
 class UpdateInvoiceFilingOwnerRequest:
     """Validated request for POST /api/invoices/{id}/filing-owner."""
 
@@ -1341,7 +1393,7 @@ def parse_preview_finalize_request(payload: Any) -> PreviewFinalizeRequest:
 
     Accepted fields: billing_period_start, billing_period_end, billing_month,
     delivery_method, notes, supplement_sequence, insurance_coding_included,
-    insurance_diagnosis_code.
+    insurance_diagnosis_code, cancellation_policy_included.
     """
     data = _require_object(payload)
     _optional_str(data, "billing_period_start")
@@ -1352,6 +1404,7 @@ def parse_preview_finalize_request(payload: Any) -> PreviewFinalizeRequest:
     _optional_int_not_bool(data, "supplement_sequence")
     _optional_bool(data, "insurance_coding_included")
     _optional_str(data, "insurance_diagnosis_code")
+    _optional_bool(data, "cancellation_policy_included")
     return PreviewFinalizeRequest(payload=data)
 
 
@@ -1359,7 +1412,8 @@ def parse_finalize_invoice_request(payload: Any) -> FinalizeInvoiceRequest:
     """Parse POST /api/invoices/{id}/finalize.
 
     Required: confirmed (must be true).
-    Optional: expected_revision, insurance_coding_included, insurance_diagnosis_code.
+    Optional: expected_revision, insurance_coding_included, insurance_diagnosis_code,
+    cancellation_policy_included.
     """
     data = _require_object(payload)
     confirmed = _optional_bool(data, "confirmed")
@@ -1368,6 +1422,7 @@ def parse_finalize_invoice_request(payload: Any) -> FinalizeInvoiceRequest:
     _optional_int_not_bool(data, "expected_revision")
     _optional_bool(data, "insurance_coding_included")
     _optional_str(data, "insurance_diagnosis_code")
+    _optional_bool(data, "cancellation_policy_included")
     return FinalizeInvoiceRequest(confirmed=confirmed, payload=data)
 
 
@@ -1381,6 +1436,16 @@ def parse_void_invoice_request(payload: Any) -> VoidInvoiceRequest:
     if reason is None:
         reason = ""
     return VoidInvoiceRequest(reason=reason, payload=data)
+
+
+def parse_correct_invoice_request(payload: Any) -> CorrectInvoiceRequest:
+    """Parse POST /api/invoices/{id}/correct.
+
+    Accepted fields: reason (required, non-empty).
+    """
+    data = _require_object(payload)
+    reason = _required_str(data, "reason")
+    return CorrectInvoiceRequest(reason=reason, payload=data)
 
 
 def parse_update_invoice_filing_owner_request(payload: Any) -> UpdateInvoiceFilingOwnerRequest:
@@ -1413,11 +1478,13 @@ def parse_print_preview_request(payload: Any) -> PrintPreviewRequest:
     """Parse POST /api/invoices/{id}/print-preview and
     POST /api/invoices/{id}/draft-pdf.
 
-    Accepted fields: insurance_coding_included, insurance_diagnosis_code.
+    Accepted fields: insurance_coding_included, insurance_diagnosis_code,
+    cancellation_policy_included.
     """
     data = _require_object(payload)
     _optional_bool(data, "insurance_coding_included")
     _optional_str(data, "insurance_diagnosis_code")
+    _optional_bool(data, "cancellation_policy_included")
     return PrintPreviewRequest(payload=data)
 
 

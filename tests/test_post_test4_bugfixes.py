@@ -297,9 +297,9 @@ class TestAmbiguousTitleReviewRouting(unittest.TestCase):
             "end_at": "2026-06-18T17:00:00-04:00",
             "duration_minutes": 60,
         })
-        self.assertEqual(result.classification, "unresolved")
+        self.assertEqual(result.classification, "client_session")
         self.assertEqual(result.proposed_client_name, "Sage Burkhead")
-        self.assertIn("zoom", result.unresolved_trailing_text)
+        self.assertEqual(result.appointment_method, "zoom")
 
     def test_fred_60_extracts_name_guess(self):
         result = parse_event({
@@ -552,8 +552,8 @@ class TestFutureAppointmentApprovalGate(TestBase):
         payload = self._full_setup_for_approval(candidate_id)
         with self.assertRaises(ValueError) as ctx:
             approve_candidate(self.conn, candidate_id, payload)
-        self.assertIn("scheduled for", str(ctx.exception))
-        self.assertIn("can be approved after", str(ctx.exception))
+        self.assertIn("historical calendar review list", str(ctx.exception))
+        self.assertIn("Sync Calendar", str(ctx.exception))
 
     def test_past_appointment_approval_unaffected(self):
         """Past appointments should still be approvable normally."""

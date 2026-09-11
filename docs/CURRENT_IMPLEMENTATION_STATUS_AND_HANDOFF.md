@@ -2,17 +2,52 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Test.40 release preparation — September 10
+
+Prevents a second person-linked billing setup for the same client, blocks an
+in-use setup from being deactivated, and provides an audited repair for the
+legacy active/inactive duplicate pattern found in the supplied database. Waived
+cancellations now remain visible as `$0.00` invoice lines. Paid-at-session
+sessions now stage to invoice lines and carry their existing payment allocation,
+so the invoice preserves both the charge and the payment.
+
+## Test.39 release preparation — September 10
+
+Repairs unbilled approvals tied to retired payers using one active, confirmed
+relationship established before approval. Financially linked sessions are
+protected. Pending approval validates active payers, Month Close checks draft
+coverage, and editable draft labels deduplicate repeated person UUIDs. Sync
+applies the guarded repair; installation and update delivery remain manual.
+
+## Test.38 release preparation — September 10
+
+Month Close now uses the importer's identity resolution, including stored aliases
+and canonical calendar matching. It no longer reports an existing record as
+missing merely because its original candidate key differs from a later capture.
+Historical capture checks require post-session evidence and include backfill
+windows. Session review uses the same queue as Review, including candidate-only
+appointments. These report changes are read-only. The automatic update feed
+remains disabled; installation is manual.
+
+## Test.37 release — September 10
+
+Zoom parsing, historical candidate-only Review routing, targeted existing-record
+repair, and maintainer-controlled update notices/installation are implemented.
+The release also fixes redundant per-action reconciliation and button feedback,
+and repairs proven automatic exclusions from the old parser. The automatic update
+feed remains disabled. See `TEST_RELEASE_NOTES.md` and `SOFTWARE_UPDATES.md`.
+
 ## Verified Baseline
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
-- **Migration head:** `018_delivery_contact_person`
+- **Migration head:** `024_month_close`
 - **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.22`
+- **Current test release target:** `v0.1.0-test.40`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post22`
+- **Current package/application version:** `0.1.0.post40`
 - **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.21` is superseded by test.22 for installation and update testing
+- **Prior test release:** `v0.1.0-test.39` is superseded by test.40 for installation and update testing
 
 ## Architecture
 
@@ -79,12 +114,12 @@ This is not yet a final production declaration. Brooke should remain available d
 - Optional invoice-specific insurance coding entered deliberately by Jordana
 - Void and reissue workflow
 - Searchable invoice library
-- Waived late-cancellation lines can correctly persist as $0.00 without permitting arbitrary zero-dollar invoice lines
+- Waived cancellation, late-cancellation, timely-cancellation, and no-show lines persist as explicit $0.00 invoice lines without permitting arbitrary zero-dollar invoice lines
 
 ### Payments
 
 - Payment ledger and allocations
-- Paid-at-session approval workflow with idempotent payment creation/allocation
+- Paid-at-session approval workflow with idempotent payment creation/allocation and invoice-line linkage
 - Available-funds application
 - Allocation reversal and payment voiding
 - Correction history
@@ -92,6 +127,9 @@ This is not yet a final production declaration. Brooke should remain available d
 - Outstanding, Paid, and All Payments views with shared Invoice Period filtering and first-name sorting
 - Shared invoice/payment financial-summary calculations
 - Read-only historical paid-at-session analyzer and CLI
+- Service-month payment and outstanding totals, independent of cash-received date
+- Receipts filed under the invoice service month even when paid later
+- Month Close screen with narrow calendar-to-receipt reconciliation
 
 ### Packaging And Installation
 
@@ -110,17 +148,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.22 supersedes test.21):
+The current controlled-beta release target is (test.40 supersedes test.39):
 
 ```text
-JordanaBilling-v0.1.0-test.22-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.40-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.22`
-- Python package/application version: `0.1.0.post22`
+- Release label: `v0.1.0-test.40`
+- Python package/application version: `0.1.0.post40`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -130,11 +168,67 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post22` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post40` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 
-### Bug Fixes In test.22
+### Month Close And Service-Month Accounting In test.35
+
+1. **Dedicated Month Close** — one screen checks capture-run proof, past raw evidence, canonical UTC duplicates, unresolved sessions, finalized invoice coverage, payment allocations, and receipt filing.
+2. **Quiet schedule changes** — future-only events and ordinary edited-event history are informational. Only `past_3_days` evidence is expected to become a billing candidate.
+3. **Service-month totals** — Invoices shows Total Billable and Total Invoiced; Payments shows Payments Applied and Outstanding for the selected service month.
+4. **Receipt filing** — a receipt follows the oldest invoice service month represented by its allocations, not the date cash arrived.
+5. **No new Shortcut** — the existing v3 Shortcut already sends aggregate completion counts. Redeploying the existing Apps Script Web App makes `Run_Log` proof available to the backend.
+
+### Calendar Reliability And Client Presentation In test.34
+
+The refreshed Test.34 installer is an application-only refinement. The existing
+v3 Calendar Sync Shortcut remains compatible and does not require replacement.
+
+1. **Evidence-gated billing** — future rows remain raw scheduling evidence;
+   only post-session past capture can create billing candidates.
+2. **Quiet schedule movement and window aging** — a future appointment that is
+   moved before it occurs creates no candidate, while a post-session candidate
+   is never removed or warned merely because it later ages out of the rolling
+   capture window.
+3. **Canonical duplicate protection and reversible recovery** — repeated
+   captures, offset variants, and supported legacy recovery are handled without
+   rewriting finalized history.
+4. **Optional Dr. invoice title** — a Client Details checkbox controls `Dr.` on
+   editable/new invoice names while keeping calendar identity and finalized
+   snapshots unchanged.
+
+### Billing Improvements In test.33
+
+1. **Service-period prior balances** — an unpaid earlier service month remains in
+   a newer invoice's prior balance even if the earlier invoice was finalized
+   later; later service months remain excluded.
+2. **Finalization-preview parity** — Review & Finalize receives the same account
+   summary used by the draft and exact-PDF preview paths.
+3. **Single-line PDF dates** — the Date column fits every English long-form
+   month name without reducing the Service column.
+
+### Billing And Client Improvements In test.31
+
+1. **Canonical JavaScript invoice preview** — the draft editor, Review & Finalize, and finalized/void invoice preview cards remain JavaScript-rendered but now use the current canonical invoice layout and render model, including the correct header, Bill To block, Service table, totals, prior-invoice dates, Zelle details, and notes.
+
+### Billing And Client Improvements In test.30
+
+1. **Correction-draft balance fix** — correction drafts exclude their still-finalized parent invoice from prior unpaid balance calculations, preventing the parent’s current charges from appearing a second time as a prior balance.
+
+### Billing And Client Improvements In test.29
+
+1. **Finalization-derived invoice date** — the customer-facing invoice date is assigned from `finalized_at` in `America/New_York`, draft previews show `Assigned when finalized`, and corrected replacement invoices receive their own finalization date without rewriting the original finalized history.
+
+### Billing And Client Improvements In test.28
+
+1. **Optional cancellation policy** — a finalization checkbox controls the exact approved plain-text policy at the bottom of each invoice, and finalized policy snapshots remain frozen.
+2. **Late-cancellation billing** — Review exposes a dedicated editable custom-fee field, refreshes full fee from the confirmed client's Rate Card rule, and retains the saved billing choice through final approval.
+3. **Client rename and duplicate merge** — UUID-linked draft/future billing can be corrected while finalized invoice and receipt history remains unchanged.
+4. **Correct & Replace Invoice** — corrections use a linked replacement draft and atomically void the original only when the replacement finalizes safely.
+5. **Calendar shorthand recovery** — titles ending in a duration unit such as `30 min` become reviewable client sessions, and sync repairs matching candidate-only records from preserved raw evidence.
+
+### Bug Fixes Inherited from test.22
 
 1. **Confirmed client rate reconciliation** — Every sync preserves UUID-backed confirmed participants on pending sessions and evaluates the rate card with the confirmed client, participant combination, and billing-relationship scope. Client-specific rules therefore take precedence over the global standard rate.
 2. **Upgrade/no-new-rows rate reconciliation** — An empty incremental sync refreshes pending suggested rates from the current confirmed rate scope, correcting stale global suggestions without modifying raw snapshots or approved charges.
@@ -190,12 +284,12 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 
 ### Bug Fixes In test.13
 
-14. **Paid-at-session review persistence and approval** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Completed paid-at-session reviews approve normally even when the cancellation-billing field is hidden; the backend normalizes that completed-session treatment to billable. If the paid-at-session detail form has already been saved and collapsed, approval reuses the stored payment detail instead of sending blank fields. Approval continues to create or validate one provenance-linked payment/allocation idempotently and remains excluded from invoice staging.
+14. **Paid-at-session review persistence and approval** — Approved paid-at-session sessions reload with a payment-ledger summary showing the stored amount, date, method, allocation state, and optional reference/admin fields. Completed paid-at-session reviews approve normally even when the cancellation-billing field is hidden; the backend normalizes that completed-session treatment to billable. If the paid-at-session detail form has already been saved and collapsed, approval reuses the stored payment detail instead of sending blank fields. Approval creates or validates one provenance-linked payment/allocation idempotently, stages the session charge, and links the payment to the invoice line.
 15. **Chronological invoice line order** — Draft editor rows, in-app HTML previews, exact PDF previews, finalized PDFs, and canonical invoice serialization now order session lines by service date, source start time, and stable line UUID rather than import, approval, insertion, or row order.
 16. **Model-backed HTML invoice preview restored** — Draft, finalization, and finalized/void invoice screens use a clean in-app HTML card built from the current canonical invoice render model. Exact PDF open/download/print actions remain available, and the stored PDF remains the official customer-facing artifact.
 17. **Invoice and review layout polish** — The Review queue uses the required Status, Date, Day, Time, RAW CLIENT, Clients, Duration, Rate, Review order and shows the original raw calendar title in the RAW CLIENT column. The draft invoice editor separates Date and Participants. The invoice library exposes only Status and Service Period filters, dynamically lists current service periods, shows filtered Draft/Finalized counts and totals, and sorts by Bill To/client first name.
 18. **Invoice header presentation** — Draft previews, finalization previews, and finalized PDFs show the invoice header as `INVOICE`, an unlabeled uppercase short invoice date, and an unlabeled invoice number or draft placeholder. Billing Period is not displayed in the invoice header.
-19. **Payments period filtering** — The Payments screen now filters Outstanding, Paid, and All Payments by Invoice Period rather than invoice date. Outstanding and Paid invoice tables display Invoice Period, rows sort by Bill To/client first name, and paid-at-session posted payments appear in the Paid tab as session-payment rows without creating invoices or changing finalized invoice history.
+19. **Payments period filtering** — The Payments screen now filters Outstanding, Paid, and All Payments by Invoice Period rather than invoice date. Outstanding and Paid invoice tables display Invoice Period, rows sort by Bill To/client first name, and paid-at-session posted payments appear in the Paid tab as session-payment rows. Current paid-at-session records also stage to invoice lines without changing finalized invoice history.
 20. **Reports browser smoke** — `/reports` and `/api/reports` were verified in a real browser during release prep after the local debug session; report metadata loads and cards render.
 21. **Beta invoice polish** — Draft invoices can be batch-printed as a draft packet, edited inline for Bill To/File Under/delivery scope, and corrected back to linked approved sessions only with an explicit reason. Finalization repair actions return to the same invoice after missing billing contact details are saved.
 22. **Verified backup workflow** — App-launch daily backup, manual backup, migration backup, operational sync/rebuild backup, and finalization/void backup paths now use the verified backup module with manifests, retention, optional private-config copy, and optional secondary copy.
@@ -361,3 +455,20 @@ git log -1 --oneline
 Then read `AGENTS.md`, this document, `docs/HANDOFF_TO_JORDANA_MAC.md`, `docs/PRIVATE_DATA_TRANSFER.md`, `docs/FRESH_INSTALL.md`, `docs/PRODUCTION_PACKAGING.md`, and `docs/TEST_MAC_ACCEPTANCE.md`.
 
 Do not restart the architecture. Continue from the current implementation and choose the smallest safe change.
+
+## Test.36 historical Review rules
+
+Normal Review uses post-end past-calendar evidence for every payload version.
+Legacy future-only derived records remain preserved but inactive. A later
+historical capture covering an unapproved event can retire an obsolete entry;
+aging out of the rolling window cannot. Late cancellations stay eligible.
+Manual exclusions override import parsing and survive repeated syncs.
+Saved participants and approved aliases feed readiness after import.
+
+Migration `025_historical_review` adds only `calendar_review_state` on candidates.
+The authenticated Review reconciliation and sync paths populate it, including
+no-new-row upgrades. Eligibility changes are audited, reversible from later
+evidence, and never edit raw snapshots or protected financial records.
+Missing/partial capture proof is handled conservatively: legacy batches use
+their observed event span, and explicit date-picker batches cannot remove
+observations beyond their demonstrated boundary coverage.

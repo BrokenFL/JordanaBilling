@@ -24,7 +24,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result.classification, "client_session")
         self.assertEqual(result.proposed_client_name, "Bonnie")
         self.assertEqual(result.proposed_duration_minutes, 60)
-        self.assertEqual(result.duration_source, "calendar")
+        self.assertEqual(result.duration_source, "default")
         self.assertIn("client_full_name", result.fields_requiring_review)
 
     def test_explicit_duration_overrides_calendar_duration(self):

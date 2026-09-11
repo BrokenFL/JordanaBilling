@@ -24,7 +24,7 @@ Future format examples:
 
 - Client candidate: `Bonnie`
 - Title time shorthand: `5:00`
-- Duration: calendar duration if present, otherwise 60 minutes
+- Duration: 60 minutes when no explicit length is supplied
 - Review required: full client name and rate
 
 ### `Leah Grossman 630 30`
@@ -54,8 +54,9 @@ Future format examples:
 ## Duration Precedence
 
 1. Explicit recognized duration at the end of the title
-2. Calendar start/end or `duration_minutes`
-3. Default 60 minutes
+2. Default 60 minutes for recognized shorthand without a length
+
+Calendar start/end remain source timing evidence. A manually saved session duration takes precedence during review.
 
 ### Standard Duration Choices
 
@@ -142,3 +143,10 @@ Full Name | Time | Minutes | Session Type | No Show
 Legacy shorthand remains supported after structured parsing, including forms such as `Fred 830`, `Leah Grossman 630 30`, `Rebecca colon 630 90`, and `Bobsy and Fred 6`.
 
 Calendar start time remains authoritative. Optional title time is used only to create a warning when it disagrees exactly by hour/minute.
+
+### Zoom (prepared Test.37)
+
+`Alex Example 1130 zoom` and `Alex Example 1130 30 Zoom` recognize Zoom as the
+appointment method, with default 60 or explicit 30 minutes respectively. The
+calendar start remains authoritative. Unsupported trailing tokens keep a
+recognizable historical appointment in Review for classification.

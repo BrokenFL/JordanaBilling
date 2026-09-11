@@ -6,7 +6,7 @@ The iPhone Shortcut continues to import non-all-day events from all calendars.
 
 `Jordana Work` is the preferred future work calendar. It is a strong classification signal, not an ingestion restriction. Events from other calendars remain preserved as raw evidence and can still become sessions after review.
 
-The normal capture windows are `past_3_days` and `next_7_days`. Deprecated `past_7_days` and `next_2_days` rows remain readable during transition.
+The normal v3 capture windows are `past_3_days` and `next_2_days`. The future window is raw scheduling evidence only; it does not create a billing candidate. A session becomes reviewable only after it appears in a post-end `past_3_days` capture. Deprecated `past_7_days` and `next_7_days` rows remain readable during transition.
 
 ## Preferred Titles
 

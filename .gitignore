@@ -1,4 +1,6 @@
 .env
+.codex/
+.devin/
 !config/
 !config/example.env
 .DS_Store

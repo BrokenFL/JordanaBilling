@@ -291,16 +291,26 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertGreater(TABLE_COLUMN_WIDTHS[0], old_w)
 
     def test_date_column_fits_long_date_text(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
         available = TABLE_COLUMN_WIDTHS[0] - (TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING)
-        # "June 22, 2026" at the body size in Times-Roman is roughly 58pt.
-        self.assertGreaterEqual(available, 58)
+        date_widths = [
+            stringWidth(f"{month} 30, 2026", "Times-Roman", BODY_FONT_SIZE)
+            for month in (
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December",
+            )
+        ]
+        self.assertGreaterEqual(available, max(date_widths))
 
     def test_long_date_does_not_wrap_in_pdf(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
         lines = [{
-            "service_date": "2026-06-22",
+            "service_date": "2026-08-03",
             "participants_snapshot": "Avery Stone",
             "description_snapshot": "Office Visit",
             "duration_minutes": 60,
@@ -309,7 +319,7 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         path = self._generate_pdf(lines=lines)
         reader = PdfReader(path)
         text = reader.pages[0].extract_text() or ""
-        self.assertIn("June 22, 2026", text)
+        self.assertIn("August 03, 2026", text)
 
     # --- 6. Short-invoice footer placement and page balance ---
 
@@ -1074,6 +1084,38 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
             self.assertIn(s, draft_text, f"Draft PDF missing insurance line: {s}")
             self.assertIn(s, final_text, f"Finalized PDF missing insurance line: {s}")
 
+    def test_optional_cancellation_policy_is_plain_bottom_text_and_frozen(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_rendering import CANCELLATION_POLICY_TEXT, build_invoice_render_model
+
+        lines = _sample_lines()
+        draft_invoice = _sample_invoice(invoice_number="", status="draft")
+        draft_model = build_invoice_render_model(
+            draft_invoice,
+            lines,
+            insurance_coding_payload={"cancellation_policy_included": True},
+        )
+        self.assertEqual(draft_model["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+        draft_text = self._extract_pdf_text(
+            generate_draft_pdf_bytes(draft_invoice, lines, render_model=draft_model)
+        )
+        self.assertIn(CANCELLATION_POLICY_TEXT, draft_text.replace("\n", " "))
+
+        final_invoice = _sample_invoice(
+            status="finalized",
+            cancellation_policy_included=1,
+            cancellation_policy_text_snapshot=CANCELLATION_POLICY_TEXT,
+        )
+        frozen_model = build_invoice_render_model(final_invoice, lines)
+        self.assertEqual(frozen_model["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+
+        omitted = build_invoice_render_model(
+            _sample_invoice(status="finalized", cancellation_policy_included=0),
+            lines,
+        )
+        self.assertIsNone(omitted["cancellation_policy"])
+
     def test_html_preview_and_pdf_use_same_canonical_values(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
@@ -1129,7 +1171,6 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
 
         expected_values = [
             "Avery Stone",
-            "JUN 1, 2026",
             "May 22, 2026",
             "May 23, 2026",
             "Office Visit",
@@ -1148,6 +1189,8 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         for value in expected_values:
             self.assertIn(value, html)
             self.assertIn(value, pdf_text)
+        self.assertIn("Assigned when finalized", html)
+        self.assertIn("Assigned when finalized", pdf_text)
         self.assertNotIn("Invoice Number:", html)
         self.assertNotIn("Invoice Date:", html)
         self.assertNotIn("Billing Period", html)

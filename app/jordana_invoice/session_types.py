@@ -76,6 +76,7 @@ LEGACY_SERVICE_MODES = frozenset({
     "office",
     "phone",
     "facetime",
+    "zoom",
     "correspondence",
     "preparation",
     "mediation",
@@ -83,7 +84,7 @@ LEGACY_SERVICE_MODES = frozenset({
     "unknown",
 })
 
-APPOINTMENT_METHODS = frozenset({"office", "phone", "facetime", "unknown"})
+APPOINTMENT_METHODS = frozenset({"office", "phone", "zoom", "facetime", "unknown"})
 
 
 def validate_billing_session_type(value: str | None) -> str:
@@ -165,7 +166,7 @@ def map_legacy_to_appointment_method(service_mode: str | None) -> str:
     Map legacy service_mode to appointment method.
     Office/Phone/FaceTime are appointment methods, not billing types.
     """
-    if service_mode in {"phone", "facetime", "office"}:
+    if service_mode in {"phone", "zoom", "facetime", "office"}:
         return service_mode
     if service_mode == "house_call":
         return "office"
@@ -305,6 +306,7 @@ def normalize_billing_treatment_for_outcome(
             "custom_fee": "custom_fee",
             "waive": "waived",
             "waived": "waived",
+            "fee_waived": "waived",
             "not_billable": "waived",
             "unresolved": "unresolved",
             "": "unresolved",
@@ -317,6 +319,7 @@ def normalize_billing_treatment_for_outcome(
             "billable": "billable",
             "not_billable": "not_billable",
             "waived": "waived",
+            "fee_waived": "waived",
             "unresolved": "unresolved",
             "": "unresolved",
         }

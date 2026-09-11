@@ -12,7 +12,7 @@ Read first:
 
 ## Current Handoff Decision
 
-The `v0.1.0-test.9` release may be used for a supervised Jordana beta after
+The `v0.1.0-test.40` release may be used for a supervised Jordana beta after
 Brooke verifies the published GitHub artifact, checksum, installer runtime
 identity, and upgrade-over-old-build test. It is not represented as final
 production software.
@@ -20,13 +20,13 @@ production software.
 Use this exact artifact:
 
 ```text
-JordanaBilling-v0.1.0-test.9-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.40-<commit>-macos-arm64.dmg
 ```
 
 Release facts to verify before installing:
 
 - Manifest commit: matches the GitHub release and `release_manifest.json`
-- Python package/application version: 0.1.0.post9
+- Python package/application version: 0.1.0.post40
 - Build ID: matches `release_manifest.json` and the installed `/api/build-info`
 - Builder Python: 3.14.4
 - Required Python family: 3.14.x
@@ -37,9 +37,7 @@ Release facts to verify before installing:
 - Upgrade over an older installed build: passed
 - Existing config/database preservation during upgrade: passed
 
-Do not use the rejected Python 3.11 test.6 artifact from commit `6c3dbab`, the
-superseded test.7 artifact, or the test.8 artifact for installation/update
-testing.
+Earlier test builds are superseded for installation and update testing.
 
 ## Before Leaving Brooke's Mac
 

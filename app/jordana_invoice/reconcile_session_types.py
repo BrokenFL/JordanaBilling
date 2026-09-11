@@ -81,7 +81,7 @@ def get_legacy_rate_rules(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         SELECT rate_rule_id, service_mode, rate_group, duration_minutes, 
                time_category, amount_cents, effective_from, active
         FROM rate_rules
-        WHERE service_mode IN ('office', 'phone', 'facetime')
+        WHERE service_mode IN ('office', 'phone', 'zoom', 'facetime')
            OR rate_group IN ('office', 'remote')
     """).fetchall()
     return [dict(row) for row in rows]
@@ -227,7 +227,7 @@ def reconcile_approved_sessions(
             stats["preserved"] += 1
             continue
         
-        if service_mode in ("office", "phone", "facetime", "house_call", "unknown"):
+        if service_mode in ("office", "phone", "zoom", "facetime", "house_call", "unknown"):
             stats["legacy_values"].append({
                 "session_id": session_id,
                 "service_mode": service_mode,

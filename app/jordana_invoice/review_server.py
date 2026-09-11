@@ -29,6 +29,8 @@ from .google_sync import (
 )
 from .review_services import (
     add_account_member,
+    archive_already_classified_personal_admin,
+    archive_person,
     analyze_billing_relationship_duplicates,
     approve_candidate,
     BillingPartyNotFoundError,
@@ -72,6 +74,7 @@ from .review_services import (
     save_person_section,
     save_relationship_section,
     save_session_draft,
+    set_sessions_archive_state,
     search_accounts,
     search_billing_parties,
     search_organization_billing_parties,
@@ -87,6 +90,7 @@ from .review_services import (
 from .invoice_services import (
     add_sessions_to_draft,
     create_invoice_draft,
+    start_invoice_correction,
     delete_invoice_draft,
     eligible_sessions,
     finalize_invoice,
@@ -112,6 +116,7 @@ from .backups import (
     open_backup_folder,
 )
 from .financial_summary import get_financial_summary
+from .month_close import get_month_close_report
 from .payment_services import (
     apply_available_funds,
     get_payment_detail_view,
@@ -149,6 +154,7 @@ from .request_validation import (
     parse_save_session_draft_request,
     parse_mark_candidate_request,
     parse_restore_candidate_request,
+    parse_return_to_review_request,
     parse_create_person_request,
     parse_update_person_request,
     parse_save_person_alias_request,
@@ -169,6 +175,7 @@ from .request_validation import (
     parse_replace_rate_rule_request,
     parse_end_rate_rule_request,
     parse_create_invoice_draft_request,
+    parse_correct_invoice_request,
     parse_stage_invoices_request,
     parse_update_invoice_draft_request,
     parse_update_invoice_line_item_request,
@@ -192,6 +199,7 @@ from .request_validation import (
 from .diagnostics import (
     create_issue_report,
     record_event as record_diagnostic_event,
+    record_exception as record_diagnostic_exception,
     record_http_event,
 )
 
@@ -384,6 +392,10 @@ def is_safe_validation_error(error: Exception) -> bool:
             "A reason is required to return an approved session to Review.",
             "No session found for this candidate.",
             "Only approved sessions can be returned to Review with this action.",
+            "This is not an open correction draft for a finalized invoice.",
+            "This session is not linked to the selected correction draft.",
+            "This correction draft cannot be edited because payment history is attached to its original invoice.",
+            "Could not save the diagnostic report. Check that the Reports folder is available and writable.",
             "Select which participant should receive this future rate.",
             "session_ids must be a list.",
             "Each session_id must be a non-empty string.",
@@ -396,6 +408,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Display name is required.",
             "Cannot merge a person into itself.",
             "Both people must exist before merging.",
+            "An active client with this name already exists. Use that client or resolve the duplicate explicitly.",
             "First and last name are required before assigning a person code.",
             # Business Profile
             "Business name is required.",
@@ -414,6 +427,12 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Invoice line was not found.",
             "A void reason is required.",
             "Only a finalized invoice can be voided.",
+            "A correction reason is required.",
+            "Only a finalized invoice can be corrected.",
+            "This invoice cannot be corrected because payment history is attached to it.",
+            "The original invoice is no longer available for correction.",
+            "The original invoice changed before correction could be completed.",
+            "Delete the open correction draft before voiding this invoice.",
             "Only a draft invoice can be changed.",
             "supplement_sequence cannot be negative.",
             "Description must be non-empty.",
@@ -449,6 +468,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Amount exceeds the current invoice balance.",
             "This request has already been processed.",
             "Calendar sync is already running.",
+            "This appointment is not in the current historical calendar review list. Sync Calendar before reviewing it.",
             "Explicit rebuild confirmation is required.",
             # Billing parties
             "Billing name is required.",
@@ -459,6 +479,13 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Billing party not found.",
             "billing_name must not be blank.",
             "Cannot reassign billing party to a different person through this operation.",
+            "This billing setup cannot be deactivated while an active billing relationship, draft invoice, or approved unfinalized session still uses it. Update the billing relationship or repair the duplicate setup first.",
+            "No active billing setup is available to keep. Reactivate the correct setup first.",
+            "A duplicate billing setup has payment-linked draft work. It cannot be repaired automatically.",
+            "Duplicate drafts with manual adjustments require review before they can be merged.",
+            "Duplicate drafts contain conflicting copies of the same session.",
+            "This client has multiple inactive billing setups. Repair those existing setups before creating or reactivating another one.",
+            "Paid-at-session payment could not be linked to the invoice because its billing record is inconsistent.",
             # Reports
             "Invalid year",
             "Year out of range",
@@ -470,6 +497,7 @@ def is_safe_validation_error(error: Exception) -> bool:
         safe_prefixes = (
             "Cannot approve until required fields are complete:",
             "No active billing party found for ",
+            "This client already has an ",
             "Session is not invoice eligible: ",
             "Return to Review is blocked: ",
             "This appointment is scheduled for ",
@@ -642,12 +670,17 @@ def make_handler(
             else:
                 status = default_status
                 msg = "An unexpected error occurred."
+                record_diagnostic_exception(
+                    error,
+                    method=getattr(self, "command", ""),
+                    path=getattr(self, "path", ""),
+                )
             self.send_json({"ok": False, "error": msg}, status=status)
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             try:
-                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid", "/payments"} or parsed.path.startswith("/invoices/"):
+                if parsed.path in {"/", "/review", "/invoices", "/reports", "/unpaid", "/payments", "/month-close"} or parsed.path.startswith("/invoices/"):
                     self.send_static("review.html")
                     return
                 if parsed.path in {"/clients", "/people"} or parsed.path.startswith("/clients/") or parsed.path.startswith("/people/"):
@@ -658,6 +691,10 @@ def make_handler(
                     return
                 if parsed.path == "/api/health":
                     self.send_json({"ok": True, "status": "healthy", **current_build_info()})
+                    return
+                if parsed.path == "/api/updates":
+                    from .software_updates import check_updates
+                    self.send_json(check_updates(current_build_info()["version"]))
                     return
                 if parsed.path == "/api/build-info":
                     self.send_json({"ok": True, **current_build_info()})
@@ -771,6 +808,7 @@ def make_handler(
                             date_range=first(query, "date_range") or "rolling_30",
                             review_status=first(query, "review_status"),
                             payment_status=first(query, "payment_status"),
+                            archive_status=first(query, "archive_status") or "active",
                             limit=int(first(query, "limit") or 30),
                             offset=int(first(query, "offset") or 0),
                         )
@@ -788,6 +826,10 @@ def make_handler(
                 if parsed.path == "/api/financial-summary":
                     query = parse_qs(parsed.query)
                     self.send_json(get_financial_summary(self.conn(), first(query, "month") or None))
+                    return
+                if parsed.path == "/api/month-close":
+                    query = parse_qs(parsed.query)
+                    self.send_json(get_month_close_report(self.conn(), first(query, "month") or None))
                     return
                 if parsed.path == "/api/invoices/eligible-sessions":
                     query = parse_qs(parsed.query)
@@ -912,18 +954,12 @@ def make_handler(
                     if data["invoice"]["status"] != "draft":
                         self.send_json({"ok": False, "error": "Finalization PDF preview is only available for draft invoices."}, status=400)
                         return
-                    insurance_payload = None
-                    if preview_payload.get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": preview_payload.get("insurance_diagnosis_code") or "",
-                        }
                     render_model = build_invoice_render_model(
                         data["invoice"], data["lines"],
                         business_profile=data.get("business_profile"),
                         billing_party=data.get("billing_party"),
                         account_summary=(data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=preview_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         data["invoice"], data["lines"],
@@ -987,6 +1023,17 @@ def make_handler(
             if parsed is None:
                 return
             try:
+                if parsed.path in {"/api/updates/check", "/api/updates/install"}:
+                    from .software_updates import check_updates, start_update
+                    try:
+                        if parsed.path.endswith("/check"):
+                            result = check_updates(current_build_info()["version"], force=True)
+                        else:
+                            result = start_update(database_path, current_build_info()["version"], data.get("version"))
+                        self.send_json(result)
+                    except ValueError as error:
+                        self.send_json({"ok": False, "error": str(error)}, status=400)
+                    return
                 if parsed.path == "/api/app/quit":
                     ok, already_started, message = schedule_shutdown(self)
                     if not ok:
@@ -1025,18 +1072,13 @@ def make_handler(
                         self.send_json({"ok": False, "error": "Print preview is only available for draft invoices."}, status=400)
                         return
                     req = parse_print_preview_request(data)
-                    insurance_payload = None
-                    if req.to_payload().get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
-                        }
+                    finalization_payload = req.to_payload()
                     html = build_print_preview_html(
                         inv_data["invoice"], inv_data["lines"],
                         business_profile=inv_data.get("business_profile"),
                         billing_party=inv_data.get("billing_party"),
                         account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=finalization_payload,
                     )
                     body = html.encode("utf-8")
                     self.send_response(200)
@@ -1053,18 +1095,13 @@ def make_handler(
                         self.send_json({"ok": False, "error": "Draft PDF preview is only available for draft invoices."}, status=400)
                         return
                     req = parse_print_preview_request(data)
-                    insurance_payload = None
-                    if req.to_payload().get("insurance_coding_included"):
-                        insurance_payload = {
-                            "insurance_coding_included": True,
-                            "insurance_diagnosis_code": req.to_payload().get("insurance_diagnosis_code") or "",
-                        }
+                    finalization_payload = req.to_payload()
                     render_model = build_invoice_render_model(
                         inv_data["invoice"], inv_data["lines"],
                         business_profile=inv_data.get("business_profile"),
                         billing_party=inv_data.get("billing_party"),
                         account_summary=(inv_data.get("render_model") or {}).get("account_summary"),
-                        insurance_coding_payload=insurance_payload,
+                        insurance_coding_payload=finalization_payload,
                     )
                     body = generate_draft_pdf_bytes(
                         inv_data["invoice"], inv_data["lines"],
@@ -1094,6 +1131,33 @@ def make_handler(
                     req = parse_create_person_request(data)
                     self.send_json(create_person(self.conn(), req.to_payload()))
                     return
+                if parsed.path == "/api/review/archive-personal-admin":
+                    self.send_json(archive_already_classified_personal_admin(self.conn()))
+                    return
+                if parsed.path == "/api/sessions/archive":
+                    candidate_ids = data.get("candidate_ids")
+                    if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
+                        raise ValueError("candidate_ids must be a list of session row IDs.")
+                    self.send_json(set_sessions_archive_state(self.conn(), candidate_ids, archived=True))
+                    return
+                if parsed.path == "/api/sessions/restore-archive":
+                    candidate_ids = data.get("candidate_ids")
+                    if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
+                        raise ValueError("candidate_ids must be a list of session row IDs.")
+                    self.send_json(set_sessions_archive_state(self.conn(), candidate_ids, archived=False))
+                    return
+                if parsed.path == "/api/review/reconcile-calendar":
+                    from .importer import suppress_pending_events_missing_from_newest_covering_snapshot
+
+                    conn = self.conn()
+                    changed = suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    from .review_services import reparse_candidate_only_duration_suffixes
+                    repair = reparse_candidate_only_duration_suffixes(conn)
+                    if repair["sessions_created"] or repair.get("automatic_exclusions_repaired"):
+                        changed += suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    conn.commit()
+                    self.send_json({"reconciled": changed})
+                    return
                 if parsed.path.startswith("/api/people/") and parsed.path.endswith("/aliases"):
                     person_id = parsed.path.strip("/").split("/")[2]
                     req = parse_save_person_alias_request(data)
@@ -1118,6 +1182,10 @@ def make_handler(
                             req.reason,
                         )
                     )
+                    return
+                if parsed.path.startswith("/api/people/") and parsed.path.endswith("/archive"):
+                    person_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(archive_person(self.conn(), person_id, data.get("reason") or ""))
                     return
                 if parsed.path.startswith("/api/people/"):
                     person_id = parsed.path.rsplit("/", 1)[-1]
@@ -1168,7 +1236,13 @@ def make_handler(
                     return
                 if parsed.path == "/api/billing-parties":
                     req = parse_create_billing_party_request(data)
-                    self.send_json(create_billing_party(self.conn(), req.to_payload()))
+                    self.send_json(
+                        create_billing_party(
+                            self.conn(),
+                            req.to_payload(),
+                            allow_duplicate_person=False,
+                        )
+                    )
                     return
                 if parsed.path.startswith("/api/billing-parties/") and parsed.path.endswith("/copy-contact"):
                     parts = parsed.path.strip("/").split("/")
@@ -1186,7 +1260,14 @@ def make_handler(
                 if parsed.path.startswith("/api/billing-parties/"):
                     billing_party_id = parsed.path.rsplit("/", 1)[-1]
                     req = parse_update_billing_party_request(data)
-                    self.send_json(update_billing_party(self.conn(), billing_party_id, req.to_payload()))
+                    self.send_json(
+                        update_billing_party(
+                            self.conn(),
+                            billing_party_id,
+                            req.to_payload(),
+                            allow_in_use_deactivation=False,
+                        )
+                    )
                     return
                 if parsed.path == "/api/rate-rules":
                     req = parse_create_rate_rule_request(data)
@@ -1419,6 +1500,7 @@ def make_handler(
                             expected_revision=req.to_payload().get("expected_revision"),
                             insurance_coding_included=bool(req.to_payload().get("insurance_coding_included")),
                             insurance_diagnosis_code=str(req.to_payload().get("insurance_diagnosis_code") or ""),
+                            cancellation_policy_included=bool(req.to_payload().get("cancellation_policy_included")),
                         ))
                         return
                     if action == "filing-owner":
@@ -1439,6 +1521,10 @@ def make_handler(
                     if action == "void":
                         req = parse_void_invoice_request(data)
                         self.send_json(void_invoice(self.conn(), invoice_id, req.reason))
+                        return
+                    if action == "correct":
+                        req = parse_correct_invoice_request(data)
+                        self.send_json(start_invoice_correction(self.conn(), invoice_id, req.reason))
                         return
                     req = parse_update_invoice_draft_request(data)
                     self.send_json(update_invoice_draft(self.conn(), invoice_id, req.to_payload()))
@@ -1491,31 +1577,25 @@ def make_handler(
                         result = approve_candidate(self.conn(), candidate_id, req.to_payload())
                         approved_session_id = result.get("session", {}).get("id")
                         if approved_session_id:
-                            session_row = self.conn().execute("SELECT payment_status FROM sessions WHERE id = ?", (approved_session_id,)).fetchone()
-                            if session_row and session_row["payment_status"] == "paid_at_session":
+                            try:
+                                staging = stage_approved_sessions_to_monthly_drafts(
+                                    self.conn(), session_ids=[approved_session_id],
+                                )
+                                if staging.get("errors"):
+                                    for err in staging["errors"]:
+                                        err["error"] = sanitize_staging_error_message(err.get("error", ""))
                                 result["invoice_staging"] = {
-                                    "status": "not_required",
-                                    "summary": {
-                                        "errors": [],
-                                        "message": "Paid-at-session session; invoice staging was not required."
-                                    }
+                                    "status": "warning" if staging.get("errors") or any(
+                                        reason.startswith("Bill-to party")
+                                        for item in staging.get("sessions_skipped", [])
+                                        for reason in item.get("reasons", [])
+                                    ) else "success",
+                                    "summary": staging,
                                 }
-                            else:
-                                try:
-                                    staging = stage_approved_sessions_to_monthly_drafts(
-                                        self.conn(), session_ids=[approved_session_id],
-                                    )
-                                    if staging.get("errors"):
-                                        for err in staging["errors"]:
-                                            err["error"] = sanitize_staging_error_message(err.get("error", ""))
-                                    result["invoice_staging"] = {
-                                        "status": "success" if not staging.get("errors") else "warning",
-                                        "summary": staging,
-                                    }
-                                except DatabaseBusyError:
-                                    result["invoice_staging"] = {"status": "unavailable", "summary": None}
-                                except Exception:
-                                    result["invoice_staging"] = {"status": "error", "summary": None}
+                            except DatabaseBusyError:
+                                result["invoice_staging"] = {"status": "unavailable", "summary": None}
+                            except Exception:
+                                result["invoice_staging"] = {"status": "error", "summary": None}
                         self.send_json(result)
                         return
                     if action == "mark":
@@ -1540,12 +1620,14 @@ def make_handler(
                         )
                         return
                     if action == "return-to-review":
+                        req = parse_return_to_review_request(data)
                         self.send_json(
                             return_approved_session_to_review(
                                 self.conn(),
                                 candidate_id,
-                                reason=data.get("reason", ""),
-                                action_source=data.get("action_source", "review_ui"),
+                                reason=req.reason,
+                                action_source=req.action_source,
+                                correction_invoice_id=req.correction_invoice_id,
                             )
                         )
                         return

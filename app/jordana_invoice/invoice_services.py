@@ -8,13 +8,22 @@ from datetime import date, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from .invoice_rendering import build_invoice_render_model, format_month_label, resolve_logo_path
+from .calendar_identity import canonical_datetime, canonical_structural_parts, has_complete_structural_identity
+from .calendar_warnings import upsert_calendar_warning
+from .invoice_rendering import (
+    CANCELLATION_POLICY_TEXT,
+    build_invoice_render_model,
+    format_month_label,
+    resolve_logo_path,
+)
+from .invoice_names import format_invoice_person_name
 from .invoice_pdf import generate_invoice_pdf
 from .csv_reports import refresh_reports_after_commit
 from .service_catalog import learn_service, list_services
 from .session_types import get_user_facing_session_label
-from .util import json_dumps, new_id, normalize_payment_status, now_iso
+from .util import json_dumps, new_id, normalize_payment_status, now_iso, stable_hash
 from .db import DatabaseBusyError, _get_db_path_from_conn, is_operational_db_path
 
 
@@ -25,6 +34,17 @@ def init_db(_conn: sqlite3.Connection) -> None:
 
 DELIVERY_METHODS = {"email", "mail", "both", "unresolved"}
 INVOICE_STATUSES = {"draft", "finalized", "void"}
+INVOICE_DATE_TIMEZONE = ZoneInfo("America/New_York")
+PAYMENT_LINKED_DRAFT_SKIP_REASON = (
+    "A duplicate billing setup has payment-linked draft work. "
+    "It cannot be repaired automatically."
+)
+
+
+def _invoice_date_from_finalized_at(finalized_at: str) -> str:
+    """Return the customer-facing invoice date for a finalized timestamp."""
+    parsed = datetime.fromisoformat(str(finalized_at).replace("Z", "+00:00"))
+    return parsed.astimezone(INVOICE_DATE_TIMEZONE).date().isoformat()
 
 
 def _backup_operational_database_before(conn: sqlite3.Connection, reason: str) -> None:
@@ -38,6 +58,43 @@ def _backup_operational_database_before(conn: sqlite3.Connection, reason: str) -
 
 def _present_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _billing_party_invoice_name(
+    conn: sqlite3.Connection,
+    party: sqlite3.Row | dict[str, Any] | None,
+) -> str:
+    if not party:
+        return ""
+    billing_name = _present_text(_row_get(party, "billing_name"))
+    person_id = _present_text(_row_get(party, "person_id"))
+    if not person_id:
+        return billing_name
+    person = conn.execute(
+        "SELECT display_name, use_dr_on_invoices FROM people WHERE person_id = ?",
+        (person_id,),
+    ).fetchone()
+    if not person or not person["use_dr_on_invoices"]:
+        return billing_name
+    display_name = _present_text(person["display_name"])
+    titled_name = format_invoice_person_name(display_name, True)
+    normalized_billing = " ".join(billing_name.casefold().split())
+    eligible_names = {
+        " ".join(display_name.casefold().split()),
+        " ".join(titled_name.casefold().split()),
+    }
+    return titled_name if normalized_billing in eligible_names else billing_name
+
+
+def _invoice_render_party(
+    conn: sqlite3.Connection,
+    party: sqlite3.Row | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not party:
+        return None
+    result = dict(party)
+    result["invoice_display_name"] = _billing_party_invoice_name(conn, party)
+    return result
 
 
 def _billing_address_complete(party: sqlite3.Row | dict[str, Any] | None) -> bool:
@@ -102,6 +159,141 @@ def _invoice_paid_cents(conn: sqlite3.Connection, invoice_id: str) -> int:
     ).fetchone()[0]
 
 
+def _invoice_has_payment_history(conn: sqlite3.Connection, invoice_id: str) -> bool:
+    """Return whether money has ever been allocated to this invoice's sessions.
+
+    Correction/replacement is intentionally stricter than the live balance
+    calculation: a reversed allocation or a voided payment still represents
+    financial history that must not be detached from the original invoice.
+    """
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM payment_allocations pa
+        JOIN invoice_line_items li
+          ON li.invoice_line_item_id = pa.invoice_line_item_id
+          OR li.source_session_id = pa.session_id
+        WHERE li.invoice_id = ?
+        LIMIT 1
+        """,
+        (invoice_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _invoice_line_has_payment_history(
+    conn: sqlite3.Connection,
+    line: sqlite3.Row | dict[str, Any],
+) -> bool:
+    """Return whether a draft line has any payment history attached to it.
+
+    Payment allocations may be linked to a line after staging, or may still be
+    pre-staging allocations linked only to the source session.  A source
+    payment can also exist before its allocation is repaired.  All three cases
+    protect the line from being moved between payer-owned drafts.
+    """
+    line_id = line["invoice_line_item_id"]
+    session_id = line["source_session_id"]
+    return conn.execute(
+        """
+        SELECT 1
+        FROM payment_allocations
+        WHERE invoice_line_item_id = ?
+           OR session_id = ?
+        UNION ALL
+        SELECT 1
+        FROM payments
+        WHERE source_session_id = ?
+        LIMIT 1
+        """,
+        (line_id, session_id, session_id),
+    ).fetchone() is not None
+
+
+def _payment_linked_draft_lines(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+) -> list[sqlite3.Row]:
+    lines = conn.execute(
+        "SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order",
+        (invoice_id,),
+    ).fetchall()
+    return [line for line in lines if _invoice_line_has_payment_history(conn, line)]
+
+
+def _invoice_excluded_session_invoice_ids(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+) -> set[str]:
+    """Return active invoice IDs intentionally allowed for a draft's lines."""
+    ids = {invoice_id}
+    row = conn.execute(
+        "SELECT correction_of_invoice_id FROM invoices WHERE invoice_id = ?",
+        (invoice_id,),
+    ).fetchone()
+    if row and row["correction_of_invoice_id"]:
+        ids.add(row["correction_of_invoice_id"])
+    return ids
+
+
+def _invoice_period_month(invoice: dict[str, Any]) -> str:
+    """Return the invoice's service-period month when it can be identified."""
+    billing_month = str(invoice.get("billing_month") or "").strip()
+    if billing_month:
+        return billing_month
+    period_start = str(invoice.get("billing_period_start") or "").strip()
+    period_end = str(invoice.get("billing_period_end") or "").strip()
+    return _derive_billing_month(period_start, period_end) or ""
+
+
+def _invoice_is_prior(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Order invoices by service period before customer-facing invoice date.
+
+    Finalization assigns the displayed invoice date. It can therefore be later
+    than the date on a draft for a newer service month. Service-period ordering
+    prevents that display-date change from hiding a genuine prior balance.
+    Same-period supplements and legacy/overlapping periods retain the prior
+    deterministic finalization/date ordering.
+    """
+    candidate_month = _invoice_period_month(candidate)
+    current_month = _invoice_period_month(current)
+    if candidate_month and current_month and candidate_month != current_month:
+        return candidate_month < current_month
+
+    candidate_start = str(candidate.get("billing_period_start") or "").strip()
+    candidate_end = str(candidate.get("billing_period_end") or "").strip()
+    current_start = str(current.get("billing_period_start") or "").strip()
+    current_end = str(current.get("billing_period_end") or "").strip()
+    if candidate_end and current_start and candidate_end < current_start:
+        return True
+    if candidate_start and current_end and candidate_start > current_end:
+        return False
+
+    candidate_sequence = int(candidate.get("supplement_sequence") or 0)
+    current_sequence = int(current.get("supplement_sequence") or 0)
+    if candidate_month and candidate_month == current_month and candidate_sequence != current_sequence:
+        return candidate_sequence < current_sequence
+
+    candidate_date = str(candidate.get("invoice_date") or "")
+    current_date = str(current.get("invoice_date") or "")
+    candidate_finalized_at = str(candidate.get("finalized_at") or "")
+    current_finalized_at = str(current.get("finalized_at") or "")
+
+    if candidate_date < current_date:
+        return True
+    if candidate_date > current_date:
+        # A finalized same-period invoice is prior to an open supplement even
+        # when finalization assigned it a later customer-facing date.
+        return bool(candidate_finalized_at and not current_finalized_at)
+    if candidate_finalized_at and not current_finalized_at:
+        return True
+    if candidate_finalized_at and current_finalized_at:
+        if candidate_finalized_at != current_finalized_at:
+            return candidate_finalized_at < current_finalized_at
+        return str(candidate.get("invoice_id") or "") < str(current.get("invoice_id") or "")
+    return False
+
+
 def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str) -> dict[str, Any]:
     """Calculate the account summary values for a given invoice.
 
@@ -118,6 +310,7 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
         raise ValueError("Invoice was not found.")
     invoice = dict(invoice_row)
     status = invoice["status"]
+    correction_parent_id = invoice.get("correction_of_invoice_id")
 
     current_total = int(invoice["total_cents"] or 0)
     current_paid = _invoice_paid_cents(conn, invoice_id)
@@ -168,38 +361,18 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
     prior_invoices = []
     prior_unpaid_cents = 0
 
-    current_date = invoice["invoice_date"]
-    current_finalized_at = invoice.get("finalized_at")
-
     for row in candidates_rows:
         cand = dict(row)
         cand_id = cand["invoice_id"]
 
-        # 1. Skip the current invoice itself
-        if cand_id == invoice_id:
+        # 1. Skip the current invoice itself and, while a correction is being
+        # edited, its still-finalized parent. The parent is being replaced by
+        # this draft and must not appear as a second prior charge.
+        if cand_id == invoice_id or cand_id == correction_parent_id:
             continue
 
-        # 2. Check if the candidate is "prior" based on the cutoff rule
-        cand_date = cand["invoice_date"]
-        cand_finalized_at = cand.get("finalized_at")
-
-        is_prior = False
-        if cand_date < current_date:
-            is_prior = True
-        elif cand_date == current_date:
-            # Same date cutoff ordering:
-            if cand_finalized_at and not current_finalized_at:
-                # Candidate is finalized, current is draft
-                is_prior = True
-            elif cand_finalized_at and current_finalized_at:
-                # Both are finalized
-                if cand_finalized_at < current_finalized_at:
-                    is_prior = True
-                elif cand_finalized_at == current_finalized_at:
-                    # Stable tie-breaker using UUID comparison
-                    is_prior = cand_id < invoice_id
-
-        if not is_prior:
+        # 2. Check whether the candidate's service period precedes this one.
+        if not _invoice_is_prior(cand, invoice):
             continue
 
         # Calculate dynamic remaining balance for the candidate
@@ -211,9 +384,16 @@ def calculate_invoice_account_summary(conn: sqlite3.Connection, invoice_id: str)
             prior_invoices.append({
                 "invoice_id": cand_id,
                 "invoice_number": cand["invoice_number"],
-                "invoice_date": cand_date,
+                "invoice_date": cand["invoice_date"],
                 "remaining_balance_cents": remaining,
-                "_sort_key": (cand_date, cand_finalized_at or "", cand_id)
+                "_sort_key": (
+                    _invoice_period_month(cand),
+                    str(cand.get("billing_period_start") or ""),
+                    int(cand.get("supplement_sequence") or 0),
+                    str(cand.get("invoice_date") or ""),
+                    str(cand.get("finalized_at") or ""),
+                    cand_id,
+                ),
             })
             prior_unpaid_cents += remaining
 
@@ -940,7 +1120,7 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
     current_profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     current_party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (row["bill_to_party_id"],)).fetchone()
     profile = dict(current_profile) if current_profile and row["status"] == "draft" else None
-    party = dict(current_party) if current_party else None
+    party = _invoice_render_party(conn, current_party)
     invoice = dict(row)
     line_dicts = [dict(line) for line in lines]
     paid_cents = _invoice_paid_cents(conn, invoice_id)
@@ -955,6 +1135,34 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: str, *, sync_draft_deliver
         invoice.get("filing_owner_display_name_snapshot")
         or (filing.get("selected") or {}).get("display_name")
         or ""
+    )
+    if invoice.get("correction_of_invoice_id"):
+        parent = conn.execute(
+            "SELECT invoice_id, invoice_number, status FROM invoices WHERE invoice_id = ?",
+            (invoice["correction_of_invoice_id"],),
+        ).fetchone()
+        invoice["correction_parent_invoice"] = dict(parent) if parent else None
+    else:
+        invoice["correction_parent_invoice"] = None
+    replacement = conn.execute(
+        """
+        SELECT invoice_id, invoice_number, status
+        FROM invoices
+        WHERE correction_of_invoice_id = ? AND status IN ('draft', 'finalized')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (invoice_id,),
+    ).fetchone()
+    invoice["replacement_invoice"] = dict(replacement) if replacement else None
+    invoice["has_payment_history"] = _invoice_has_payment_history(conn, invoice_id)
+    invoice["correction_available"] = (
+        invoice["status"] == "finalized" and not invoice["has_payment_history"]
+    )
+    invoice["correction_block_reason"] = (
+        "This invoice cannot be corrected because payment history is attached to it."
+        if invoice["status"] == "finalized" and invoice["has_payment_history"]
+        else None
     )
     if invoice["status"] in ("finalized", "void") and invoice.get("pdf_path"):
         version = invoice.get("pdf_sha256") or invoice.get("updated_at") or invoice_id
@@ -1088,28 +1296,68 @@ def eligible_sessions(
     return result
 
 
-def invoice_ineligibility_reasons(conn: sqlite3.Connection, session: sqlite3.Row | dict[str, Any], excluding_invoice_id: str | None = None) -> list[str]:
+def invoice_ineligibility_reasons(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row | dict[str, Any],
+    excluding_invoice_id: str | None = None,
+    excluding_invoice_ids: set[str] | None = None,
+) -> list[str]:
     s = dict(session)
     reasons = []
     if s.get("review_status") != "approved": reasons.append("Session is not approved")
     count = conn.execute("SELECT COUNT(*) FROM session_participants WHERE session_id = ?", (s["id"],)).fetchone()[0]
     if not count: reasons.append("Participants are not confirmed")
     if not s.get("billing_party_id"): reasons.append("Bill-to party is not confirmed")
+    elif not conn.execute("SELECT 1 FROM billing_parties WHERE billing_party_id=? AND active=1",
+                          (s["billing_party_id"],)).fetchone():
+        reasons.append("Bill-to party is inactive or missing; confirm an active payer")
     if s.get("approved_rate_cents") is None and s.get("rate_cents_snapshot") is None: reasons.append("Approved charged amount is missing")
     amount = s.get("rate_cents_snapshot") if s.get("rate_cents_snapshot") is not None else s.get("approved_rate_cents")
     if amount is not None and int(amount) < 0: reasons.append("Approved amount cannot be negative")
     if s.get("appointment_status") == "scheduled": reasons.append("Future scheduled session is not invoice eligible")
     if s.get("billable_status") in {"excluded", "nonbillable"}: reasons.append("Session is excluded or nonbillable")
-    if normalize_payment_status(s.get("payment_status")) == "paid_at_session": reasons.append("Session was paid at time of session")
-    if s.get("appointment_status") in {"cancelled", "no_show"} and s.get("billing_treatment") != "billable":
-        reasons.append("Cancelled or no-show session requires explicit billable treatment")
+    if normalize_payment_status(s.get("payment_status")) == "paid_at_session":
+        charge_cents = s.get("rate_cents_snapshot")
+        if charge_cents is None:
+            charge_cents = s.get("approved_rate_cents")
+        paid_rows = conn.execute(
+            """
+            SELECT p.payment_id, p.billing_party_id, p.amount_cents,
+                   pa.allocation_id, pa.session_id, pa.invoice_line_item_id,
+                   pa.amount_cents AS allocation_amount_cents
+            FROM payments p
+            LEFT JOIN payment_allocations pa
+              ON pa.payment_id = p.payment_id AND pa.status = 'active'
+            WHERE p.source_type = 'paid_at_session_backfill'
+              AND p.source_session_id = ?
+              AND p.status = 'posted'
+            """,
+            (s["id"],),
+        ).fetchall()
+        valid_paid_record = (
+            len(paid_rows) == 1
+            and paid_rows[0]["allocation_id"]
+            and paid_rows[0]["billing_party_id"] == s.get("billing_party_id")
+            and charge_cents is not None
+            and int(paid_rows[0]["amount_cents"] or 0) == int(charge_cents)
+            and paid_rows[0]["session_id"] == s["id"]
+            and int(paid_rows[0]["allocation_amount_cents"] or 0) == int(charge_cents)
+        )
+        if not valid_paid_record:
+            reasons.append("Paid-at-session payment record is missing or does not match the approved session")
+    if s.get("appointment_status") in {"cancelled", "no_show", "timely_cancellation"} and s.get("billing_treatment") not in {"billable", "waived"}:
+        reasons.append("Cancelled, timely-cancellation, or no-show session requires explicit invoice treatment")
     if s.get("appointment_status") == "late_cancellation" and s.get("billing_treatment") not in {"bill_full_fee", "custom_fee", "waived"}:
         reasons.append("Late cancellation requires explicit billing treatment")
     params: list[Any] = [s["id"]]
-    invoice_filter = ""
+    excluded_ids = set(excluding_invoice_ids or set())
     if excluding_invoice_id:
-        invoice_filter = "AND i.invoice_id != ?"
-        params.append(excluding_invoice_id)
+        excluded_ids.add(excluding_invoice_id)
+    invoice_filter = ""
+    if excluded_ids:
+        placeholders = ", ".join("?" for _ in excluded_ids)
+        invoice_filter = f"AND i.invoice_id NOT IN ({placeholders})"
+        params.extend(sorted(excluded_ids))
     attached = conn.execute(
         f"""SELECT i.status FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
         WHERE li.source_session_id = ? AND i.status IN ('draft','finalized') {invoice_filter} LIMIT 1""", params
@@ -1214,11 +1462,238 @@ def create_invoice_draft(conn: sqlite3.Connection, data: dict[str, Any]) -> dict
     return result
 
 
+def start_invoice_correction(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict[str, Any]:
+    """Create an editable correction draft for an unpaid finalized invoice.
+
+    The original invoice stays finalized until the correction draft is
+    successfully finalized. This keeps abandoning a correction safe while
+    allowing the draft editor to reuse its existing correction controls.
+    """
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("A correction reason is required.")
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        if "locked" in str(error).lower():
+            raise DatabaseBusyError(
+                "Cannot start invoice correction: database is locked by another operation. "
+                "Please retry in a moment."
+            ) from error
+        raise
+
+    try:
+        original = conn.execute(
+            "SELECT * FROM invoices WHERE invoice_id = ?",
+            (invoice_id,),
+        ).fetchone()
+        if not original:
+            raise ValueError("Invoice was not found.")
+        if original["status"] != "finalized":
+            raise ValueError("Only a finalized invoice can be corrected.")
+        if _invoice_has_payment_history(conn, invoice_id):
+            raise ValueError(
+                "This invoice cannot be corrected because payment history is attached to it."
+            )
+
+        existing = conn.execute(
+            """
+            SELECT invoice_id
+            FROM invoices
+            WHERE correction_of_invoice_id = ? AND status = 'draft'
+            LIMIT 1
+            """,
+            (invoice_id,),
+        ).fetchone()
+        if existing:
+            conn.commit()
+            return get_invoice(conn, existing["invoice_id"])
+
+        draft_id = new_id()
+        now = now_iso()
+        conn.execute(
+            """
+            INSERT INTO invoices (
+              invoice_id, status, bill_to_party_id, billing_period_start,
+              billing_period_end, invoice_date, currency, adjustment_cents,
+              delivery_method, notes, filing_owner_kind, filing_owner_record_id,
+              filing_owner_person_id, filing_owner_person_code_snapshot,
+              filing_owner_display_name_snapshot, billing_month,
+              supplement_sequence, correction_of_invoice_id, correction_reason,
+              created_at, updated_at
+            ) VALUES (
+              ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                draft_id,
+                original["bill_to_party_id"],
+                original["billing_period_start"],
+                original["billing_period_end"],
+                original["invoice_date"],
+                original["currency"],
+                original["adjustment_cents"],
+                original["delivery_method"],
+                original["notes"],
+                original["filing_owner_kind"],
+                original["filing_owner_record_id"],
+                original["filing_owner_person_id"],
+                original["filing_owner_person_code_snapshot"],
+                original["filing_owner_display_name_snapshot"],
+                original["billing_month"],
+                original["supplement_sequence"],
+                invoice_id,
+                reason,
+                now,
+                now,
+            ),
+        )
+
+        line_fields = (
+            "source_session_id", "sort_order", "service_date", "participants_snapshot",
+            "service_catalog_id", "service_name_snapshot", "billing_session_type_snapshot",
+            "time_category_snapshot", "appointment_status_snapshot", "billing_treatment_snapshot",
+            "scheduled_rate_cents_snapshot", "duration_minutes", "description_snapshot",
+            "custom_service_description_snapshot", "custom_service_code_snapshot", "quantity",
+            "unit_amount_cents", "line_amount_cents",
+        )
+        placeholders = ", ".join("?" for _ in line_fields)
+        for line in invoice_line_rows(conn, invoice_id):
+            conn.execute(
+                f"""
+                INSERT INTO invoice_line_items (
+                  invoice_line_item_id, invoice_id, {', '.join(line_fields)}, created_at, updated_at
+                ) VALUES (?, ?, {placeholders}, ?, ?)
+                """,
+                (
+                    new_id(), draft_id,
+                    *[line[field] for field in line_fields],
+                    now, now,
+                ),
+            )
+        _recalculate(conn, draft_id)
+        _audit(conn, "invoice", invoice_id, "correction_started", {
+            "correction_draft_id": draft_id,
+            "reason": reason,
+        })
+        _audit(conn, "invoice", draft_id, "correction_draft_created", {
+            "correction_of_invoice_id": invoice_id,
+            "original_invoice_number": original["invoice_number"],
+            "reason": reason,
+        })
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    result = get_invoice(conn, draft_id)
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
+
+
+def calendar_source_identity_for_session(
+    conn: sqlite3.Connection,
+    session: sqlite3.Row | dict[str, Any],
+) -> str | None:
+    """Return a privacy-safe identity for a session's underlying calendar event.
+
+    A stable calendar-event identifier is preferred.  If it is unavailable,
+    use an exact canonical structural identity (title, UTC start/end, duration,
+    calendar) only when all fields are present.  Conflicting stable identifiers
+    intentionally return None so the caller can leave the case reviewable.
+    """
+
+    candidate_id = str(session["candidate_id"] or "")
+    if candidate_id:
+        aliases = conn.execute(
+            """
+            SELECT alias_type, alias_value
+            FROM candidate_identity_aliases
+            WHERE candidate_id = ?
+              AND alias_type = 'calendar_event_id'
+            """,
+            (candidate_id,),
+        ).fetchall()
+        event_ids = {str(row["alias_value"]) for row in aliases if row["alias_type"] == "calendar_event_id"}
+        if len(event_ids) == 1:
+            return "calendar_event_id:" + next(iter(event_ids))
+        if len(event_ids) > 1:
+            return None
+    if not has_complete_structural_identity(session):
+        return None
+    return "structural:" + stable_hash("|".join(canonical_structural_parts(session)))
+
+
+def equivalent_session_in_invoice(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    session: sqlite3.Row | dict[str, Any],
+) -> sqlite3.Row | None:
+    """Find a different draft line with the same confirmed source event."""
+
+    source_identity = calendar_source_identity_for_session(conn, session)
+    if not source_identity:
+        return None
+    source_session_id = str(session["id"])
+    lines = conn.execute(
+        """
+        SELECT li.invoice_line_item_id, li.source_session_id, s.*
+        FROM invoice_line_items li
+        JOIN sessions s ON s.id = li.source_session_id
+        WHERE li.invoice_id = ?
+        """,
+        (invoice_id,),
+    ).fetchall()
+    for line in lines:
+        if line["source_session_id"] == source_session_id:
+            continue
+        if calendar_source_identity_for_session(conn, line) == source_identity:
+            return line
+    return None
+
+
+def _warn_duplicate_calendar_identity(
+    conn: sqlite3.Connection,
+    *,
+    invoice_id: str,
+    session: sqlite3.Row | dict[str, Any],
+) -> None:
+    candidate_id = str(session["candidate_id"] or "")
+    if not candidate_id:
+        return
+    upsert_calendar_warning(
+        conn,
+        candidate_id=candidate_id,
+        session_id=str(session["id"]),
+        warning_code="duplicate_billing_identity_warning",
+        reason=(
+            "A session with the same confirmed calendar identity is already "
+            "in this draft invoice. The duplicate was not added."
+        ),
+        new_value=f"draft:{invoice_id}",
+    )
+
+
+def _assert_no_equivalent_session_in_invoice(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    session: sqlite3.Row | dict[str, Any],
+) -> None:
+    if equivalent_session_in_invoice(conn, invoice_id, session):
+        _warn_duplicate_calendar_identity(conn, invoice_id=invoice_id, session=session)
+        raise ValueError("A session with the same confirmed calendar identity is already included in this draft.")
+
+
 def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite3.Row | dict[str, Any], order: int) -> None:
     """Insert a single invoice line item from a session, reusing existing snapshot logic."""
+    _assert_no_equivalent_session_in_invoice(conn, invoice_id, session)
     session_id = session["id"]
     values = _line_item_snapshot_values(conn, session)
     now = now_iso()
+    line_item_id = new_id()
     conn.execute(
         """INSERT INTO invoice_line_items (
           invoice_line_item_id, invoice_id, source_session_id, sort_order, service_date,
@@ -1229,7 +1704,7 @@ def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite
           unit_amount_cents, line_amount_cents, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
         (
-            new_id(), invoice_id, session_id, order,
+            line_item_id, invoice_id, session_id, order,
             values["service_date"], values["participants_snapshot"],
             values["service_catalog_id"], values["service_name_snapshot"],
             values["billing_session_type_snapshot"], values["time_category_snapshot"],
@@ -1240,6 +1715,39 @@ def _insert_line_item(conn: sqlite3.Connection, invoice_id: str, session: sqlite
             values["line_amount_cents"], now, now,
         ),
     )
+    if normalize_payment_status(session["payment_status"]) == "paid_at_session":
+        invoice = conn.execute(
+            "SELECT bill_to_party_id FROM invoices WHERE invoice_id = ?",
+            (invoice_id,),
+        ).fetchone()
+        allocations = conn.execute(
+            """
+            SELECT pa.allocation_id, p.billing_party_id
+            FROM payment_allocations pa
+            JOIN payments p ON p.payment_id = pa.payment_id
+            WHERE pa.session_id = ?
+              AND pa.status = 'active'
+              AND pa.invoice_line_item_id IS NULL
+              AND p.status = 'posted'
+              AND p.source_type = 'paid_at_session_backfill'
+            """,
+            (session_id,),
+        ).fetchall()
+        if len(allocations) != 1 or allocations[0]["billing_party_id"] != invoice["bill_to_party_id"]:
+            raise ValueError(
+                "Paid-at-session payment could not be linked to the invoice because its billing record is inconsistent."
+            )
+        conn.execute(
+            "UPDATE payment_allocations SET invoice_line_item_id = ?, updated_at = ? WHERE allocation_id = ?",
+            (line_item_id, now, allocations[0]["allocation_id"]),
+        )
+        _audit(
+            conn,
+            "payment_allocation",
+            allocations[0]["allocation_id"],
+            "paid_at_session_allocation_linked_to_invoice",
+            {"session_id": session_id, "invoice_line_item_id": line_item_id},
+        )
 
 
 def _line_item_snapshot_values(conn: sqlite3.Connection, session: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -1288,8 +1796,123 @@ def _refresh_draft_line_from_session(
     return True
 
 
+def refresh_correction_draft_lines_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+) -> list[str]:
+    """Refresh replacement-draft lines after their session is re-approved.
+
+    Correction drafts intentionally are not part of routine monthly staging.
+    This explicit helper updates only an already-linked open replacement draft;
+    it never changes the finalized parent invoice or its frozen PDF/snapshots.
+    The caller owns the transaction.
+    """
+    session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if not session or session["review_status"] != "approved":
+        return []
+    rows = conn.execute(
+        """
+        SELECT li.*, i.invoice_id
+        FROM invoice_line_items li
+        JOIN invoices i ON i.invoice_id = li.invoice_id
+        JOIN invoices parent ON parent.invoice_id = i.correction_of_invoice_id
+        WHERE li.source_session_id = ?
+          AND i.status = 'draft'
+          AND i.correction_of_invoice_id IS NOT NULL
+          AND parent.status = 'finalized'
+        ORDER BY i.invoice_id, li.sort_order, li.invoice_line_item_id
+        """,
+        (session_id,),
+    ).fetchall()
+    invoice_ids: list[str] = []
+    for line in rows:
+        invoice_id = line["invoice_id"]
+        if invoice_id not in invoice_ids:
+            invoice_ids.append(invoice_id)
+        _refresh_draft_line_from_session(conn, line, session)
+    for invoice_id in invoice_ids:
+        _recalculate(conn, invoice_id)
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ? AND status = 'draft'",
+            (now_iso(), invoice_id),
+        )
+        _audit(
+            conn,
+            "invoice",
+            invoice_id,
+            "correction_draft_line_refreshed_after_approval",
+            {"source_session_id": session_id},
+        )
+    return invoice_ids
+
+
+def remove_correction_draft_lines_for_session(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    reason: str,
+) -> list[str]:
+    """Remove only replacement-draft lines after an excluded correction session.
+
+    Routine drafts are deliberately excluded. This prevents an excluded
+    appointment from remaining billable in the replacement while leaving the
+    historical parent invoice fully intact. The caller owns the transaction.
+    """
+    rows = conn.execute(
+        """
+        SELECT li.invoice_line_item_id, i.invoice_id, i.correction_of_invoice_id
+        FROM invoice_line_items li
+        JOIN invoices i ON i.invoice_id = li.invoice_id
+        JOIN invoices parent ON parent.invoice_id = i.correction_of_invoice_id
+        WHERE li.source_session_id = ?
+          AND i.status = 'draft'
+          AND i.correction_of_invoice_id IS NOT NULL
+          AND parent.status = 'finalized'
+        ORDER BY i.invoice_id, li.sort_order, li.invoice_line_item_id
+        """,
+        (session_id,),
+    ).fetchall()
+    parent_ids = sorted({row["correction_of_invoice_id"] for row in rows if row["correction_of_invoice_id"]})
+    for parent_id in parent_ids:
+        if _invoice_has_payment_history(conn, parent_id):
+            raise ValueError(
+                "This correction draft cannot be edited because payment history is attached to its original invoice."
+            )
+    invoice_ids: list[str] = []
+    for row in rows:
+        invoice_id = row["invoice_id"]
+        if invoice_id not in invoice_ids:
+            invoice_ids.append(invoice_id)
+        conn.execute(
+            "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ? AND invoice_id = ?",
+            (row["invoice_line_item_id"], invoice_id),
+        )
+    for invoice_id in invoice_ids:
+        _recalculate(conn, invoice_id)
+        conn.execute(
+            "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ? AND status = 'draft'",
+            (now_iso(), invoice_id),
+        )
+        _audit(
+            conn,
+            "invoice",
+            invoice_id,
+            "correction_draft_line_removed_for_excluded_session",
+            {"source_session_id": session_id, "reason": reason},
+        )
+    return invoice_ids
+
+
 def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids: list[str]) -> dict[str, Any]:
     invoice = _draft(conn, invoice_id)
+    # Detect same-event selections before opening the write transaction so the
+    # warning survives the rejected manual add and appears in normal Review.
+    for session_id in session_ids:
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if session and equivalent_session_in_invoice(conn, invoice_id, session):
+            _warn_duplicate_calendar_identity(conn, invoice_id=invoice_id, session=session)
+            conn.commit()
+            raise ValueError("A session with the same confirmed calendar identity is already included in this draft.")
     conn.execute("BEGIN IMMEDIATE")
     try:
         order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?", (invoice_id,)).fetchone()[0]
@@ -1299,7 +1922,11 @@ def add_sessions_to_draft(conn: sqlite3.Connection, invoice_id: str, session_ids
             session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             if not session: raise ValueError("Source session was not found.")
             if session["billing_party_id"] != invoice["bill_to_party_id"]: raise ValueError("All invoice sessions must use the selected bill-to party.")
-            reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
+            reasons = invoice_ineligibility_reasons(
+                conn,
+                session,
+                excluding_invoice_ids=_invoice_excluded_session_invoice_ids(conn, invoice_id),
+            )
             if reasons: raise ValueError("Session is not invoice eligible: " + "; ".join(reasons))
             if session["session_date"] < invoice["billing_period_start"] or session["session_date"] > invoice["billing_period_end"]:
                 raise ValueError("Session is outside the invoice billing period.")
@@ -1477,15 +2104,21 @@ def _session_month(session_date: str | None) -> str | None:
         return None
 
 
-def _consolidate_duplicate_payer_drafts(conn: sqlite3.Connection) -> int:
-    """Merge draft invoices for duplicate person-linked billing parties.
+def _consolidate_duplicate_payer_drafts(
+    conn: sqlite3.Connection,
+    *,
+    skipped: list[dict[str, Any]] | None = None,
+) -> int:
+    """Merge safe draft invoices for duplicate person-linked billing parties.
 
-    For each person with multiple active person-linked billing parties, find
-    draft invoices for the same billing_month and move lines from redundant
-    drafts to the canonical draft. Never touches finalized or void invoices.
-    Returns the number of redundant drafts consolidated.
+    This helper is a transaction boundary immediately before monthly staging's
+    per-party transactions.  Payment-linked drafts are left in place and
+    reported to the caller because changing their payer would detach financial
+    history from the payer that received it.  The helper returns the number of
+    drafts actually consolidated; optional ``skipped`` receives reviewable
+    payment-protection outcomes.
     """
-    # Find persons with multiple active person-linked billing parties
+    # Find persons with multiple active person-linked billing parties.
     dup_persons = conn.execute(
         """
         SELECT bp.person_id, COUNT(*) AS bp_count
@@ -1496,81 +2129,166 @@ def _consolidate_duplicate_payer_drafts(conn: sqlite3.Connection) -> int:
         """
     ).fetchall()
 
-    consolidated = 0
-    for row in dup_persons:
-        person_id = row["person_id"]
-        # Get all active billing parties for this person, ordered by account reference count
-        parties = conn.execute(
-            """
-            SELECT bp.*,
-              (SELECT COUNT(*) FROM client_accounts ca
-               WHERE ca.default_billing_party_id = bp.billing_party_id AND ca.active = 1) AS acct_count
-            FROM billing_parties bp
-            WHERE bp.active = 1 AND bp.person_id = ? AND bp.billing_party_type = 'person'
-            ORDER BY acct_count DESC, bp.updated_at DESC
-            """,
-            (person_id,),
-        ).fetchall()
-
-        canonical_id = parties[0]["billing_party_id"]
-        redundant_ids = [p["billing_party_id"] for p in parties[1:]]
-
-        for r_id in redundant_ids:
-            # Find draft invoices for the redundant billing party
-            r_drafts = conn.execute(
-                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND status = 'draft'",
-                (r_id,),
-            ).fetchall()
-            for r_draft in r_drafts:
-                bm = r_draft["billing_month"]
-                if not bm:
-                    continue
-                # Find or create canonical draft for same month
-                canonical_draft = conn.execute(
-                    "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
-                    (canonical_id, bm),
-                ).fetchone()
-                if not canonical_draft:
-                    # Repoint the redundant draft to canonical
-                    conn.execute(
-                        "UPDATE invoices SET bill_to_party_id = ?, updated_at = ? WHERE invoice_id = ?",
-                        (canonical_id, now_iso(), r_draft["invoice_id"]),
-                    )
-                    continue
-                # Move lines from redundant draft to canonical draft
-                r_lines = conn.execute(
-                    "SELECT * FROM invoice_line_items WHERE invoice_id = ?",
-                    (r_draft["invoice_id"],),
-                ).fetchall()
-                for line in r_lines:
-                    already = conn.execute(
-                        "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
-                        (canonical_draft["invoice_id"], line["source_session_id"]),
-                    ).fetchone()
-                    if not already:
-                        order = conn.execute(
-                            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
-                            (canonical_draft["invoice_id"],),
-                        ).fetchone()[0]
-                        conn.execute(
-                            "UPDATE invoice_line_items SET invoice_id = ?, sort_order = ? WHERE invoice_line_item_id = ?",
-                            (canonical_draft["invoice_id"], order, line["invoice_line_item_id"]),
-                        )
-                # Recalculate canonical draft totals
-                _recalculate(conn, canonical_draft["invoice_id"])
-                conn.execute(
-                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
-                    (now_iso(), canonical_draft["invoice_id"]),
-                )
-                # Delete the now-empty redundant draft
-                conn.execute("DELETE FROM invoices WHERE invoice_id = ?", (r_draft["invoice_id"],))
-                _audit(conn, "invoice", r_draft["invoice_id"], "consolidated_into_canonical_draft",
-                       {"canonical_invoice_id": canonical_draft["invoice_id"], "billing_month": bm})
-                consolidated += 1
-
-    if consolidated > 0:
+    # Staging must be able to open its own BEGIN IMMEDIATE transaction below.
+    # Close any setup transaction before returning as well as before starting
+    # consolidation, including the repoint-only case that used to leak it.
+    if conn.in_transaction:
         conn.commit()
+    if not dup_persons:
+        return 0
 
+    conn.execute("BEGIN IMMEDIATE")
+    consolidated = 0
+    pending_skips: list[dict[str, Any]] = []
+    try:
+        for row in dup_persons:
+            person_id = row["person_id"]
+            # Get all active billing parties for this person, ordered by account reference count.
+            parties = conn.execute(
+                """
+                SELECT bp.*,
+                  (SELECT COUNT(*) FROM client_accounts ca
+                   WHERE ca.default_billing_party_id = bp.billing_party_id AND ca.active = 1) AS acct_count
+                FROM billing_parties bp
+                WHERE bp.active = 1 AND bp.person_id = ? AND bp.billing_party_type = 'person'
+                ORDER BY acct_count DESC, bp.updated_at DESC
+                """,
+                (person_id,),
+            ).fetchall()
+
+            canonical_id = parties[0]["billing_party_id"]
+            redundant_ids = [p["billing_party_id"] for p in parties[1:]]
+
+            for r_id in redundant_ids:
+                # Find draft invoices for the redundant billing party.
+                r_drafts = conn.execute(
+                    "SELECT * FROM invoices WHERE bill_to_party_id = ? AND status = 'draft' "
+                    "AND correction_of_invoice_id IS NULL",
+                    (r_id,),
+                ).fetchall()
+                for r_draft in r_drafts:
+                    bm = r_draft["billing_month"]
+                    if not bm:
+                        continue
+
+                    # A source draft is an atomic unit.  Do not move any of its
+                    # lines when one line has payment history, because doing so
+                    # would transfer the payment-linked line to another payer
+                    # or make its invoice impossible to delete safely.
+                    protected_lines = _payment_linked_draft_lines(conn, r_draft["invoice_id"])
+                    if protected_lines:
+                        pending_skips.append(
+                            {
+                                "invoice_id": r_draft["invoice_id"],
+                                "billing_party_id": r_id,
+                                "billing_month": bm,
+                                "canonical_billing_party_id": canonical_id,
+                                "source_session_ids": [
+                                    line["source_session_id"]
+                                    for line in protected_lines
+                                    if line["source_session_id"]
+                                ],
+                                "reason": PAYMENT_LINKED_DRAFT_SKIP_REASON,
+                            }
+                        )
+                        continue
+
+                    # Find the canonical draft for the same month.
+                    canonical_draft = conn.execute(
+                        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? "
+                        "AND status = 'draft' AND correction_of_invoice_id IS NULL",
+                        (canonical_id, bm),
+                    ).fetchone()
+                    if not canonical_draft:
+                        # Repointing an unlinked draft is safe, but still counts
+                        # as consolidation and is audited.
+                        conn.execute(
+                            "UPDATE invoices SET bill_to_party_id = ?, updated_at = ? WHERE invoice_id = ?",
+                            (canonical_id, now_iso(), r_draft["invoice_id"]),
+                        )
+                        _audit(
+                            conn,
+                            "invoice",
+                            r_draft["invoice_id"],
+                            "duplicate_payer_draft_repointed_for_staging",
+                            {
+                                "old_billing_party_id": r_id,
+                                "canonical_billing_party_id": canonical_id,
+                                "billing_month": bm,
+                            },
+                        )
+                        consolidated += 1
+                        continue
+
+                    # Move unlinked lines from the redundant draft to the
+                    # canonical draft.  Duplicate source-session lines are
+                    # discarded from the redundant draft before its invoice is
+                    # deleted; payment-linked duplicates were preflighted above.
+                    r_lines = conn.execute(
+                        "SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY sort_order",
+                        (r_draft["invoice_id"],),
+                    ).fetchall()
+                    for line in r_lines:
+                        already = conn.execute(
+                            "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
+                            (canonical_draft["invoice_id"], line["source_session_id"]),
+                        ).fetchone()
+                        session = conn.execute(
+                            "SELECT * FROM sessions WHERE id = ?",
+                            (line["source_session_id"],),
+                        ).fetchone()
+                        if already:
+                            conn.execute(
+                                "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
+                                (line["invoice_line_item_id"],),
+                            )
+                        elif session and equivalent_session_in_invoice(
+                            conn,
+                            canonical_draft["invoice_id"],
+                            session,
+                        ):
+                            _warn_duplicate_calendar_identity(
+                                conn,
+                                invoice_id=canonical_draft["invoice_id"],
+                                session=session,
+                            )
+                            conn.execute(
+                                "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
+                                (line["invoice_line_item_id"],),
+                            )
+                        else:
+                            order = conn.execute(
+                                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
+                                (canonical_draft["invoice_id"],),
+                            ).fetchone()[0]
+                            conn.execute(
+                                "UPDATE invoice_line_items SET invoice_id = ?, sort_order = ? WHERE invoice_line_item_id = ?",
+                                (canonical_draft["invoice_id"], order, line["invoice_line_item_id"]),
+                            )
+                    # Recalculate canonical draft totals.
+                    _recalculate(conn, canonical_draft["invoice_id"])
+                    conn.execute(
+                        "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                        (now_iso(), canonical_draft["invoice_id"]),
+                    )
+                    # Delete the now-empty redundant draft.
+                    conn.execute("DELETE FROM invoices WHERE invoice_id = ?", (r_draft["invoice_id"],))
+                    _audit(
+                        conn,
+                        "invoice",
+                        r_draft["invoice_id"],
+                        "consolidated_into_canonical_draft",
+                        {"canonical_invoice_id": canonical_draft["invoice_id"], "billing_month": bm},
+                    )
+                    consolidated += 1
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    if skipped is not None:
+        skipped.extend(pending_skips)
     return consolidated
 
 
@@ -1586,7 +2304,8 @@ def _find_or_create_monthly_draft(
     Returns (draft_row, created_bool).
     """
     draft = conn.execute(
-        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+        "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? "
+        "AND status = 'draft' AND correction_of_invoice_id IS NULL",
         (billing_party_id, billing_month),
     ).fetchone()
     if draft:
@@ -1632,6 +2351,48 @@ def _find_or_create_monthly_draft(
     return conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone(), True
 
 
+def repair_unbilled_inactive_payers(conn, session_ids=None):
+    """Repair only unbilled approvals with one established active replacement.
+
+    Every invoice/payment-linked record stays untouched, including void history.
+    A replacement relationship must already have existed at approval time.
+    """
+    from .billing_resolution import replacement_for_inactive_payer
+    rows = conn.execute("""SELECT s.* FROM sessions s
+        JOIN billing_parties bp ON bp.billing_party_id=s.billing_party_id
+        WHERE s.review_status='approved' AND bp.active=0
+          AND s.payment_status!='paid_at_session'
+          AND s.billable_status NOT IN ('excluded','nonbillable')
+          AND NOT EXISTS(SELECT 1 FROM invoice_line_items li WHERE li.source_session_id=s.id)
+          AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.source_session_id=s.id)
+          AND NOT EXISTS(SELECT 1 FROM payment_allocations pa WHERE pa.session_id=s.id)
+    """).fetchall()
+    allowed = set(session_ids) if session_ids is not None else None
+    repairs = []
+    for session in rows:
+        if allowed is not None and session["id"] not in allowed:
+            continue
+        approval = conn.execute("SELECT created_at FROM audit_log WHERE entity_id=? AND action='approved' ORDER BY created_at DESC LIMIT 1",
+                                (session["id"],)).fetchone()
+        if not approval:
+            continue
+        participants = [dict(p) for p in conn.execute("SELECT person_id FROM session_participants WHERE session_id=?", (session["id"],))]
+        replacement = replacement_for_inactive_payer(conn, session, participants, configured_before=approval[0])
+        if replacement:
+            repairs.append((session, replacement))
+    if repairs:
+        _backup_operational_database_before(conn, "repair_inactive_unbilled_payers")
+        with conn:
+            for session, replacement in repairs:
+                conn.execute("UPDATE sessions SET account_id=?, billing_party_id=?, updated_at=? WHERE id=?",
+                    (replacement["account_id"], replacement["billing_party_id"], now_iso(), session["id"]))
+                _audit(conn, "session", session["id"], "unbilled_inactive_payer_repaired", {
+                    "old_account_id": session["account_id"], "old_billing_party_id": session["billing_party_id"],
+                    **replacement, "reason": "Unique active relationship established before approval",
+                })
+    return len(repairs)
+
+
 def stage_approved_sessions_to_monthly_drafts(
     conn: sqlite3.Connection,
     session_ids: list[str] | None = None,
@@ -1649,6 +2410,8 @@ def stage_approved_sessions_to_monthly_drafts(
     """
     init_db(conn)
 
+    repaired_payers = repair_unbilled_inactive_payers(conn, session_ids)
+
     result: dict[str, Any] = {
         "drafts_created": 0,
         "drafts_reused": 0,
@@ -1660,10 +2423,26 @@ def stage_approved_sessions_to_monthly_drafts(
         "sessions_skipped": [],
         "errors": [],
         "drafts_consolidated": 0,
+        "drafts_consolidation_skipped": [],
+        "payer_links_repaired": repaired_payers,
     }
 
     # --- Step 0: Consolidate drafts for duplicate person-linked billing parties ---
-    result["drafts_consolidated"] = _consolidate_duplicate_payer_drafts(conn)
+    consolidation_skips: list[dict[str, Any]] = []
+    result["drafts_consolidated"] = _consolidate_duplicate_payer_drafts(
+        conn,
+        skipped=consolidation_skips,
+    )
+    result["drafts_consolidation_skipped"] = consolidation_skips
+    for skip in consolidation_skips:
+        result["errors"].append(
+            {
+                "billing_party_id": skip["billing_party_id"],
+                "billing_month": skip["billing_month"],
+                "error": skip["reason"],
+                "outcome": "skipped",
+            }
+        )
 
     # --- Step 1: Determine the set of (party, month) groups to process ---
 
@@ -1696,7 +2475,8 @@ def stage_approved_sessions_to_monthly_drafts(
 
     # From existing monthly drafts (to check for stale lines)
     drafts = conn.execute(
-        "SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL"
+        "SELECT * FROM invoices WHERE status = 'draft' AND billing_month IS NOT NULL "
+        "AND correction_of_invoice_id IS NULL"
     ).fetchall()
     for d in drafts:
         groups[(d["bill_to_party_id"], d["billing_month"])] = None
@@ -1717,7 +2497,8 @@ def stage_approved_sessions_to_monthly_drafts(
         try:
             # Look for existing draft without creating one yet
             existing_draft = conn.execute(
-                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? AND status = 'draft'",
+                "SELECT * FROM invoices WHERE bill_to_party_id = ? AND billing_month = ? "
+                "AND status = 'draft' AND correction_of_invoice_id IS NULL",
                 (party_id, billing_month),
             ).fetchone()
 
@@ -1738,6 +2519,12 @@ def stage_approved_sessions_to_monthly_drafts(
                         "SELECT * FROM sessions WHERE id = ?", (line["source_session_id"],)
                     ).fetchone()
                     if not session:
+                        if _invoice_line_has_payment_history(conn, line):
+                            result["sessions_skipped"].append({
+                                "session_id": line["source_session_id"],
+                                "reasons": [PAYMENT_LINKED_DRAFT_SKIP_REASON],
+                            })
+                            continue
                         conn.execute(
                             "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
                             (line["invoice_line_item_id"],),
@@ -1752,6 +2539,12 @@ def stage_approved_sessions_to_monthly_drafts(
                     is_wrong_month = session_month != billing_month
 
                     if is_wrong_party or is_wrong_month:
+                        if _invoice_line_has_payment_history(conn, line):
+                            result["sessions_skipped"].append({
+                                "session_id": session["id"],
+                                "reasons": [PAYMENT_LINKED_DRAFT_SKIP_REASON],
+                            })
+                            continue
                         conn.execute(
                             "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
                             (line["invoice_line_item_id"],),
@@ -1777,7 +2570,17 @@ def stage_approved_sessions_to_monthly_drafts(
                                 "SELECT 1 FROM invoice_line_items WHERE invoice_id = ? AND source_session_id = ?",
                                 (target_draft["invoice_id"], session["id"]),
                             ).fetchone()
-                            if not already:
+                            if not already and equivalent_session_in_invoice(conn, target_draft["invoice_id"], session):
+                                _warn_duplicate_calendar_identity(
+                                    conn,
+                                    invoice_id=target_draft["invoice_id"],
+                                    session=session,
+                                )
+                                result["sessions_skipped"].append({
+                                    "session_id": session["id"],
+                                    "reasons": ["Same confirmed calendar event is already staged in the target draft."],
+                                })
+                            elif not already:
                                 order = conn.execute(
                                     "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
                                     (target_draft["invoice_id"],),
@@ -1788,10 +2591,21 @@ def stage_approved_sessions_to_monthly_drafts(
                                     "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
                                     (now_iso(), target_draft["invoice_id"]),
                                 )
-                            result["sessions_moved"] += 1
+                                result["sessions_moved"] += 1
                     else:
                         reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=draft_id)
                         if reasons:
+                            if "Bill-to party is inactive or missing; confirm an active payer" in reasons:
+                                # A retired payer needs an explicit billing correction;
+                                # preserve an existing draft line while reporting it.
+                                result["sessions_skipped"].append({"session_id": session["id"], "reasons": reasons})
+                                continue
+                            if _invoice_line_has_payment_history(conn, line):
+                                result["sessions_skipped"].append({
+                                    "session_id": session["id"],
+                                    "reasons": [PAYMENT_LINKED_DRAFT_SKIP_REASON],
+                                })
+                                continue
                             conn.execute(
                                 "DELETE FROM invoice_line_items WHERE invoice_line_item_id = ?",
                                 (line["invoice_line_item_id"],),
@@ -1865,18 +2679,37 @@ def stage_approved_sessions_to_monthly_drafts(
                         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM invoice_line_items WHERE invoice_id = ?",
                         (draft_id,),
                     ).fetchone()[0]
+                    if equivalent_session_in_invoice(conn, draft_id, session):
+                        _warn_duplicate_calendar_identity(conn, invoice_id=draft_id, session=session)
+                        result["sessions_skipped"].append({
+                            "session_id": session["id"],
+                            "reasons": ["Same confirmed calendar event is already staged in this draft."],
+                        })
+                        continue
                     _insert_line_item(conn, draft_id, session, order)
                     result["sessions_staged"] += 1
                     draft_changed = True
 
             if draft_id and draft_changed:
-                _recalculate(conn, draft_id)
-                conn.execute(
-                    "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
-                    (now_iso(), draft_id),
-                )
-                _audit(conn, "invoice", draft_id, "staging_reconciled",
-                       {"billing_month": billing_month})
+                remaining_lines = conn.execute(
+                    "SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = ?",
+                    (draft_id,),
+                ).fetchone()[0]
+                if remaining_lines == 0:
+                    # A paid-at-session or otherwise ineligible session can
+                    # remove the final draft line.  Keep its payment/receipt
+                    # history, but do not leave a misleading $0 invoice.
+                    conn.execute("DELETE FROM invoices WHERE invoice_id = ? AND status = 'draft'", (draft_id,))
+                    _audit(conn, "invoice", draft_id, "empty_draft_removed_by_staging",
+                           {"billing_month": billing_month})
+                else:
+                    _recalculate(conn, draft_id)
+                    conn.execute(
+                        "UPDATE invoices SET revision = revision + 1, updated_at = ? WHERE invoice_id = ?",
+                        (now_iso(), draft_id),
+                    )
+                    _audit(conn, "invoice", draft_id, "staging_reconciled",
+                           {"billing_month": billing_month})
 
             conn.commit()
         except Exception as error:
@@ -1926,30 +2759,21 @@ def validate_invoice_readiness(
     if not lines:
         errors.append({"field": "lines", "message": "Add at least one eligible session before finalizing."})
 
-    # 3. Valid positive line amounts (waived late cancellation is valid at $0.00)
+    # 3. Valid positive line amounts (a waived cancellation is valid at $0.00)
     for line in lines:
         amount = line.get("line_amount_cents")
-        is_waived_late_cancel = (
-            line.get("appointment_status_snapshot") == "late_cancellation"
+        is_waived_cancellation = (
+            line.get("appointment_status_snapshot")
+            in {"late_cancellation", "cancelled", "no_show", "timely_cancellation"}
             and line.get("billing_treatment_snapshot") == "waived"
         )
-        if amount is None or int(amount) < 0 or (int(amount) == 0 and not is_waived_late_cancel):
+        if amount is None or int(amount) < 0 or (int(amount) == 0 and not is_waived_cancellation):
             errors.append({
                 "field": "line_amount",
                 "message": f"Line for {line['service_date']} has an invalid or non-positive amount.",
             })
 
-    # 4. Valid invoice date
-    inv_date = invoice.get("invoice_date")
-    if not inv_date or not str(inv_date).strip():
-        errors.append({"field": "invoice_date", "message": "Invoice date is missing."})
-    else:
-        try:
-            date.fromisoformat(str(inv_date)[:10])
-        except (ValueError, TypeError):
-            errors.append({"field": "invoice_date", "message": "Invoice date is not a valid date."})
-
-    # 5. Active business profile
+    # 4. Active business profile
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     if not profile:
         errors.append({"field": "business_profile", "message": "Configure an active business profile before finalizing."})
@@ -1986,27 +2810,12 @@ def validate_invoice_readiness(
         if not _present_text(profile["zelle_recipient"]):
             errors.append({"field": "zelle_recipient", "message": "Invoice Settings must include a Zelle email or mobile number before finalizing."})
 
-    # 8. Valid, unique invoice number generation
-    if profile and inv_date:
-        try:
-            year = int(str(inv_date)[:4])
-            pattern = profile["invoice_number_format"] or "YYYY-NNNN"
-            if "YYYY" not in pattern or "NNNN" not in pattern:
-                errors.append({"field": "invoice_number", "message": "Invoice number format is invalid."})
-            else:
-                seq_row = conn.execute(
-                    "SELECT last_value FROM invoice_sequences WHERE sequence_year = ?", (year,)
-                ).fetchone()
-                next_val = (seq_row["last_value"] + 1) if seq_row else 1
-                candidate_number = pattern.replace("YYYY", str(year)).replace("NNNN", f"{next_val:04d}")
-                existing = conn.execute(
-                    "SELECT 1 FROM invoices WHERE invoice_number = ? AND invoice_id != ?",
-                    (candidate_number, invoice_id),
-                ).fetchone()
-                if existing:
-                    errors.append({"field": "invoice_number", "message": "Generated invoice number conflicts with an existing invoice."})
-        except (ValueError, TypeError):
-            errors.append({"field": "invoice_number", "message": "Cannot generate a valid invoice number."})
+    # 8. Valid invoice number format. The finalization transaction derives the
+    # year from its generated invoice date and allocates the next sequence.
+    if profile:
+        pattern = profile["invoice_number_format"] or "YYYY-NNNN"
+        if "YYYY" not in pattern or "NNNN" not in pattern:
+            errors.append({"field": "invoice_number", "message": "Invoice number format is invalid."})
 
     # 9. Any included session is no longer invoice-eligible
     for line in lines:
@@ -2014,7 +2823,11 @@ def validate_invoice_readiness(
         if not session:
             errors.append({"field": "session", "message": f"Source session for {line['service_date']} is missing."})
         else:
-            reasons = invoice_ineligibility_reasons(conn, session, excluding_invoice_id=invoice_id)
+            reasons = invoice_ineligibility_reasons(
+                conn,
+                session,
+                excluding_invoice_ids=_invoice_excluded_session_invoice_ids(conn, invoice_id),
+            )
             if reasons:
                 errors.append({
                     "field": "session",
@@ -2109,24 +2922,21 @@ def preview_finalization(conn: sqlite3.Connection, invoice_id: str, *, data: dic
     )
     profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
     party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
-    insurance_payload = None
-    if data and data.get("insurance_coding_included"):
-        insurance_payload = {
-            "insurance_coding_included": True,
-            "insurance_diagnosis_code": data.get("insurance_diagnosis_code") or "",
-        }
+    render_party = _invoice_render_party(conn, party)
+    finalization_payload = dict(data or {})
     return {
         "invoice": dict(invoice),
         "lines": [dict(line) for line in lines],
         "business_profile": dict(profile) if profile else None,
-        "billing_party": dict(party) if party else None,
+        "billing_party": render_party,
         "filing_owner": resolve_invoice_filing_owner(conn, invoice_id),
         "render_model": build_invoice_render_model(
             dict(invoice),
             [dict(line) for line in lines],
             business_profile=dict(profile) if profile else None,
-            billing_party=dict(party) if party else None,
-            insurance_coding_payload=insurance_payload,
+            billing_party=render_party,
+            account_summary=(result.get("render_model") or {}).get("account_summary"),
+            insurance_coding_payload=finalization_payload,
         ),
         "preview_revision": invoice["revision"],
         "readiness": readiness,
@@ -2139,7 +2949,8 @@ def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> lis
         f"""
         SELECT li.invoice_line_item_id, li.service_date, li.participants_snapshot,
                li.duration_minutes, li.line_amount_cents, li.source_session_id,
-               s.start_at, s.end_at, s.candidate_id
+               s.start_at, s.end_at, s.candidate_id, s.raw_calendar_title,
+               s.calendar_name
         FROM invoice_line_items li
         LEFT JOIN sessions s ON s.id = li.source_session_id
         WHERE li.invoice_id = ?
@@ -2151,12 +2962,27 @@ def duplicate_billing_warnings(conn: sqlite3.Connection, invoice_id: str) -> lis
     for left, right in combinations([dict(row) for row in rows], 2):
         if left.get("service_date") != right.get("service_date"):
             continue
-        same_start = bool(left.get("start_at") and right.get("start_at") and left["start_at"] == right["start_at"])
+        left_session = next((row for row in rows if row["source_session_id"] == left.get("source_session_id")), None)
+        right_session = next((row for row in rows if row["source_session_id"] == right.get("source_session_id")), None)
+        same_source_event = bool(
+            left_session
+            and right_session
+            and calendar_source_identity_for_session(conn, left_session)
+            and calendar_source_identity_for_session(conn, left_session)
+            == calendar_source_identity_for_session(conn, right_session)
+        )
+        same_start = bool(
+            left.get("start_at")
+            and right.get("start_at")
+            and canonical_datetime(left["start_at"]) == canonical_datetime(right["start_at"])
+        )
         overlapping = _line_times_overlap(left, right)
         matching = _substantially_matching_lines(left, right)
-        if not (same_start or overlapping or matching):
+        if not (same_source_event or same_start or overlapping or matching):
             continue
         reason_parts = []
+        if same_source_event:
+            reason_parts.append("same confirmed calendar event")
         if same_start:
             reason_parts.append("same start time")
         elif overlapping:
@@ -2226,7 +3052,16 @@ def _time_label(start_at: Any, end_at: Any) -> str:
     return start_label or end_label
 
 
-def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revision: int | None = None, pdf_root: str | Path | None = None, insurance_coding_included: bool = False, insurance_diagnosis_code: str = "") -> dict[str, Any]:
+def finalize_invoice(
+    conn: sqlite3.Connection,
+    invoice_id: str,
+    *,
+    expected_revision: int | None = None,
+    pdf_root: str | Path | None = None,
+    insurance_coding_included: bool = False,
+    insurance_diagnosis_code: str = "",
+    cancellation_policy_included: bool = False,
+) -> dict[str, Any]:
     existing = conn.execute("SELECT status, pdf_path FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
     if not existing:
         raise ValueError("Invoice was not found.")
@@ -2253,11 +3088,24 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         insurance_payload = {
             "insurance_coding_included": insurance_coding_included,
             "insurance_diagnosis_code": insurance_diagnosis_code,
+            "cancellation_policy_included": cancellation_policy_included,
         }
         readiness = validate_invoice_readiness(conn, invoice_id, expected_revision=expected_revision, insurance_coding_payload=insurance_payload)
         if not readiness["ready"]:
             raise ValueError("; ".join(e["message"] for e in readiness["errors"]))
         invoice = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        correction_parent = None
+        if invoice["correction_of_invoice_id"]:
+            correction_parent = conn.execute(
+                "SELECT * FROM invoices WHERE invoice_id = ?",
+                (invoice["correction_of_invoice_id"],),
+            ).fetchone()
+            if not correction_parent or correction_parent["status"] != "finalized":
+                raise ValueError("The original invoice is no longer available for correction.")
+            if _invoice_has_payment_history(conn, correction_parent["invoice_id"]):
+                raise ValueError(
+                    "This invoice cannot be corrected because payment history is attached to it."
+                )
         lines = invoice_line_rows(conn, invoice_id)
         profile = conn.execute("SELECT * FROM business_profile WHERE active = 1 LIMIT 1").fetchone()
         party = conn.execute("SELECT * FROM billing_parties WHERE billing_party_id = ?", (invoice["bill_to_party_id"],)).fetchone()
@@ -2265,11 +3113,13 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         filing_owner = filing.get("selected")
         if not filing_owner:
             raise ValueError(filing.get("message") or "Choose which client this invoice should be filed under.")
-        number = _next_invoice_number(conn, int(str(invoice["invoice_date"])[:4]), profile["invoice_number_format"])
         now = now_iso()
+        invoice_date = _invoice_date_from_finalized_at(now)
+        number = _next_invoice_number(conn, int(invoice_date[:4]), profile["invoice_number_format"])
         snapshots = {
             "invoice_number": number,
-            "bill_to_name_snapshot": party["billing_name"],
+            "invoice_date": invoice_date,
+            "bill_to_name_snapshot": _billing_party_invoice_name(conn, party),
             "bill_to_email_snapshot": party["billing_email"],
             "bill_to_phone_snapshot": party["billing_phone"],
             "bill_to_address_snapshot": _address(party, "billing_"),
@@ -2297,10 +3147,33 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
             "insurance_ein_snapshot": _present_text(profile["insurance_ein"]) if insurance_coding_included else None,
             "insurance_npi_snapshot": _present_text(profile["insurance_npi"]) if insurance_coding_included else None,
             "insurance_sw_snapshot": _present_text(profile["insurance_sw"]) if insurance_coding_included else None,
+            "cancellation_policy_included": 1 if cancellation_policy_included else 0,
+            "cancellation_policy_text_snapshot": (
+                CANCELLATION_POLICY_TEXT if cancellation_policy_included else None
+            ),
             "status": "finalized", "finalized_at": now, "updated_at": now,
         }
         conn.execute(f"UPDATE invoices SET {', '.join(f'{k} = ?' for k in snapshots)} WHERE invoice_id = ?", (*snapshots.values(), invoice_id))
         _recalculate(conn, invoice_id)
+
+        if correction_parent:
+            correction_reason = str(invoice["correction_reason"] or "Invoice correction").strip()
+            replacement_reason = f"Corrected by replacement invoice {number}: {correction_reason}"
+            cursor = conn.execute(
+                """
+                UPDATE invoices
+                SET status = 'void', void_reason = ?, voided_at = ?, updated_at = ?
+                WHERE invoice_id = ? AND status = 'finalized'
+                """,
+                (replacement_reason, now, now, correction_parent["invoice_id"]),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("The original invoice changed before correction could be completed.")
+            _audit(conn, "invoice", correction_parent["invoice_id"], "replaced_by_invoice", {
+                "replacement_invoice_id": invoice_id,
+                "replacement_invoice_number": number,
+                "reason": correction_reason,
+            })
 
         # Compute the frozen account summary and store it
         account_summary = calculate_invoice_account_summary(conn, invoice_id)
@@ -2319,6 +3192,12 @@ def finalize_invoice(conn: sqlite3.Connection, invoice_id: str, *, expected_revi
         checksum = generate_invoice_pdf(frozen["invoice"], frozen["lines"], pdf_path, render_model=frozen["render_model"])
         conn.execute("UPDATE invoices SET pdf_path = ?, pdf_sha256 = ?, updated_at = ? WHERE invoice_id = ?", (str(pdf_path), checksum, now_iso(), invoice_id))
         _audit(conn, "invoice", invoice_id, "finalized", {"invoice_number": number, "pdf_sha256": checksum})
+        if correction_parent:
+            _audit(conn, "invoice", invoice_id, "correction_finalized", {
+                "correction_of_invoice_id": correction_parent["invoice_id"],
+                "original_invoice_number": correction_parent["invoice_number"],
+                "reason": str(invoice["correction_reason"] or "Invoice correction").strip(),
+            })
         conn.commit()
     except Exception:
         conn.rollback()
@@ -2347,6 +3226,16 @@ def void_invoice(conn: sqlite3.Connection, invoice_id: str, reason: str) -> dict
     try:
         row = conn.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)).fetchone()
         if not row or row["status"] != "finalized": raise ValueError("Only a finalized invoice can be voided.")
+        open_correction = conn.execute(
+            """
+            SELECT invoice_id FROM invoices
+            WHERE correction_of_invoice_id = ? AND status = 'draft'
+            LIMIT 1
+            """,
+            (invoice_id,),
+        ).fetchone()
+        if open_correction:
+            raise ValueError("Delete the open correction draft before voiding this invoice.")
         now = now_iso()
         conn.execute("UPDATE invoices SET status = 'void', void_reason = ?, voided_at = ?, updated_at = ? WHERE invoice_id = ?", (reason.strip(), now, now, invoice_id))
         _audit(conn, "invoice", invoice_id, "voided", {"reason": reason.strip(), "invoice_number": row["invoice_number"]})
@@ -2382,8 +3271,23 @@ def _next_invoice_number(conn: sqlite3.Connection, year: int, pattern: str) -> s
 
 
 def _participant_names(conn: sqlite3.Connection, session_id: str) -> str:
-    rows = conn.execute("""SELECT COALESCE(p.display_name, sp.participant_name) AS name FROM session_participants sp LEFT JOIN people p ON p.person_id = sp.person_id WHERE sp.session_id = ? ORDER BY sp.created_at""", (session_id,)).fetchall()
-    return " & ".join(row["name"] for row in rows if row["name"])
+    rows = conn.execute(
+        """SELECT sp.person_id, sp.session_participant_id,
+                  COALESCE(p.display_name, sp.participant_name) AS name,
+                  COALESCE(p.use_dr_on_invoices, 0) AS use_dr_on_invoices
+           FROM session_participants sp
+           LEFT JOIN people p ON p.person_id = sp.person_id
+           WHERE sp.session_id = ?
+           ORDER BY sp.created_at""",
+        (session_id,),
+    ).fetchall()
+    names, seen = [], set()
+    for row in rows:
+        identity = row["person_id"] or row["session_participant_id"]
+        if row["name"] and identity not in seen:
+            names.append(format_invoice_person_name(row["name"], row["use_dr_on_invoices"]))
+            seen.add(identity)
+    return " & ".join(names)
 
 
 def _service_description(session: sqlite3.Row, service_name: str) -> str:
@@ -2392,8 +3296,15 @@ def _service_description(session: sqlite3.Row, service_name: str) -> str:
     appointment_status = session["appointment_status"] if "appointment_status" in session.keys() else None
     billing_treatment = session["billing_treatment"] if "billing_treatment" in session.keys() else None
 
-    if appointment_status == "late_cancellation" and billing_treatment == "waived":
-        return "Late Cancellation - Fee Waived"
+    if billing_treatment == "waived":
+        waived_descriptions = {
+            "late_cancellation": "Late Cancellation - Fee Waived",
+            "cancelled": "Cancelled Session - Fee Waived",
+            "no_show": "No-Show - Fee Waived",
+            "timely_cancellation": "Timely Cancellation - Fee Waived",
+        }
+        if appointment_status in waived_descriptions:
+            return waived_descriptions[appointment_status]
 
     if billing_type == "custom" and custom_desc:
         return get_user_facing_session_label(billing_type, appointment_status, custom_desc)
