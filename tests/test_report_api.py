@@ -34,16 +34,18 @@ def raw_row(
     *,
     end_at: str | None = None,
     event_fingerprint: str | None = None,
-    capture_window: str = "next_2_days",
+    capture_window: str = "past_7_days",
     calendar: str = "Jordana Work",
 ) -> dict[str, str]:
+    from datetime import datetime, timedelta
+    captured = (datetime.fromisoformat(end_at or start_at) + timedelta(days=1)).isoformat()
     return {
-        "ingested_at": "2026-06-22T02:00:00.000Z",
+        "ingested_at": captured,
         "snapshot_key": snapshot_key,
         "run_id": "run-1",
         "batch_name": "test",
         "capture_window": capture_window,
-        "captured_at": "2026-06-22T01:00:00.000Z",
+        "captured_at": captured,
         "source_device": "test",
         "timezone": "America/New_York",
         "calendar_event_id": "",

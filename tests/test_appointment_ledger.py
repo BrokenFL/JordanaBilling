@@ -17,7 +17,7 @@ def raw_row(
     *,
     end_at: str | None = None,
     event_fingerprint: str | None = None,
-    capture_window: str = "next_2_days",
+    capture_window: str = "past_7_days",
     calendar: str = "Jordana Work",
 ) -> dict[str, str]:
     return {

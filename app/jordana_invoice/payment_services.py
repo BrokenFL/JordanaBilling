@@ -933,6 +933,24 @@ def list_paid_invoices(conn: sqlite3.Connection, *, billing_month: str | None = 
         LEFT JOIN people bill_to_person ON bill_to_person.person_id = bp.person_id
         WHERE p.source_type = 'paid_at_session_backfill'
           AND p.status = 'posted'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM payment_allocations pa
+            JOIN invoice_line_items li ON li.invoice_line_item_id = pa.invoice_line_item_id
+            JOIN invoices i ON i.invoice_id = li.invoice_id
+            WHERE pa.payment_id = p.payment_id
+              AND pa.status = 'active'
+              AND i.status = 'finalized'
+              AND i.total_cents <= (
+                SELECT COALESCE(SUM(pa2.amount_cents), 0)
+                FROM payment_allocations pa2
+                JOIN payments p2 ON p2.payment_id = pa2.payment_id
+                JOIN invoice_line_items li2 ON li2.invoice_line_item_id = pa2.invoice_line_item_id
+                WHERE li2.invoice_id = i.invoice_id
+                  AND pa2.status = 'active'
+                  AND p2.status = 'posted'
+              )
+          )
         """
     ).fetchall():
         row_period = _month_key(row["service_date"])

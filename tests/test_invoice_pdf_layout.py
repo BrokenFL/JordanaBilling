@@ -7,6 +7,7 @@ from pathlib import Path
 
 from jordana_invoice.invoice_pdf import (
     BODY_FONT_SIZE,
+    BODY_LEADING,
     BLOCK_LEADING,
     BILLTO_LABEL_TO_DETAILS_SPACING,
     CONTENT_WIDTH,
@@ -54,6 +55,7 @@ from jordana_invoice.invoice_pdf import (
     _build_pdf_footer,
     _build_header_table,
     _build_session_table,
+    _session_table_column_widths,
     _footer_pushdown_height,
     _generate_invoice_pdf_bytes,
     generate_draft_pdf_bytes,
@@ -242,6 +244,26 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         text = reader.pages[0].extract_text() or ""
         self.assertIn("INVOICE", text)
 
+    def test_corrected_receipt_title_fits_header_on_one_line(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+
+        invoice = _sample_invoice(total_cents=5000)
+        lines = _sample_lines(count=1)
+        render = build_invoice_render_model(invoice, lines)
+        pdf_bytes = _generate_invoice_pdf_bytes(
+            invoice,
+            lines,
+            render_model=render,
+            meta_rows=[("", "Paid on August 03, 2026"), ("", "R-2026-0042")],
+            page_footer_label="Corrected Receipt R-2026-0042",
+            doc_title="Corrected Receipt R-2026-0042",
+            document_title="CORRECTED RECEIPT",
+        )
+        text_lines = [line.strip() for line in self._extract_pdf_text(pdf_bytes).splitlines()]
+        self.assertIn("CORRECTED RECEIPT", text_lines)
+
     def test_table_headers_present_on_first_page(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
@@ -291,16 +313,26 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         self.assertGreater(TABLE_COLUMN_WIDTHS[0], old_w)
 
     def test_date_column_fits_long_date_text(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
         available = TABLE_COLUMN_WIDTHS[0] - (TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING)
-        # "June 22, 2026" at the body size in Times-Roman is roughly 58pt.
-        self.assertGreaterEqual(available, 58)
+        date_widths = [
+            stringWidth(f"{month} 30, 2026", "Times-Roman", BODY_FONT_SIZE)
+            for month in (
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December",
+            )
+        ]
+        self.assertGreaterEqual(available, max(date_widths))
 
     def test_long_date_does_not_wrap_in_pdf(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
         from pypdf import PdfReader
         lines = [{
-            "service_date": "2026-06-22",
+            "service_date": "2026-08-03",
             "participants_snapshot": "Avery Stone",
             "description_snapshot": "Office Visit",
             "duration_minutes": 60,
@@ -309,7 +341,57 @@ class InvoicePdfLayoutTests(unittest.TestCase):
         path = self._generate_pdf(lines=lines)
         reader = PdfReader(path)
         text = reader.pages[0].extract_text() or ""
-        self.assertIn("June 22, 2026", text)
+        self.assertIn("August 03, 2026", text)
+
+    def test_measured_service_column_keeps_normal_long_label_on_one_line(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.platypus import Paragraph
+        from jordana_invoice.invoice_rendering import build_invoice_render_model
+
+        description = "Psychotherapy Session / Family Consultation"
+        lines = [{
+            "service_date": "2026-08-03",
+            "participants_snapshot": "Avery Stone",
+            "description_snapshot": description,
+            "duration_minutes": 60,
+            "line_amount_cents": 5000,
+        }]
+        render = build_invoice_render_model(_sample_invoice(total_cents=5000), lines)
+        widths = _session_table_column_widths(render)
+        required = stringWidth(description, "Times-Roman", BODY_FONT_SIZE) + TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING
+        self.assertGreaterEqual(widths[2], required)
+        self.assertAlmostEqual(sum(widths), CONTENT_W, delta=0.1)
+
+        styles = getSampleStyleSheet()
+        body = ParagraphStyle("Body", parent=styles["BodyText"])
+        header = ParagraphStyle("Header", parent=body, fontName="Times-Bold")
+        table = _build_session_table(render, lambda value, style=body: Paragraph(str(value), style), header)
+        service_cell = table._cellvalues[1][2]
+        _, height = service_cell.wrap(
+            widths[2] - TABLE_CELL_LEFT_PADDING - TABLE_CELL_RIGHT_PADDING,
+            10_000,
+        )
+        self.assertLessEqual(height, BODY_LEADING)
+
+    def test_extreme_service_label_breaks_explicitly_without_clipping_pdf_text(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from pypdf import PdfReader
+
+        description = "Fictional Extended Service Description " + ("Z" * 90)
+        lines = [{
+            "service_date": "2026-08-03",
+            "participants_snapshot": "Avery Stone",
+            "description_snapshot": description,
+            "duration_minutes": 60,
+            "line_amount_cents": 5000,
+        }]
+        path = self._generate_pdf(lines=lines, filename="Invoice_extreme_service.pdf")
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        self.assertIn("".join(description.split()), "".join(text.split()))
 
     # --- 6. Short-invoice footer placement and page balance ---
 
@@ -1074,6 +1156,38 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
             self.assertIn(s, draft_text, f"Draft PDF missing insurance line: {s}")
             self.assertIn(s, final_text, f"Finalized PDF missing insurance line: {s}")
 
+    def test_optional_cancellation_policy_is_plain_bottom_text_and_frozen(self):
+        if not _has_pdf_deps():
+            self.skipTest("PDF dependencies not installed")
+        from jordana_invoice.invoice_rendering import CANCELLATION_POLICY_TEXT, build_invoice_render_model
+
+        lines = _sample_lines()
+        draft_invoice = _sample_invoice(invoice_number="", status="draft")
+        draft_model = build_invoice_render_model(
+            draft_invoice,
+            lines,
+            insurance_coding_payload={"cancellation_policy_included": True},
+        )
+        self.assertEqual(draft_model["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+        draft_text = self._extract_pdf_text(
+            generate_draft_pdf_bytes(draft_invoice, lines, render_model=draft_model)
+        )
+        self.assertIn(CANCELLATION_POLICY_TEXT, draft_text.replace("\n", " "))
+
+        final_invoice = _sample_invoice(
+            status="finalized",
+            cancellation_policy_included=1,
+            cancellation_policy_text_snapshot=CANCELLATION_POLICY_TEXT,
+        )
+        frozen_model = build_invoice_render_model(final_invoice, lines)
+        self.assertEqual(frozen_model["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+
+        omitted = build_invoice_render_model(
+            _sample_invoice(status="finalized", cancellation_policy_included=0),
+            lines,
+        )
+        self.assertIsNone(omitted["cancellation_policy"])
+
     def test_html_preview_and_pdf_use_same_canonical_values(self):
         if not _has_pdf_deps():
             self.skipTest("PDF dependencies not installed")
@@ -1129,7 +1243,6 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
 
         expected_values = [
             "Avery Stone",
-            "JUN 1, 2026",
             "May 22, 2026",
             "May 23, 2026",
             "Office Visit",
@@ -1148,10 +1261,44 @@ class InvoicePreviewFinalizationParityTests(unittest.TestCase):
         for value in expected_values:
             self.assertIn(value, html)
             self.assertIn(value, pdf_text)
+        self.assertIn("Assigned when finalized", html)
+        self.assertIn("Assigned when finalized", pdf_text)
         self.assertNotIn("Invoice Number:", html)
         self.assertNotIn("Invoice Date:", html)
         self.assertNotIn("Billing Period", html)
         self.assertNotIn("Billing Period", pdf_text)
+
+    def test_print_html_keeps_normal_service_one_line_and_marks_extreme_fallback(self):
+        from jordana_invoice.invoice_rendering import build_print_preview_html
+
+        normal = "Psychotherapy Session / Family Consultation"
+        normal_html = build_print_preview_html(
+            _sample_invoice(invoice_number="", status="draft", total_cents=5000),
+            [{
+                "service_date": "2026-08-03",
+                "participants_snapshot": "Avery Stone",
+                "description_snapshot": normal,
+                "duration_minutes": 60,
+                "line_amount_cents": 5000,
+            }],
+        )
+        self.assertIn('class="invoice-print-table"', normal_html)
+        self.assertIn('<td class="service-cell">', normal_html)
+        self.assertNotIn('class="service-cell print-cell-wrap-fallback"', normal_html)
+
+        extreme = "Fictional Extended Service Description " + ("Z" * 90)
+        extreme_html = build_print_preview_html(
+            _sample_invoice(invoice_number="", status="draft", total_cents=5000),
+            [{
+                "service_date": "2026-08-03",
+                "participants_snapshot": "Avery Stone",
+                "description_snapshot": extreme,
+                "duration_minutes": 60,
+                "line_amount_cents": 5000,
+            }],
+        )
+        self.assertIn('class="service-cell print-cell-wrap-fallback"', extreme_html)
+        self.assertIn(extreme, extreme_html)
 
     def test_old_renderer_not_reachable_from_finalization(self):
         """Verify that generate_invoice_pdf delegates to _generate_invoice_pdf_bytes

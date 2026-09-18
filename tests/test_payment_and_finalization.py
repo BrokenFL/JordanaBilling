@@ -101,11 +101,10 @@ class PaymentStatusTests(unittest.TestCase):
         self.assertEqual(normalize_payment_status("unpaid"), "unpaid")
         self.assertEqual(normalize_payment_status("paid_at_session"), "paid_at_session")
 
-    def test_paid_at_session_excluded_from_invoicing(self):
-        """Sessions marked paid_at_session should be ineligible for invoicing."""
+    def test_paid_at_session_is_invoice_eligible_with_matching_payment(self):
         session = self._approved_session("paid1", payment_status="paid_at_session")
         reasons = invoice_ineligibility_reasons(self.conn, session)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
     def test_unpaid_session_remains_eligible(self):
         """Unpaid sessions should remain invoice eligible."""
@@ -114,26 +113,38 @@ class PaymentStatusTests(unittest.TestCase):
         self.assertEqual(reasons, [])
 
     def test_legacy_paid_normalized_to_paid_at_session(self):
-        """Legacy 'paid' value should be normalized and block invoicing."""
+        """Legacy 'paid' normalizes and remains invoice eligible with its payment."""
         session = self._approved_session("legacy", payment_status="paid")
         self.assertEqual(session["payment_status"], "paid_at_session")
         reasons = invoice_ineligibility_reasons(self.conn, session)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
     def test_payment_status_not_required_for_approval(self):
         """Payment status should not block review readiness."""
         session = self._approved_session("no_payment", payment_status="unpaid")
         self.assertEqual(session["review_status"], "approved")
 
-    def test_draft_with_paid_at_session_session_fails(self):
-        """Adding a paid_at_session session to a draft should fail."""
+    def test_draft_with_paid_at_session_session_applies_payment(self):
         session = self._approved_session("draft_fail", payment_status="paid_at_session")
-        with self.assertRaises(ValueError):
-            create_invoice_draft(self.conn, {
-                "bill_to_party_id": self.party["billing_party_id"],
-                "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
-                "invoice_date": "2026-05-31", "session_ids": [session["id"]],
-            })
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party["billing_party_id"],
+            "billing_period_start": "2026-05-01", "billing_period_end": "2026-05-31",
+            "invoice_date": "2026-05-31", "session_ids": [session["id"]],
+        })
+        self.assertEqual(draft["invoice"]["total_cents"], 15000)
+        self.assertEqual(draft["invoice"]["paid_cents"], 15000)
+        self.assertEqual(draft["invoice"]["balance_cents"], 0)
+
+    def test_paid_at_session_without_matching_payment_is_blocked(self):
+        session = self._approved_session("missingpay", payment_status="unpaid")
+        self.conn.execute(
+            "UPDATE sessions SET payment_status = 'paid_at_session' WHERE id = ?",
+            (session["id"],),
+        )
+        self.conn.commit()
+        changed = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (session["id"],)).fetchone()
+        reasons = invoice_ineligibility_reasons(self.conn, changed)
+        self.assertTrue(any("payment record is missing" in reason.lower() for reason in reasons))
 
 
 class SafeFinalizationTests(unittest.TestCase):
@@ -206,11 +217,28 @@ class SafeFinalizationTests(unittest.TestCase):
         draft = self._draft([session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
-        self.assertEqual(render["invoice_date_display"], "MAY 31, 2026")
+        self.assertEqual(render["invoice_date_display"], "Assigned when finalized")
         self.assertEqual(render["billing_period_display"], "May 2026")
         self.assertEqual(render["invoice_number_display"], "Assigned when finalized")
         self.assertEqual(render["lines"][0]["service_date_display"], "May 17, 2026")
         self.assertEqual(render["sender_lines"][0], "Sample Provider")
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalization_assigns_invoice_date_from_eastern_finalized_at(self, fake_pdf):
+        fake_pdf.return_value = "x" * 64
+        session = self._approved_session("finaldate")
+        draft = self._draft([session])
+
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-08-03T01:30:00Z"):
+            final = finalize_invoice(
+                self.conn,
+                draft["invoice"]["invoice_id"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        self.assertEqual(final["invoice"]["finalized_at"], "2026-08-03T01:30:00Z")
+        self.assertEqual(final["invoice"]["invoice_date"], "2026-08-02")
+        self.assertNotEqual(final["invoice"]["invoice_date"], draft["invoice"]["invoice_date"])
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
     def test_preview_render_model_uses_compact_multimonth_period(self, fake_pdf):
@@ -233,7 +261,7 @@ class SafeFinalizationTests(unittest.TestCase):
         draft = self._draft([session])
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         render = preview["render_model"]
-        self.assertEqual(render["bill_to_lines"], ["Robin Test", "Via Email: robin@example.test"])
+        self.assertEqual(render["bill_to_lines"], ["Robin Test", "robin@example.test"])
         self.assertIn("Or pay via Zelle: sample-zelle@example.test", render["payment_zelle_line"])
         self.assertEqual(render["payment_lines"], ["200 Sample Ave", "Sample, FL 00000"])
 
@@ -250,7 +278,7 @@ class SafeFinalizationTests(unittest.TestCase):
         preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
         self.assertEqual(
             preview["render_model"]["bill_to_lines"],
-            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "robin@example.test"],
         )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
@@ -411,7 +439,7 @@ class SafeFinalizationTests(unittest.TestCase):
         reopened = get_invoice(self.conn, final["invoice"]["invoice_id"])
         self.assertEqual(
             reopened["render_model"]["bill_to_lines"],
-            ["Robin Test", "5 Sample St", "Sample, FL 00000", "Via Email: robin@example.test"],
+            ["Robin Test", "5 Sample St", "Sample, FL 00000", "robin@example.test"],
         )
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")

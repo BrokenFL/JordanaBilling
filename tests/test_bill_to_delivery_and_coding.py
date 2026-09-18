@@ -150,7 +150,7 @@ class BillToDeliveryTests(unittest.TestCase):
             page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages
         )
         self.assertIn("Robin Rivers", text)
-        self.assertIn("Via Email: robin.rivers@example.test", text)
+        self.assertIn("robin.rivers@example.test", text)
 
     # 3. Review & Finalize readiness does not report unresolved delivery
     def test_readiness_no_unresolved_with_email(self):
@@ -200,7 +200,7 @@ class BillToDeliveryTests(unittest.TestCase):
         )
         self.assertIn("Robin Rivers", text)
         self.assertIn("10 Sample Street", text)
-        self.assertIn("Via Email: robin.rivers@example.test", text)
+        self.assertIn("robin.rivers@example.test", text)
 
     # 6. Existing mutable draft created before Billing Setup can safely refresh
     def test_stale_draft_refreshes_delivery(self):
@@ -268,7 +268,34 @@ class BillToDeliveryTests(unittest.TestCase):
         final_lines = final["render_model"]["bill_to_lines"]
         self.assertEqual(draft_lines, final_lines)
         # All should contain the Via Email line
-        self.assertIn("Via Email: robin.rivers@example.test", draft_lines)
+        self.assertIn("robin.rivers@example.test", draft_lines)
+
+    @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
+    def test_finalization_freezes_optional_cancellation_policy(self, fake_pdf):
+        from jordana_invoice.invoice_rendering import CANCELLATION_POLICY_TEXT
+
+        fake_pdf.return_value = "p" * 64
+        party = self._make_party("email")
+        session = self._approved_session("policy-1", party["billing_party_id"])
+        draft = self._draft(party["billing_party_id"], [session])
+        invoice_id = draft["invoice"]["invoice_id"]
+
+        preview = preview_finalization(
+            self.conn,
+            invoice_id,
+            data={"cancellation_policy_included": True},
+        )
+        self.assertEqual(preview["render_model"]["cancellation_policy"], CANCELLATION_POLICY_TEXT)
+
+        final = finalize_invoice(
+            self.conn,
+            invoice_id,
+            pdf_root=self.root / "Invoices",
+            cancellation_policy_included=True,
+        )
+        self.assertEqual(final["invoice"]["cancellation_policy_included"], 1)
+        self.assertEqual(final["invoice"]["cancellation_policy_text_snapshot"], CANCELLATION_POLICY_TEXT)
+        self.assertEqual(final["render_model"]["cancellation_policy"], CANCELLATION_POLICY_TEXT)
 
     # 10. No stale data from inactive or duplicate billing party
     def test_no_stale_data_from_inactive_party(self):
@@ -291,7 +318,7 @@ class BillToDeliveryTests(unittest.TestCase):
         draft = self._draft(party2["billing_party_id"], [session])
         # The render model should use the active party's email, not the inactive one
         bill_to_lines = draft["render_model"]["bill_to_lines"]
-        self.assertIn("Via Email: new@example.test", bill_to_lines)
+        self.assertIn("new@example.test", bill_to_lines)
         self.assertNotIn("active@example.test", bill_to_lines)
 
 
@@ -460,7 +487,7 @@ class RenderModelDeliveryResolutionTests(unittest.TestCase):
             "preferred_delivery_method": "email",
         }
         render = build_invoice_render_model(invoice, [], billing_party=party)
-        self.assertIn("Via Email: robin.rivers@example.test", render["bill_to_lines"])
+        self.assertIn("robin.rivers@example.test", render["bill_to_lines"])
 
     def test_blank_falls_back_to_party_preference(self):
         invoice = {
@@ -474,7 +501,7 @@ class RenderModelDeliveryResolutionTests(unittest.TestCase):
             "preferred_delivery_method": "email",
         }
         render = build_invoice_render_model(invoice, [], billing_party=party)
-        self.assertIn("Via Email: robin.rivers@example.test", render["bill_to_lines"])
+        self.assertIn("robin.rivers@example.test", render["bill_to_lines"])
 
     def test_deliberate_override_not_overwritten(self):
         invoice = {
@@ -506,7 +533,7 @@ class RenderModelDeliveryResolutionTests(unittest.TestCase):
             "preferred_delivery_method": "email",
         }
         render = build_invoice_render_model(invoice, [], billing_party=party)
-        self.assertIn("Via Email: frozen@example.test", render["bill_to_lines"])
+        self.assertIn("frozen@example.test", render["bill_to_lines"])
         self.assertNotIn("changed@example.test", render["bill_to_lines"])
 
 

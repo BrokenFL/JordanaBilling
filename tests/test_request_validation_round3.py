@@ -52,6 +52,7 @@ from jordana_invoice.request_validation import (
     parse_preview_finalize_request,
     parse_finalize_invoice_request,
     parse_void_invoice_request,
+    parse_correct_invoice_request,
     parse_update_invoice_filing_owner_request,
     parse_document_action_request,
     parse_print_preview_request,
@@ -60,6 +61,7 @@ from jordana_invoice.request_validation import (
     parse_apply_funds_request,
     parse_void_payment_request,
     parse_create_payment_receipt_request,
+    parse_corrected_receipt_request,
     parse_save_business_profile_request,
     parse_sync_run_request,
     parse_sync_rebuild_request,
@@ -69,8 +71,9 @@ from jordana_invoice.review_server import is_safe_validation_error
 
 class TestParseCreatePerson(unittest.TestCase):
     def test_valid_payload(self):
-        req = parse_create_person_request({"display_name": "Alice Stone"})
+        req = parse_create_person_request({"display_name": "Alice Stone", "use_dr_on_invoices": True})
         self.assertEqual(req.to_payload()["display_name"], "Alice Stone")
+        self.assertTrue(req.to_payload()["use_dr_on_invoices"])
 
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
@@ -84,11 +87,16 @@ class TestParseCreatePerson(unittest.TestCase):
         with self.assertRaises(RequestValidationError):
             parse_create_person_request({"display_name": 123})
 
+    def test_invoice_title_must_be_boolean(self):
+        with self.assertRaises(RequestValidationError):
+            parse_create_person_request({"display_name": "Alice Stone", "use_dr_on_invoices": "yes"})
+
 
 class TestParseUpdatePerson(unittest.TestCase):
     def test_valid_payload(self):
-        req = parse_update_person_request({"display_name": "Alice Stone", "active": False})
+        req = parse_update_person_request({"display_name": "Alice Stone", "active": False, "use_dr_on_invoices": True})
         self.assertFalse(req.to_payload()["active"])
+        self.assertTrue(req.to_payload()["use_dr_on_invoices"])
 
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
@@ -97,6 +105,10 @@ class TestParseUpdatePerson(unittest.TestCase):
     def test_wrong_type_for_bool(self):
         with self.assertRaises(RequestValidationError):
             parse_update_person_request({"active": "yes"})
+
+    def test_invoice_title_must_be_boolean(self):
+        with self.assertRaises(RequestValidationError):
+            parse_update_person_request({"use_dr_on_invoices": "yes"})
 
 
 class TestParseSavePersonAlias(unittest.TestCase):
@@ -460,6 +472,20 @@ class TestParseVoidInvoice(unittest.TestCase):
             parse_void_invoice_request(42)
 
 
+class TestParseCorrectInvoice(unittest.TestCase):
+    def test_valid_with_reason(self):
+        req = parse_correct_invoice_request({"reason": "Incorrect invoice information"})
+        self.assertEqual(req.reason, "Incorrect invoice information")
+
+    def test_empty_reason_is_rejected(self):
+        with self.assertRaisesRegex(RequestValidationError, "reason must not be empty"):
+            parse_correct_invoice_request({"reason": "  "})
+
+    def test_non_object_is_rejected(self):
+        with self.assertRaises(RequestValidationError):
+            parse_correct_invoice_request(42)
+
+
 class TestParseUpdateInvoiceFilingOwner(unittest.TestCase):
     def test_valid_payload(self):
         req = parse_update_invoice_filing_owner_request({"person_id": "p-1"})
@@ -490,8 +516,13 @@ class TestParseDocumentAction(unittest.TestCase):
 
 class TestParsePrintPreview(unittest.TestCase):
     def test_valid_payload(self):
-        req = parse_print_preview_request({"insurance_coding_included": True})
+        req = parse_print_preview_request({"insurance_coding_included": True, "cancellation_policy_included": True})
         self.assertTrue(req.to_payload()["insurance_coding_included"])
+        self.assertTrue(req.to_payload()["cancellation_policy_included"])
+
+    def test_cancellation_policy_must_be_boolean(self):
+        with self.assertRaises(RequestValidationError):
+            parse_print_preview_request({"cancellation_policy_included": "yes"})
 
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
@@ -563,6 +594,23 @@ class TestParseCreatePaymentReceipt(unittest.TestCase):
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
             parse_create_payment_receipt_request(None)
+
+
+class TestParseCorrectedReceipt(unittest.TestCase):
+    def test_create_requires_explicit_reason(self):
+        payload = {"allocation_id": "allocation-1", "billing_session_type": "psychotherapy_house_call"}
+        with self.assertRaises(RequestValidationError):
+            parse_corrected_receipt_request(payload)
+        self.assertEqual(
+            parse_corrected_receipt_request({**payload, "reason": "Administrative correction", "expected_preview_digest": "digest"}).to_payload()["reason"],
+            "Administrative correction",
+        )
+
+    def test_preview_accepts_no_reason_but_rejects_wrong_types(self):
+        payload = {"allocation_id": "allocation-1", "billing_session_type": "psychotherapy_house_call"}
+        self.assertEqual(parse_corrected_receipt_request(payload, require_reason=False).to_payload(), payload)
+        with self.assertRaises(RequestValidationError):
+            parse_corrected_receipt_request({**payload, "expected_latest_correction_id": 1}, require_reason=False)
 
 
 class TestParseSaveBusinessProfile(unittest.TestCase):

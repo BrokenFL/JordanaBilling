@@ -49,6 +49,7 @@ def main() -> int:
         "timezone": timezone,
         "payload_version": require(values, "JORDANA_PAYLOAD_VERSION"),
         "calendar_scope": "all_non_all_day_events",
+        "calendar_event_id_source": "omitted_by_shortcuts_backend_fingerprint_used",
         "preferred_work_calendar": values.get("JORDANA_PREFERRED_WORK_CALENDAR", ""),
         "past": {
             "days": int(require(values, "JORDANA_NORMAL_PAST_DAYS")),
@@ -60,6 +61,7 @@ def main() -> int:
         },
         "run_complete": {
             "record_type": "run_complete",
+            "future_capture_window": require(values, "JORDANA_FUTURE_CAPTURE_WINDOW"),
             "counts": ["past_found", "past_received", "future_found", "future_received"],
         },
     }

@@ -55,8 +55,8 @@ def raw_row(snapshot_key: str, title: str = "Bonnie 5") -> dict[str, str]:
         "snapshot_key": snapshot_key,
         "run_id": "run-1",
         "batch_name": "test",
-        "capture_window": "next_2_days",
-        "captured_at": "2026-06-22T01:00:00.000Z",
+        "capture_window": "past_7_days",
+        "captured_at": "2026-06-24T01:00:00.000Z",
         "source_device": "test",
         "timezone": "America/New_York",
         "calendar_event_id": "",
@@ -281,7 +281,7 @@ class SyncRollbackTests(unittest.TestCase):
     def test_failed_sync_does_not_advance_cursor(self):
         self.conn.execute(
             "INSERT INTO sync_state (source_name, cursor_value) VALUES (?, ?)",
-            (SOURCE_NAME, "2026-06-22T01:00:00.000Z"),
+            (SOURCE_NAME, "2026-06-24T01:00:00.000Z"),
         )
         self.conn.commit()
 
@@ -296,7 +296,7 @@ class SyncRollbackTests(unittest.TestCase):
             "SELECT cursor_value FROM sync_state WHERE source_name = ?",
             (SOURCE_NAME,),
         ).fetchone()["cursor_value"]
-        self.assertEqual(cursor, "2026-06-22T01:00:00.000Z")
+        self.assertEqual(cursor, "2026-06-24T01:00:00.000Z")
 
 
 class InvoiceFinalizationContentionTests(unittest.TestCase):

@@ -194,17 +194,18 @@ class InvoiceReadinessTests(unittest.TestCase):
             finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
 
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")
-    def test_invalid_date_blocks_finalization(self, fake_pdf):
+    def test_draft_invoice_date_does_not_control_finalization(self, fake_pdf):
         fake_pdf.return_value = "a" * 64
         session = self._approved_session("baddate1")
         draft = self._draft([session])
         update_invoice_draft(self.conn, draft["invoice"]["invoice_id"], {"invoice_date": "not-a-date"})
         readiness = validate_invoice_readiness(self.conn, draft["invoice"]["invoice_id"])
-        self.assertFalse(readiness["ready"])
+        self.assertTrue(readiness["ready"])
         fields = {e["field"] for e in readiness["errors"]}
-        self.assertIn("invoice_date", fields)
-        with self.assertRaises(ValueError):
-            finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertNotIn("invoice_date", fields)
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-08-03T01:30:00Z"):
+            final = finalize_invoice(self.conn, draft["invoice"]["invoice_id"], pdf_root=self.root / "Invoices")
+        self.assertEqual(final["invoice"]["invoice_date"], "2026-08-02")
 
     # 5. Missing delivery-required email/address blocks finalization
     @patch("jordana_invoice.invoice_services.generate_invoice_pdf")

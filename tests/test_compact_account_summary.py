@@ -129,7 +129,8 @@ class CompactAccountSummaryTests(unittest.TestCase):
         """Create a prior finalized unpaid invoice and a newer draft with prior balance."""
         s1 = self._approved_session("prior", "2026-04-10T10:00:00-04:00")
         d1 = self._draft([s1], "2026-04-30")
-        self._finalize(d1)
+        with patch("jordana_invoice.invoice_services.now_iso", return_value="2026-04-30T16:00:00+00:00"):
+            self._finalize(d1)
         s2 = self._approved_session("newer", "2026-05-15T10:00:00-04:00")
         d2 = self._draft([s2], "2026-05-31")
         return d2

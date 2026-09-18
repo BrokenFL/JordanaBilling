@@ -51,11 +51,11 @@ RIGHT_HEADER_BLOCK_WIDTH = 2.45 * POINTS_PER_INCH
 META_LABEL_WIDTH = 2.02 * POINTS_PER_INCH
 META_VALUE_WIDTH = 0.0
 TABLE_COLUMN_WIDTHS = [
-    1.12 * POINTS_PER_INCH,
-    1.65 * POINTS_PER_INCH,
+    1.38 * POINTS_PER_INCH,
+    1.49 * POINTS_PER_INCH,
     2.78 * POINTS_PER_INCH,
     0.85 * POINTS_PER_INCH,
-    1.10 * POINTS_PER_INCH,
+    1.00 * POINTS_PER_INCH,
 ]
 TOTAL_COLUMN_WIDTHS = [6.15 * POINTS_PER_INCH, 1.35 * POINTS_PER_INCH]
 
@@ -64,6 +64,10 @@ TABLE_ROW_BOTTOM_PADDING = 4
 TABLE_CELL_LEFT_PADDING = 6
 TABLE_CELL_RIGHT_PADDING = 6
 TABLE_HEADER_BORDER_WIDTH = 0.5
+# The standard invoice frame has enough room for normal catalog labels. A
+# custom service description can be longer, so the session table may borrow a
+# small amount of space from Participants after measuring the actual text.
+PARTICIPANT_COLUMN_MIN_WIDTH = 80.0
 PAYMENT_FOOTER_MIN_CLEARANCE = 0.30 * POINTS_PER_INCH
 PAYMENT_COLUMN_HEADING_TO_DETAIL_SPACING = 3.5
 PAYMENT_ZELLE_TOP_SPACING = 0.60 * BODY_LEADING
@@ -202,6 +206,16 @@ def _generate_invoice_pdf_bytes(
         spaceBefore=0,
         spaceAfter=0,
     )
+    if document_title == "CORRECTED RECEIPT":
+        # The corrected receipt label is longer than the ordinary invoice and
+        # receipt titles. Keep its full meaning on one line inside the fixed
+        # header block without changing the established title size elsewhere.
+        title = ParagraphStyle(
+            "CorrectedReceiptTitle",
+            parent=title,
+            fontSize=13.5,
+            leading=TITLE_LEADING,
+        )
     total_label_style = ParagraphStyle(
         "InvoiceTotalLabel",
         parent=body,
@@ -283,6 +297,7 @@ def _generate_invoice_pdf_bytes(
         payment_title_style,
     )
     footer.extend(_build_insurance_coding_flowables(render, small))
+    footer.extend(_build_cancellation_policy_flowables(render, small))
     story.append(KeepTogether(footer))
     doc.build(story, canvasmaker=_times_canvasmaker)
     pdf_bytes = buf.getvalue()
@@ -642,6 +657,52 @@ class _InvoiceHeaderFlowable:
         return []
 
 
+def _session_table_column_widths(render: dict[str, Any]) -> list[float]:
+    """Return session-table widths that keep ordinary service labels on one line.
+
+    The letter frame and the total/footer tables retain their established
+    widths. The line-item table can give a measured amount of spare space from
+    Participants to Service when a normal custom service label needs it. The
+    participant column has a floor, and extreme labels remain fully readable
+    because their Paragraphs use ReportLab's explicit long-word breaking.
+    """
+    try:
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+    except ImportError:
+        return list(TABLE_COLUMN_WIDTHS)
+
+    widths = list(TABLE_COLUMN_WIDTHS)
+    lines = render.get("lines") or []
+    if not lines:
+        return widths
+
+    measured_service_width = max(
+        (
+            stringWidth(
+                str(line.get("description_display") or ""),
+                "Times-Roman",
+                BODY_FONT_SIZE,
+            )
+            for line in lines
+        ),
+        default=0.0,
+    )
+    required_service_width = measured_service_width + TABLE_CELL_LEFT_PADDING + TABLE_CELL_RIGHT_PADDING
+    if required_service_width <= widths[2]:
+        return widths
+
+    available_participant_space = max(0.0, widths[1] - PARTICIPANT_COLUMN_MIN_WIDTH)
+    service_expansion = min(
+        required_service_width - widths[2],
+        available_participant_space,
+    )
+    if service_expansion <= 0:
+        return widths
+    widths[1] -= service_expansion
+    widths[2] += service_expansion
+    return widths
+
+
 def _build_session_table(render: dict[str, Any], para: Any, table_header_style: Any) -> Any:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
@@ -656,6 +717,10 @@ def _build_session_table(render: dict[str, Any], para: Any, table_header_style: 
         fontSize=BODY_FONT_SIZE,
         leading=BODY_LEADING,
         alignment=TA_CENTER,
+        # Keep ordinary labels on one line after the measured column
+        # adjustment, while still breaking a pathological unbroken value so
+        # the complete text remains visible inside the PDF cell.
+        wordWrap="CJK",
         spaceBefore=0,
         spaceAfter=0,
     )
@@ -689,7 +754,7 @@ def _build_session_table(render: dict[str, Any], para: Any, table_header_style: 
             table_para(line.get("amount_display")),
         ])
 
-    table = LongTable(data, colWidths=TABLE_COLUMN_WIDTHS, repeatRows=1, hAlign="LEFT")
+    table = LongTable(data, colWidths=_session_table_column_widths(render), repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#102A43")),
@@ -784,6 +849,27 @@ def _build_insurance_coding_flowables(render: dict[str, Any], small_style: Any):
         text = f"{_escape(item['label'])}: {_escape(item['value'])}"
         flowables.append(Paragraph(text, coding_style))
     return flowables
+
+
+def _build_cancellation_policy_flowables(render: dict[str, Any], small_style: Any):
+    """Render the optional policy as plain bottom text without a box or shading."""
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+
+    policy = str(render.get("cancellation_policy") or "").strip()
+    if not policy:
+        return []
+    policy_style = ParagraphStyle(
+        "CancellationPolicy",
+        parent=small_style,
+        fontSize=SMALL_FONT_SIZE,
+        leading=SMALL_LEADING,
+        alignment=TA_LEFT,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+    return [Spacer(1, 2 * BODY_LEADING), Paragraph(_escape(policy), policy_style)]
 
 
 def generate_draft_pdf_bytes(

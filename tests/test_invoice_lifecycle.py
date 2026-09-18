@@ -90,7 +90,11 @@ class InvoiceLifecycleTests(unittest.TestCase):
         init_db(self.conn)
         tables = {row[0] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({"business_profile", "service_catalog", "invoices", "invoice_line_items", "invoice_sequences"} <= tables)
-        self.assertEqual(len(list_services(self.conn)), 13)
+        services = list_services(self.conn)
+        self.assertEqual(len(services), 14)
+        zoom = [row for row in services if row["canonical_name"] == "zoom"]
+        self.assertEqual(len(zoom), 1)
+        self.assertEqual(zoom[0]["catalog_type"], "appointment_method")
         self.assertEqual(self.conn.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_legacy_billing_party_migration_adds_delivery_to_correct_table(self):
@@ -125,7 +129,7 @@ class InvoiceLifecycleTests(unittest.TestCase):
         self.assertEqual(invoice_ineligibility_reasons(self.conn, normal), [])
         self.assertTrue(invoice_ineligibility_reasons(self.conn, cancelled))
         self.assertEqual(invoice_ineligibility_reasons(self.conn, cancelled_billable), [])
-        self.assertTrue(invoice_ineligibility_reasons(self.conn, no_show_waived))
+        self.assertEqual(invoice_ineligibility_reasons(self.conn, no_show_waived), [])
         draft = self.draft([normal])
         self.assertIn("already attached", " ".join(invoice_ineligibility_reasons(self.conn, normal)).lower())
         with self.assertRaises(ValueError):

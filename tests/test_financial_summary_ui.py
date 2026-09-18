@@ -12,18 +12,20 @@ class FinancialSummaryUiTests(unittest.TestCase):
 
         for element_id in (
             "invoiceSummaryMonth",
-            "invoiceDraftValue",
-            "invoiceFinalizedValue",
-            "invoiceOutstandingValue",
+            "invoiceBillableValue",
+            "invoiceInvoicedValue",
             "paymentsSummaryMonth",
-            "paymentsInvoicedValue",
-            "paymentsReceivedValue",
+            "paymentsAppliedValue",
             "paymentsOutstandingValue",
+            "monthCloseMonth",
+            "monthCloseChecks",
         ):
             self.assertIn(f'id="{element_id}"', html)
 
         self.assertIn("/api/financial-summary?month=", js)
-        self.assertIn("finalized_invoice_value_for_month_cents", js)
+        self.assertIn("total_billable_cents", js)
+        self.assertIn("payments_applied_cents", js)
+        self.assertIn("/api/month-close?month=", js)
         self.assertIn("state.financialSummary.month", js)
 
     def test_summary_styles_are_present(self):

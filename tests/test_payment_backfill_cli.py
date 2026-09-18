@@ -235,15 +235,15 @@ class PaymentBackfillCLITests(unittest.TestCase):
         rc, out, err = _run_cli(old_db)
         self.assertEqual(rc, 3)
 
-    # 19. Existing paid-at-session invoice exclusion remains unchanged
-    def test_paid_at_session_exclusion_unchanged(self):
+    # 19. A complete paid-at-session record remains invoice eligible
+    def test_paid_at_session_record_is_invoice_eligible(self):
         rc, out, err = _run_cli(self.db_path)
         self.assertEqual(rc, 0)
         conn = connect(self.db_path)
         session = conn.execute("SELECT * FROM sessions WHERE id = ?", (self.session_id,)).fetchone()
         reasons = invoice_ineligibility_reasons(conn, session)
         conn.close()
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
     # 20. No --apply argument exists
     def test_no_apply_argument(self):

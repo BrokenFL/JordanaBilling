@@ -120,6 +120,10 @@ REPORT_EXCLUDED_REVIEW_STATUSES = (
     "needs_review",
     "needs_classification",
     "needs_person_match",
+    "needs_participants",
+    "needs_billing_party",
+    "needs_duration",
+    "needs_service_mode",
     "needs_rate",
     "needs_billing_treatment",
 )
@@ -166,6 +170,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
         LEFT JOIN billing_parties b ON b.billing_party_id = s.billing_party_id
         WHERE substr(s.start_at, 1, 4) = ?
           AND COALESCE(c.classification, '') = 'client_session'
+          AND (s.review_status = 'approved' OR c.calendar_review_state IN ('eligible', 'unverified'))
           AND COALESCE(s.review_status, '') NOT IN ({placeholders})
           AND COALESCE(s.billable_status, '') NOT IN ('excluded', 'nonbillable')
         ORDER BY s.start_at, s.proposed_client_name, c.title

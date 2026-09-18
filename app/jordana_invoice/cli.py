@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 
 from .db import (
@@ -22,6 +23,7 @@ from .google_sync import (
     sync_with_process_lock,
 )
 from .importer import import_csv, replay_existing_raw_snapshots
+from .calendar_recovery import calendar_recovery_plan, reverse_calendar_recovery
 from .duplicate_repair import duplicate_repair_plan, reverse_duplicate_repair
 from .rates import dollars_to_cents, seed_rate_rule, set_rate_policy
 from .report import acceptance_report
@@ -210,6 +212,45 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional YYYY-MM month to reconcile.",
     )
 
+    recovery_parser = subparsers.add_parser(
+        "calendar-recovery",
+        help=(
+            "Plan or apply the narrowly-scoped repair for legacy calendar "
+            "absence suppression and exact editable-draft duplicates."
+        ),
+    )
+    recovery_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Analyze only from a read-only database connection. This is the default.",
+    )
+    recovery_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the repair. Requires --confirm-apply.",
+    )
+    recovery_parser.add_argument(
+        "--confirm-apply",
+        default="",
+        help="Must be exactly APPLY_CALENDAR_RECOVERY when --apply is used.",
+    )
+    recovery_parser.add_argument(
+        "--reverse",
+        action="store_true",
+        help="Reverse unchanged actions from this repair. Requires --confirm-reversal.",
+    )
+    recovery_parser.add_argument(
+        "--confirm-reversal",
+        default="",
+        help="Must be exactly REVERSE_CALENDAR_RECOVERY when --reverse is used.",
+    )
+    recovery_parser.add_argument(
+        "--month",
+        default="",
+        help="Optional YYYY-MM scope for a dry run; required when applying recovery.",
+    )
+
     serve_parser = subparsers.add_parser(
         "serve-review",
         help="Run the local review UI.",
@@ -388,6 +429,60 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             conn.close()
         print(json.dumps(result.as_dict(), sort_keys=True))
+        return 0
+
+    if args.command == "calendar-recovery":
+        if args.apply and args.reverse:
+            print("REFUSED: choose either --apply or --reverse, not both.", file=__import__("sys").stderr)
+            return 1
+        if args.apply and args.confirm_apply != "APPLY_CALENDAR_RECOVERY":
+            print(
+                "REFUSED: --apply requires --confirm-apply APPLY_CALENDAR_RECOVERY",
+                file=__import__("sys").stderr,
+            )
+            return 1
+        if args.apply and not args.month:
+            print(
+                "REFUSED: --apply requires --month YYYY-MM so recovery stays scoped.",
+                file=__import__("sys").stderr,
+            )
+            return 1
+        if args.reverse and args.confirm_reversal != "REVERSE_CALENDAR_RECOVERY":
+            print(
+                "REFUSED: --reverse requires --confirm-reversal REVERSE_CALENDAR_RECOVERY",
+                file=__import__("sys").stderr,
+            )
+            return 1
+        load_env_file()
+        if not args.apply and not args.reverse:
+            db_path = Path(args.db).resolve()
+            if not db_path.is_file():
+                print("REFUSED: the selected database does not exist.", file=__import__("sys").stderr)
+                return 1
+            conn = sqlite3.connect(f"file:{db_path.as_posix()}?immutable=1", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                result = calendar_recovery_plan(conn, apply=False, month=args.month or None)
+            finally:
+                conn.close()
+            print(json.dumps(result["summary"], sort_keys=True))
+            print("dry_run=true writes_performed=false")
+            return 0
+        migrate_database(args.db)
+        conn = connect(args.db)
+        try:
+            if args.reverse:
+                result = reverse_calendar_recovery(conn, confirm=True)
+            else:
+                result = calendar_recovery_plan(
+                    conn,
+                    apply=True,
+                    confirm=True,
+                    month=args.month or None,
+                )
+        finally:
+            conn.close()
+        print(json.dumps(result["summary"] if "summary" in result else result, sort_keys=True))
         return 0
 
     if args.command == "normalize-existing":

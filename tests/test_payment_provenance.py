@@ -247,8 +247,8 @@ class PaymentProvenanceTests(unittest.TestCase):
             self.assertNotIn("patient", details_str.lower())
             self.assertIn("source_type", details_str)
 
-    # 19. Paid-at-session eligibility remains unchanged
-    def test_paid_at_session_eligibility_unchanged(self):
+    # 19. Paid-at-session provenance makes the session invoice eligible
+    def test_paid_at_session_provenance_is_invoice_eligible(self):
         import_rows(self.conn, [raw_row("paid1", "Pat Client | 60 | Office", "2026-05-15T10:00:00-04:00")], "test")
         candidate_id = self.conn.execute(
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
@@ -264,7 +264,7 @@ class PaymentProvenanceTests(unittest.TestCase):
         })
         paid_session = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
         reasons = invoice_ineligibility_reasons(self.conn, paid_session)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
 
     # 20. No payment or allocation records are automatically created by migration 004
     def test_migration_creates_no_payment_records(self):

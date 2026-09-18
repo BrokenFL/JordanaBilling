@@ -396,7 +396,7 @@ class PaymentServicesTests(unittest.TestCase):
             self.assertNotIn("patient", details_str.lower())
 
     # 26. Existing invoice eligibility and paid-at-session exclusion remain unchanged
-    def test_paid_at_session_exclusion_unchanged(self):
+    def test_paid_at_session_with_payment_is_invoice_eligible(self):
         import_rows(self.conn, [raw_row("paid1", "Pat Client | 60 | Office", "2026-05-15T10:00:00-04:00")], "test")
         candidate_id = self.conn.execute(
             "SELECT id FROM calendar_event_candidates WHERE candidate_key = ?",
@@ -412,7 +412,7 @@ class PaymentServicesTests(unittest.TestCase):
         })
         paid_session = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (detail["session"]["id"],)).fetchone()
         reasons = invoice_ineligibility_reasons(self.conn, paid_session)
-        self.assertTrue(any("paid at time of session" in r.lower() for r in reasons))
+        self.assertEqual(reasons, [])
         unpaid_reasons = invoice_ineligibility_reasons(self.conn, self.session)
         self.assertEqual(unpaid_reasons, [])
 
@@ -797,6 +797,81 @@ class PaymentServicesTests(unittest.TestCase):
         self.assertEqual(len(ledger), 1)
         self.assertEqual(ledger[0]["source_type"], "paid_at_session_backfill")
         self.assertEqual(ledger[0]["bill_to_name"], "Robin Other")
+
+    def test_paid_at_session_payment_linked_to_fully_paid_invoice_has_one_paid_row(self):
+        paid_session = self._approved_session_for(
+            "paid-session-finalized",
+            "2026-06-18T10:00:00-04:00",
+            self.person2,
+            self.party2,
+            payment_status="paid_at_session",
+        )
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party2["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [paid_session["id"]],
+        })
+        draft_rows = list_paid_invoices(self.conn, billing_month="2026-06")
+        self.assertEqual([row["row_type"] for row in draft_rows], ["paid_at_session"])
+
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
+            fake_pdf.return_value = "x" * 64
+            preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+            final = finalize_invoice(
+                self.conn,
+                draft["invoice"]["invoice_id"],
+                expected_revision=preview["preview_revision"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        paid_rows = list_paid_invoices(self.conn, billing_month="2026-06")
+        self.assertEqual(len(paid_rows), 1)
+        self.assertEqual(paid_rows[0]["row_type"], "invoice")
+        self.assertEqual(paid_rows[0]["invoice_id"], final["invoice"]["invoice_id"])
+
+    def test_paid_at_session_payment_linked_to_partially_paid_invoice_keeps_synthetic_row(self):
+        paid_session = self._approved_session_for(
+            "paid-session-partial",
+            "2026-06-18T10:00:00-04:00",
+            self.person2,
+            self.party2,
+            payment_status="paid_at_session",
+        )
+        unpaid_session = self._approved_session_for(
+            "unpaid-session-partial",
+            "2026-06-19T10:00:00-04:00",
+            self.person2,
+            self.party2,
+            amount="200.00",
+        )
+        draft = create_invoice_draft(self.conn, {
+            "bill_to_party_id": self.party2["billing_party_id"],
+            "billing_period_start": "2026-06-01",
+            "billing_period_end": "2026-06-30",
+            "invoice_date": "2026-06-30",
+            "session_ids": [paid_session["id"], unpaid_session["id"]],
+        })
+        with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
+            fake_pdf.return_value = "x" * 64
+            preview = preview_finalization(self.conn, draft["invoice"]["invoice_id"])
+            final = finalize_invoice(
+                self.conn,
+                draft["invoice"]["invoice_id"],
+                expected_revision=preview["preview_revision"],
+                pdf_root=self.root / "Invoices",
+            )
+
+        paid_rows = list_paid_invoices(self.conn, billing_month="2026-06")
+        synthetic_rows = [row for row in paid_rows if row.get("row_type") == "paid_at_session"]
+        self.assertEqual(len(synthetic_rows), 1)
+        self.assertEqual(synthetic_rows[0]["session_id"], paid_session["id"])
+        self.assertEqual(synthetic_rows[0]["payment_id"], self.conn.execute(
+            "SELECT payment_id FROM payments WHERE source_session_id = ?",
+            (paid_session["id"],),
+        ).fetchone()["payment_id"])
+        self.assertNotIn(final["invoice"]["invoice_id"], {row.get("invoice_id") for row in paid_rows})
 
     # 36. get_payment_detail_view returns payment with invoice info
     def test_get_payment_detail_view(self):

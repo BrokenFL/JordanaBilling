@@ -173,6 +173,24 @@ def display_invoice_number(invoice_number: Any, status: Any) -> str:
     return ""
 
 
+CANCELLATION_POLICY_TEXT = (
+    "Cancellation Policy: Cancellations received less than 24 hours prior to "
+    "scheduled appointment time are billed at the rate of the full session."
+)
+
+
+def _build_cancellation_policy(
+    invoice: dict[str, Any],
+    finalization_payload: dict[str, Any] | None,
+) -> str | None:
+    if str(invoice.get("status") or "") in ("finalized", "void"):
+        if not int(invoice.get("cancellation_policy_included") or 0):
+            return None
+        return str(invoice.get("cancellation_policy_text_snapshot") or "").strip() or None
+    payload = finalization_payload or {}
+    return CANCELLATION_POLICY_TEXT if payload.get("cancellation_policy_included") else None
+
+
 def _build_insurance_coding(
     invoice: dict[str, Any],
     profile: dict[str, Any],
@@ -265,7 +283,12 @@ def build_invoice_render_model(
         if value
     ]
 
-    bill_to_lines = [str(invoice.get("bill_to_name_snapshot") or party.get("billing_name") or "").strip()]
+    bill_to_lines = [str(
+        invoice.get("bill_to_name_snapshot")
+        or party.get("invoice_display_name")
+        or party.get("billing_name")
+        or ""
+    ).strip()]
     if delivery_method in {"mail", "both"}:
         bill_to_lines.extend(bill_to_address_lines)
     if delivery_method in {"email", "both"} and bill_to_email:
@@ -335,6 +358,13 @@ def build_invoice_render_model(
         }
 
     insurance_coding = _build_insurance_coding(invoice, profile, insurance_coding_payload)
+    cancellation_policy = _build_cancellation_policy(invoice, insurance_coding_payload)
+
+    invoice_date_display = (
+        "Assigned when finalized"
+        if str(invoice.get("status") or "") == "draft"
+        else format_invoice_header_date(invoice.get("invoice_date"))
+    )
 
     return {
         "logo_path": logo_path,
@@ -342,7 +372,7 @@ def build_invoice_render_model(
         "sender_lines": sender_lines,
         "bill_to_lines": bill_to_lines,
         "invoice_number_display": display_invoice_number(invoice.get("invoice_number"), invoice.get("status")),
-        "invoice_date_display": format_invoice_header_date(invoice.get("invoice_date")),
+        "invoice_date_display": invoice_date_display,
         "billing_period_display": format_billing_period(
             invoice.get("billing_month"),
             invoice.get("billing_period_start"),
@@ -369,6 +399,7 @@ def build_invoice_render_model(
         "total_display": money(invoice.get("total_cents")),
         "account_summary": summary_model,
         "insurance_coding": insurance_coding,
+        "cancellation_policy": cancellation_policy,
     }
 
 
@@ -378,6 +409,28 @@ def money(cents: Any) -> str:
 
 def _esc(value: Any) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+PRINT_ONE_LINE_FALLBACK_LENGTH = 52
+PRINT_ONE_LINE_FALLBACK_WORD_LENGTH = 26
+
+
+def _print_cell_class(value: Any, role: str) -> str:
+    """Choose an explicit print fallback for unusually long values.
+
+    Ordinary service and participant labels are kept on one line by the
+    print-preview stylesheet. Extremely long values get a wrapping class so
+    they remain fully readable instead of overflowing or being clipped.
+    """
+    text = " ".join(str(value or "").split())
+    longest_word = max((len(word) for word in text.split()), default=0)
+    suffix = (
+        " print-cell-wrap-fallback"
+        if len(text) > PRINT_ONE_LINE_FALLBACK_LENGTH
+        or longest_word > PRINT_ONE_LINE_FALLBACK_WORD_LENGTH
+        else ""
+    )
+    return f"{role}-cell{suffix}"
 
 
 def build_print_preview_html(
@@ -408,8 +461,10 @@ def build_print_preview_html(
     bill_to_lines = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("bill_to_lines") or []) if line)
     line_rows = "".join(
         f"<tr><td>{_esc(ln.get('service_date_display'))}</td>"
-        f"<td>{_esc(ln.get('participants_display'))}</td>"
-        f"<td>{_esc(ln.get('description_display'))}</td>"
+        f"<td class=\"{_print_cell_class(ln.get('participants_display'), 'participants')}\">"
+        f"{_esc(ln.get('participants_display'))}</td>"
+        f"<td class=\"{_print_cell_class(ln.get('description_display'), 'service')}\">"
+        f"{_esc(ln.get('description_display'))}</td>"
         f"<td>{_esc(ln.get('duration_display'))}</td>"
         f"<td style=\"text-align:right\">{_esc(ln.get('amount_display'))}</td></tr>"
         for ln in (render.get("lines") or [])
@@ -425,6 +480,10 @@ def build_print_preview_html(
             for item in insurance_coding
         )
         insurance_html = f'<div class="insurance-coding">{insurance_lines_html}</div>'
+    policy_html = (
+        f'<div class="cancellation-policy">{_esc(render.get("cancellation_policy"))}</div>'
+        if render.get("cancellation_policy") else ""
+    )
 
     summary_rows_html = ""
     prior_note_html = ""
@@ -504,10 +563,17 @@ def build_print_preview_html(
   .invoice-header-right div {{ font-size: 8pt; color: #42526A; margin-top: 2px; }}
   .bill-to {{ margin-bottom: 18px; }}
   .bill-to strong {{ font-size: 8pt; color: #526171; }}
-  table {{ width: 100%; border-collapse: collapse; margin-bottom: 14px; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 14px; table-layout: fixed; }}
+  .invoice-print-table th:nth-child(1), .invoice-print-table td:nth-child(1) {{ width: 1.38in; }}
+  .invoice-print-table th:nth-child(2), .invoice-print-table td:nth-child(2) {{ width: 1.12in; }}
+  .invoice-print-table th:nth-child(3), .invoice-print-table td:nth-child(3) {{ width: 3.15in; }}
+  .invoice-print-table th:nth-child(4), .invoice-print-table td:nth-child(4) {{ width: 0.85in; }}
+  .invoice-print-table th:nth-child(5), .invoice-print-table td:nth-child(5) {{ width: 1.00in; }}
   th {{ background: #EAF0F6; color: #102A43; font-size: 8pt; text-align: left; padding: 7px 5px;
     border-bottom: 0.8pt solid #9FB3C8; }}
   td {{ padding: 7px 5px; border-bottom: 0.3pt solid #D9E2EC; vertical-align: top; }}
+  .invoice-print-table .participants-cell, .invoice-print-table .service-cell {{ white-space: nowrap; }}
+  .invoice-print-table .print-cell-wrap-fallback {{ white-space: normal; overflow-wrap: anywhere; word-break: break-word; }}
   .total-row {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
   .total-row table {{ width: auto; }}
   .total-row td {{ border-top: 1pt solid #102A43; padding: 9px 0; font-weight: bold; font-size: 13pt; }}
@@ -516,6 +582,7 @@ def build_print_preview_html(
   .insurance-coding {{ margin-top: 14px; font-size: 9pt; line-height: 1.3; }}
   .insurance-coding div {{ margin: 0; padding: 0; }}
   .notes {{ margin-top: 14px; font-size: 9pt; }}
+  .cancellation-policy {{ margin-top: 14px; font-size: 9pt; line-height: 1.35; }}
   @media print {{ .print-btn-row, .draft-banner {{ display: none; }} .draft-watermark {{ color: rgba(200,80,80,0.08); }} }}
 </style></head><body>
   <div class="draft-banner">DRAFT — NOT FINAL</div>
@@ -530,7 +597,7 @@ def build_print_preview_html(
     </div>
   </div>
   <div class="bill-to"><strong>BILL TO</strong>{bill_to_lines}</div>
-  <table><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
+  <table class="invoice-print-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
   <tbody>{line_rows}{summary_rows_html}</tbody></table>
   {prior_note_html}
   <div class="payment-section">
@@ -540,4 +607,5 @@ def build_print_preview_html(
   </div>
   {insurance_html}
   {notes_html}
+  {policy_html}
 </body></html>"""

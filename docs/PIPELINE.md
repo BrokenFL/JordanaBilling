@@ -4,7 +4,9 @@
 
 The Apple Shortcut sends calendar snapshots to Google Apps Script. Google Sheets stores those rows in `Raw_Event_Snapshots`, and `Run_Log` records when capture windows have completed.
 
-Google Sheets is the raw cloud staging and audit layer. The local app never deletes or modifies Sheet rows. Normal capture now uses `past_3_days` and `next_7_days`; deprecated `past_7_days` and `next_2_days` rows remain readable during transition.
+Google Sheets is the raw cloud staging and audit layer. The local app never deletes or modifies Sheet rows. Normal v3 capture uses `past_3_days` and a short `next_2_days` scheduling-health window; deprecated `past_7_days` and `next_7_days` rows remain readable during transition.
+
+For v3 payloads, future rows are raw scheduling evidence only. A billing candidate/session is derived only when the same event appears in a `past_3_days` capture after its offset-aware end time. A later omission is a reversible Review warning, never automatic proof of cancellation, exclusion, or non-billability.
 
 ## 2. Sync Staged Rows
 
@@ -70,7 +72,7 @@ Raw rows are never edited in place.
 The local importer counts completed runs by grouping rows by `run_id`. A normal recurring run is treated as complete when it has one supported past label and one supported future label:
 
 - `past_3_days` or deprecated `past_7_days`
-- `next_7_days` or deprecated `next_2_days`
+- `next_2_days` or deprecated `next_7_days`
 
 The June 1-14, 2026 backfill uses `backfill_2026_06_01_through_2026_06_14` and is treated as a coherent one-time historical past batch.
 
@@ -81,7 +83,7 @@ This is a local validation signal only. It does not approve billing.
 Multiple raw rows can describe the same appointment. The importer collapses rows by:
 
 - `calendar_event_id` when present
-- Otherwise `event_fingerprint`, title, start, and end
+- Otherwise `event_fingerprint`, then exact canonical title, UTC start/end, duration, and calendar evidence
 
 The latest raw snapshot remains linked as the current candidate, while all raw rows remain preserved. Remote sync additionally skips any `snapshot_key` already present locally.
 
@@ -113,6 +115,9 @@ Any uncertain or human-dependent item goes to `review_queue`. Examples:
 - Unknown service mode
 - Missing rate
 - Missing billing party
+- A completed appointment absent from a newer capture
+- Ambiguous canonical calendar identity
+- A duplicate attempt with the same confirmed calendar event
 
 Review decisions are stored in SQLite. CSV exports are not the review system of record.
 
@@ -182,7 +187,7 @@ Resolution order is conservative:
 1. Exact stable calendar event ID.
 2. Exact event fingerprint.
 3. Exact structural identity when neither stable identifier resolves uniquely
-   and exactly one existing candidate matches normalized title, start, end,
+   and exactly one existing candidate matches normalized title, UTC start/end,
    duration, and calendar evidence.
 
 Structural matching is exact, not fuzzy. Rows that arrive with both a new event
@@ -191,9 +196,14 @@ changed or missing stable identifier may structurally reuse only an unapproved
 candidate; rows missing stable identifiers may structurally reuse a protected
 canonical candidate when the match is unique. If event ID and fingerprint
 evidence point to different candidates, or if structural identity matches
-multiple candidates, the importer preserves the new row as reviewable and flags
-identity resolution for manual review. Raw snapshots are never edited or
-deleted.
+multiple candidates, the importer preserves the new row and creates an
+idempotent Review warning rather than creating a third candidate or merging
+silently. Raw snapshots are never edited or deleted.
+
+When a legacy unidentifiable capture has the same title, UTC start, and calendar
+as an existing candidate but conflicts on duration or end time, it stays raw
+evidence and produces a Review warning. The importer never selects a duration
+or creates a second billable candidate from that conflict.
 
 A local dry-run analyzer is available for existing duplicate candidate/session
 groups:
@@ -210,3 +220,21 @@ excluded from later discovery, so a dry run after apply reports zero actions for
 those records. Reversal restores only fields whose current values still match
 the duplicate-repair-applied state; later user or workflow edits make reversal
 unsafe and prevent automatic restoration.
+
+## 13. Scoped Legacy Calendar Recovery
+
+The separate `calendar-recovery` command repairs only the historic absence
+suppression defect. Its dry run opens SQLite immutably and emits aggregate
+counts. Apply requires a `YYYY-MM` scope and an explicit confirmation phrase:
+
+```bash
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-recovery --dry-run --month 2026-08
+PYTHONPATH=app .venv/bin/python -m jordana_invoice --db data/jordana_invoice.sqlite3 calendar-recovery --apply --month 2026-08 --confirm-apply APPLY_CALENDAR_RECOVERY
+```
+
+Only legacy-excluded candidates with matching post-end `past_3_days` raw
+evidence return to normal Review; the command never auto-approves or stages
+them. Exact canonical offset duplicates are quarantined, uncertain
+duration/end-time versions are warned, and only exact, unpaid, unnumbered draft
+line duplicates are removed. Every applied action records reversible state and
+operational apply/reversal creates a verified private backup.

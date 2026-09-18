@@ -54,7 +54,7 @@ BILLING_SESSION_TYPE_LABELS = {
     "custom": "Custom",
 }
 
-APPOINTMENT_METHODS = {"office", "phone", "facetime", "unknown"}
+APPOINTMENT_METHODS = {"office", "phone", "zoom", "facetime", "unknown"}
 PERSONAL_KEYWORDS = {
     "mani",
     "pedi",
@@ -62,6 +62,9 @@ PERSONAL_KEYWORDS = {
     "pedicure",
     "cp reformer",
     "haircut",
+    "hair color",
+    "massage",
+    "reunion",
     "cleaners",
     "dry cleaner",
     "dinner",
@@ -87,6 +90,11 @@ ADMIN_PREFIXES = (
     "check",
     "cancel",
     "have i heard",
+    "received",
+    "reminder",
+    "book",
+    "take",
+    "change",
 )
 ADMIN_KEYWORDS = {
     "follow up",
@@ -119,6 +127,7 @@ SERVICE_MODE_ALIASES = {
     "phone": "phone",
     "call": "phone",
     "facetime": "facetime",
+    "zoom": "zoom",
     "face time": "facetime",
     "ft": "facetime",
     "office": "office",
@@ -132,7 +141,7 @@ SERVICE_MODE_ALIASES = {
 
 RATE_GROUP_BY_SERVICE_MODE = {
     "phone": "remote",
-    "facetime": "remote",
+    "facetime": "remote", "zoom": "remote",
     "office": "office",
     "house_call": "house_call",
     "unknown": "",
@@ -833,6 +842,12 @@ def parse_standard_title(title: str) -> tuple[str, str | None, int | None, str, 
 def parse_shorthand(title: str) -> tuple[str, str, int | None, str, bool, str | None, str | None] | None:
     cleaned_title, service_mode = strip_service_mode(title)
     tokens = cleaned_title.strip().split()
+    if (
+        len(tokens) >= 3
+        and tokens[-1].lower() in {"min", "mins", "minute", "minutes"}
+        and is_duration_token(tokens[-2])
+    ):
+        tokens = tokens[:-1]
     if len(tokens) < 2:
         return None
 
@@ -942,8 +957,8 @@ def choose_duration(
 ) -> tuple[int, str]:
     if explicit_duration:
         return explicit_duration, "title"
-    if calendar_duration:
-        return calendar_duration, "calendar"
+    # Shorthand without an explicit length means a standard hour. Calendar
+    # block length is retained separately as source evidence.
     return 60, "default"
 
 
@@ -1122,7 +1137,7 @@ def derive_appointment_method(service_mode: str) -> str:
     Map service_mode to appointment_method.
     Office/Phone/FaceTime are appointment methods, not billing types.
     """
-    if service_mode in {"phone", "facetime", "office"}:
+    if service_mode in {"phone", "zoom", "facetime", "office"}:
         return service_mode
     if service_mode == "house_call":
         return "office"
@@ -1187,7 +1202,7 @@ def contains_any(value: str, needles: set[str]) -> bool:
 
 _NAME_GUESS_STOPWORDS = {
     "am", "pm", "min", "mins", "minutes", "hour", "hours",
-    "zoom", "phone", "facetime", "office", "home", "house",
+    "zoom", "phone", "zoom", "facetime", "office", "home", "house",
     "late", "cx", "cancel", "cancelled", "canceled",
     "no", "show", "noshow",
     "leaves", "leave", "going", "away", "vacation",
@@ -1227,3 +1242,16 @@ def extract_name_guess(title: str) -> tuple[str | None, str | None]:
     name = canonicalize_name(" ".join(name_tokens))
     trailing = " ".join(tokens[len(name_tokens):]).strip()
     return (name if name else None), (trailing if trailing else None)
+
+
+def recognizable_appointment_title(title: str) -> bool:
+    """A person-like leading name followed by a time needs review, even if
+    additional tokens are unsupported. Never classify or approve from this hint.
+    """
+    normalized = normalize_title(title)
+    lowered = normalized.lower()
+    if (contains_any(lowered, PERSONAL_KEYWORDS | ADMIN_KEYWORDS) or lowered.startswith(ADMIN_PREFIXES)
+            or re.search(r"\bparty\b", lowered)):
+        return False
+    name, trailing = extract_name_guess(normalized)
+    return bool(name and trailing and (is_time_token(trailing.split()[0]) or is_duration_token(trailing.split()[0])))

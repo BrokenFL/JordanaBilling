@@ -14,6 +14,7 @@ Tests the fresh-install workflow:
 from __future__ import annotations
 
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -134,26 +135,30 @@ class CleanInstallTest(unittest.TestCase):
         self._run_cli("init-db")
         env = os.environ.copy()
         env["PYTHONPATH"] = str(APP_DIR)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
         proc = subprocess.Popen(
             [
                 sys.executable, "-m", "jordana_invoice",
                 "--db", str(self.db_path),
-                "serve-review", "--host", "127.0.0.1", "--port", "8771",
+                "serve-review", "--host", "127.0.0.1", "--port", str(port),
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=env,
             cwd=str(PROJECT_DIR),
         )
         try:
             healthy = False
             for _ in range(15):
+                self.assertIsNone(proc.poll(), "Review server exited before becoming healthy")
                 try:
-                    resp = urllib.request.urlopen(
-                        "http://127.0.0.1:8771/api/health", timeout=2
-                    )
-                    import json
-                    data = json.loads(resp.read())
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/api/health", timeout=2
+                    ) as resp:
+                        import json
+                        data = json.loads(resp.read())
                     if data.get("ok") is True:
                         healthy = True
                         break
