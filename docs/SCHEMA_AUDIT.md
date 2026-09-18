@@ -38,6 +38,8 @@ The registered migrations are:
 22. `022_calendar_recovery_actions` — reversible, scoped audit state for the legacy calendar-suppression and draft-duplicate recovery
 23. `023_client_invoice_title` — optional client-level `Dr.` invoice presentation flag
 24. `024_month_close` — additive local capture-run summaries synced from the Sheet `Run_Log`
+25. `025_historical_review` — explicit candidate calendar-review state
+26. `026_corrected_receipts` — immutable linked corrected-receipt snapshots and PDFs
 
 Do not describe `001_base` as the current migration. It is the first migration in the active sequence.
 
@@ -171,6 +173,7 @@ fixtures, screenshots, logs, demo data, examples, or documentation.
 - `payments` — posted and void payment records with provenance
 - `payment_allocations` — money applied to invoices or charges
 - `payment_receipts` — immutable finalized receipt snapshots and PDF paths
+- `corrected_receipts` — separately numbered immutable receipt corrections linked to the payment, finalized invoice line, prior receipt version, and audit reason
 - `receipt_sequences` — annual receipt numbering state
 - `idempotency_keys` — protection against repeated financial actions
 

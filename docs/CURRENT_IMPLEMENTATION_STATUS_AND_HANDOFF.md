@@ -2,6 +2,16 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Test.41 release preparation — September 17
+
+Adds a separately numbered, linked corrected receipt for an explicitly entered
+session-type display correction on a paid finalized invoice. The original
+invoice/PDF, payment allocation, paid status, and earlier receipts remain
+unchanged. Invoice and receipt tables give long service labels more room; narrow
+app views scroll sideways and extreme printed values wrap in full. The additive
+`026_corrected_receipts` migration is backed up before installation on an
+existing database. See `TEST_RELEASE_NOTES.md` and `INVOICE_LIFECYCLE.md`.
+
 ## Test.40 release preparation — September 10
 
 Prevents a second person-linked billing setup for the same client, blocks an
@@ -41,13 +51,13 @@ feed remains disabled. See `TEST_RELEASE_NOTES.md` and `SOFTWARE_UPDATES.md`.
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
-- **Migration head:** `024_month_close`
-- **Latest recorded full-suite baseline:** 2,795 tests passed, 0 failures, 68 skipped on Python 3.14.4
-- **Current test release target:** `v0.1.0-test.40`
+- **Migration head:** `026_corrected_receipts`
+- **Latest recorded local unit baseline:** 3,077 tests passed, 0 failures, 11 skipped on Python 3.14.4; the separate temporary-database live-sync integration passed in the preceding full run
+- **Current test release target:** `v0.1.0-test.41`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post40`
-- **Release status:** approved for a controlled Jordana beta; not represented as final production software
-- **Prior test release:** `v0.1.0-test.39` is superseded by test.40 for installation and update testing
+- **Current package/application version:** `0.1.0.post41`
+- **Release status:** controlled beta target pending artifact verification; not represented as final production software
+- **Prior test release:** `v0.1.0-test.40` remains available until Test.41 is verified and promoted
 
 ## Architecture
 
@@ -124,6 +134,7 @@ This is not yet a final production declaration. Brooke should remain available d
 - Allocation reversal and payment voiding
 - Correction history
 - Manual immutable receipt generation
+- Separately linked corrected receipt versions for explicit session-type display corrections on paid finalized invoices
 - Outstanding, Paid, and All Payments views with shared Invoice Period filtering and first-name sorting
 - Shared invoice/payment financial-summary calculations
 - Read-only historical paid-at-session analyzer and CLI
@@ -148,17 +159,17 @@ This is not yet a final production declaration. Brooke should remain available d
 
 ## Release Target
 
-The current controlled-beta release target is (test.40 supersedes test.39):
+The current controlled-beta release target is Test.41:
 
 ```text
-JordanaBilling-v0.1.0-test.40-<commit>-macos-arm64.dmg
+JordanaBilling-v0.1.0-test.41-<commit>-macos-arm64.dmg
 ```
 
 Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 `release_manifest.json` after publication.
 
-- Release label: `v0.1.0-test.40`
-- Python package/application version: `0.1.0.post40`
+- Release label: `v0.1.0-test.41`
+- Python package/application version: `0.1.0.post41`
 - Build ID: embedded in the wheel and exposed by `/api/build-info`
 - Source tree dirty: false
 - Builder Python: 3.14.4
@@ -168,7 +179,7 @@ Release facts are recorded in the GitHub release, `.sha256` asset, and artifact
 - `hdiutil verify`: required before publication
 - Private-file scan: no `.env`, SQLite, or PDF files found in release payload
 - `contains_private_data`: false
-- Wheelhouse includes exact `jordana_invoice-0.1.0.post40` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
+- Wheelhouse includes exact `jordana_invoice-0.1.0.post41` app wheel and explicit `Pillow` runtime support required by ReportLab PDF rendering
 - Local browser smoke testing: required before publication
 - Focused tests pass for Quit, installer/update behavior, build identity, report filtering, June reconciliation, weekday column, weekend/evening rate matching, Edit Session, billing relationship deletion/archive, self-pay edit, SSL handling, and write-token messaging
 

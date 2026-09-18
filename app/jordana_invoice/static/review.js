@@ -3498,11 +3498,19 @@ async function openPaymentDetail(paymentId) {
   const activeAllocs = allocs.filter(a => a.status === "active");
   const reversedAllocs = allocs.filter(a => a.status === "reversed");
   const receipt = data.receipt || null;
+  const correctedReceipts = data.corrected_receipts || [];
   const receiptActions = receipt
     ? `<button type="button" id="openReceiptBtn">Open Receipt</button><button type="button" id="showReceiptInFinderBtn">Show in Finder</button>`
+    : correctedReceipts.length
+      ? `<span class="help">The original invoice is preserved. Open the corrected receipt below.</span>`
     : data.status === "posted"
       ? `<button type="button" id="previewReceiptBtn">Preview Receipt</button><button type="button" id="createReceiptBtn" class="save">Create Receipt</button>`
       : `<span class="help">Receipts are available for posted payments only.</span>`;
+  const correctedReceiptRows = correctedReceipts.map(item => `
+    <tr><td>${fmt(item.receipt_number)}</td><td>${fmt(item.created_at)}</td>
+    <td class="service-cell">${fmt(item.previous_description_snapshot)}</td><td class="service-cell">${fmt(item.corrected_description_snapshot)}</td><td>${fmt(item.reason)}</td>
+    <td><button type="button" data-open-corrected-receipt="${escapeAttr(item.correction_id)}">Open PDF</button></td></tr>
+  `).join("");
 
   const allocRows = allocs.map(a => `
     <tr>
@@ -3543,7 +3551,12 @@ async function openPaymentDetail(paymentId) {
     <div class="payment-detail-section">
       <h3>Receipt</h3>
       <div class="payment-receipt-actions">${receiptActions}</div>
+      ${data.status === "posted" && activeAllocs.some(a => a.invoice_info)
+        ? `<p class="help">A corrected receipt changes the displayed session type only. The finalized invoice, payment, and original receipt stay unchanged.</p><button type="button" id="correctReceiptBtn" class="secondary">Correct Session Type on Receipt</button>`
+        : ""}
       <div id="paymentReceiptPreview" class="receipt-preview-inline" hidden></div>
+      <div id="paymentReceiptCorrection" class="receipt-preview-inline" hidden></div>
+      ${correctedReceipts.length ? `<h4>Corrected receipt history</h4><div class="table-scroll-wrap" role="region" aria-label="Corrected receipt history" tabindex="0"><table class="review-table corrected-receipt-history"><thead><tr><th>Receipt</th><th>Created</th><th>Previous session type</th><th>Corrected session type</th><th>Reason</th><th>Document</th></tr></thead><tbody>${correctedReceiptRows}</tbody></table></div><p class="table-scroll-hint">Scroll sideways to see the full history.</p>` : ""}
     </div>
     <div class="payment-detail-section">
       <h3>Allocations</h3>
@@ -3617,6 +3630,17 @@ async function openPaymentDetail(paymentId) {
       alert(err.message || "Receipt creation failed.");
     }
   };
+  if ($("correctReceiptBtn")) $("correctReceiptBtn").onclick = async () => {
+    try {
+      const options = await api(`/api/payments/${encodeURIComponent(paymentId)}/receipt-correction-options`);
+      renderReceiptCorrectionForm(paymentId, options);
+    } catch (err) {
+      alert(err.message || "Receipt correction is unavailable.");
+    }
+  };
+  document.querySelectorAll("[data-open-corrected-receipt]").forEach(btn => {
+    btn.onclick = () => window.open(`/api/receipt-corrections/${encodeURIComponent(btn.dataset.openCorrectedReceipt)}/pdf`, "_blank");
+  });
 
   document.querySelectorAll("[data-reverse-alloc]").forEach(btn => {
     btn.onclick = async () => {
@@ -3675,8 +3699,14 @@ async function openPaymentDetail(paymentId) {
   }
 }
 
-function renderPaymentReceiptPreview(snapshot) {
-  const target = $("paymentReceiptPreview");
+function printWrapClass(value) {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  const longestWord = Math.max(0, ...text.split(" ").map(word => word.length));
+  return text.length > 52 || longestWord > 26 ? " print-cell-wrap-fallback" : "";
+}
+
+function renderPaymentReceiptPreview(snapshot, targetId = "paymentReceiptPreview") {
+  const target = $(targetId);
   if (!target) return;
   const filing = snapshot.filing_owner || {};
   const eligible = filing.eligible_clients || [];
@@ -3700,17 +3730,109 @@ function renderPaymentReceiptPreview(snapshot) {
           <div><strong>Payment Date:</strong> ${fmt(snapshot.payment_date_display)}</div>
           <div><strong>Payment Method:</strong> ${fmt(snapshot.payment_method_display)}</div>
           ${snapshot.reference_number ? `<div><strong>Reference:</strong> ${fmt(snapshot.reference_number)}</div>` : ""}
+          ${snapshot.correction ? `<div><strong>Corrects Invoice:</strong> ${fmt(snapshot.correction.source_invoice_number)}</div>` : ""}
+          ${snapshot.correction && snapshot.correction.supersedes_receipt_number ? `<div><strong>Supersedes Receipt:</strong> ${fmt(snapshot.correction.supersedes_receipt_number)}</div>` : ""}
         </div>
       </header>
       ${filingHtml}
-      <table class="invoice-preview-table"><thead><tr><th>Invoice / Session</th><th>Date</th><th>Amount Paid</th><th>Remaining Balance</th></tr></thead><tbody>${(snapshot.allocations || []).map(a => `<tr><td>${fmt(a.reference_display)}</td><td>${fmt(a.service_date_display)}</td><td>${money(centString(a.amount_cents))}</td><td>${money(centString(a.remaining_balance_cents))}</td></tr>`).join("")}</tbody></table>
+      <div class="table-scroll-wrap" role="region" aria-label="Receipt session lines" tabindex="0"><table class="invoice-preview-table receipt-preview-table"><thead><tr><th>Invoice / Session</th><th>Date</th><th>Session Type</th><th>Amount Paid</th><th>Remaining Balance</th></tr></thead><tbody>${(snapshot.allocations || []).map(a => `<tr><td>${fmt(a.reference_display)}</td><td>${fmt(a.service_date_display)}</td><td class="service-cell${printWrapClass(a.description_display)}">${fmt(a.description_display)}</td><td>${money(centString(a.amount_cents))}</td><td>${money(centString(a.remaining_balance_cents))}</td></tr>`).join("")}</tbody></table></div><p class="table-scroll-hint">Scroll sideways to read every column.</p>
+      ${snapshot.correction ? `<p class="help">Corrected receipt for insurance documentation. No additional charge or payment.</p>` : ""}
       <div class="invoice-payment-summary">
         <div class="payment-summary-card"><label>Amount Received</label><strong>${money(centString(snapshot.amount_cents))}</strong></div>
         <div class="payment-summary-card"><label>Unapplied</label><strong>${money(centString(snapshot.unapplied_cents))}</strong></div>
         <div class="payment-summary-card"><label>Status</label><strong>${snapshot.paid_in_full ? "PAID IN FULL" : "Partial payment"}</strong></div>
       </div>
+      ${(snapshot.insurance_coding || []).length ? `<div class="invoice-preview-insurance">${snapshot.insurance_coding.map(item => `<div>${fmt(item.label)}: ${fmt(item.value)}</div>`).join("")}</div>` : ""}
     </article>
   `;
+}
+
+function renderReceiptCorrectionForm(paymentId, options) {
+  const target = $("paymentReceiptCorrection");
+  if (!target) return;
+  const lines = options.lines || [];
+  if (!lines.length) {
+    target.hidden = false;
+    target.innerHTML = '<div class="reports-error">No active allocation on a finalized invoice can be corrected for this payment.</div>';
+    return;
+  }
+  const filing = options.filing_owner || {};
+  const filingSelection = filing.selected ? "" : `
+    <label class="field">File corrected receipt under
+      <select name="filing_owner_person_id" required><option value="">Select client...</option>
+      ${(filing.eligible_clients || []).map(person => `<option value="${escapeAttr(person.person_id)}">${fmt(person.display_name)}</option>`).join("")}
+      </select>
+    </label>`;
+  target.hidden = false;
+  target.innerHTML = `
+    <form id="receiptCorrectionForm" class="payment-detail-action-form">
+      <label class="field">Invoice session to correct
+        <select name="allocation_id" required>${lines.map(line => `<option value="${escapeAttr(line.allocation_id)}">${fmt(line.invoice_number)} · ${fmt(line.service_date_display)} · ${fmt(line.current_description)}</option>`).join("")}</select>
+      </label>
+      <p id="receiptCorrectionCurrent" class="help"></p>
+      <label class="field">Corrected session type<select name="billing_session_type" required><option value="">Select...</option>${billingTypeOptions("")}</select></label>
+      <label class="field" id="receiptCorrectionCustomField" hidden>Custom session type, short label only<input name="custom_description" maxlength="160" autocomplete="off" /></label>
+      ${filingSelection}
+      <label class="field">Administrative correction reason<input name="reason" maxlength="240" required autocomplete="off" placeholder="Why this label needs correction" /></label>
+      <div class="actions"><button type="submit" class="secondary">Preview Corrected Receipt</button><button type="button" id="createCorrectedReceiptBtn" class="save" disabled>Create Corrected Receipt</button></div>
+      <p class="help">The corrected PDF will be numbered separately. It does not replace the finalized invoice or alter paid status.</p>
+    </form>
+    <div id="receiptCorrectionPreview" class="receipt-preview-inline" hidden></div>`;
+  const form = $("receiptCorrectionForm");
+  const current = $("receiptCorrectionCurrent");
+  const updateCurrent = () => {
+    const line = lines.find(item => item.allocation_id === form.elements.allocation_id.value);
+    current.textContent = line ? `Current receipt value: ${line.current_description}` : "";
+  };
+  const updateCustom = () => {
+    const custom = form.elements.billing_session_type.value === "custom";
+    $("receiptCorrectionCustomField").hidden = !custom;
+    form.elements.custom_description.required = custom;
+  };
+  const payload = () => ({
+    allocation_id: form.elements.allocation_id.value,
+    billing_session_type: form.elements.billing_session_type.value,
+    custom_description: form.elements.custom_description.value.trim() || null,
+    filing_owner_person_id: form.elements.filing_owner_person_id ? form.elements.filing_owner_person_id.value || null : null,
+    reason: form.elements.reason.value.trim(),
+    expected_latest_correction_id: options.latest_correction_id || null,
+  });
+  form.oninput = () => { $("createCorrectedReceiptBtn").disabled = true; updateCurrent(); updateCustom(); };
+  updateCurrent();
+  form.onsubmit = async event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    try {
+      const request = payload();
+      const preview = await api(`/api/payments/${encodeURIComponent(paymentId)}/receipt-correction-preview`, {
+        method: "POST", body: JSON.stringify(request),
+      });
+      renderPaymentReceiptPreview(preview.snapshot || {}, "receiptCorrectionPreview");
+      form.dataset.previewPayload = JSON.stringify(request);
+      form.dataset.previewDigest = preview.preview_digest || "";
+      $("createCorrectedReceiptBtn").disabled = false;
+    } catch (err) {
+      alert(err.message || "Corrected receipt preview failed.");
+    }
+  };
+  $("createCorrectedReceiptBtn").onclick = async () => {
+    const request = payload();
+    if (!form.reportValidity() || form.dataset.previewPayload !== JSON.stringify(request)) return;
+    try {
+      const result = await api(`/api/payments/${encodeURIComponent(paymentId)}/receipt-corrections`, {
+        method: "POST", body: JSON.stringify({ ...request, expected_preview_digest: form.dataset.previewDigest }),
+      });
+      await openPaymentDetail(paymentId);
+      await loadAllPayments();
+      if (result.correction && result.correction.correction_id) {
+        const openButton = Array.from(document.querySelectorAll("[data-open-corrected-receipt]"))
+          .find(button => button.dataset.openCorrectedReceipt === result.correction.correction_id);
+        if (openButton) { openButton.scrollIntoView({ block: "nearest" }); openButton.focus(); }
+      }
+    } catch (err) {
+      alert(err.message || "Corrected receipt creation failed.");
+    }
+  };
 }
 
 function closePaymentDetailOverlay() {
@@ -4406,7 +4528,7 @@ async function renderInvoiceEditor(data) {
       </div>
       ${filingControl}
     </div>
-    <table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-candidate-id="${escapeAttr(line.candidate_id || "")}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td>${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions">${line.candidate_id ? `<button class="return-approved-session-btn edit-line secondary" data-cid="${escapeAttr(line.candidate_id)}" data-return-invoice-id="${escapeAttr(i.invoice_id)}" data-correction-invoice-id="${correctionParent ? escapeAttr(i.invoice_id) : ""}" type="button">Edit Session</button>` : ""}<button class="remove-line danger" type="button" title="Remove from this draft invoice">Remove</button></div></td></tr>`).join("")}</tbody></table>
+    <div class="table-scroll-wrap" role="region" aria-label="Draft invoice sessions" tabindex="0"><table class="invoice-editor-lines"><thead><tr><th>Date</th><th>Participants</th><th>Session Type</th><th>Duration</th><th>Rate</th><th></th></tr></thead><tbody>${data.lines.map(line => `<tr data-line="${escapeAttr(line.invoice_line_item_id)}" data-candidate-id="${escapeAttr(line.candidate_id || "")}" data-description="${escapeAttr(line.description_snapshot)}"><td>${escapeHtml(line.service_date)}</td><td>${fmt(line.participants_snapshot)}</td><td class="service-cell">${escapeHtml(line.description_snapshot)}</td><td>${line.duration_minutes == null ? "-" : `${line.duration_minutes} min`}</td><td>${money(centString(line.line_amount_cents))}</td><td><div class="line-item-actions">${line.candidate_id ? `<button class="return-approved-session-btn edit-line secondary" data-cid="${escapeAttr(line.candidate_id)}" data-return-invoice-id="${escapeAttr(i.invoice_id)}" data-correction-invoice-id="${correctionParent ? escapeAttr(i.invoice_id) : ""}" type="button">Edit Session</button>` : ""}<button class="remove-line danger" type="button" title="Remove from this draft invoice">Remove</button></div></td></tr>`).join("")}</tbody></table></div><p class="table-scroll-hint">Scroll sideways to read every column.</p>
     <div class="invoice-total"><span>TOTAL</span><span>${money(centString(i.total_cents))}</span></div>
     <section class="invoice-html-preview-panel" aria-label="Draft invoice preview">
       ${renderCanonicalInvoicePreview(data.render_model)}
@@ -4976,10 +5098,10 @@ function renderCanonicalInvoicePreview(renderModel, options = {}) {
           <div class="invoice-preview-title"><h3>INVOICE</h3><div>${fmt(model.invoice_date_display)}</div><div>${fmt(model.invoice_number_display)}</div></div>
         </div>
       </header>
-      <table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>
-        ${lines.map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td>${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}
+      <div class="table-scroll-wrap" role="region" aria-label="Invoice service lines" tabindex="0"><table class="invoice-preview-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th>Amount</th></tr></thead><tbody>
+        ${lines.map(line => `<tr><td>${fmt(line.service_date_display)}</td><td>${fmt(line.participants_display)}</td><td class="service-cell${printWrapClass(line.description_display)}">${fmt(line.description_display)}</td><td>${fmt(line.duration_display)}</td><td>${fmt(line.amount_display)}</td></tr>`).join("")}
         ${summaryRows}
-      </tbody></table>
+      </tbody></table></div><p class="table-scroll-hint">Scroll sideways to read every column.</p>
       ${priorHtml}
       <footer class="invoice-preview-payment">
         <strong>${fmt(model.payment_title || "Please make checks payable to:")}</strong>

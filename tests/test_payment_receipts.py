@@ -24,6 +24,12 @@ from jordana_invoice.receipt_services import (
     preview_payment_receipt,
     trusted_receipt_document_action,
 )
+from jordana_invoice.corrected_receipt_services import (
+    corrected_receipt_options,
+    create_corrected_receipt,
+    list_corrected_receipts,
+    preview_corrected_receipt,
+)
 from jordana_invoice.review_services import approve_candidate, create_billing_party, create_person
 from jordana_invoice.util import stable_hash
 
@@ -102,7 +108,7 @@ class PaymentReceiptTests(unittest.TestCase):
             "billing_period_start": billing_period_start,
             "billing_period_end": billing_period_end,
             "invoice_date": invoice_date,
-            "session_ids": [session_id],
+            "session_ids": [session_id] if isinstance(session_id, str) else session_id,
         })
         with patch("jordana_invoice.invoice_services.generate_invoice_pdf") as fake_pdf:
             fake_pdf.side_effect = lambda inv, lines, path, **kw: (Path(path).parent.mkdir(parents=True, exist_ok=True), Path(path).write_bytes(b"%PDF invoice"), "i" * 64)[-1]
@@ -126,6 +132,31 @@ class PaymentReceiptTests(unittest.TestCase):
         with patch("jordana_invoice.receipt_services.generate_receipt_pdf") as fake_pdf:
             fake_pdf.side_effect = lambda snapshot, path: (Path(path).parent.mkdir(parents=True, exist_ok=True), Path(path).write_bytes(b"%PDF receipt"), "r" * 64)[-1]
             return create_payment_receipt(self.conn, payment_id, pdf_root=self.root / "Receipts")
+
+    def _create_correction(self, payment_id, allocation_id, **overrides):
+        payload = {
+            "allocation_id": allocation_id,
+            "billing_session_type": "psychotherapy_house_call",
+            "reason": "Administrative session type correction",
+            "pdf_root": self.root / "Receipts",
+        }
+        payload.update(overrides)
+        if "expected_preview_digest" not in payload:
+            try:
+                preview = preview_corrected_receipt(
+                    self.conn, payment_id,
+                    allocation_id=payload["allocation_id"],
+                    billing_session_type=payload["billing_session_type"],
+                    custom_description=payload.get("custom_description"),
+                    filing_owner_person_id=payload.get("filing_owner_person_id"),
+                    expected_latest_correction_id=payload.get("expected_latest_correction_id"),
+                )
+                payload["expected_preview_digest"] = preview["preview_digest"]
+            except ValueError:
+                payload["expected_preview_digest"] = "stale-preview"
+        with patch("jordana_invoice.corrected_receipt_services.generate_receipt_pdf") as fake_pdf:
+            fake_pdf.side_effect = lambda snapshot, path: (Path(path).parent.mkdir(parents=True, exist_ok=True), Path(path).write_bytes(b"%PDF corrected receipt"), "c" * 64)[-1]
+            return create_corrected_receipt(self.conn, payment_id, **payload)
 
     def test_preview_creates_no_database_or_filesystem_mutation(self):
         session = self._approved_session("prev-no-mut")
@@ -349,6 +380,255 @@ class PaymentReceiptTests(unittest.TestCase):
         self.assertIn("EIN: 00-0000000", text)
         self.assertIn("NPI: 0000000000", text)
         self.assertIn("SW: SW-TEST", text)
+
+    def test_corrected_receipt_preserves_invoice_payment_and_original_receipt(self):
+        session = self._approved_session("corrected-preserve")
+        invoice_id = self._finalize_invoice(
+            session["id"], insurance_coding_included=True,
+            insurance_diagnosis_code="DEMO-CODE",
+        )["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="zelle",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        original = self._create_receipt(payment_id)["receipt"]
+        original_pdf = Path(original["pdf_path"]).read_bytes()
+        options = corrected_receipt_options(self.conn, payment_id)
+        allocation_id = options["lines"][0]["allocation_id"]
+        before = {
+            table: [tuple(row) for row in self.conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()]
+            for table in ("invoices", "invoice_line_items", "payments", "payment_allocations", "payment_receipts")
+        }
+
+        preview = preview_corrected_receipt(
+            self.conn, payment_id, allocation_id=allocation_id,
+            billing_session_type="psychotherapy_house_call",
+        )
+        self.assertEqual(preview["snapshot"]["document_title"], "DRAFT CORRECTED RECEIPT")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM corrected_receipts").fetchone()[0], 0)
+        result = self._create_correction(payment_id, allocation_id)
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["correction"]["original_receipt_id"], original["receipt_id"])
+        self.assertEqual(result["correction"]["source_invoice_id"], invoice_id)
+        self.assertEqual(result["correction"]["receipt_number"], "R-2026-0002")
+        self.assertEqual(result["snapshot"]["allocations"][0]["description_display"], "Psychotherapy Session / House Call")
+        self.assertEqual(result["snapshot"]["insurance_coding"], json.loads(original["snapshot_json"])["insurance_coding"])
+        self.assertEqual(Path(original["pdf_path"]).read_bytes(), original_pdf)
+        for table, rows in before.items():
+            self.assertEqual(
+                [tuple(row) for row in self.conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()],
+                rows, table,
+            )
+        audit = self.conn.execute(
+            "SELECT action FROM audit_log WHERE entity_type = 'corrected_receipt' AND entity_id = ?",
+            (result["correction"]["correction_id"],),
+        ).fetchone()
+        self.assertEqual(audit["action"], "receipt_corrected")
+
+    def test_corrected_receipt_without_original_does_not_create_uncorrected_receipt(self):
+        session = self._approved_session("corrected-first")
+        invoice_id = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        allocation_id = corrected_receipt_options(self.conn, payment_id)["lines"][0]["allocation_id"]
+
+        result = self._create_correction(payment_id, allocation_id)
+
+        self.assertIsNone(result["correction"]["original_receipt_id"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM payment_receipts").fetchone()[0], 0)
+        self.assertEqual(preview_payment_receipt(self.conn, payment_id)["mode"], "corrected")
+        with self.assertRaisesRegex(ValueError, "corrected receipt already exists"):
+            create_payment_receipt(self.conn, payment_id, pdf_root=self.root / "Receipts")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM payments").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM payment_allocations").fetchone()[0], 1)
+
+    def test_corrected_receipt_versions_and_retry_are_immutable(self):
+        session = self._approved_session("corrected-versions")
+        invoice_id = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        allocation_id = corrected_receipt_options(self.conn, payment_id)["lines"][0]["allocation_id"]
+        first = self._create_correction(payment_id, allocation_id)
+        first_id = first["correction"]["correction_id"]
+        first_pdf = Path(first["correction"]["pdf_path"]).read_bytes()
+
+        second = self._create_correction(
+            payment_id, allocation_id, billing_session_type="psychotherapy_weekend",
+            reason="Second administrative correction", expected_latest_correction_id=first_id,
+        )
+        retry = self._create_correction(
+            payment_id, allocation_id, billing_session_type="psychotherapy_weekend",
+            reason="Second administrative correction", expected_latest_correction_id=first_id,
+            expected_preview_digest=second["preview_digest"],
+        )
+
+        self.assertEqual(second["correction"]["version"], 2)
+        self.assertEqual(second["correction"]["supersedes_correction_id"], first_id)
+        self.assertEqual(second["correction"]["previous_description_snapshot"], "Psychotherapy Session / House Call")
+        self.assertFalse(retry["created"])
+        self.assertEqual(retry["correction"]["correction_id"], second["correction"]["correction_id"])
+        self.assertEqual(len(list_corrected_receipts(self.conn, payment_id)), 2)
+        self.assertEqual(Path(first["correction"]["pdf_path"]).read_bytes(), first_pdf)
+        with self.assertRaisesRegex(ValueError, "newer corrected receipt"):
+            self._create_correction(
+                payment_id, allocation_id, billing_session_type="psychotherapy_evening",
+                expected_latest_correction_id=first_id,
+            )
+        with self.assertRaisesRegex(ValueError, "newer corrected receipt"):
+            self._create_correction(
+                payment_id, allocation_id, billing_session_type="psychotherapy_weekend",
+                reason="Second administrative correction", expected_latest_correction_id=first_id,
+                expected_preview_digest="different-request",
+            )
+
+    def test_corrected_receipt_rejects_changed_or_reversed_allocation(self):
+        session = self._approved_session("corrected-reversed")
+        invoice_id = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        self._create_receipt(payment_id)
+        allocation_id = corrected_receipt_options(self.conn, payment_id)["lines"][0]["allocation_id"]
+        reverse_allocation(self.conn, allocation_id, reason="Administrative reversal")
+
+        with self.assertRaisesRegex(ValueError, "allocations changed"):
+            self._create_correction(payment_id, allocation_id)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM corrected_receipts").fetchone()[0], 0)
+
+    def test_corrected_receipt_changes_only_selected_line(self):
+        first = self._approved_session("corrected-multi-first", start_at="2026-05-10T10:00:00-04:00")
+        second = self._approved_session("corrected-multi-second", start_at="2026-05-11T10:00:00-04:00")
+        invoice_id = self._finalize_invoice([first["id"], second["id"]])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=30000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        original = self._create_receipt(payment_id)
+        options = corrected_receipt_options(self.conn, payment_id)
+        self.assertEqual(len(options["lines"]), 2)
+        chosen = options["lines"][0]["allocation_id"]
+
+        corrected = self._create_correction(payment_id, chosen)
+
+        old_rows = {row["allocation_id"]: row for row in original["snapshot"]["allocations"]}
+        new_rows = {row["allocation_id"]: row for row in corrected["snapshot"]["allocations"]}
+        self.assertEqual(set(old_rows), set(new_rows))
+        for allocation_id in old_rows:
+            if allocation_id == chosen:
+                self.assertNotEqual(old_rows[allocation_id]["description_display"], new_rows[allocation_id]["description_display"])
+            else:
+                self.assertEqual(old_rows[allocation_id], new_rows[allocation_id])
+
+    def test_corrected_receipt_rolls_back_sequence_and_pdf_on_audit_failure(self):
+        session = self._approved_session("corrected-rollback")
+        invoice_id = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        allocation_id = corrected_receipt_options(self.conn, payment_id)["lines"][0]["allocation_id"]
+        self.conn.execute(
+            """CREATE TRIGGER reject_correction_audit BEFORE INSERT ON audit_log
+               WHEN NEW.entity_type = 'corrected_receipt'
+               BEGIN SELECT RAISE(ABORT, 'test rollback'); END"""
+        )
+        self.conn.commit()
+
+        with self.assertRaisesRegex(Exception, "test rollback"):
+            self._create_correction(payment_id, allocation_id)
+
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM corrected_receipts").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM receipt_sequences").fetchone()[0], 0)
+        self.assertFalse((self.root / "Receipts" / "Pat Client" / "May 2026" / "Corrected_Receipt_R-2026-0001.pdf").exists())
+
+    def test_original_receipt_created_after_preview_requires_new_preview(self):
+        session = self._approved_session("corrected-preview-race")
+        invoice_id = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        allocation_id = corrected_receipt_options(self.conn, payment_id)["lines"][0]["allocation_id"]
+        old_preview = preview_corrected_receipt(
+            self.conn, payment_id, allocation_id=allocation_id,
+            billing_session_type="psychotherapy_house_call",
+        )
+        self._create_receipt(payment_id)
+
+        with self.assertRaisesRegex(ValueError, "changed since preview"):
+            self._create_correction(
+                payment_id, allocation_id,
+                expected_preview_digest=old_preview["preview_digest"],
+            )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM corrected_receipts").fetchone()[0], 0)
+
+    def test_corrects_receipt_created_before_paid_session_was_invoiced(self):
+        session = self._approved_session("corrected-pre-invoice", payment_status="paid_at_session")
+        payment_id = self.conn.execute(
+            "SELECT payment_id FROM payments WHERE source_session_id = ?", (session["id"],)
+        ).fetchone()[0]
+        original = self._create_receipt(payment_id)
+        self.assertIsNone(original["snapshot"]["allocations"][0]["invoice_line_item_id"])
+        invoice_id = self._finalize_invoice(
+            session["id"], insurance_coding_included=True,
+            insurance_diagnosis_code="DEMO-CODE",
+        )["invoice"]["invoice_id"]
+        original_snapshot = original["receipt"]["snapshot_json"]
+        options = corrected_receipt_options(self.conn, payment_id)
+
+        corrected = self._create_correction(payment_id, options["lines"][0]["allocation_id"])
+
+        self.assertEqual(corrected["correction"]["source_invoice_id"], invoice_id)
+        self.assertEqual(corrected["snapshot"]["allocations"][0]["invoice_id"], invoice_id)
+        self.assertIn("Invoice", corrected["snapshot"]["allocations"][0]["reference_display"])
+        self.assertEqual(corrected["snapshot"]["insurance_coding"][0]["value"], "DEMO-CODE")
+        self.assertEqual(
+            self.conn.execute("SELECT snapshot_json FROM payment_receipts WHERE payment_id = ?", (payment_id,)).fetchone()[0],
+            original_snapshot,
+        )
+
+    def test_corrected_receipt_pdf_identifies_change_without_new_charge(self):
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            self.skipTest("pypdf is not installed in the active test interpreter")
+        session = self._approved_session("corrected-pdf")
+        invoice_id = self._finalize_invoice(session["id"])["invoice"]["invoice_id"]
+        payment = record_invoice_payment(
+            self.conn, invoice_id=invoice_id, payment_date="2026-05-15",
+            amount_cents=15000, payment_method="ach",
+        )["payment"]
+        payment_id = payment["payment_id"]
+        allocation_id = corrected_receipt_options(self.conn, payment_id)["lines"][0]["allocation_id"]
+
+        result = create_corrected_receipt(
+            self.conn, payment_id, allocation_id=allocation_id,
+            billing_session_type="psychotherapy_house_call",
+            reason="Administrative session type correction", pdf_root=self.root / "Receipts",
+            expected_preview_digest=preview_corrected_receipt(
+                self.conn, payment_id, allocation_id=allocation_id,
+                billing_session_type="psychotherapy_house_call",
+            )["preview_digest"],
+        )
+
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(result["correction"]["pdf_path"]).pages)
+        self.assertIn("CORRECTED RECEIPT", " ".join(text.split()))
+        self.assertIn("Psychotherapy Session / House Call", text)
+        self.assertIn("No additional charge or payment.", text)
+        self.assertIn("AMOUNT PAID", text)
 
 
 if __name__ == "__main__":

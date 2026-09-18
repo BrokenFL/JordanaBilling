@@ -801,6 +801,7 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Success response**: receipt dict
 - **DB tables**: `payment_receipts`, `receipt_sequences`, `audit_log`, PDF file written
 - **Idempotent**: yes — creating a receipt for a payment that already has one returns the existing receipt
+- **Corrected-document guard**: if a corrected receipt exists and no original receipt exists, creating a new uncorrected receipt is rejected
 - **Existing tests**: `test_payment_receipts.py`
 - **Missing contract coverage**: HTTP-level shape
 
@@ -816,6 +817,14 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Idempotent**: yes
 - **Existing tests**: `test_payment_receipts.py`
 - **Missing contract coverage**: HTTP-level shape
+
+### Corrected receipt endpoints
+
+- `GET /api/payments/{id}/receipt-correction-options` lists active finalized-invoice allocations and the latest correction ID. It is read-only.
+- `POST /api/payments/{id}/receipt-correction-preview` accepts `allocation_id`, `billing_session_type`, optional `custom_description`, optional `filing_owner_person_id`, and `expected_latest_correction_id`. It returns a side-effect-free preview snapshot and digest.
+- `POST /api/payments/{id}/receipt-corrections` accepts those fields plus a required administrative `reason` and `expected_preview_digest`. It writes one immutable `corrected_receipts` row, a separate numbered PDF, and an audit event in one transaction. Only an exact repeated request returns that version; stale or changed requests are rejected.
+- `GET /api/receipt-corrections/{id}/pdf` serves the checksum-verified stored PDF from the configured receipt folder. `GET /api/payments/{id}` lists all corrected versions alongside the original receipt.
+- The service rejects void payments, changed/reversed allocation membership, allocations outside finalized invoices, unchanged labels, and unsupported session types. It never modifies the invoice, original receipt, payment, or allocations.
 
 ---
 

@@ -134,6 +134,13 @@ from .receipt_services import (
     preview_payment_receipt,
     trusted_receipt_document_action,
 )
+from .corrected_receipt_services import (
+    corrected_receipt_options,
+    corrected_receipt_pdf_path,
+    create_corrected_receipt,
+    list_corrected_receipts,
+    preview_corrected_receipt,
+)
 from .csv_reports import (
     available_report_types,
     available_years,
@@ -192,6 +199,7 @@ from .request_validation import (
     parse_apply_funds_request,
     parse_void_payment_request,
     parse_create_payment_receipt_request,
+    parse_corrected_receipt_request,
     parse_save_business_profile_request,
     parse_sync_run_request,
     parse_sync_rebuild_request,
@@ -467,6 +475,35 @@ def is_safe_validation_error(error: Exception) -> bool:
             "Amount exceeds available unapplied funds.",
             "Amount exceeds the current invoice balance.",
             "This request has already been processed.",
+            # Corrected receipts (fixed, sanitized administrative messages)
+            "Only posted payments can have corrected receipts.",
+            "Payment allocations changed since this receipt snapshot. Review the payment before correcting it.",
+            "Choose an active allocation on a finalized invoice.",
+            "The receipt allocation no longer matches the finalized invoice. Review the payment first.",
+            "The corrected session type must differ from the current receipt value.",
+            "A newer corrected receipt exists. Reopen the payment and preview again.",
+            "Choose which client the corrected receipt should be filed under.",
+            "Choose a supported billing session type.",
+            "A corrected receipt PDF already exists at the target location.",
+            "Corrected receipt was not found.",
+            "Stored corrected receipt path is outside the configured receipt folder.",
+            "The corrected receipt PDF does not match its recorded checksum.",
+            "A corrected receipt already exists. Open that document instead of creating an uncorrected receipt.",
+            "A receipt requires at least one active allocation.",
+            "Business profile is required before creating a receipt.",
+            "Payment Bill To party was not found.",
+            "Payment allocation session was not found.",
+            "File receipt under must be one of the eligible session participants.",
+            "Choose which session participant this receipt should be filed under.",
+            "Add an eligible session participant before creating this receipt.",
+            "This payment covers allocations with different filing owners. Create separate receipts after splitting the payment.",
+            "Invoice filing owner must be resolved before creating a receipt.",
+            "Custom session type is required.",
+            "Custom session type must be one line and at most 160 characters.",
+            "Correction reason is required.",
+            "Correction reason must be one line and at most 240 characters.",
+            "Preview the corrected receipt again before creating it.",
+            "The corrected receipt changed since preview. Preview it again before creating it.",
             "Calendar sync is already running.",
             "This appointment is not in the current historical calendar review list. Sync Calendar before reviewing it.",
             "Explicit rebuild confirmation is required.",
@@ -885,6 +922,19 @@ def make_handler(
                         filing_owner_person_id=first(query, "filing_owner_person_id") or None,
                     ))
                     return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-correction-options"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    self.send_json(corrected_receipt_options(self.conn(), payment_id))
+                    return
+                if parsed.path.startswith("/api/receipt-corrections/") and parsed.path.endswith("/pdf"):
+                    correction_id = parsed.path.strip("/").split("/")[2]
+                    try:
+                        pdf_path = corrected_receipt_pdf_path(self.conn(), correction_id)
+                    except FileNotFoundError as error:
+                        self.send_json({"ok": False, "error": str(error)}, status=404)
+                        return
+                    self.send_pdf(pdf_path.read_bytes(), pdf_path.name)
+                    return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-pdf"):
                     payment_id = parsed.path.strip("/").split("/")[2]
                     receipt = self.conn().execute("SELECT * FROM payment_receipts WHERE payment_id = ?", (payment_id,)).fetchone()
@@ -902,6 +952,7 @@ def make_handler(
                     detail = get_payment_detail_view(self.conn(), payment_id)
                     receipt = self.conn().execute("SELECT * FROM payment_receipts WHERE payment_id = ?", (payment_id,)).fetchone()
                     detail["receipt"] = dict(receipt) if receipt else None
+                    detail["corrected_receipts"] = list_corrected_receipts(self.conn(), payment_id)
                     self.send_json(detail)
                     return
                 if parsed.path.startswith("/api/invoices/") and parsed.path.endswith("/print-preview"):
@@ -1435,6 +1486,29 @@ def make_handler(
                             filing_owner_person_id=req.to_payload().get("filing_owner_person_id"),
                         )
                     )
+                    return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-correction-preview"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_corrected_receipt_request(data, require_reason=False)
+                    self.send_json(preview_corrected_receipt(
+                        self.conn(), payment_id, **{
+                            key: value for key, value in req.to_payload().items()
+                            if key in {"allocation_id", "billing_session_type", "custom_description",
+                                       "filing_owner_person_id", "expected_latest_correction_id"}
+                        },
+                    ))
+                    return
+                if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-corrections"):
+                    payment_id = parsed.path.strip("/").split("/")[2]
+                    req = parse_corrected_receipt_request(data)
+                    self.send_json(create_corrected_receipt(
+                        self.conn(), payment_id, **{
+                            key: value for key, value in req.to_payload().items()
+                            if key in {"allocation_id", "billing_session_type", "custom_description",
+                                       "reason", "filing_owner_person_id", "expected_latest_correction_id",
+                                       "expected_preview_digest"}
+                        },
+                    ))
                     return
                 if parsed.path.startswith("/api/payments/") and parsed.path.endswith("/receipt-document-action"):
                     payment_id = parsed.path.strip("/").split("/")[2]

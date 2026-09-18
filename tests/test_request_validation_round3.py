@@ -61,6 +61,7 @@ from jordana_invoice.request_validation import (
     parse_apply_funds_request,
     parse_void_payment_request,
     parse_create_payment_receipt_request,
+    parse_corrected_receipt_request,
     parse_save_business_profile_request,
     parse_sync_run_request,
     parse_sync_rebuild_request,
@@ -593,6 +594,23 @@ class TestParseCreatePaymentReceipt(unittest.TestCase):
     def test_non_object_raises(self):
         with self.assertRaises(RequestValidationError):
             parse_create_payment_receipt_request(None)
+
+
+class TestParseCorrectedReceipt(unittest.TestCase):
+    def test_create_requires_explicit_reason(self):
+        payload = {"allocation_id": "allocation-1", "billing_session_type": "psychotherapy_house_call"}
+        with self.assertRaises(RequestValidationError):
+            parse_corrected_receipt_request(payload)
+        self.assertEqual(
+            parse_corrected_receipt_request({**payload, "reason": "Administrative correction", "expected_preview_digest": "digest"}).to_payload()["reason"],
+            "Administrative correction",
+        )
+
+    def test_preview_accepts_no_reason_but_rejects_wrong_types(self):
+        payload = {"allocation_id": "allocation-1", "billing_session_type": "psychotherapy_house_call"}
+        self.assertEqual(parse_corrected_receipt_request(payload, require_reason=False).to_payload(), payload)
+        with self.assertRaises(RequestValidationError):
+            parse_corrected_receipt_request({**payload, "expected_latest_correction_id": 1}, require_reason=False)
 
 
 class TestParseSaveBusinessProfile(unittest.TestCase):

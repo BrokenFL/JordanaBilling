@@ -34,6 +34,13 @@ def preview_payment_receipt(
     existing = get_payment_receipt(conn, payment_id)
     if existing:
         return {"mode": "finalized", "receipt": existing, "snapshot": json.loads(existing["snapshot_json"])}
+    corrected = conn.execute(
+        "SELECT * FROM corrected_receipts WHERE payment_id = ? ORDER BY version DESC LIMIT 1",
+        (payment_id,),
+    ).fetchone()
+    if corrected:
+        return {"mode": "corrected", "receipt": None,
+                "corrected_receipt": dict(corrected), "snapshot": json.loads(corrected["snapshot_json"])}
     snapshot = _build_receipt_snapshot(
         conn,
         payment_id,
@@ -55,6 +62,11 @@ def create_payment_receipt(
     if existing:
         return {"receipt": existing, "snapshot": json.loads(existing["snapshot_json"]), "created": False}
 
+    if conn.execute(
+        "SELECT 1 FROM corrected_receipts WHERE payment_id = ? LIMIT 1", (payment_id,)
+    ).fetchone():
+        raise ValueError("A corrected receipt already exists. Open that document instead of creating an uncorrected receipt.")
+
     root = Path(pdf_root or os.getenv("JORDANA_RECEIPTS_DIR", "Receipts")).expanduser()
     pdf_path: Path | None = None
     pdf_existed_before = False
@@ -69,6 +81,10 @@ def create_payment_receipt(
         if existing_locked:
             conn.commit()
             return {"receipt": existing_locked, "snapshot": json.loads(existing_locked["snapshot_json"]), "created": False}
+        if conn.execute(
+            "SELECT 1 FROM corrected_receipts WHERE payment_id = ? LIMIT 1", (payment_id,)
+        ).fetchone():
+            raise ValueError("A corrected receipt already exists. Open that document instead of creating an uncorrected receipt.")
         payment = conn.execute("SELECT * FROM payments WHERE payment_id = ?", (payment_id,)).fetchone()
         if not payment:
             raise ValueError("Payment was not found.")

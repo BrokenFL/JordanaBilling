@@ -1,3 +1,43 @@
+# Jordana Billing v0.1.0-test.41
+
+This controlled beta adds a separate corrected receipt for a session-type
+display error on a paid, finalized invoice. Package version `0.1.0.post41`.
+
+## Changes
+
+- In **Payments**, open a posted payment and choose **Correct Session Type on
+  Receipt**. Select the affected invoice session, explicitly choose the corrected
+  type or enter a short custom label, provide an administrative reason, review
+  the preview, and create the separately numbered PDF.
+- The corrected receipt links to its source invoice and earlier receipt when
+  present. The finalized invoice and PDF, payment allocations, paid status,
+  original receipt, and earlier corrected versions remain unchanged. No second
+  charge or payment is created. The release adds the additive database migration
+  `026_corrected_receipts`; the installer backs up an existing database before
+  migration.
+- Long session labels remain on one line where they fit in the app, print
+  preview, and PDFs. Narrow app tables scroll sideways; exceptionally long
+  values wrap in full in printed documents.
+
+This receipt can document a label correction for reimbursement. If a payer
+requires a changed invoice, that needs a separately reviewed invoice workflow.
+The app never infers diagnosis codes from session information.
+
+## Install and verify
+
+After the maintainer verifies and promotes this release, Jordana can use
+**Check for Updates** and **Update and restart**, or install the verified DMG
+with the existing configuration and database. Open a posted payment with a
+finalized invoice to inspect the correction controls. Do not use real client
+records for a test correction. A successful GitHub publication or update offer
+does not by itself confirm installation on Jordana's Mac.
+
+## Validation
+
+Focused correction, migration, HTTP, and layout regressions use fictional
+records and temporary databases. The release artifact must pass checksum,
+disk-image, signature, embedded-file, and privacy checks before promotion.
+
 # Jordana Billing v0.1.0-test.40
 
 Prevents duplicate client billing setups, repairs the existing draft-only payer

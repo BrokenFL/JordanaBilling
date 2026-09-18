@@ -1546,6 +1546,16 @@ class CreatePaymentReceiptRequest:
         return self.payload
 
 
+@dataclass(frozen=True)
+class CorrectedReceiptRequest:
+    """Validated request for receipt-correction preview or creation."""
+
+    payload: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.payload
+
+
 def parse_record_payment_request(payload: Any) -> RecordPaymentRequest:
     """Parse POST /api/invoices/{id}/payments.
 
@@ -1617,6 +1627,22 @@ def parse_create_payment_receipt_request(payload: Any) -> CreatePaymentReceiptRe
     data = _require_object(payload)
     _optional_str(data, "filing_owner_person_id")
     return CreatePaymentReceiptRequest(payload=data)
+
+
+def parse_corrected_receipt_request(payload: Any, *, require_reason: bool = True) -> CorrectedReceiptRequest:
+    data = _require_object(payload)
+    _required_str(data, "allocation_id")
+    _required_str(data, "billing_session_type")
+    _optional_str(data, "custom_description")
+    _optional_str(data, "filing_owner_person_id")
+    _optional_str(data, "expected_latest_correction_id")
+    if require_reason:
+        _required_str(data, "reason")
+        _required_str(data, "expected_preview_digest")
+    else:
+        _optional_str(data, "reason")
+        _optional_str(data, "expected_preview_digest")
+    return CorrectedReceiptRequest(payload=data)
 
 
 # ---------------------------------------------------------------------------

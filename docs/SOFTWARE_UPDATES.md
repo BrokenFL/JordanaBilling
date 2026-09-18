@@ -3,8 +3,8 @@
 The app checks an explicit promotion feed on launch and at most once daily.
 A manual **Check for updates** button can refresh it sooner. Only a newer
 version explicitly enabled in `updates/jordana.json` is offered. Publishing a
-GitHub release alone does not offer it to Jordana. Test.40 is the first planned
-promotion through this feed after its published DMG is independently verified.
+GitHub release alone does not offer it to Jordana. Test.40 was the first
+promotion through this feed; Test.41 requires its own verified offer.
 
 The default feed is the `main` branch's `updates/jordana.json` on
 `raw.githubusercontent.com/BrokenFL/JordanaBilling`. Checks send no calendar,

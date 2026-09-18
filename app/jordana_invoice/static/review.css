@@ -485,7 +485,7 @@ tr.empty-row:hover { background: transparent; }
   color: #1d3f72;
 }
 .payment-receipt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.receipt-preview-inline { margin-top: 12px; }
+.receipt-preview-inline { margin-top: 12px; max-width: 100%; overflow-x: auto; }
 .receipt-preview { transform-origin: top left; }
 .payment-overlay-modal { max-width: 760px; }
 .review-warning-banner {
@@ -501,7 +501,7 @@ tr.empty-row:hover { background: transparent; }
 .eligible-row:last-child { border-bottom: 0; }
 .eligible-row.ineligible { color: var(--muted); background: var(--soft); }
 .eligible-row input { min-height: 18px; }
-.invoice-editor-lines { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.invoice-editor-lines { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto; }
 .invoice-editor-lines th, .invoice-editor-lines td { border-bottom: 1px solid var(--line); padding: 7px 5px; font-size: 12px; vertical-align: top; }
 .invoice-editor-lines input { width: 100%; min-height: 32px; }
 .invoice-editor-lines th:nth-child(1) { width: 105px; }
@@ -510,9 +510,10 @@ tr.empty-row:hover { background: transparent; }
 .invoice-editor-lines th:nth-child(4) { width: 82px; }
 .invoice-editor-lines th:nth-child(5) { width: 96px; }
 .invoice-editor-lines th:nth-child(6) { width: 126px; }
+.invoice-editor-lines td:nth-child(2), .invoice-editor-lines td:nth-child(3) { white-space: nowrap; }
 .line-item-actions { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
 .line-item-actions button { min-height: 28px; font-size: 12px; padding: 0 8px; }
-.invoice-html-preview-panel { max-width: 980px; width: 100%; }
+.invoice-html-preview-panel { max-width: 980px; width: 100%; overflow-x: auto; }
 .invoice-preview { border: 1px solid #b8c5d4; background: white; padding: 28px 30px; min-height: 0; box-shadow: 0 2px 8px rgba(16, 42, 67, 0.08); color: #102a43; }
 .invoice-preview-header { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 24px; align-items: start; }
 .invoice-preview-left { min-width: 0; }
@@ -615,10 +616,14 @@ tr.empty-row:hover { background: transparent; }
 .relationship-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid #edf1f6; font-size: 13px; }
 .relationship-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .secondary-heading { margin: 16px 0 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
-.table-scroll-wrap { overflow-x: auto; }
-.invoice-preview-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.table-scroll-wrap { max-width: 100%; overflow-x: auto; }
+.table-scroll-hint { margin: 4px 0 10px; color: var(--muted); font-size: 11px; }
+.invoice-preview-table { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto; }
 .invoice-preview-table th { background: #eaf0f6; padding: 8px 6px; height: auto; }
 .invoice-preview-table td { padding: 8px 6px; height: auto; font-size: 11px; vertical-align: top; }
+.invoice-preview-table td:nth-child(2), .invoice-preview-table td:nth-child(3) { white-space: nowrap; }
+.corrected-receipt-history { width: max-content; min-width: 100%; table-layout: auto; }
+.corrected-receipt-history .service-cell { white-space: nowrap; }
 .invoice-preview-table th:last-child, .invoice-preview-table td:last-child { text-align: right; }
 .invoice-preview-table th:nth-child(1) { width: 15%; }
 .invoice-preview-table th:nth-child(2) { width: 25%; }
@@ -812,7 +817,7 @@ body.responsive-sheet-open {
     max-height: calc(100vh - 32px);
     min-height: 0;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;
     background: white;
     opacity: 1;
     isolation: isolate;
@@ -842,15 +847,20 @@ body.responsive-sheet-open {
   .invoice-builder,
   .payment-panel {
     min-width: 0;
-    overflow-x: hidden;
+    overflow-x: auto;
   }
 
   .responsive-sheet.responsive-sheet-active .review-table,
-  .responsive-sheet.responsive-sheet-active .invoice-editor-lines,
-  .responsive-sheet.responsive-sheet-active .invoice-preview-table,
   .responsive-sheet.responsive-sheet-active .org-table {
     width: 100%;
     min-width: 0;
+    table-layout: auto;
+  }
+
+  .responsive-sheet.responsive-sheet-active .invoice-editor-lines,
+  .responsive-sheet.responsive-sheet-active .invoice-preview-table {
+    width: max-content;
+    min-width: 100%;
     table-layout: auto;
   }
 
@@ -875,7 +885,8 @@ body.responsive-sheet-open {
     width: 100%;
     max-height: none;
     min-height: 0;
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: visible;
     contain: none;
     border: 0;
     border-top: 1px solid var(--line);
@@ -1301,3 +1312,42 @@ body.responsive-sheet-open {
 .software-update { position: fixed; right: 16px; bottom: 12px; z-index: 30; max-width: min(420px, 90vw); background: white; border: 1px solid #ccc; border-radius: 10px; padding: 10px; box-shadow: 0 3px 12px #0002; }
 .software-update p { margin: 8px 0; white-space: pre-wrap; }
 @media print { .software-update { display: none; } }
+
+@media print {
+  .table-scroll-hint { display: none; }
+
+  .table-scroll-wrap,
+  .invoice-html-preview-panel,
+  .receipt-preview-inline {
+    overflow: visible;
+  }
+
+  .invoice-editor-lines,
+  .invoice-preview-table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .receipt-preview-table th:nth-child(1) { width: 20%; }
+  .receipt-preview-table th:nth-child(2) { width: 18%; }
+  .receipt-preview-table th:nth-child(3) { width: 40%; }
+  .receipt-preview-table th:nth-child(4),
+  .receipt-preview-table th:nth-child(5) { width: 11%; }
+
+  .invoice-preview-table .service-cell { white-space: nowrap; }
+  .invoice-preview-table .service-cell.print-cell-wrap-fallback {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .invoice-editor-lines td:nth-child(2),
+  .invoice-editor-lines td:nth-child(3),
+  .invoice-preview-table td:nth-child(2),
+  .corrected-receipt-history .service-cell {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}

@@ -111,6 +111,63 @@ class ReviewServerSyncConnectionTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["review_items_changed"], 3)
 
 
+class ReviewServerCorrectedReceiptRoutesTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.handler_cls = make_handler(str(Path(self.temp.name) / "test.sqlite3"))
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _handler(self, path, body=None):
+        handler = object.__new__(self.handler_cls)
+        handler.path = path
+        raw = json.dumps(body or {}).encode("utf-8")
+        handler.headers = {
+            "Content-Length": str(len(raw)),
+            "Content-Type": "application/json",
+            self.handler_cls.write_token_header: self.handler_cls.write_token,
+        }
+        handler.rfile = io.BytesIO(raw)
+        handler.wfile = io.BytesIO()
+        handler.conn = lambda: object()
+        handler.send_error = lambda code: (_ for _ in ()).throw(AssertionError(f"unexpected error {code}"))
+        captured = {}
+        handler.send_json = lambda payload, status=200: captured.update(payload=payload, status=status)
+        handler.send_pdf = lambda content, filename: captured.update(pdf=content, filename=filename)
+        return handler, captured
+
+    def test_options_returns_actionable_validation_error(self):
+        handler, captured = self._handler("/api/payments/payment-1/receipt-correction-options")
+        with patch("jordana_invoice.review_server.corrected_receipt_options", side_effect=ValueError(
+            "Payment allocations changed since this receipt snapshot. Review the payment before correcting it."
+        )):
+            handler.do_GET()
+        self.assertEqual(captured["status"], 400)
+        self.assertIn("allocations changed", captured["payload"]["error"])
+
+    def test_create_route_passes_preview_identity(self):
+        body = {
+            "allocation_id": "allocation-1", "billing_session_type": "psychotherapy_house_call",
+            "reason": "Administrative correction", "expected_preview_digest": "digest-1",
+        }
+        handler, captured = self._handler("/api/payments/payment-1/receipt-corrections", body)
+        with patch("jordana_invoice.review_server.create_corrected_receipt", return_value={"created": True}) as create:
+            handler.do_POST()
+        self.assertEqual(captured["status"], 200)
+        self.assertTrue(captured["payload"]["created"])
+        self.assertEqual(create.call_args.kwargs["expected_preview_digest"], "digest-1")
+
+    def test_corrected_pdf_route_serves_stored_file(self):
+        path = Path(self.temp.name) / "Corrected_Receipt_demo.pdf"
+        path.write_bytes(b"%PDF sanitized")
+        handler, captured = self._handler("/api/receipt-corrections/correction-1/pdf")
+        with patch("jordana_invoice.review_server.corrected_receipt_pdf_path", return_value=path):
+            handler.do_GET()
+        self.assertEqual(captured["pdf"], b"%PDF sanitized")
+        self.assertEqual(captured["filename"], path.name)
+
+
 class ReviewServerQuitTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

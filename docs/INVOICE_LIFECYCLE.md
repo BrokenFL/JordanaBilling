@@ -299,6 +299,36 @@ historical invoice. Correction drafts are excluded from automatic monthly stagin
 the existing manual void flow remains available for cases that should not be
 replaced through this guided workflow.
 
+### Corrected Receipt For A Paid Finalized Invoice
+
+When an invoice has payment-allocation history, **Correct & Replace Invoice**
+remains blocked. Jordana can create a separately numbered **Corrected Receipt**
+for a session-type display error on an active allocation to a finalized invoice.
+In Payments, open the payment, choose **Correct Session Type on Receipt**,
+select the invoice session, enter the corrected billing session type (or a short
+custom type) and an administrative reason, preview, then create the PDF.
+
+The correction is a new immutable receipt snapshot and PDF. It identifies the
+source invoice and prior receipt when one exists and states that no additional
+charge or payment was made. It never edits or voids the finalized invoice, its
+PDF, the original receipt, the payment, or allocations. Every earlier corrected
+version remains available in the payment detail view. If no original receipt
+exists, the first corrected document links directly to the payment and
+finalized invoice; the app does not create an incorrect original first.
+Changed allocations, void payments, and non-finalized invoices block a new
+correction and require review.
+The creation request must match the displayed preview snapshot; if the source
+receipt or filing details change before confirmation, Jordana must preview
+again. A receipt issued for a paid-at-session payment before invoice
+finalization can be corrected after that allocation is linked to the
+finalized invoice. The corrected version names the invoice and uses only the
+invoice's frozen insurance coding; the earlier receipt remains untouched.
+
+This flow corrects the receipt's session-type display for reimbursement
+documentation. It does not change the original invoice's description or any
+frozen diagnosis-code snapshot. A payer that requires a reissued invoice needs
+a separate reviewed financial workflow.
+
 ## Client Page Invoice History
 
 The client workspace displays a read-only invoice history table for all invoices addressed to billing parties belonging to that person and can identify invoices filed under that client. Void invoices show zero balance. No payment, finalization, or void controls appear on the client page — those actions remain on the dedicated invoice view. The client page now shows account summary cards (Total Finalized Invoices, Total Payments Applied, Current Balance, Account Status) powered by `client_account_summary`. The invoice table includes Payment Status and Paid columns. Session tables use "Payment Handling" with labels "Invoice billing" and "Paid at session".
@@ -549,7 +579,7 @@ The customer-facing `invoice_date` remains the finalization date. It is not used
 
 ### Unimplemented Features
 The following features are **not implemented** in this round and remain out of scope:
-- Automatic receipts, bulk receipts, and receipt correction workflows
+- Automatic receipts and bulk receipts
 - Paid Invoice documents
 - Optional prior-invoice PDF packets
 - Email or mail delivery and delivery tracking

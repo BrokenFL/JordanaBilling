@@ -394,6 +394,14 @@ A local command-line interface is available in `app/jordana_invoice/payment_back
 - Credits, multi-invoice payments, reconciliation, and month-close workflows remain unfinished.
 - Account statements, delivery, credits, and reconciliation remain unimplemented. Manual one-payment receipts are implemented separately with immutable receipt snapshots.
 
+Corrected payment receipts are stored in `corrected_receipts`, linked to a
+posted payment, one active allocation, its finalized invoice line, the original
+receipt when present, and the preceding corrected version when present. Each
+version has its own number, frozen snapshot, PDF path, checksum, reason,
+explicitly selected billing session type, and exact request fingerprint.
+This table does not update `invoices`, `invoice_line_items`, `payments`,
+`payment_allocations`, or `payment_receipts`.
+
 ## Prior Balance & Account Summary Schema
 
 Finalized invoices store an immutable historical snapshot of the payer's prior unpaid balance and payments applied in the `account_summary_snapshot` column of the `invoices` table.

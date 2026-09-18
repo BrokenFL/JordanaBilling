@@ -411,6 +411,28 @@ def _esc(value: Any) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+PRINT_ONE_LINE_FALLBACK_LENGTH = 52
+PRINT_ONE_LINE_FALLBACK_WORD_LENGTH = 26
+
+
+def _print_cell_class(value: Any, role: str) -> str:
+    """Choose an explicit print fallback for unusually long values.
+
+    Ordinary service and participant labels are kept on one line by the
+    print-preview stylesheet. Extremely long values get a wrapping class so
+    they remain fully readable instead of overflowing or being clipped.
+    """
+    text = " ".join(str(value or "").split())
+    longest_word = max((len(word) for word in text.split()), default=0)
+    suffix = (
+        " print-cell-wrap-fallback"
+        if len(text) > PRINT_ONE_LINE_FALLBACK_LENGTH
+        or longest_word > PRINT_ONE_LINE_FALLBACK_WORD_LENGTH
+        else ""
+    )
+    return f"{role}-cell{suffix}"
+
+
 def build_print_preview_html(
     invoice: dict[str, Any],
     lines: list[dict[str, Any]],
@@ -439,8 +461,10 @@ def build_print_preview_html(
     bill_to_lines = "".join(f"<div>{_esc(line)}</div>" for line in (render.get("bill_to_lines") or []) if line)
     line_rows = "".join(
         f"<tr><td>{_esc(ln.get('service_date_display'))}</td>"
-        f"<td>{_esc(ln.get('participants_display'))}</td>"
-        f"<td>{_esc(ln.get('description_display'))}</td>"
+        f"<td class=\"{_print_cell_class(ln.get('participants_display'), 'participants')}\">"
+        f"{_esc(ln.get('participants_display'))}</td>"
+        f"<td class=\"{_print_cell_class(ln.get('description_display'), 'service')}\">"
+        f"{_esc(ln.get('description_display'))}</td>"
         f"<td>{_esc(ln.get('duration_display'))}</td>"
         f"<td style=\"text-align:right\">{_esc(ln.get('amount_display'))}</td></tr>"
         for ln in (render.get("lines") or [])
@@ -539,10 +563,17 @@ def build_print_preview_html(
   .invoice-header-right div {{ font-size: 8pt; color: #42526A; margin-top: 2px; }}
   .bill-to {{ margin-bottom: 18px; }}
   .bill-to strong {{ font-size: 8pt; color: #526171; }}
-  table {{ width: 100%; border-collapse: collapse; margin-bottom: 14px; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 14px; table-layout: fixed; }}
+  .invoice-print-table th:nth-child(1), .invoice-print-table td:nth-child(1) {{ width: 1.38in; }}
+  .invoice-print-table th:nth-child(2), .invoice-print-table td:nth-child(2) {{ width: 1.12in; }}
+  .invoice-print-table th:nth-child(3), .invoice-print-table td:nth-child(3) {{ width: 3.15in; }}
+  .invoice-print-table th:nth-child(4), .invoice-print-table td:nth-child(4) {{ width: 0.85in; }}
+  .invoice-print-table th:nth-child(5), .invoice-print-table td:nth-child(5) {{ width: 1.00in; }}
   th {{ background: #EAF0F6; color: #102A43; font-size: 8pt; text-align: left; padding: 7px 5px;
     border-bottom: 0.8pt solid #9FB3C8; }}
   td {{ padding: 7px 5px; border-bottom: 0.3pt solid #D9E2EC; vertical-align: top; }}
+  .invoice-print-table .participants-cell, .invoice-print-table .service-cell {{ white-space: nowrap; }}
+  .invoice-print-table .print-cell-wrap-fallback {{ white-space: normal; overflow-wrap: anywhere; word-break: break-word; }}
   .total-row {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
   .total-row table {{ width: auto; }}
   .total-row td {{ border-top: 1pt solid #102A43; padding: 9px 0; font-weight: bold; font-size: 13pt; }}
@@ -566,7 +597,7 @@ def build_print_preview_html(
     </div>
   </div>
   <div class="bill-to"><strong>BILL TO</strong>{bill_to_lines}</div>
-  <table><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
+  <table class="invoice-print-table"><thead><tr><th>Date</th><th>Participants</th><th>Service</th><th>Duration</th><th style="text-align:right">Amount</th></tr></thead>
   <tbody>{line_rows}{summary_rows_html}</tbody></table>
   {prior_note_html}
   <div class="payment-section">

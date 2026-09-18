@@ -17,12 +17,12 @@ fails, the installer should restore `.previous`; if no previous app existed, it
 should remove the failed app. Private configuration and SQLite data remain
 outside the app and must be preserved.
 
-### Current Test Build — v0.1.0-test.40
+### Current Test Build Target — v0.1.0-test.41
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.40
-- **Python package/application version:** 0.1.0.post40
+- **Release label:** v0.1.0-test.41
+- **Python package/application version:** 0.1.0.post41
 - **DMG:** recorded in the GitHub release and `release_manifest.json`
 - **Manifest commit:** recorded in `release_manifest.json`
 - **Build ID:** recorded in `release_manifest.json` and exposed by `/api/build-info`
@@ -40,10 +40,10 @@ This is a controlled pilot/test release, not a final production release.
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-test.40 supersedes test.39 for installation and update testing. It retains the
-prior billing and client safeguards, prevents duplicate person billing setups,
-repairs safe legacy duplicate drafts and sessions, and includes waived and
-paid-at-session records on invoices.
+After release verification, Test.41 supersedes Test.40 for installation and
+update testing. It retains the earlier billing safeguards and adds a linked
+corrected receipt for paid finalized invoices without rewriting the original
+financial history.
 
 ### Calendar Reliability And Client Presentation In test.34
 

@@ -893,6 +893,32 @@ CREATE INDEX IF NOT EXISTS idx_payment_receipts_payment
 CREATE INDEX IF NOT EXISTS idx_payment_receipts_filing_owner
   ON payment_receipts(filing_owner_person_id, created_at);
 
+CREATE TABLE IF NOT EXISTS corrected_receipts (
+  correction_id TEXT PRIMARY KEY,
+  payment_id TEXT NOT NULL REFERENCES payments(payment_id),
+  original_receipt_id TEXT REFERENCES payment_receipts(receipt_id),
+  supersedes_correction_id TEXT REFERENCES corrected_receipts(correction_id),
+  version INTEGER NOT NULL CHECK (version >= 1),
+  receipt_number TEXT NOT NULL UNIQUE,
+  allocation_id TEXT NOT NULL REFERENCES payment_allocations(allocation_id),
+  invoice_line_item_id TEXT NOT NULL REFERENCES invoice_line_items(invoice_line_item_id),
+  source_invoice_id TEXT NOT NULL REFERENCES invoices(invoice_id),
+  previous_description_snapshot TEXT NOT NULL,
+  corrected_description_snapshot TEXT NOT NULL,
+  billing_session_type TEXT NOT NULL,
+  custom_description_snapshot TEXT,
+  reason TEXT NOT NULL,
+  request_digest TEXT NOT NULL UNIQUE,
+  snapshot_json TEXT NOT NULL,
+  pdf_path TEXT NOT NULL,
+  pdf_sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(payment_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_corrected_receipts_payment
+  ON corrected_receipts(payment_id, version);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_draft_party_month
   ON invoices(bill_to_party_id, billing_month)
   WHERE status = 'draft' AND billing_month IS NOT NULL
@@ -1789,6 +1815,40 @@ def _apply_migration_025(conn: sqlite3.Connection) -> None:
     })
 
 
+MIGRATION_026_CORRECTED_RECEIPTS = "026_corrected_receipts"
+
+
+def _apply_migration_026(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS corrected_receipts (
+          correction_id TEXT PRIMARY KEY,
+          payment_id TEXT NOT NULL REFERENCES payments(payment_id),
+          original_receipt_id TEXT REFERENCES payment_receipts(receipt_id),
+          supersedes_correction_id TEXT REFERENCES corrected_receipts(correction_id),
+          version INTEGER NOT NULL CHECK (version >= 1),
+          receipt_number TEXT NOT NULL UNIQUE,
+          allocation_id TEXT NOT NULL REFERENCES payment_allocations(allocation_id),
+          invoice_line_item_id TEXT NOT NULL REFERENCES invoice_line_items(invoice_line_item_id),
+          source_invoice_id TEXT NOT NULL REFERENCES invoices(invoice_id),
+          previous_description_snapshot TEXT NOT NULL,
+          corrected_description_snapshot TEXT NOT NULL,
+          billing_session_type TEXT NOT NULL,
+          custom_description_snapshot TEXT,
+          reason TEXT NOT NULL,
+          request_digest TEXT NOT NULL UNIQUE,
+          snapshot_json TEXT NOT NULL,
+          pdf_path TEXT NOT NULL,
+          pdf_sha256 TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(payment_id, version)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_corrected_receipts_payment"
+        " ON corrected_receipts(payment_id, version)"
+    )
+
+
 MIGRATIONS: list[tuple[str, object]] = [
     (CURRENT_SCHEMA_VERSION, _apply_migration_001),
     (MIGRATION_002_MONTHLY_INVOICE_IDENTITY, _apply_migration_002),
@@ -1815,6 +1875,7 @@ MIGRATIONS: list[tuple[str, object]] = [
     (MIGRATION_023_CLIENT_INVOICE_TITLE, _apply_migration_023),
     (MIGRATION_024_MONTH_CLOSE, _apply_migration_024),
     (MIGRATION_025_HISTORICAL_REVIEW, _apply_migration_025),
+    (MIGRATION_026_CORRECTED_RECEIPTS, _apply_migration_026),
 ]
 
 

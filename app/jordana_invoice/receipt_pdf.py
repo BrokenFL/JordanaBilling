@@ -30,6 +30,8 @@ def generate_receipt_pdf(
         "total_label_snapshot": "AMOUNT PAID",
         "notes": render_model.get("notes") or "",
     }
+    corrected = snapshot.get("correction") or {}
+    title = "CORRECTED RECEIPT" if corrected else "RECEIPT"
     pdf_bytes = _generate_invoice_pdf_bytes(
         invoice,
         [],
@@ -38,9 +40,9 @@ def generate_receipt_pdf(
             ("", f"Paid on {snapshot.get('payment_date_display') or snapshot.get('payment_date') or ''}".strip()),
             ("", number),
         ],
-        page_footer_label=f"Receipt {number}",
-        doc_title=f"Receipt {number}",
-        document_title="RECEIPT",
+        page_footer_label=f"{title.title()} {number}",
+        doc_title=f"{title.title()} {number}",
+        document_title=title,
     )
     try:
         temp_path.write_bytes(pdf_bytes)
@@ -54,6 +56,16 @@ def generate_receipt_pdf(
 
 def _receipt_render_model(snapshot: dict[str, Any]) -> dict[str, Any]:
     note_parts = []
+    correction = snapshot.get("correction") or {}
+    if correction:
+        reference = correction.get("source_invoice_number")
+        note_parts.append(
+            f"Corrected session type for Invoice {reference}." if reference
+            else "Corrected session type for the original invoice."
+        )
+        if correction.get("supersedes_receipt_number"):
+            note_parts.append(f"Supersedes receipt {correction['supersedes_receipt_number']}.")
+        note_parts.append("No additional charge or payment.")
     if snapshot.get("payment_method_display"):
         note_parts.append(f"Payment method: {snapshot['payment_method_display']}")
     if snapshot.get("reference_number"):
