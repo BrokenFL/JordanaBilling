@@ -1,3 +1,45 @@
+# Jordana Billing v0.1.0-test.42
+
+Controlled beta update, package version `0.1.0.post42`. Delivery uses the
+built-in updater after the published artifact is verified and promoted.
+
+## Changes
+
+- Approved sessions stay in **Session Log**, **Client Sessions**, and **Client
+  Summary** even if an older or later calendar parse marks their candidate
+  unresolved. Their saved durations and actual charges are used.
+- **Reports → Monthly Calendar Comparison** compares a phone Calendar CSV with
+  the month's approved sessions. Changed values, missing records, possible
+  matches, and duplicates remain explicit for Jordana's manual review.
+- Download the original Calendar CSV, Approved Session Log, and Comparison CSV
+  directly from the comparison. No comparison data is imported or saved to the
+  application database.
+- The separate **Jordana Monthly Calendar Export** Shortcut exports every timed
+  appointment from all available calendars for a selected Eastern month and
+  excludes all-day events. It is supplied as a validated, signed `.shortcut`.
+  Calendar notes, locations, and credentials are not exported.
+
+## Install and verify
+
+After promotion, choose **Check for Updates → Update and restart** in Jordana's
+installed Mac app. The updater creates a verified database backup and preserves
+the existing configuration and records. Regenerate the Session Log from
+**Reports** after reopening. The verified DMG also supports manual installation.
+Transfer the separate Shortcut to the iPhone, add it, allow the relevant calendars,
+and run it for the month to compare. See `MONTHLY_CALENDAR_REVIEW.md` for setup,
+monthly use, result meanings, and first-device acceptance checks.
+
+## Verification
+
+On the supplied October 3 database, the corrected report query includes all
+111 September approved sessions; the prior filter included 108. All 427 approved
+2026 sessions are included. These checks read the database without changing it.
+Fictional temporary-database tests cover replay after approval, CSV validation,
+timezone/month boundaries, duplicate preservation, uncertain matching, and the
+guarded HTTP endpoint. Device installation and the actual iPhone export remain
+separate from local tests and artifact verification. No schema migration is
+introduced by this update.
+
 # Jordana Billing v0.1.0-test.41
 
 This controlled beta adds a separate corrected receipt for a session-type

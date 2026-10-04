@@ -183,6 +183,12 @@ the installed SQLite database without duplicating existing snapshots.
 
 ## Shortcut Status
 
+For the independent monthly audit, use **Jordana Monthly Calendar Export**;
+see [Monthly Calendar Review](MONTHLY_CALENDAR_REVIEW.md). It exports a local CSV
+of all timed appointments for the selected Eastern month, excluding all-day
+events. It has no network actions or credentials and does not feed the daily
+sync pipeline. The signed artifact is generated in ignored `output/monthly-review/`.
+
 The current macOS Shortcuts library contains the live Calendar Sync shortcut,
 but Apple `shortcuts` on this Mac can list/run/view/sign only; it does not
 export or install a Shortcut from the command line. Live Shortcut specs are
@@ -286,7 +292,9 @@ Expected behavior:
 - Pending edited/replaced events use the newest captured source version.
 - Excluded or non-client latest evidence is marked excluded and does not enter billing.
 - Approved sessions are not silently changed; source changes create review warnings.
-- Reports and invoice staging exclude unresolved or excluded rows until Jordana resolves and approves them.
+- Reports and invoice staging exclude unresolved or excluded sessions until
+  Jordana resolves and approves them. Saved session approval takes precedence
+  over a stale calendar candidate classification in session reports.
 
 ## Freshness Warning
 

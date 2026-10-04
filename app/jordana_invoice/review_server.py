@@ -117,6 +117,7 @@ from .backups import (
 )
 from .financial_summary import get_financial_summary
 from .month_close import get_month_close_report
+from .monthly_calendar_review import compare_monthly_calendar
 from .payment_services import (
     apply_available_funds,
     get_payment_detail_view,
@@ -1074,6 +1075,9 @@ def make_handler(
             if parsed is None:
                 return
             try:
+                if parsed.path == "/api/reports/calendar-review":
+                    self.send_json(compare_monthly_calendar(self.conn(), data))
+                    return
                 if parsed.path in {"/api/updates/check", "/api/updates/install"}:
                     from .software_updates import check_updates, start_update
                     try:

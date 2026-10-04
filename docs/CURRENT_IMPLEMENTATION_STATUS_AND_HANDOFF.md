@@ -2,6 +2,26 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Test.42 release preparation — October 3
+
+Session Log, Client Sessions, and Client Summary now honor saved approval over
+stale calendar candidate classification. Read-only verification of the supplied
+October 3 database found 111 September approved sessions, all included by the
+corrected query; the prior filter returned 108. All 427 approvals in 2026 are
+included. No source database, approved charge, invoice, or payment was changed.
+
+Adds **Reports → Monthly Calendar Comparison** and the separate signed
+**Jordana Monthly Calendar Export** iPhone Shortcut. The Shortcut exports timed
+events from every available calendar for a full Eastern month, excluding all-day
+events. The app compares that CSV with approved sessions, keeps uncertain and
+duplicate records reviewable, and provides calendar, approved-log, and comparison
+downloads. The feature requires no schema migration or sync credentials.
+
+Package version `0.1.0.post42` is prepared for the built-in updater. Publication,
+downloaded-artifact verification, an isolated Test.41-to-Test.42 upgrade, and
+update-feed promotion are separate release steps. Jordana's actual Mac installation
+and first iPhone run require device acceptance. See `MONTHLY_CALENDAR_REVIEW.md`.
+
 ## Test.41 release preparation — September 17
 
 Adds a separately numbered, linked corrected receipt for an explicitly entered
@@ -47,17 +67,17 @@ The release also fixes redundant per-action reconciliation and button feedback,
 and repairs proven automatic exclusions from the old parser. The automatic update
 feed remains disabled. See `TEST_RELEASE_NOTES.md` and `SOFTWARE_UPDATES.md`.
 
-## Verified Baseline
+## Release Baseline
 
 - **Application and release baseline reviewed:** `179da1fe14ac1fd56ed1e6b939b34fafe7299760`
 - **Documentation state reviewed before this reconciliation:** `fd9031b5fb694ddc138a939f6b2c0c98b2c98b46`
 - **Migration head:** `026_corrected_receipts`
-- **Latest recorded local unit baseline:** 3,077 tests passed, 0 failures, 11 skipped on Python 3.14.4; the separate temporary-database live-sync integration passed in the preceding full run
-- **Current test release target:** `v0.1.0-test.41`
+- **Latest recorded local unit baseline:** 3,108 tests completed, 3,096 passed, 12 skipped, 0 failures on Python 3.14.4 using the exact installer dependencies; temporary-database acceptance passed
+- **Current test release target:** `v0.1.0-test.42`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
-- **Current package/application version:** `0.1.0.post41`
+- **Current package/application version:** `0.1.0.post42`
 - **Release status:** controlled beta target pending artifact verification; not represented as final production software
-- **Prior test release:** `v0.1.0-test.40` remains available until Test.41 is verified and promoted
+- **Prior test release:** `v0.1.0-test.41` remains available until Test.42 is verified and promoted
 
 ## Architecture
 

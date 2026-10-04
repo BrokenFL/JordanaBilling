@@ -3039,6 +3039,7 @@ async function showReports() {
   $("pageTitle").textContent = "Reports";
   $("pageSubtitle").textContent = "Download billing and appointment exports";
   document.title = "Jordana Billing - Reports";
+  window.JordanaMonthlyCalendarReview?.initialize();
   await loadReports();
 }
 

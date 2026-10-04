@@ -1421,10 +1421,12 @@ for (const [args, expected] of cases) {
         self.assertIn("reports-privacy-note", html)
         self.assertIn("Store downloaded files securely", html)
 
-    def test_reports_view_has_no_table_or_filter_controls(self):
+    def test_annual_report_downloads_have_no_table_or_filter_controls(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
         start = html.index('id="reportsView"')
-        end = html.index("</section>", start) + len("</section>")
+        # The independent monthly comparison has its own table and view filter.
+        # Annual report cards retain the original download-only layout.
+        end = html.index('<section class="monthly-calendar-review"', start)
         reports_html = html[start:end]
         self.assertNotIn("<table", reports_html)
         self.assertNotIn("filter", reports_html.lower())

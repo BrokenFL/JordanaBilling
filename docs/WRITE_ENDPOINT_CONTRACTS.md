@@ -896,6 +896,28 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Idempotent**: yes
 - **Existing tests**: `test_review_ui_static.py`
 
+### POST /api/reports/calendar-review
+
+- **Service**: `compare_monthly_calendar(conn, data)`
+- **Auth and body guards**: the shared local POST write-token, Host, Origin,
+  JSON content-type, and 1 MiB body requirements apply, even though this report
+  has no persistence side effects
+- **Accepted fields**: `month` (`YYYY-MM`, 2000–2099), `csv_text` (string)
+- **CSV limits**: 800,000 UTF-8 bytes, 5,000 records; exact headers and consistent
+  export month/timestamp; offset-aware event times and validated duration
+- **Success status**: 200
+- **Success response**: month, export metadata, calendar/approved counts, result
+  counts, manual-review row count, paired/unmatched rows, approved-log CSV, and
+  comparison CSV
+- **DB tables**: none mutated; reads approved sessions, participants, billing
+  parties, and invoice/payment ledger values within one read snapshot
+- **File writes**: none; uploads and derived CSVs stay in memory; browser downloads
+  save only when the user chooses a download
+- **Error status codes**: 400 (safe validation message without calendar text),
+  403 (missing/incorrect token), 413/415 (shared body/content-type limits)
+- **Idempotent**: yes for the same saved database state and CSV
+- **Existing tests**: `test_monthly_calendar_review.py`
+
 ---
 
 ## 13. Calendar Reconciliation

@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build Target — v0.1.0-test.41
+### Current Test Build Target — v0.1.0-test.42
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.41
-- **Python package/application version:** 0.1.0.post41
+- **Release label:** v0.1.0-test.42
+- **Python package/application version:** 0.1.0.post42
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,15 +36,16 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post41` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post42` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-Test.41 retains the Test.40 billing safeguards and adds separately linked
-corrected receipts for paid finalized invoices. Long session labels fit on one
-line where the page allows and remain readable when they exceed the page width.
+Test.42 retains the existing billing safeguards and corrected receipts,
+keeps approved sessions visible in reports after calendar reclassification,
+and adds a read-only monthly phone-calendar comparison. See
+`MONTHLY_CALENDAR_REVIEW.md` for the separate iPhone Shortcut and review steps.
 The existing v3 Shortcut remains compatible.
 
 ### Calendar Reliability And Client Presentation In test.34

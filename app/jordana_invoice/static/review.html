@@ -519,6 +519,31 @@
             </div>
           </div>
           <div class="report-card-grid" id="reportCardGrid"></div>
+          <section class="monthly-calendar-review" id="monthlyCalendarReview" aria-labelledby="monthlyCalendarHeading">
+            <h3 id="monthlyCalendarHeading">Monthly Calendar Comparison</h3>
+            <p>Compare the iPhone calendar export with Jordana’s approved sessions. Every timed calendar event stays visible for manual review.</p>
+            <form id="monthlyCalendarForm" class="monthly-calendar-controls">
+              <label class="field">Month<input type="month" id="monthlyCalendarMonth" min="2000-01" max="2099-12" required /></label>
+              <label class="field">Calendar export CSV<input type="file" id="monthlyCalendarFile" accept=".csv,text/csv" required /></label>
+              <button type="submit" class="save" id="monthlyCalendarCompare">Compare Month</button>
+            </form>
+            <div id="monthlyCalendarMessage" role="status" aria-live="polite"></div>
+            <div id="monthlyCalendarError" class="reports-error" role="alert" hidden></div>
+            <div id="monthlyCalendarResults" hidden>
+              <div id="monthlyCalendarSummary" class="monthly-calendar-summary"></div>
+              <p id="monthlyCalendarSource" class="monthly-calendar-source"></p>
+              <p>Calendar-only events may be personal, administrative, or awaiting approval. A calendar snapshot shows what is on the calendar when exported; review any later changes against the saved session record.</p>
+              <div class="monthly-calendar-downloads">
+                <button type="button" id="monthlyCalendarDownload">Download Calendar CSV</button>
+                <button type="button" id="monthlyApprovedDownload">Download Approved Session Log</button>
+                <button type="button" id="monthlyComparisonDownload">Download Comparison CSV</button>
+                <label class="field">Show<select id="monthlyCalendarFilter"><option value="review">Needs manual review</option><option value="all">All appointments</option><option value="matched">Matched</option></select></label>
+              </div>
+              <div class="monthly-calendar-table-wrap" tabindex="0" role="region" aria-label="Calendar and approved sessions comparison">
+                <table class="review-table monthly-calendar-table"><thead><tr><th>Date</th><th>Result</th><th>Calendar appointment</th><th>Approved session</th><th>Review details</th></tr></thead><tbody id="monthlyCalendarRows"></tbody></table>
+              </div>
+            </div>
+          </section>
           <div class="reports-privacy-note">
             Reports may contain client names, rates, and payment information. Store downloaded files securely.
           </div>
@@ -662,6 +687,7 @@
     </aside>
     <script src="/static/js/api.js"></script>
     <script src="/static/js/overlay_manager.js"></script>
+    <script src="/static/js/monthly_calendar_review.js"></script>
     <script src="/static/review.js"></script>
     <script src="/static/js/software_updates.js"></script>
   </body>

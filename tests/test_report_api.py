@@ -272,6 +272,59 @@ class GenerateReportCsvTests(unittest.TestCase):
         self.assertTrue(len(rows) > 0)
         self.assertEqual(list(rows[0].keys()), SESSION_COLUMNS)
 
+    def test_approved_session_overrides_stale_calendar_classification_in_all_reports(self):
+        self._import_sample_data()
+        sid = self._session_id()
+        self._set_session(sid, review_status="approved", billable_status="approved", approved_rate_cents=23500)
+        candidate_id = self.conn.execute("SELECT candidate_id FROM sessions WHERE id = ?", (sid,)).fetchone()[0]
+        self.conn.execute("UPDATE calendar_event_candidates SET classification = 'unresolved', calendar_review_state = 'obsolete' WHERE id = ?", (candidate_id,))
+        self.conn.commit()
+        before = list(self.conn.iterdump())
+
+        detailed = self._parse_csv(generate_report_csv(self.conn, "sessions", 2026))
+        approved = next(row for row in detailed if row["review_status"] == "approved")
+        self.assertEqual(approved["classification"], "client_session")
+        self.assertEqual(approved["approved_rate"], "235.00")
+        simple = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))
+        self.assertEqual(sum(row["Review Status"] == "Approved" for row in simple), 1)
+        summary = self._parse_csv(generate_report_csv(self.conn, "summary", 2026))
+        self.assertEqual(sum(int(row["session_count"]) for row in summary), len(detailed))
+        self.assertEqual(list(self.conn.iterdump()), before)
+
+    def test_pending_unresolved_and_intentionally_excluded_sessions_stay_out(self):
+        self._import_sample_data()
+        sid = self._session_id()
+        candidate_id = self.conn.execute("SELECT candidate_id FROM sessions WHERE id = ?", (sid,)).fetchone()[0]
+        self.conn.execute("UPDATE calendar_event_candidates SET classification = 'unresolved' WHERE id = ?", (candidate_id,))
+        self.conn.commit()
+        self.assertEqual(len(self._parse_csv(generate_report_csv(self.conn, "sessions", 2026))), 1)
+        self._set_session(sid, review_status="approved", billable_status="excluded")
+        self.assertEqual(len(self._parse_csv(generate_report_csv(self.conn, "sessions", 2026))), 1)
+
+    def test_calendar_replay_cannot_hide_or_reprice_an_approved_session(self):
+        start = "2026-09-09T14:00:00-04:00"
+        end = "2026-09-09T15:00:00-04:00"
+        import_rows(self.conn, [raw_row("original", "Alex Example 2", start,
+                    end_at=end, event_fingerprint="same-calendar-event")], "test")
+        sid = self.conn.execute("SELECT id FROM sessions").fetchone()[0]
+        self._set_session(sid, review_status="approved", billable_status="approved",
+                          approved_rate_cents=23500, duration_minutes=60)
+        approved_before = dict(self.conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone())
+        later = raw_row("later", "Unsupported administrative reminder", start,
+                        end_at=end, event_fingerprint="same-calendar-event")
+        later["captured_at"] = later["ingested_at"] = "2026-09-11T10:00:00-04:00"
+        import_rows(self.conn, [later], "test")
+        candidate = self.conn.execute("SELECT classification FROM calendar_event_candidates").fetchone()
+        self.assertNotEqual(candidate["classification"], "client_session")
+        self.assertEqual(dict(self.conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()), approved_before)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0], 2)
+        self.assertEqual(len(self._parse_csv(generate_report_csv(self.conn, "sessions", 2026))), 1)
+        simple = self._parse_csv(generate_report_csv(self.conn, "simple", 2026))
+        self.assertEqual(len(simple), 1)
+        self.assertEqual(simple[0]["Rate"], "235.00")
+        summary = self._parse_csv(generate_report_csv(self.conn, "summary", 2026))
+        self.assertEqual(sum(int(row["session_count"]) for row in summary), 1)
+
     def test_summary_returns_valid_csv_with_existing_headers(self):
         self._import_sample_data()
         csv_text = generate_report_csv(self.conn, "summary", 2026)

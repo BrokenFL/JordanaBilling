@@ -1351,3 +1351,19 @@ body.responsive-sheet-open {
     word-break: break-word;
   }
 }
+.monthly-calendar-review { margin-top: 28px; padding: 24px; border: 1px solid var(--line, #d8dbe0); border-radius: 12px; background: var(--panel, #fff); }
+.monthly-calendar-controls, .monthly-calendar-downloads { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+.monthly-calendar-controls .field { min-width: 160px; }
+.monthly-calendar-controls input[type="file"] { max-width: 100%; }
+.monthly-calendar-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.monthly-calendar-summary > div { padding: 15px; background: #f5f7fa; border-radius: 8px; }
+.monthly-calendar-summary strong { display: block; font-size: 26px; }
+.monthly-calendar-source { overflow-wrap: anywhere; color: #586577; }
+.monthly-calendar-table-wrap { overflow-x: auto; }
+.monthly-calendar-table { min-width: 760px; }
+.monthly-calendar-table td { vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+.monthly-calendar-table td strong { display: block; }
+.monthly-calendar-table td > div { margin-top: 4px; }
+.monthly-calendar-table tr:not(.calendar-result-matched) td:nth-child(2) { color: #84521c; font-weight: 600; }
+@media (max-width: 1000px) { .monthly-calendar-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .monthly-calendar-review { padding: 15px; } .monthly-calendar-controls .field { width: 100%; min-width: 0; } }

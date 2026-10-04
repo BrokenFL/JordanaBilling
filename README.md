@@ -41,6 +41,10 @@ This is not a general multi-user billing platform. It is implemented and tested 
 - Read-only duplicate analysis for legacy relationship and payer-record conflicts
 - Initial client, alias, rate, session, review, and audit tables
 - Local CSV reports after successful sync
+- Approved sessions remain in Session Log, Client Sessions, and Client Summary
+  when a later calendar parse changes the candidate classification
+- Independent monthly iPhone calendar CSV and read-only approved-session
+  comparison, with missing records and uncertain matches available for review
 - Acceptance report for June-style data
 - Isolated sanitized demo database for review testing
 - Private local business profile and logo reference
@@ -184,6 +188,11 @@ PDFs. Operational data remains under
 `~/Library/Application Support/Jordana Billing`.
 
 The reports are written atomically so a failed write does not leave a partial CSV behind.
+
+For the independent month-end calendar export and comparison, see
+[Monthly Calendar Review](docs/MONTHLY_CALENDAR_REVIEW.md). This uses a separate
+signed iPhone Shortcut and the **Reports → Monthly Calendar Comparison** screen.
+The monthly comparison reads saved approvals and preserves their actual rates.
 
 ## Review UI
 

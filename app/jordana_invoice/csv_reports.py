@@ -155,7 +155,8 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
           s.raw_calendar_title,
           s.billing_session_type,
           s.custom_service_description,
-          c.classification,
+          CASE WHEN s.review_status = 'approved' THEN 'client_session'
+               ELSE c.classification END AS classification,
           c.confidence,
           c.candidate_person_names,
           c.candidate_account_code,
@@ -169,7 +170,7 @@ def build_session_rows(conn: sqlite3.Connection, year: int) -> list[dict[str, ob
         LEFT JOIN client_accounts a ON a.account_id = s.account_id
         LEFT JOIN billing_parties b ON b.billing_party_id = s.billing_party_id
         WHERE substr(s.start_at, 1, 4) = ?
-          AND COALESCE(c.classification, '') = 'client_session'
+          AND (s.review_status = 'approved' OR COALESCE(c.classification, '') = 'client_session')
           AND (s.review_status = 'approved' OR c.calendar_review_state IN ('eligible', 'unverified'))
           AND COALESCE(s.review_status, '') NOT IN ({placeholders})
           AND COALESCE(s.billable_status, '') NOT IN ('excluded', 'nonbillable')
