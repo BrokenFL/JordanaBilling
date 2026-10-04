@@ -50,3 +50,18 @@ currently relies on HTTPS and control of the fixed GitHub repository/feed.
    **Check for Updates**, then **Update and restart**, after a verified offer is
    promoted. The discovery, worker, routing and failure paths have automated
    tests; installed-Mac confirmation remains separate evidence.
+
+## Current verified offer
+
+Test.42 (`0.1.0.post42`) is promoted from clean source
+`bed7ad690525d6d5a008efe0da21516b22b1387e`. The published DMG has SHA-256
+`34a79ab4d5cd99048a81f31ec56de6f4a91507d6c84149e3ac79ad2f3c2861d7`.
+Source CI and independent downloaded-artifact verification passed.
+
+The isolated Test.41-to-Test.42 pre-promotion check used fictional records and
+a local offer override for discovery only. The production worker downloaded
+the public asset, verified it, installed it, and restarted the app. A protected
+verified backup, raw calendar evidence, approved rates, finalized invoice, payment
+allocation and configuration were preserved. The updated report included both
+previously omitted approvals and the comparison matched both calendar rows.
+This does not establish installation on Jordana's actual Mac or iPhone.

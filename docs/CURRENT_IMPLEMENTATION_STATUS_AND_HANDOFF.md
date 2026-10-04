@@ -2,7 +2,7 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
-## Test.42 release preparation — October 3
+## Test.42 release — October 3
 
 Session Log, Client Sessions, and Client Summary now honor saved approval over
 stale calendar candidate classification. Read-only verification of the supplied
@@ -17,10 +17,15 @@ events. The app compares that CSV with approved sessions, keeps uncertain and
 duplicate records reviewable, and provides calendar, approved-log, and comparison
 downloads. The feature requires no schema migration or sync credentials.
 
-Package version `0.1.0.post42` is prepared for the built-in updater. Publication,
-downloaded-artifact verification, an isolated Test.41-to-Test.42 upgrade, and
-update-feed promotion are separate release steps. Jordana's actual Mac installation
-and first iPhone run require device acceptance. See `MONTHLY_CALENDAR_REVIEW.md`.
+Package version `0.1.0.post42` is published from clean source commit
+`bed7ad690525d6d5a008efe0da21516b22b1387e` and promoted in the built-in updater.
+The downloaded installer passed checksum, signature, embedded-hash, source-identity,
+and privacy verification; source CI passed. An isolated Test.41-to-Test.42 update
+downloaded the published asset, created a protected verified backup, preserved
+approvals, actual charges, finalized invoices, payments, raw calendar records and
+configuration, and restarted with the correct build. The corrected reports and
+monthly comparison passed after restart. Jordana's actual Mac installation and
+first iPhone run remain device acceptance steps. See `MONTHLY_CALENDAR_REVIEW.md`.
 
 ## Test.41 release preparation — September 17
 
@@ -76,8 +81,8 @@ feed remains disabled. See `TEST_RELEASE_NOTES.md` and `SOFTWARE_UPDATES.md`.
 - **Current test release target:** `v0.1.0-test.42`
 - **Current release artifact:** recorded in the GitHub release and `release_manifest.json`
 - **Current package/application version:** `0.1.0.post42`
-- **Release status:** controlled beta target pending artifact verification; not represented as final production software
-- **Prior test release:** `v0.1.0-test.41` remains available until Test.42 is verified and promoted
+- **Release status:** verified controlled beta published and promoted through the built-in updater; recipient device acceptance remains pending
+- **Prior test release:** `v0.1.0-test.41` remains available for rollback reference
 
 ## Architecture
 
