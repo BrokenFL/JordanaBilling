@@ -660,7 +660,7 @@ def strip_title_appointment_status(title: str) -> tuple[str, str | None]:
         r"(?i)\s+(?:did\s+not\s+attend|no[\s\-]?show|noshow)\s*$"
     )
     _late_cancel_re = re.compile(
-        r"(?i)\s+(?:late\s+cx|late\s+cancel(?:lation|led|ed)?)\s*$"
+        r"(?i)\s+(?:late\s+cx|late\s+cancel(?:lation|led|ed)?)(?:\s+charge)?\s*$"
     )
     _cancelled_re = re.compile(
         r"(?i)\s+cancel(?:l?ed)?\s*$"

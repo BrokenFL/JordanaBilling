@@ -5,6 +5,7 @@ const approvalState = { submitting: false, candidateId: null };
 const excludeState = { submitting: false, candidateId: null };
 const duplicateState = { submitting: false, candidateId: null };
 const restoreState = { submitting: false, candidateId: null };
+const promoteState = { submitting: false, candidateId: null };
 const returnApprovedState = { submitting: false, candidateId: null };
 const billingWizardState = { submitting: false };
 
@@ -614,6 +615,7 @@ async function selectCandidate(candidateId) {
 function renderInspector(data) {
   const s = data.session;
   const isSession = Boolean(s.id);
+  const reviewLocked = ["approved", "excluded"].includes(s.review_status);
   const readiness = data.readiness || {};
   const effectiveBillingParty = data.effective_billing_party || data.billing_party;
   const clientsEditing = state.editSteps.clients;
@@ -641,7 +643,7 @@ function renderInspector(data) {
     ? `<button type="button" class="mini" id="openPaidAtSessionReceiptBtn" data-payment-id="${escapeAttr(paidAtSessionPayment.payment_id)}">Receipt</button>`
     : "";
   const paidAtSessionSummary = s.payment_status === "paid_at_session"
-    ? `<div class="payment-confirmation"><span>Paid at session${paidAtSessionPayment ? `: ${money(centString(paidAtSessionPayment.amount_cents))} on ${fmt(paidAtSessionPayment.received_at)} by ${escapeHtml(paymentMethodLabel(paidAtSessionPayment.method))}` : ""}</span>${paidAtSessionReceiptAction}</div>`
+    ? `<div class="payment-confirmation"><span>Paid at session${paidAtSessionPayment ? `: ${money(centString(paidAtSessionPayment.amount_cents))} on ${fmt(paidAtSessionPayment.received_at)} by ${escapeHtml(paymentMethodLabel(paidAtSessionPayment.method))}` : ""}</span>${!reviewLocked ? paidAtSessionReceiptAction : ""}</div>`
     : "";
   const participantIds = state.participants.map(p => p.person_id).filter(Boolean);
   const overlayContent = $("reviewOverlayContent");
@@ -674,6 +676,7 @@ function renderInspector(data) {
       </details>
     </section>
 
+    <fieldset class="review-values" ${reviewLocked ? "disabled" : ""}>
     <section class="section">
       <div class="section-title-row"><h3>Clients in this session</h3><span class="save-state" id="relationshipState">Needs review</span></div>
       <div class="help">Clients attending this session</div>
@@ -768,11 +771,14 @@ function renderInspector(data) {
       <div class="checklist">${data.checklist.map(c => `<div class="check ${c.resolved ? "done" : ""}"><span></span><label>${escapeHtml(c.label)}</label></div>`).join("")}</div>
     </section>
 
+    </fieldset>
     <div class="actions">
-      ${isSession && readiness.all_ready && !isFutureAppointment(s) ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
-      ${isSession && readiness.all_ready && isFutureAppointment(s) ? '<button class="approve" id="approveBtn" disabled>Approve Session</button><div class="readonly-note" id="futureAppointmentNote">' + escapeHtml(futureAppointmentMessage(s)) + '</div>' : ""}
-      <button id="duplicateBtn">Mark Duplicate</button>
-      <button class="danger" id="excludeBtn">Exclude / Not Billable</button>
+      ${isSession && !reviewLocked && readiness.all_ready && !isFutureAppointment(s) ? '<button class="approve" id="approveBtn">Approve Session</button>' : ""}
+      ${isSession && !reviewLocked && readiness.all_ready && isFutureAppointment(s) ? '<button class="approve" id="approveBtn" disabled>Approve Session</button><div class="readonly-note" id="futureAppointmentNote">' + escapeHtml(futureAppointmentMessage(s)) + '</div>' : ""}
+      ${!reviewLocked ? '<button id="duplicateBtn">Mark Duplicate</button><button class="danger" id="excludeBtn">Exclude / Not Billable</button>' : ""}
+      ${s.review_status === "excluded" ? '<div class="readonly-note">This record is excluded from billing. Return it to Review to make a new decision.</div><button id="restoreReviewBtn">Return to Review</button>' : ""}
+      ${s.review_status === "approved" ? '<div class="readonly-note">This session is approved. Use Edit Session to request a correction; finalized invoices and payment history remain protected.</div><button id="editApprovedReviewBtn">Edit Session</button>' : ""}
+      ${reviewLocked ? paidAtSessionReceiptAction : ""}
       <div class="reports-error" id="reviewActionError" role="alert" hidden></div>
     </div>
   `;
@@ -782,6 +788,8 @@ function renderInspector(data) {
 }
 
 function wireInspector() {
+  if ($("restoreReviewBtn")) $("restoreReviewBtn").onclick = () => restoreSessionRow(state.selected);
+  if ($("editApprovedReviewBtn")) $("editApprovedReviewBtn").onclick = () => returnApprovedSessionToReview(state.selected);
   if ($("personInput")) $("personInput").addEventListener("input", debounce(e => showPersonSearchResults(e.target.value), 160));
   if ($("addPerson")) $("addPerson").onclick = async () => {
     const button = $("addPerson");
@@ -2838,14 +2846,16 @@ function renderSessions(rows, total) {
   $("sessionsRows").innerHTML = rows.map(row => {
     const canRestore = row.review_status === "excluded" && row.candidate_id;
     const canReturnApproved = row.review_status === "approved" && row.candidate_id;
-    const canPromote = !row.session_id && row.review_status === "needs_classification" && row.candidate_id;
-    let actionCell = `<td></td>`;
+    const needsReview = row.review_status?.startsWith("needs_") || row.review_status === "ready_for_approval";
+    const canPromote = !row.session_id && needsReview && row.candidate_id;
+    let recoveryAction = "";
     if (canRestore)
-      actionCell = `<td><button class="restore-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button></td>`;
+      recoveryAction = `<button class="restore-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button>`;
     else if (canReturnApproved)
-      actionCell = `<td><button class="return-approved-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Edit Session</button></td>`;
+      recoveryAction = `<button class="return-approved-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Edit Session</button>`;
     else if (canPromote)
-      actionCell = `<td><button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button></td>`;
+      recoveryAction = `<button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button>`;
+    const actionCell = `<td><button class="open-session-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Review</button>${recoveryAction}</td>`;
     return `
     <tr>
       <td><input type="checkbox" class="session-row-checkbox" data-cid="${escapeAttr(row.candidate_id)}" aria-label="Select ${escapeAttr(row.calendar_title || row.date || "session row")}" ${state.sessions.selectedIds.has(row.candidate_id) ? "checked" : ""}></td>
@@ -2875,6 +2885,9 @@ function renderSessions(rows, total) {
   $("sessionsRows").querySelectorAll(".send-session-to-review-btn").forEach(btn => {
     btn.addEventListener("click", () => sendSessionRowToReview(btn.dataset.cid));
   });
+  $("sessionsRows").querySelectorAll(".open-session-review-btn").forEach(btn => {
+    btn.addEventListener("click", () => openSessionRowInReview(btn.dataset.cid));
+  });
 }
 
 async function restoreSessionRow(candidateId) {
@@ -2882,11 +2895,12 @@ async function restoreSessionRow(candidateId) {
   if (restoreState.candidateId && restoreState.candidateId !== candidateId) return;
   restoreState.submitting = true;
   restoreState.candidateId = candidateId;
-  const btn = document.querySelector(`.restore-session-btn[data-cid="${CSS.escape(candidateId)}"]`);
+  const btn = $("restoreReviewBtn") || document.querySelector(`.restore-session-btn[data-cid="${CSS.escape(candidateId)}"]`);
   if (btn) btn.disabled = true;
   try {
     const result = await api(`/api/review/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify({ reason: "Returned to review queue from Sessions view" }) });
     await loadSessions();
+    await openSessionRowInReview(candidateId);
     if (result && result.warning) {
       alert(result.warning);
     }
@@ -2900,11 +2914,37 @@ async function restoreSessionRow(candidateId) {
 }
 
 async function sendSessionRowToReview(candidateId) {
+  if (promoteState.submitting) return;
+  promoteState.submitting = true;
+  promoteState.candidateId = candidateId;
+  const btn = document.querySelector(`.send-session-to-review-btn[data-cid="${CSS.escape(candidateId)}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+  }
   try {
     await api(`/api/review/candidates/${candidateId}/send-to-review`, { method: "POST", body: JSON.stringify({ reason: "Promoted to review queue from Sessions view" }) });
     await loadSessions();
+    await openSessionRowInReview(candidateId);
   } catch (err) {
-    alert("Could not promote to review: " + err.message);
+    alert(sanitizeUiErrorMessage(err.message, "Could not send this appointment to Review. Please try again."));
+  } finally {
+    promoteState.submitting = false;
+    promoteState.candidateId = null;
+    if (btn && document.body.contains(btn)) {
+      btn.disabled = false;
+      btn.textContent = "Send to Review";
+    }
+  }
+}
+
+async function openSessionRowInReview(candidateId) {
+  try {
+    location.hash = "";
+    await showReviewWorkbench();
+    await selectCandidate(candidateId);
+  } catch (err) {
+    alert(sanitizeUiErrorMessage(err.message, "Could not open this appointment in Review. Please try again."));
   }
 }
 

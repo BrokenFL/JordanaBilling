@@ -162,6 +162,7 @@ tr.empty-row:hover { background: transparent; }
 .empty-state { height: 100%; display: grid; place-items: center; color: var(--muted); }
 .inspector-header { display: flex; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
 .inspector-header h2 { margin: 0 0 8px; font-size: 20px; }
+.review-values { border: 0; min-width: 0; margin: 0; padding: 0; }
 .badge { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 800; background: #fff0ed; color: var(--red); }
 .meta { color: #30435e; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .section { border-bottom: 1px solid var(--line); padding: 14px 0; }

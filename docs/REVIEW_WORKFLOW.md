@@ -160,6 +160,19 @@ Cancelled and no-show appointments remain preserved and reviewable. They require
 - `unresolved`
 
 Late cancellation supports an additional `bill_full_fee` and `custom_fee` treatment.
+Candidate-only late cancellations remain visible in Review while awaiting that
+decision. Every row in Sessions has a **Review** button, regardless of status,
+classification, or whether an editable session exists. Opening shows that same
+record without approving it or clearing an exclusion. Excluded records can be
+deliberately returned to Review, including candidate-only records; approved
+records use the guarded **Edit Session** action. Their saved values are visible
+in a disabled form until the explicit recovery action succeeds. Finalized
+invoice and payment protections still apply. **Send to Review** also remains
+available for pending candidate-only records, including `needs_billing_treatment`.
+Review preparation and sync also recover previously stranded, recognizable
+late-cancellation titles from preserved post-end calendar evidence, including a
+trailing `charge`. Recovery creates at most one pending session, preserves raw
+evidence, and skips existing sessions and approved or excluded decisions.
 Attendance Outcome and Cancellation Billing are visible in the main Session
 Details grid. Choosing `bill_full_fee` restores the preserved scheduled session
 rate; choosing `custom_fee` requires a positive entered amount; choosing `waived`

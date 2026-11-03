@@ -462,8 +462,10 @@ class QueueExclusionAndRestoreTests(unittest.TestCase):
         nosession_cid = self._candidate_id_for("Lunch break")
         # Mark as excluded first so we can verify restore doesn't partially undo it
         mark_candidate(self.conn, nosession_cid, classification="personal", reason="test")
-        with self.assertRaises(ValueError):
-            restore_candidate(self.conn, nosession_cid, reason="re-review")
+        from unittest.mock import patch
+        with patch("jordana_invoice.review_services.maybe_insert_session", return_value=False):
+            with self.assertRaises(ValueError):
+                restore_candidate(self.conn, nosession_cid, reason="re-review")
         row = self.conn.execute(
             "SELECT review_status FROM calendar_event_candidates WHERE id = ?",
             (nosession_cid,),

@@ -140,7 +140,8 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 - **Accepted fields**: `reason` (default "")
 - **Success status**: 200
 - **Success response**: full candidate detail dict; if the post-restore suggestion refresh fails, an additive `warning` field is included with the sanitized message `"Candidate was restored, but suggestions could not be refreshed."`
-- **Error status codes**: 400/404 ("No session found for this candidate; only session-backed candidates can be restored.")
+- **Eligibility**: session-backed excluded records and explicitly excluded candidate-only records can be restored. Candidate-only restoration promotes the preserved raw record transactionally. Approved sessions must use guarded Edit Session / return-to-review; opening a record alone never restores it.
+- **Error status codes**: 400 for an unsupported candidate-only state or an approved session that must use Edit Session; missing records remain a controlled validation error.
 - **DB tables**: `calendar_event_candidates`, `sessions`, `audit_log`, `review_items`
 - **Transaction boundary**: the restore (candidate/session/audit/review-item updates) commits atomically before the suggestion refresh is attempted; the refresh is a secondary operation whose failure cannot roll back the committed restore
 - **Idempotency**: no — restoring an already-needs-review candidate resets fields; repeat requests produce additional audit entries but do not create duplicate sessions

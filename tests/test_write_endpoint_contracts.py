@@ -347,6 +347,23 @@ class TestMarkCandidateContract(WriteEndpointContractTestBase):
 
 
 class TestRestoreCandidateContract(WriteEndpointContractTestBase):
+    def test_restore_excluded_candidate_only_returns_pending_session(self):
+        cid = self._import_candidate("excluded-raw", "Lunch break", "2026-05-15T12:00:00-04:00")
+        self._post(f"/api/review/candidates/{cid}/mark", {"classification": "nonbillable"})
+        _, captured = self._post(f"/api/review/candidates/{cid}/restore", {"reason": "Fictional correction"})
+        self.assertEqual(captured["status"], 200)
+        self.assertIsNotNone(captured["payload"]["session"]["id"])
+        self.assertNotIn(captured["payload"]["session"]["review_status"], {"excluded", "approved"})
+
+    def test_restore_approved_session_requires_guarded_edit(self):
+        cid = self._import_candidate("approved-restore", "Avery Stone 6", "2026-05-15T18:00:00-04:00")
+        self.conn.execute("UPDATE sessions SET review_status='approved' WHERE candidate_id=?", (cid,))
+        self.conn.execute("UPDATE calendar_event_candidates SET review_status='approved' WHERE id=?", (cid,))
+        self.conn.commit()
+        _, captured = self._post(f"/api/review/candidates/{cid}/restore", {})
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["payload"]["error"], "Use Edit Session to return an approved session to Review.")
+
     def test_restore_returns_200(self):
         cid = self._import_candidate("rs-1", "Avery Stone 6pm", "2026-05-15T12:00:00-04:00")
         self._post(f"/api/review/candidates/{cid}/mark", {"classification": "personal"})

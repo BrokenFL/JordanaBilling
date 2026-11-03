@@ -395,6 +395,7 @@ def is_safe_validation_error(error: Exception) -> bool:
             # Review Candidates / Sessions
             "Review candidate not found.",
             "No session found for this candidate; only session-backed candidates can be restored.",
+            "Use Edit Session to return an approved session to Review.",
             "A session already exists for this candidate.",
             "Raw snapshot not found for candidate.",
             "Session not found for candidate.",

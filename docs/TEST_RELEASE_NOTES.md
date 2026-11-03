@@ -1,3 +1,33 @@
+# Jordana Billing v0.1.0-test.43
+
+Local controlled-beta installer, package version `0.1.0.post43`. Publication and
+built-in updater promotion remain pending.
+
+## Changes
+
+- Every **Sessions** row has a **Review** button, including excluded, approved,
+  candidate-only, and older statuses. Opening preserves its saved status.
+- Excluded raw records can be explicitly returned to Review even when no
+  editable session was previously created. Failed restoration rolls back the
+  complete promotion. Approved and financially protected records retain the
+  guarded correction workflow.
+- Titles such as `Alex Example 3 late cx charge` retain the proposed client and
+  time as a late cancellation. Review preparation and sync recover previously
+  stranded matching records from preserved post-end evidence, creating one
+  pending session without approving a fee or generating an invoice.
+
+## Recover a cancellation charge
+
+Install the update while preserving the existing database and configuration.
+Open Review or Sync Calendar, then open the recovered appointment. Confirm the
+client and Bill To, keep **Late Cancellation**, choose **Bill full scheduled
+fee** or **Custom fee**, verify the amount, and approve. The approved line stages
+as a late-cancellation fee in the relevant month's draft invoice. No new
+Shortcut, Sheet edit, database replacement, or schema migration is required.
+
+Focused tests cover these changed paths and an isolated-copy recovery check.
+Installation on Jordana's Mac remains a device acceptance step.
+
 # Jordana Billing v0.1.0-test.42
 
 Controlled beta update, package version `0.1.0.post42`. Delivery uses the

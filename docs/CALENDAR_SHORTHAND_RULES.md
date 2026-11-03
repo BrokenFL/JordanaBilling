@@ -131,6 +131,12 @@ Multi-person shorthand such as `Fred + Bobsy` is only a participant candidate. I
 Titles ending in `for <reference>` (e.g., `Caitlin Schneider 530 for Sage`) preserve the reference as unresolved evidence. The parser does not infer a participant, bill-to, or relationship from the reference name. The reference appears in candidate evidence for manual review only.
 ## Structured Title Compatibility
 
+Legacy late-cancellation suffixes also accept a trailing `charge`, for example
+`Alex Example 3 late cx charge`. The parser preserves the proposed client and
+title time and suggests `late_cancellation`; `charge` never approves a fee,
+chooses an amount, or marks payment received. Calendar start remains
+authoritative, and billing treatment and the actual fee require review.
+
 Structured pipe titles are parsed before legacy shorthand:
 
 ```text

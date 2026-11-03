@@ -1359,13 +1359,20 @@ for (const [args, expected] of cases) {
         self.assertIn("sendToReview", js)
         self.assertIn("/send-to-review", js)
 
-    def test_sessions_table_has_send_to_review_for_unclassified_candidate_only_rows(self):
+    def test_sessions_table_always_offers_review_with_separate_recovery_actions(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn("send-session-to-review-btn", js)
         self.assertIn("sendSessionRowToReview", js)
-        self.assertIn('!row.session_id && row.review_status === "needs_classification"', js)
+        self.assertIn('row.review_status?.startsWith("needs_")', js)
+        self.assertIn('!row.session_id && needsReview && row.candidate_id', js)
+        self.assertNotIn('const canOpenReview =', js)
+        self.assertIn('open-session-review-btn', js)
         self.assertIn("/send-to-review", js)
+        self.assertIn('const reviewLocked = ["approved", "excluded"].includes(s.review_status);', js)
+        self.assertIn('<fieldset class="review-values" ${reviewLocked ? "disabled" : ""}>', js)
+        self.assertIn('id="restoreReviewBtn"', js)
+        self.assertIn('id="editApprovedReviewBtn"', js)
 
     def test_reports_nav_has_id_and_href(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()

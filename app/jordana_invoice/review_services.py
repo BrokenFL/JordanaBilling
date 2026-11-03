@@ -43,7 +43,7 @@ from .invoice_services import (
     remove_correction_draft_lines_for_session,
 )
 from .invoice_names import format_invoice_person_name
-from .parser import parse_event
+from .parser import parse_event, strip_title_appointment_status
 from .review import review_status_for_parse
 from .payment_services import _invoice_balance_summary, _invoice_paid_amount, client_account_summary
 from .util import json_dumps, new_id, now_iso, normalize_payment_status, parse_int, text
@@ -82,6 +82,8 @@ REVIEW_ACTIONABLE_STATUSES = (
     "needs_duration",
     "needs_service_mode",
     "needs_rate",
+    "needs_payment_status",
+    "needs_billing_treatment",
     "needs_review",
 )
 
@@ -819,9 +821,9 @@ def list_candidate_only_rows(
     actionable_only: bool = False,
 ) -> list[dict[str, Any]]:
     if calendar_filter in ("personal_admin", "all", "hidden"):
-        class_sql = "c.classification IN ('personal', 'administrative', 'nonbillable', 'cancelled', 'no_show', 'unresolved')"
+        class_sql = "c.classification IN ('personal', 'administrative', 'nonbillable', 'cancelled', 'late_cancellation', 'timely_cancellation', 'no_show', 'unresolved')"
     else:
-        class_sql = "c.classification IN ('unresolved', 'cancelled', 'no_show')"
+        class_sql = "c.classification IN ('unresolved', 'cancelled', 'late_cancellation', 'timely_cancellation', 'no_show')"
     filters = [
         "c.id NOT IN (SELECT candidate_id FROM sessions)",
         class_sql,
@@ -1768,43 +1770,57 @@ def restore_candidate(
     session = conn.execute(
         "SELECT * FROM sessions WHERE candidate_id = ?", (candidate_id,)
     ).fetchone()
-    if not session:
+    candidate = conn.execute("SELECT * FROM calendar_event_candidates WHERE id=?", (candidate_id,)).fetchone()
+    if not session and (not candidate or candidate["review_status"] != "excluded"):
         raise ValueError("No session found for this candidate; only session-backed candidates can be restored.")
-    conn.execute(
-        """
-        UPDATE calendar_event_candidates
-        SET classification = 'client_session', review_status = 'needs_classification', updated_at = ?
-        WHERE id = ?
-        """,
-        (now, candidate_id),
-    )
-    conn.execute(
-        """
-        UPDATE sessions
-        SET review_status = 'needs_classification',
-            billable_status = 'proposed',
-            payment_status = 'unpaid',
-            billing_treatment = 'unresolved',
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (now, session["id"]),
-    )
-    record_audit(
-        conn,
-        "calendar_event_candidate",
-        candidate_id,
-        "restored_to_review_queue",
-        {"reason": reason, "prior_review_status": "excluded"},
-    )
-    add_review_item(
-        conn,
-        candidate_id,
-        session["id"],
-        "needs_classification",
-        [],
-        [reason or "Restored to review queue."],
-    )
+    if (session and session["review_status"] == "approved") or (candidate and candidate["review_status"] == "approved"):
+        raise ValueError("Use Edit Session to return an approved session to Review.")
+    if session:
+        blockers = approved_session_return_blockers(conn, session["id"])
+        if blockers:
+            raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
+    conn.execute("SAVEPOINT restore_candidate")
+    try:
+        if not session:
+            # An explicit human reopen may promote an excluded raw record.
+            conn.execute("UPDATE calendar_event_candidates SET review_status='needs_classification' WHERE id=?", (candidate_id,))
+            session = _ensure_review_session_for_candidate(conn, candidate_id, reason=reason)
+        conn.execute(
+            """
+            UPDATE calendar_event_candidates
+            SET classification = 'client_session', review_status = 'needs_classification', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, candidate_id),
+        )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET review_status = 'needs_classification',
+                billable_status = 'proposed',
+                payment_status = 'unpaid',
+                billing_treatment = 'unresolved',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, session["id"]),
+        )
+        record_audit(
+            conn, "calendar_event_candidate", candidate_id, "restored_to_review_queue",
+            {"reason": reason, "prior_review_status": "excluded"},
+        )
+        # A manual exclusion can be lifted; historical-evidence gating remains.
+        if candidate and candidate["calendar_review_state"] == "manual_exclusion":
+            from .historical_review import historical_evidence
+            snap = conn.execute("SELECT * FROM raw_calendar_snapshots WHERE id=?", (candidate["latest_raw_snapshot_id"],)).fetchone()
+            review_state = "eligible" if snap and historical_evidence(snap) else "future_only"
+            conn.execute("UPDATE calendar_event_candidates SET calendar_review_state=? WHERE id=?", (review_state, candidate_id))
+        add_review_item(conn, candidate_id, session["id"], "needs_classification", [], [reason or "Restored to review queue."])
+        conn.execute("RELEASE SAVEPOINT restore_candidate")
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT restore_candidate")
+        conn.execute("RELEASE SAVEPOINT restore_candidate")
+        raise
     conn.commit()
     warning = None
     try:
@@ -7282,11 +7298,14 @@ def _reparse_unapproved_candidates(
         if not snap:
             skipped += 1
             continue
-        if candidate_only and not re.search(
+        parser_upgrade_suffix = re.search(
             r"(?:\b\d+\s+(?:min|mins|minute|minutes)|\bzoom)\s*$",
             text(snap["event_title"]),
             re.IGNORECASE,
-        ):
+        )
+        _, suffix_status = strip_title_appointment_status(text(snap["event_title"]))
+        late_cancellation_suffix = suffix_status == "late_cancellation"
+        if candidate_only and not (parser_upgrade_suffix or late_cancellation_suffix):
             skipped += 1
             continue
 
@@ -7303,6 +7322,11 @@ def _reparse_unapproved_candidates(
         result = parse_event(parse_row)
         disposition = classify_calendar(conn, row["calendar_name"])
         result = apply_calendar_signal(result, disposition)
+        # A status word alone does not identify a client. Only recover a
+        # recognizable appointment; keep ambiguous or personal evidence intact.
+        if candidate_only and late_cancellation_suffix and result.classification != "client_session":
+            skipped += 1
+            continue
         new_review_status = review_status_for_parse(result)
 
         conn.execute(
@@ -7452,7 +7476,7 @@ def reparse_candidate_only_duration_suffixes(
     conn: sqlite3.Connection,
 ) -> dict[str, Any]:
     """
-    Reparse candidate-only records ending in a minute unit or Zoom method.
+    Reparse candidate-only minute, Zoom, and late-cancellation suffixes.
 
     This targeted parser-upgrade repair is safe to run during sync because it
     cannot rewrite an existing session or an approved/excluded decision, and it
