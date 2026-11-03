@@ -53,6 +53,19 @@ currently relies on HTTPS and control of the fixed GitHub repository/feed.
 
 ## Current verified offer
 
+Test.43 (`0.1.0.post43`) is promoted from clean source
+`732f50cd077df088bced3e531616ef398bc8f793`. Its publicly downloaded DMG has
+SHA-256 `2aebbd03c1da82fdf4db564372825770a5b6c20655e8addc1c4aa8c6861add9a`.
+Checksum, signature, disk-image, embedded manifest/hashes, runtime identity,
+privacy checks, and packaged-wheel recovery tests passed. The changed-feature
+checks cover all-status Sessions navigation, late-cancellation recovery,
+explicit excluded-record restoration, rollback, and protected approved records.
+Jordana can choose **Check for Updates → Update and restart**, then open Review
+or Sync Calendar and confirm a recovered cancellation's client, Bill To, and
+fee before approval. Installation on her Mac remains a device acceptance step.
+
+## Previous verified offer
+
 Test.42 (`0.1.0.post42`) is promoted from clean source
 `bed7ad690525d6d5a008efe0da21516b22b1387e`. The published DMG has SHA-256
 `34a79ab4d5cd99048a81f31ec56de6f4a91507d6c84149e3ac79ad2f3c2861d7`.

@@ -2,7 +2,7 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
-## Prepared late-cancellation Review recovery — November 2
+## Test.43 — late-cancellation recovery and every-row Review — November 2
 
 Legacy titles such as `Alex Example 3 late cx charge` now retain the proposed
 client and time with a late-cancellation attendance outcome and an unresolved
@@ -12,12 +12,16 @@ included in Review and its counts. Every Sessions row can open in Review,
 including excluded, approved, and legacy statuses. Opening preserves status;
 explicit restore supports excluded candidate-only records transactionally, and
 approved records retain guarded Edit Session. No schema migration is
-required. The local installer target is `v0.1.0-test.43`, package version
-`0.1.0.post43`. Publication and installation on Jordana's Mac remain pending;
-Test.42 remains the published baseline below. Focused cancellation recovery,
+required. Release `v0.1.0-test.43`, package version `0.1.0.post43`, is published
+from clean source `732f50cd077df088bced3e531616ef398bc8f793` and promoted through
+the built-in updater. Installation on Jordana's Mac remains a device step.
+Focused cancellation recovery,
 Sessions/Review navigation, restoration rollback, and HTTP contract tests pass.
 An isolated copy of the supplied export recovered exactly one pending session;
 existing sessions, raw evidence, and financial tables stayed unchanged.
+The publicly downloaded installer passed checksum, signature, disk-image,
+embedded-manifest/hash, runtime, and privacy verification. The packaged wheel's
+focused recovery tests passed with the shipped offline dependencies.
 
 ## Test.42 release — October 3
 

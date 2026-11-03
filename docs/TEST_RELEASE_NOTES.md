@@ -1,7 +1,7 @@
 # Jordana Billing v0.1.0-test.43
 
-Local controlled-beta installer, package version `0.1.0.post43`. Publication and
-built-in updater promotion remain pending.
+Controlled-beta update, package version `0.1.0.post43`. Delivery uses
+**Check for Updates → Update and restart** after verified promotion.
 
 ## Changes
 
