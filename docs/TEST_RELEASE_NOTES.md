@@ -1,3 +1,27 @@
+# Jordana Billing v0.1.0-test.44
+
+Controlled-beta PDF reliability fix, package version `0.1.0.post44`.
+
+## Changes
+
+- Fixes PDF previews and invoice finalization failing after an in-app update
+  with an unexpected error, despite passing invoice-readiness checks.
+- The server starts from a persistent Application Support folder, so replacing
+  the previous app or ejecting the installer cannot invalidate its working
+  directory. The update worker and installer also use a stable job folder.
+- The failure was reproduced at the PDF library's first import after deleting
+  the inherited folder. Focused regressions render a real PDF after that folder
+  is removed. Invoice values, numbering rules, and finalized history are intact.
+
+## Install and recover
+
+If PDF generation is currently failing, use **Quit** in the app and reopen
+Jordana Billing from Applications. Then choose **Check for Updates → Update and
+restart** once Test.44 is offered. Reopen the existing draft and finalize it;
+no session re-entry, database replacement, or new Shortcut is required.
+
+Publication and updater promotion are pending artifact verification.
+
 # Jordana Billing v0.1.0-test.43
 
 Controlled-beta update, package version `0.1.0.post43`. Delivery uses

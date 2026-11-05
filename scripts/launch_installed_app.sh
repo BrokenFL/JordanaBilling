@@ -30,6 +30,9 @@ METADATA_FILE="$RUNTIME_DIR/review_server.meta"
 LOG_FILE="$LOG_DIR/launch.log"
 
 mkdir -p "$LOG_DIR" "$RUNTIME_DIR"
+# The installer may remove the previous app bundle or unmount its release
+# image after this server starts. Keep its working directory outside both.
+cd "$APP_SUPPORT_DIR"
 
 sanitize_message() {
   sed -E \

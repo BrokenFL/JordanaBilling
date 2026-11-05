@@ -127,7 +127,7 @@ def start_update(database_path, current_version, requested_version):
         try:
             with (job / 'install.log').open('wb') as log:
                 subprocess.Popen([sys._base_executable, str(job / 'worker.py'), str(job)],
-                                 stdout=log, stderr=log, start_new_session=True, close_fds=True)
+                                 cwd=job, stdout=log, stderr=log, start_new_session=True, close_fds=True)
         except Exception:
             write_status(directory, state='failed', message='Could not start the update. Try again.')
             raise ValueError('Could not start the update. Try again.') from None
@@ -180,7 +180,7 @@ def worker(job):
         env = {**os.environ, 'JORDANA_APP_SUPPORT_DIR': str(directory.parent), 'JORDANA_INSTALL_PYTHON': sys.executable}
         # Existing installer coordinates shutdown, verifies installed identity and
         # restarts the app, rolling back its runtime if installation fails.
-        subprocess.run(['bash', str(payload / 'scripts/install_release.sh'), '--yes'], env=env, check=True, timeout=900)
+        subprocess.run(['bash', str(payload / 'scripts/install_release.sh'), '--yes'], cwd=job, env=env, check=True, timeout=900)
         write_status(directory, state='complete', version=offer['version'], message='Update installed successfully.')
     except Exception:
         write_status(directory, state='failed', message='Update could not finish. Your data is preserved. Restart the app and try again.')

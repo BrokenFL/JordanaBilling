@@ -2,6 +2,24 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
+## Test.44 preparation — stable working directory after updates — November 4
+
+The supplied sanitized diagnostic report identifies `FileNotFoundError` at
+ReportLab's lazy configuration import (`rl_config._startUp`, `os.getcwd()`).
+An update-started server inherited a folder inside an old app bundle; deleting
+that bundle left the process without a working directory. This can break every
+PDF preview/finalization in that process even when invoice readiness passes.
+The same error signature was reproduced by removing a running subprocess's
+inherited folder before its first PDF render. It is unrelated to a particular
+client or recovered session.
+
+The installed launcher now changes to the persistent Application Support
+directory before starting Python. The detached update worker and its installer
+also use an explicit stable job directory. Target: `v0.1.0-test.44`, package
+`0.1.0.post44`; no database migration or record repair. An affected installation
+can immediately recover by using the in-app Quit button and reopening the
+installed app. Publication and updater promotion of this fix remain pending.
+
 ## Test.43 — late-cancellation recovery and every-row Review — November 2
 
 Legacy titles such as `Alex Example 3 late cx charge` now retain the proposed

@@ -54,7 +54,13 @@ class SoftwareUpdateTests(unittest.TestCase):
     def test_install_backs_up_before_detached_worker_and_blocks_duplicate(self):
         db=self.directory.parent/'data/jordana_invoice.sqlite3'
         events=[]
-        with patch.object(updates.platform,'system',return_value='Darwin'),patch.object(updates.platform,'machine',return_value='arm64'),patch.object(updates,'fetch_offer',return_value=offer()),patch('jordana_invoice.backups.create_verified_backup',side_effect=lambda *a,**k:events.append('backup')),patch.object(updates.subprocess,'Popen',side_effect=lambda *a,**k:events.append('worker')):
+        def spawn(*args, **kwargs):
+            job = Path(args[0][-1])
+            self.assertEqual(kwargs['cwd'], job)
+            self.assertEqual(job.parent, self.directory)
+            self.assertTrue(job.is_dir())
+            events.append('worker')
+        with patch.object(updates.platform,'system',return_value='Darwin'),patch.object(updates.platform,'machine',return_value='arm64'),patch.object(updates,'fetch_offer',return_value=offer()),patch('jordana_invoice.backups.create_verified_backup',side_effect=lambda *a,**k:events.append('backup')),patch.object(updates.subprocess,'Popen',side_effect=spawn):
             updates.start_update(db,'0.1.0.post36','0.1.0.post37')
             self.assertEqual(events,['backup','worker'])
             with self.assertRaisesRegex(ValueError,'already running'):updates.start_update(db,'0.1.0.post36','0.1.0.post37')
@@ -84,6 +90,7 @@ class SoftwareUpdateTests(unittest.TestCase):
         def run(command,**kwargs):
             commands.append(command)
             if command[0]=='bash':
+                self.assertEqual(kwargs['cwd'],job)
                 self.assertEqual(kwargs['env']['JORDANA_APP_SUPPORT_DIR'],str(self.directory.parent))
                 self.assertIn('verified',commands)
         with patch.object(updates,'urlopen',return_value=response),patch.object(updates.subprocess,'run',side_effect=run),patch.object(updates,'verify_payload',side_effect=lambda *a:commands.append('verified')):

@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build Target — v0.1.0-test.43
+### Current Test Build Target — v0.1.0-test.44
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.43
-- **Python package/application version:** 0.1.0.post43
+- **Release label:** v0.1.0-test.44
+- **Python package/application version:** 0.1.0.post44
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,13 +36,17 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post43` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post44` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-Test.43 retains the existing billing safeguards and corrected receipts,
+Test.44 fixes the update-started server's working-directory lifetime. The
+launcher changes to Application Support before Python starts; the detached
+worker and installer run from a persistent job directory. PDF verification must
+occur after app replacement and release-directory removal, rather than only
+while the installer is still present. Test.44 retains the existing billing safeguards and corrected receipts,
 keeps approved sessions visible in reports after calendar reclassification,
 and adds a read-only monthly phone-calendar comparison. See
 `MONTHLY_CALENDAR_REVIEW.md` for the separate iPhone Shortcut and review steps.
