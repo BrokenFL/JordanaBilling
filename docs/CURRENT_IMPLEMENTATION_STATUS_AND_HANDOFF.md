@@ -2,7 +2,7 @@
 
 This document supersedes older uploaded handoffs and stale repository notes. Newer repository code, schema, migrations, tests, and explicit decisions remain authoritative.
 
-## Test.44 preparation — stable working directory after updates — November 4
+## Test.44 — stable working directory after updates
 
 The supplied sanitized diagnostic report identifies `FileNotFoundError` at
 ReportLab's lazy configuration import (`rl_config._startUp`, `os.getcwd()`).
@@ -18,7 +18,19 @@ directory before starting Python. The detached update worker and its installer
 also use an explicit stable job directory. Target: `v0.1.0-test.44`, package
 `0.1.0.post44`; no database migration or record repair. An affected installation
 can immediately recover by using the in-app Quit button and reopening the
-installed app. Publication and updater promotion of this fix remain pending.
+installed app. Release Test.44 is published from clean source
+`76f4a7c61d7b33452713d3b2de84206bd9362641` and promoted through the updater.
+
+Focused launcher/updater regressions passed. An actual isolated Test.43-to-44
+installer upgrade ran from the old app's Resources directory and removed the
+previous app before requesting any PDF. A fourteen-line fictional invoice then
+passed exact-PDF preview and finalization with a late-cancellation fee, prior
+balance, and policy; repeated finalization reused the same number. Existing
+approved charges, an older finalized invoice, payment/allocation, raw evidence,
+and private configuration were preserved; database and pre-update backup
+integrity passed. The public installer passed checksum, signature, disk-image,
+manifest/hash, and privacy verification. Source CI passed. Installation on
+Jordana's Mac remains the recipient acceptance step.
 
 ## Test.43 — late-cancellation recovery and every-row Review — November 2
 

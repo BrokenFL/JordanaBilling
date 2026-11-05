@@ -1,9 +1,9 @@
 {
   "enabled": true,
-  "version": "0.1.0.post43",
-  "release_label": "v0.1.0-test.43",
-  "commit": "732f50cd077df088bced3e531616ef398bc8f793",
-  "sha256": "2aebbd03c1da82fdf4db564372825770a5b6c20655e8addc1c4aa8c6861add9a",
-  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.43/JordanaBilling-v0.1.0-test.43-732f50cd077d-macos-arm64.dmg",
-  "notes": "Every Sessions row can now open in Review, including excluded records and older statuses. Excluded raw records can be deliberately returned to Review. Late-cancellation titles ending in \"charge\" now retain the proposed client and time; previously stranded matching entries recover for review without duplicate sessions or automatic billing. After updating, open Review or Sync Calendar, confirm the client and Bill To, choose the cancellation fee, and approve it for billing. Existing invoices and payments remain protected. No database replacement or new Shortcut is needed.\n"
+  "version": "0.1.0.post44",
+  "release_label": "v0.1.0-test.44",
+  "commit": "76f4a7c61d7b33452713d3b2de84206bd9362641",
+  "sha256": "e77c1ddab617afd65645dd0b2bb89697518fc53e30d4a0d7edd6d6d8d4d447a0",
+  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.44/JordanaBilling-v0.1.0-test.44-76f4a7c61d7b-macos-arm64.dmg",
+  "notes": "Fixes PDF previews and invoice finalization failing after an in-app update even when all readiness checks pass. If PDFs are currently failing, use Quit in the app and reopen Jordana Billing from Applications before updating. After Test.44 opens, finalize the existing draft normally. Billing records and finalized history are preserved; no database replacement or session re-entry is required.\n"
 }

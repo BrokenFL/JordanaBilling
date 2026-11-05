@@ -20,7 +20,7 @@ Jordana Billing from Applications. Then choose **Check for Updates → Update an
 restart** once Test.44 is offered. Reopen the existing draft and finalize it;
 no session re-entry, database replacement, or new Shortcut is required.
 
-Publication and updater promotion are pending artifact verification.
+The verified update is delivered through the built-in updater.
 
 # Jordana Billing v0.1.0-test.43
 

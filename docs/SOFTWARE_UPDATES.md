@@ -31,6 +31,14 @@ directory. Financial data is never included in the downloaded artifact. A
 checksum and ad-hoc bundle signature are integrity checks; release authenticity
 currently relies on HTTPS and control of the fixed GitHub repository/feed.
 
+The detached worker and installer run with the stable update-job directory as
+their explicit working directory. The installed launcher changes to Application
+Support before starting Python. A server must never inherit a removable app
+bundle or mounted-image directory: its first ReportLab import calls `os.getcwd()`
+and fails if that inherited directory was deleted after startup. Verify PDF
+generation after old-bundle cleanup and installer ejection, not only while the
+release payload remains present.
+
 ## Maintainer promotion
 
 1. Build, test, publish and independently verify a release using the existing
@@ -52,6 +60,19 @@ currently relies on HTTPS and control of the fixed GitHub repository/feed.
    tests; installed-Mac confirmation remains separate evidence.
 
 ## Current verified offer
+
+Test.44 (`0.1.0.post44`) is promoted from clean source
+`76f4a7c61d7b33452713d3b2de84206bd9362641`. Its publicly downloaded DMG has
+SHA-256 `e77c1ddab617afd65645dd0b2bb89697518fc53e30d4a0d7edd6d6d8d4d447a0`.
+Source CI and public artifact identity/signature/privacy verification passed.
+An actual isolated Test.43-to-44 installer upgrade from the old app's working
+directory preserved fictional billing history and generated draft/final PDFs
+after the previous app was removed. Eleven focused launcher/updater/packaging
+checks also passed. A currently affected user should Quit and reopen the
+installed app, then choose Check for Updates and Update and restart.
+Recipient-device confirmation remains pending.
+
+## Previous verified offers
 
 Test.43 (`0.1.0.post43`) is promoted from clean source
 `732f50cd077df088bced3e531616ef398bc8f793`. Its publicly downloaded DMG has

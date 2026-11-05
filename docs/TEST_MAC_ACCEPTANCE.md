@@ -2,6 +2,21 @@
 
 Use this checklist on Brooke's spare clean Mac before installing anything on Jordana's Mac. Do not use real credentials in screenshots or notes.
 
+## Test.44 update/PDF regression
+
+An isolated Test.43-to-44 upgrade passed with fictional billing state. The real
+installer ran from the old app's Resources directory, replaced and removed that
+app, and started Test.44 before the first PDF request. Exact draft PDF and final
+PDF generation passed afterward, including a late-cancellation fee, prior
+balance, and cancellation policy. Repeat finalize reused the stored number.
+Stored approval rates, finalized history, payment/allocation, raw evidence, and
+configuration were preserved; database and pre-update backup integrity passed.
+This is local upgrade evidence, not confirmation on Jordana's actual Mac.
+
+For every later release, check the first PDF after old-bundle deletion and
+installer-image ejection. A healthy server and passing readiness checks alone
+do not establish that lazy PDF imports work after those directories disappear.
+
 ## Current Status — 2026-07-02
 
 Brooke reports that the current one-click installer successfully completed an install and launch on a test Mac. This confirms that the basic native setup, offline runtime installation, and daily app launch work in at least one real installation.
