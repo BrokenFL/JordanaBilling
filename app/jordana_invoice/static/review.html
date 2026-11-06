@@ -37,7 +37,7 @@
         <header class="topbar">
           <div>
             <h1 id="pageTitle">Session Review</h1>
-            <p id="pageSubtitle">Review calendar events and confirm details</p>
+            <p id="pageSubtitle">Review sessions and confirm billing details</p>
           </div>
           <div class="metrics">
             <div><span id="lastSync">-</span><label>Last Sync</label></div>
@@ -382,8 +382,10 @@
 
         <section class="crm-view" id="sessionsView" hidden>
           <div class="crm-header">
-            <div><h2>Sessions</h2><p>Read-only appointment ledger across reviewed and unresolved calendar records.</p></div>
-            <div class="crm-tools">
+            <div><h2>Sessions</h2><p>Browse calendar appointments and manually entered sessions.</p></div>
+            <button id="addSessionBtn" class="save" type="button">Add Session</button>
+          </div>
+          <div class="crm-tools sessions-toolbar">
               <button id="selectAllSessionsBtn" type="button">Select all visible</button>
               <button id="clearSessionSelectionBtn" type="button">Clear</button>
               <button id="archiveSelectedSessionsBtn" type="button">Archive selected</button>
@@ -408,15 +410,32 @@
                 <option value="archived">Archived</option>
                 <option value="all">All</option>
               </select>
-            </div>
           </div>
-          <table class="review-table sessions-table">
-            <thead>
-              <tr><th><span class="sr-only">Select</span></th><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th>Actions</th></tr>
-            </thead>
-            <tbody id="sessionsRows"></tbody>
-          </table>
+          <div class="sessions-table-scroll">
+            <table class="review-table sessions-table">
+              <thead>
+                <tr><th><span class="sr-only">Select</span></th><th>Date</th><th>Time</th><th>Client(s)</th><th>Calendar Title / Source</th><th>Length</th><th>Rate</th><th>Payment Handling</th><th>Review Status</th><th class="session-action-cell">Actions</th></tr>
+              </thead>
+              <tbody id="sessionsRows"></tbody>
+            </table>
+          </div>
           <footer class="pager"><span id="sessionsResultCount">Showing 0 results</span><button id="sessionsPrevPage">‹</button><button id="sessionsNextPage">›</button></footer>
+          <dialog id="addSessionDialog" aria-labelledby="addSessionTitle">
+            <form id="addSessionForm">
+              <h3 id="addSessionTitle">Add Session</h3>
+              <p>Enter a past session in Eastern time. It will open in Review to confirm the client and billing details.</p>
+              <div class="field-grid">
+                <label class="field">Session date<input name="session_date" type="date" required autofocus></label>
+                <label class="field">Start time<input name="start_time" type="time" required></label>
+                <label class="field">Duration (minutes)<input name="duration_minutes" type="number" min="1" max="1440" step="1" required></label>
+              </div>
+              <p id="addSessionError" class="lifecycle-error" role="alert" hidden></p>
+              <div class="lifecycle-confirm-actions">
+                <button id="cancelAddSession" type="button">Cancel</button>
+                <button id="saveManualSession" class="save" type="submit">Save and Open Review</button>
+              </div>
+            </form>
+          </dialog>
         </section>
 
         <section class="invoice-view" id="invoicesView" hidden>

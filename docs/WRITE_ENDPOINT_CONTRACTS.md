@@ -31,6 +31,15 @@ POST handlers use `default_status=400` for unknown exceptions; GET handlers use 
 
 ## 1. Session Review and Approval
 
+### POST /api/sessions
+
+Creates a local manual session in the Review Queue. The request contains a UUIDv4
+`request_id`, `session_date` (`YYYY-MM-DD`), `start_time` (`HH:MM` Eastern), and
+`duration_minutes` (integer, 1 to 1440). The appointment must have ended. A retry
+with the same ID and values returns the original `candidate_id`. Creation saves
+the entered timing and source for audit. Participants, billing, and approval go
+through the existing Review endpoints.
+
 ### POST /api/review/candidates/{id}/save
 
 - **Handler**: inline in `do_POST`

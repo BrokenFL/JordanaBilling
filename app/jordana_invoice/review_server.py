@@ -40,6 +40,7 @@ from .review_services import (
     deactivate_account,
     delete_or_archive_billing_relationship,
     create_billing_party,
+    create_manual_session,
     create_person,
     create_rate_rule_from_payload,
     dashboard_status,
@@ -62,6 +63,7 @@ from .review_services import (
     recalc_unapproved_session_rates,
     reparse_unapproved_candidates,
     restore_candidate,
+    restore_explicit_nonclient_review,
     return_approved_session_to_review,
     preview_rate_suggestion,
     refresh_candidate_suggestions,
@@ -155,6 +157,7 @@ from .service_catalog import list_services, set_service_active
 from .request_validation import (
     RequestValidationError,
     parse_approve_session_request,
+    parse_create_manual_session_request,
     parse_save_interpretation_request,
     parse_save_person_section_request,
     parse_save_relationship_section_request,
@@ -1190,6 +1193,10 @@ def make_handler(
                 if parsed.path == "/api/review/archive-personal-admin":
                     self.send_json(archive_already_classified_personal_admin(self.conn()))
                     return
+                if parsed.path == "/api/sessions":
+                    request = parse_create_manual_session_request(data)
+                    self.send_json(create_manual_session(self.conn(), request))
+                    return
                 if parsed.path == "/api/sessions/archive":
                     candidate_ids = data.get("candidate_ids")
                     if not isinstance(candidate_ids, list) or not all(isinstance(value, str) for value in candidate_ids):
@@ -1211,6 +1218,7 @@ def make_handler(
                     repair = reparse_candidate_only_duration_suffixes(conn)
                     if repair["sessions_created"] or repair.get("automatic_exclusions_repaired"):
                         changed += suppress_pending_events_missing_from_newest_covering_snapshot(conn)
+                    changed += restore_explicit_nonclient_review(conn)
                     conn.commit()
                     self.send_json({"reconciled": changed})
                     return

@@ -92,6 +92,80 @@ test('Review Confirm Client(s) stays busy during a slow save and restores after 
   assert.equal(button.textContent, 'Confirm Client(s)');
 });
 
+test('Review can approve an older session after confirming its client off the current queue page', async () => {
+  const candidateId = 'older-candidate';
+  const participant = {person_id: 'example-person', display_name: 'Example Client', is_primary: true};
+  const detail = {session: {candidate_id: candidateId}, participants: [participant]};
+  const calls = [], errors = [];
+  const context = {
+    state: {selected: candidateId, detail, participants: [participant], editSteps: {}, dirty: new Set(), limit: 25, offset: 0},
+    approvalState: {submitting: false, candidateId: null},
+    $: () => ({value: ''}),
+    URLSearchParams,
+    prepareReviewCalendar: async () => {},
+    api: async (path, options) => {
+      if (!options) return {items: [{candidate_id: 'newer-candidate'}]};
+      calls.push(path);
+      if (path.endsWith('/save-relationship')) return detail;
+      if (path !== `/api/review/candidates/${candidateId}/approve`) throw new Error('Review candidate not found.');
+      return {};
+    },
+    resolveTypedSelections: async () => {},
+    collectParticipants: () => [participant], collectSessionDraftValues: () => ({}),
+    participantState: p => p, collectPayload: () => ({}),
+    renderStatus() {}, renderRows() {}, renderInspector() {}, restoreSessionDraftValues() {}, markSaved() {},
+    clearReviewActionError() {}, completeReviewOverlayAction() {}, validateCancellationBillingChoice() {},
+    reviewOverlayCtrl: null,
+    showReviewActionError: message => errors.push(message), sanitizeUiErrorMessage: message => message,
+    showReviewSuccess() {}, readInvoiceSessionReturnContext: () => null,
+    document: {getElementById: () => ({hidden: true})},
+  };
+  vm.createContext(context);
+  vm.runInContext([
+    extract('async function loadList()', 'function renderStatus('),
+    extract('async function saveRelationshipSection()', 'async function saveBillingSection()'),
+    extract('async function save(approve)', 'function validateCancellationBillingChoice()'),
+  ].join('\n'), context);
+  await vm.runInContext('saveRelationshipSection()', context);
+  await vm.runInContext('save(true)', context);
+  assert.deepEqual(calls, [
+    `/api/review/candidates/${candidateId}/save-relationship`,
+    `/api/review/candidates/${candidateId}/approve`,
+  ]);
+  assert.deepEqual(errors, []);
+});
+
+test('Record Payment reads the submitted invoice form even when hidden Review fields remain', async () => {
+  const visible = {
+    payment_date: '2026-11-05', amount_received: '175.00', payment_method: 'zelle',
+    reference_number: ' Example reference ', received_from_name: ' Example Client ', administrative_note: '',
+  };
+  const form = {elements: Object.fromEntries(Object.entries(visible).map(([name, value]) => [name, {value}]))};
+  const nodes = {
+    paymentDateInput: {value: ''}, paymentAmountInput: {value: ''}, paymentMethodInput: {value: ''},
+    paymentReferenceInput: {value: ''}, paymentReceivedFromInput: {value: visible.received_from_name},
+    paymentAdministrativeNoteInput: {value: ''}, paymentSubmitBtn: {}, paymentCancelBtn: {},
+    paymentOverlayClose: {}, paymentFormMessage: {},
+  };
+  let payload;
+  const context = {
+    state: {unpaid: {submitting: false}}, $: id => nodes[id],
+    parseMoneyToCents: value => Math.round(Number(value) * 100),
+    api: async (path, options) => {
+      assert.equal(path, '/api/invoices/example-invoice/payments');
+      payload = JSON.parse(options.body);
+    },
+    closePaymentOverlay() {}, loadOutstandingInvoices: async () => {}, showUnpaidSuccess() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(extract('async function submitInvoicePayment(', 'function goToPreviousSession()'), context);
+  await context.submitInvoicePayment({invoice_id: 'example-invoice'}, form);
+  assert.deepEqual(payload, {
+    payment_date: '2026-11-05', amount_cents: 17500, payment_method: 'zelle',
+    reference_number: 'Example reference', received_from_name: 'Example Client', administrative_note: null,
+  });
+});
+
 test('client rate save shows progress, blocks duplicate clicks, and restores for retry', async () => {
   const button = {disabled: false, textContent: 'Save Future Client Rate'};
   const message = {textContent: '', className: ''};

@@ -1,3 +1,14 @@
+# Jordana Billing v0.1.0-test.45
+
+Controlled beta, package version `0.1.0.post45`.
+
+- **Sessions → Add Session** records a past appointment as **Manually entered** and opens it in Review. Confirm the clients, Bill To, and actual charge before approving it for invoicing.
+- **Sessions** shows one centered action when available. **Send to Review** opens an eligible unclassified appointment. **Return to Review** reopens an eligible excluded or approved session. Work on sessions already in Review from the Review Queue.
+- Review keeps the open session selected after the queue refreshes. A saved client confirmation or explicit **Send to Review** takes precedence over automatic title classification for appointments with past calendar evidence.
+- **Record Payment** uses the date, amount, and method entered on the invoice form. Its default date follows Eastern time.
+
+After the update is offered, use **Check for Updates → Update and restart**. The installer preserves the existing database and configuration.
+
 # Jordana Billing v0.1.0-test.44
 
 Controlled-beta PDF reliability fix, package version `0.1.0.post44`.

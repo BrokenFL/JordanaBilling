@@ -38,6 +38,7 @@ Parser-proposed names may appear before saving, but display alone does not creat
 - Incomplete or ambiguous names remain reviewable text.
 - Person codes are created only after complete names are confirmed.
 - Saving an empty participant list intentionally clears attendance.
+- **Send to Review** and saved client confirmations take precedence over automatic non-client title classification for past appointments with calendar evidence. Billing still requires approval.
 - Exactly one confirmed participant may create or update an approved calendar alias.
 - Multi-person titles never create one combined person or alias.
 
@@ -375,14 +376,17 @@ Client Sessions reports.
 
 The Review Queue offers Needs Review, Approved, and Excluded filters. Needs Review excludes approved and excluded records.
 
-The Sessions workspace is a read-only ledger with a separate inbox-style archive
-state. Jordana may select any visible rows, archive them from the default Current
-view, inspect them under Archived, and restore them later. This changes only
-Sessions visibility: review status, classification, approval, rate, payment,
-invoice links, and raw calendar evidence remain unchanged. The review-status
-filter is intentionally limited to `All` and `Needs Classification`. Eligible
-candidate-only records may be sent to review, and excluded sessions may be
-returned to review. Approved or invoiced records are not silently reopened.
+Use **Sessions → Add Session** for an appointment missing from the calendar.
+Enter the date, start time in Eastern time, and duration. **Save and Open Review**
+adds the session to the Review Queue and opens it for confirmation. Both screens
+label the record **Manually entered**. Invoice eligibility starts with the same
+explicit approval required for calendar sessions.
+
+In the Sessions ledger, **Send to Review** promotes eligible unclassified
+records. **Return to Review** reopens excluded sessions and approved sessions
+that are eligible to be edited. Work on sessions already in Review from the
+Review Queue. Use **Archive selected** to move rows from Current to Archived
+and **Restore selected** to bring them back.
 
 ## Safety
 

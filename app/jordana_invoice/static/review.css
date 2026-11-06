@@ -416,6 +416,19 @@ tr.empty-row:hover { background: transparent; }
 .crm-tools select { padding: 6px 10px; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-size: 13px; color: var(--text); background: white; }
 .sessions-table { min-width: 960px; table-layout: auto; }
 .sessions-table th, .sessions-table td { width: auto; text-align: left; }
+.sessions-toolbar { flex-wrap: wrap; justify-content: flex-end; margin-bottom: 12px; }
+.sessions-table-scroll { overflow-x: auto; }
+.sessions-table .session-action-cell { width: 9rem; padding: 5px 8px; text-align: center; }
+.session-action-cell button { width: 100%; max-width: 8rem; min-height: 32px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+.manual-session-label { color: var(--muted); font-size: 12px; font-weight: 650; }
+#addSessionDialog {
+  width: min(440px, calc(100% - 32px)); padding: 22px; border: 1px solid var(--line);
+  border-radius: 12px; color: var(--text); box-shadow: 0 16px 48px #0d193133;
+}
+#addSessionDialog::backdrop { background: #0d193166; }
+#addSessionDialog h3 { margin: 0 0 8px; }
+#addSessionDialog p:not(.lifecycle-error) { margin: 0 0 16px; color: var(--muted); }
+#addSessionDialog .lifecycle-confirm-actions { margin-top: 16px; }
 .people-table { min-width: 900px; }
 .record-pane {
   border: 1px solid var(--line);
@@ -905,6 +918,7 @@ body.responsive-sheet-open {
 }
 
 @media (max-width: 1100px) {
+  #sessionsView .sessions-table { min-width: 760px; }
   .sidebar { width: 190px; }
   .crm-layout { grid-template-columns: 1fr; }
   #organizationRecord,

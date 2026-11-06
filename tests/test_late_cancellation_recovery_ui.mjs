@@ -11,7 +11,7 @@ function extract(start, end) {
   return source.slice(from, to);
 }
 
-test('Every Sessions row opens in Review, with separate status-specific recovery', () => {
+test('Sessions shows at most one Review action per row', () => {
   const nodes = {sessionsResultCount: {}, sessionsRows: {querySelectorAll: () => []}};
   const context = {
     state: {sessions: {offset: 0, selectedIds: new Set()}}, $: id => nodes[id],
@@ -20,27 +20,20 @@ test('Every Sessions row opens in Review, with separate status-specific recovery
   };
   vm.createContext(context);
   vm.runInContext(extract('function renderSessions(', 'async function restoreSessionRow('), context);
-  for (const status of ['needs_classification', 'needs_billing_treatment', 'needs_person_match', 'ready_for_approval']) {
-    context.rows = [{candidate_id: 'candidate-example', review_status: status}];
+  for (const [row, action] of [
+    [{review_status: 'needs_classification'}, 'Send to Review'],
+    [{review_status: 'needs_person_match', session_id: 'pending'}, null],
+    [{review_status: 'needs_participants', session_id: 'manual', manually_entered: true}, null],
+    [{review_status: 'ready_for_approval', session_id: 'pending'}, null],
+    [{review_status: 'approved', session_id: 'draft', can_return_to_review: true}, 'Return to Review'],
+    [{review_status: 'approved', session_id: 'locked', can_return_to_review: false}, null],
+    [{review_status: 'excluded', can_return_to_review: true}, 'Return to Review'],
+    [{review_status: 'source_change_warning'}, null],
+  ]) {
+    context.rows = [{candidate_id: 'candidate-example', ...row}];
     vm.runInContext('renderSessions(rows, 1)', context);
-    assert.match(nodes.sessionsRows.innerHTML, /send-session-to-review-btn/, status);
-    assert.match(nodes.sessionsRows.innerHTML, /open-session-review-btn/, status);
-    context.rows[0].session_id = 'session-example';
-    vm.runInContext('renderSessions(rows, 1)', context);
-    assert.match(nodes.sessionsRows.innerHTML, /open-session-review-btn/, status);
-    assert.doesNotMatch(nodes.sessionsRows.innerHTML, /send-session-to-review-btn/);
-  }
-  for (const [status, action] of [['approved', 'return-approved-session-btn'], ['excluded', 'restore-session-btn']]) {
-    context.rows = [{candidate_id: 'candidate-example', session_id: 'session-example', review_status: status}];
-    vm.runInContext('renderSessions(rows, 1)', context);
-    assert.ok(nodes.sessionsRows.innerHTML.includes(action));
-    assert.match(nodes.sessionsRows.innerHTML, /open-session-review-btn/);
-    assert.doesNotMatch(nodes.sessionsRows.innerHTML, /send-session-to-review-btn/);
-  }
-  for (const status of ['', 'source_change_warning', 'legacy_status']) {
-    context.rows = [{candidate_id: 'candidate-example', review_status: status}];
-    vm.runInContext('renderSessions(rows, 1)', context);
-    assert.match(nodes.sessionsRows.innerHTML, /open-session-review-btn/, status);
+    const buttons = [...nodes.sessionsRows.innerHTML.matchAll(/<button[^>]*>([^<]+)<\/button>/g)];
+    assert.deepEqual(buttons.map(match => match[1]), action ? [action] : [], row.review_status);
   }
 });
 
@@ -50,7 +43,7 @@ function promotionHarness(api) {
   const context = {
     promoteState: {submitting: false, candidateId: null}, api,
     CSS: {escape: x => x}, document: {querySelector: () => button, body: {contains: () => true}},
-    location: {hash: '#sessions'}, loadSessions: async () => {}, showReviewWorkbench: async () => {},
+    location: {hash: '#sessions'}, loadList: async () => {}, showReviewWorkbench: async () => {},
     selectCandidate: async id => opened.push(id), alert: message => alerts.push(message),
     sanitizeUiErrorMessage: () => 'Safe recovery error',
   };

@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build Target — v0.1.0-test.44
+### Current Test Build Target — v0.1.0-test.45
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.44
-- **Python package/application version:** 0.1.0.post44
+- **Release label:** v0.1.0-test.45
+- **Python package/application version:** 0.1.0.post45
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,13 +36,17 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post44` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post45` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
 
-Test.44 fixes the update-started server's working-directory lifetime. The
+Test.45 adds manual session entry, simplifies the Sessions actions, fixes Review
+approval after a queue refresh, and corrects payment entry. See
+`TEST_RELEASE_NOTES.md` for details.
+
+Test.44 fixed the update-started server's working-directory lifetime. The
 launcher changes to Application Support before Python starts; the detached
 worker and installer run from a persistent job directory. PDF verification must
 occur after app replacement and release-directory removal, rather than only

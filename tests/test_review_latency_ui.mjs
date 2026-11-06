@@ -12,7 +12,7 @@ test('list preparation reconciles only once and retries after failure',async()=>
 });
 test('approval preparation failure clears busy state and permits retry',async()=>{
  const start=source.indexOf('async function save(approve) {');const end=source.indexOf('\n}',start)+2;
- const button={disabled:false,textContent:'Approve Session'};const state={selected:'fixture'};
+ const button={disabled:false,textContent:'Approve Session'};const state={selected:'fixture',detail:{session:{candidate_id:'fixture'}}};
  const context={state,approvalState:{},$:()=>button,clearReviewActionError(){},reviewOverlayCtrl:{beginPending(){},endPending(){}},resolveTypedSelections:async()=>{assert.equal(button.textContent,'Approving…');throw Error('Could not resolve client');},showReviewActionError(){},sanitizeUiErrorMessage:x=>x};
  vm.createContext(context);vm.runInContext(source.slice(start,end),context);await vm.runInContext('save(true)',context);
  assert.equal(context.approvalState.submitting,false);assert.equal(button.disabled,false);assert.equal(button.textContent,'Approve Session');

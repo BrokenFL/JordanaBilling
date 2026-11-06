@@ -215,6 +215,12 @@ def assert_csv_import_safe(
     return authorization.backup_path
 
 
+# The existing Review schema requires a raw-source FK. All local manual
+# sessions share this empty anchor, which is never a calendar observation.
+MANUAL_SESSION_SOURCE_ID = "a5c860b8-35ae-4f3c-a936-61fab3dfdbad"
+MANUAL_SESSION_IMPORT_ID = "ef442e8a-4e7f-4f21-bfc8-5fc6acba8b7d"
+
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 

@@ -16,6 +16,7 @@ from .csv_reports import write_reports
 from .db import (
     DEFAULT_BUSY_TIMEOUT_MS,
     DEFAULT_LOCK_TIMEOUT_SECONDS,
+    MANUAL_SESSION_SOURCE_ID,
     DatabaseBusyError,
     DatabaseLock,
     LockError,
@@ -703,7 +704,9 @@ def record_sync_error(
 
 
 def count_raw_rows(conn: sqlite3.Connection) -> int:
-    return int(conn.execute("SELECT COUNT(*) AS count FROM raw_calendar_snapshots").fetchone()["count"])
+    return int(conn.execute(
+        "SELECT COUNT(*) AS count FROM raw_calendar_snapshots WHERE id != ?", (MANUAL_SESSION_SOURCE_ID,),
+    ).fetchone()["count"])
 
 
 def count_review_rows(conn: sqlite3.Connection) -> int:

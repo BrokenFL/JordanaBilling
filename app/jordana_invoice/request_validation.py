@@ -14,8 +14,12 @@ the service layer.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 
 class RequestValidationError(ValueError):
@@ -293,6 +297,47 @@ class ReturnToReviewRequest:
 # ---------------------------------------------------------------------------
 # Parser functions
 # ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CreateManualSessionRequest:
+    request_id: str
+    start_at: datetime
+    end_at: datetime
+    duration_minutes: int
+
+
+def parse_create_manual_session_request(payload: Any) -> CreateManualSessionRequest:
+    data = _require_object(payload)
+    try:
+        request_id = UUID(_required_str(data, "request_id"))
+        if request_id.version != 4:
+            raise ValueError
+    except ValueError:
+        raise RequestValidationError("Reopen Add Session and try again.") from None
+
+    session_date = _required_str(data, "session_date")
+    start_time = _required_str(data, "start_time")
+    duration = _required_int_not_bool(data, "duration_minutes")
+    if not 1 <= duration <= 1440:
+        raise RequestValidationError("Enter a duration between 1 and 1440 minutes.")
+
+    eastern = ZoneInfo("America/New_York")
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", f"{session_date}T{start_time}"):
+            raise ValueError
+        local_start = datetime.fromisoformat(f"{session_date}T{start_time}")
+        start = local_start.replace(tzinfo=eastern)
+        utc_start = start.astimezone(timezone.utc)
+        end = (utc_start + timedelta(minutes=duration)).astimezone(eastern)
+    except (ValueError, OverflowError):
+        raise RequestValidationError("Enter a valid session date and start time.") from None
+
+    if start.utcoffset() != start.replace(fold=1).utcoffset():
+        raise RequestValidationError("Choose a start time outside the Eastern daylight saving time change.")
+    if end.astimezone(timezone.utc) > datetime.now(timezone.utc):
+        raise RequestValidationError("Add the session after its end time has passed.")
+    return CreateManualSessionRequest(str(request_id), start, end, duration)
+
 
 def parse_approve_session_request(payload: Any) -> ApproveSessionRequest:
     """Parse and validate an approval request payload.

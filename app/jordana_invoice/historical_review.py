@@ -13,10 +13,11 @@ from datetime import timedelta
 
 from .calendar_identity import canonical_structural_parts, utc_datetime
 from .capture_windows import is_past_capture_window, is_future_capture_window
+from .db import MANUAL_SESSION_SOURCE_ID
 from .util import json_dumps, now_iso, text, new_id
 
 MANUAL_MARKS = {"marked_personal", "marked_administrative", "marked_nonbillable", "marked_duplicate"}
-DECISIONS = MANUAL_MARKS | {"restored_to_review_queue", "marked_client_session", "sent_to_review"}
+DECISIONS = MANUAL_MARKS | {"restored_to_review_queue", "marked_client_session", "sent_to_review", "promoted_to_review"}
 
 
 def manually_excluded(conn: sqlite3.Connection, candidate_id: str) -> bool:
@@ -105,7 +106,11 @@ def reconcile_historical_review(conn: sqlite3.Connection) -> int:
     from .parser import parse_event
     from .review_services import _auto_link_exact_name_participants, refresh_candidate_suggestions
 
-    rows = conn.execute("SELECT r.*, i.status import_status FROM raw_calendar_snapshots r JOIN import_runs i ON i.id=r.import_run_id").fetchall()
+    rows = conn.execute(
+        """SELECT r.*, i.status import_status FROM raw_calendar_snapshots r
+           JOIN import_runs i ON i.id = r.import_run_id WHERE r.id != ?""",
+        (MANUAL_SESSION_SOURCE_ID,),
+    ).fetchall()
     by_id = {r["id"]: r for r in rows}
     by_key = defaultdict(list)
     batches = defaultdict(list)
@@ -150,7 +155,8 @@ def reconcile_historical_review(conn: sqlite3.Connection) -> int:
         if not linked:
             continue  # Manually entered or fixture records have no capture evidence.
         positive = [r for r in linked.values() if historical_evidence(r)]
-        manual = manual_decisions.get(c["id"]) in MANUAL_MARKS
+        decision = manual_decisions.get(c["id"])
+        manual = decision in MANUAL_MARKS
         state = "manual_exclusion" if manual else "eligible" if positive else "future_only"
         if positive and not manual:
             latest = max(positive, key=lambda r: (utc_datetime(r["captured_at"]) or utc_datetime("1900-01-01T00:00:00Z"), text(r["ingested_at"])))
@@ -165,10 +171,11 @@ def reconcile_historical_review(conn: sqlite3.Connection) -> int:
                         break
         if state == "eligible" and session and session["review_status"] != "excluded":
             # Recognizable personal/admin titles do not need a billing review.
-            # Confirmed people take precedence over a keyword interpretation.
+            # A confirmed client or an explicit promotion takes precedence over title keywords.
             confirmed = conn.execute("SELECT 1 FROM session_participants WHERE session_id=? AND person_id IS NOT NULL", (session["id"],)).fetchone()
             parsed = parse_event(dict(latest))
-            if parsed.classification in {"personal", "administrative", "nonbillable"} and not confirmed:
+            if (parsed.classification in {"personal", "administrative", "nonbillable"}
+                    and not confirmed and decision != "promoted_to_review"):
                 state = "nonclient"
             elif (parsed.classification == "client_session" and not session["approved_duration_minutes"]
                   and parsed.proposed_duration_minutes and session["duration_minutes"] != parsed.proposed_duration_minutes):

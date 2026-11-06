@@ -12,7 +12,7 @@ from .appointment_ledger import list_appointment_ledger_page
 from .backfill import backfill_phase2
 from .calendar_preferences import classify_calendar, upsert_calendar_preference
 from .csv_reports import write_reports
-from .db import DatabaseBusyError
+from .db import DatabaseBusyError, MANUAL_SESSION_IMPORT_ID, MANUAL_SESSION_SOURCE_ID
 from .rates import (
     cents_to_dollars,
     dollars_to_cents,
@@ -43,7 +43,8 @@ from .invoice_services import (
     remove_correction_draft_lines_for_session,
 )
 from .invoice_names import format_invoice_person_name
-from .parser import parse_event, strip_title_appointment_status
+from .parser import derive_time_category, parse_event, strip_title_appointment_status
+from .request_validation import CreateManualSessionRequest, RequestValidationError
 from .review import review_status_for_parse
 from .payment_services import _invoice_balance_summary, _invoice_paid_amount, client_account_summary
 from .util import json_dumps, new_id, now_iso, normalize_payment_status, parse_int, text
@@ -553,6 +554,7 @@ def list_review_candidates(
           s.title_time_normalized,
           s.title_time_matches_calendar,
           c.classification,
+          c.latest_raw_snapshot_id = ? AS manually_entered,
           c.confidence,
           c.candidate_person_names,
           c.review_reasons,
@@ -565,7 +567,7 @@ def list_review_candidates(
         ORDER BY s.start_at DESC, s.raw_calendar_title
         LIMIT ? OFFSET ?
         """,
-        (*params, -1, 0),
+        (MANUAL_SESSION_SOURCE_ID, *params, -1, 0),
     ).fetchall()
     items = [row_summary(conn, row) for row in rows]
     include_candidate_only = True
@@ -610,7 +612,7 @@ def list_sessions_ledger(
     init_db(conn)
     backfill_phase2(conn)
     apply_smart_prefill(conn)
-    return list_appointment_ledger_page(
+    page = list_appointment_ledger_page(
         conn,
         date_range=date_range,
         review_status=review_status,
@@ -619,6 +621,87 @@ def list_sessions_ledger(
         limit=limit,
         offset=offset,
     )
+    for item in page["items"]:
+        session_id = item["session_id"]
+        status = item["review_status"]
+        if session_id:
+            item["can_return_to_review"] = status in {"approved", "excluded"} and not approved_session_return_blockers(conn, session_id)
+        else:
+            item["can_return_to_review"] = status == "excluded"
+    return page
+
+
+def create_manual_session(conn: sqlite3.Connection, request: CreateManualSessionRequest) -> dict[str, Any]:
+    candidate_id = request.request_id
+    start = request.start_at.isoformat()
+    end = request.end_at.isoformat()
+    duration = request.duration_minutes
+    duration_choice = derive_duration_choice_from_minutes(duration)
+    custom_duration = duration if duration_choice == "custom" else None
+    now = now_iso()
+    category = derive_time_category(start)
+    time_fields = (category["time_category"], int(category["is_evening"]), int(category["is_weekend"]))
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        prior = conn.execute(
+            "SELECT latest_raw_snapshot_id, start_at, proposed_duration_minutes FROM calendar_event_candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if prior:
+            if tuple(prior) != (MANUAL_SESSION_SOURCE_ID, start, duration):
+                raise RequestValidationError("This request was already used. Check Sessions before adding another entry.")
+            conn.commit()
+            return {"candidate_id": candidate_id}
+
+        conn.execute(
+            """INSERT INTO import_runs (id, source_name, imported_at, status)
+               VALUES (?, 'local_manual_sessions', ?, 'local') ON CONFLICT(id) DO NOTHING""",
+            (MANUAL_SESSION_IMPORT_ID, now),
+        )
+        conn.execute(
+            """INSERT INTO raw_calendar_snapshots (
+                 id, import_run_id, source_row_number, source_hash, raw_json, created_at
+               ) VALUES (?, ?, 0, 'local_manual_session_anchor', '{}', ?) ON CONFLICT(id) DO NOTHING""",
+            (MANUAL_SESSION_SOURCE_ID, MANUAL_SESSION_IMPORT_ID, now),
+        )
+        conn.execute(
+            """INSERT INTO calendar_event_candidates (
+                 id, import_run_id, candidate_key, latest_raw_snapshot_id, raw_snapshot_count,
+                 start_at, end_at, proposed_start_at, proposed_duration_minutes, proposed_end_at,
+                 classification, confidence, explanation, fields_requiring_review, parser_payload,
+                 confidence_label, unresolved_fields, service_mode, time_category, is_evening, is_weekend,
+                 appointment_status, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'client_session', 0, 'Manually entered', '[]', '{}',
+                         'low', '[]', 'unknown', ?, ?, ?, 'completed', ?, ?)""",
+            (candidate_id, MANUAL_SESSION_IMPORT_ID, f"manual:{candidate_id}", MANUAL_SESSION_SOURCE_ID,
+             start, end, start, duration, end, *time_fields, now, now),
+        )
+        session_id = new_id()
+        conn.execute(
+            """INSERT INTO sessions (
+                 id, candidate_id, source_event_candidate_id, session_date, start_at, end_at,
+                 duration_minutes, duration_choice, custom_duration_minutes,
+                 service_mode, time_category, is_evening, is_weekend,
+                 source_raw_snapshot_id, raw_calendar_title, appointment_status, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?, ?, '', 'completed', ?, ?)""",
+            (session_id, candidate_id, candidate_id, request.start_at.date().isoformat(), start, end,
+             duration, duration_choice, custom_duration, *time_fields, MANUAL_SESSION_SOURCE_ID, now, now),
+        )
+        refresh_candidate_suggestions(conn, candidate_id)
+        record_audit(conn, "session", session_id, "manual_session_created", {
+            "start_at": start, "duration_minutes": duration,
+        })
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    result = {"candidate_id": candidate_id}
+    warning = refresh_reports_after_commit(conn)
+    if warning:
+        result["report_warning"] = warning
+    return result
 
 
 def set_sessions_archive_state(
@@ -676,6 +759,7 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
         SELECT
           s.*,
           c.title,
+          c.latest_raw_snapshot_id = ? AS manually_entered,
           c.classification,
           c.confidence,
           c.confidence_label,
@@ -695,7 +779,7 @@ def get_review_candidate(conn: sqlite3.Connection, candidate_id: str) -> dict[st
         JOIN raw_calendar_snapshots r ON r.id = s.source_raw_snapshot_id
         WHERE s.candidate_id = ?
         """,
-        (candidate_id,),
+        (MANUAL_SESSION_SOURCE_ID, candidate_id),
     ).fetchone()
     if not row:
         return get_candidate_only(conn, candidate_id)
@@ -785,6 +869,7 @@ def row_summary(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "start_at": row["start_at"],
         "time": start_time(row["start_at"]),
         "raw_title": row["raw_calendar_title"] or "",
+        "manually_entered": bool(row["manually_entered"]),
         "suggested_client": suggested,
         "account_name": account_name,
         "account_code": row["account_code"] or "",
@@ -1473,9 +1558,52 @@ def save_relationship_section(conn: sqlite3.Connection, candidate_id: str, paylo
         _save_aliases_for_participant_save(conn, session, saved_participants)
     refresh_candidate_suggestions(conn, candidate_id)
     record_audit(conn, "session", session["id"], "relationship_section_saved", {"payload": safe_payload(payload)})
+    if "participants" in payload:
+        restore_explicit_nonclient_review(conn, candidate_id)
     conn.commit()
     refresh_reports_after_commit(conn)
     return get_review_candidate(conn, candidate_id)
+
+
+def restore_explicit_nonclient_review(conn: sqlite3.Connection, candidate_id: str | None = None) -> int:
+    """Honor explicit review decisions on appointments classified as non-client by title."""
+    from .historical_review import MANUAL_MARKS, latest_manual_decisions
+
+    # Reconciliation assigns nonclient only after establishing historical presence.
+    rows = conn.execute(
+        """SELECT c.id, s.id AS session_id,
+                  EXISTS (SELECT 1 FROM session_participants sp WHERE sp.session_id = s.id AND sp.person_id IS NOT NULL) AS has_client
+           FROM calendar_event_candidates c JOIN sessions s ON s.candidate_id = c.id
+           WHERE c.calendar_review_state = 'nonclient'
+             AND c.review_status NOT IN ('approved', 'excluded')
+             AND s.review_status NOT IN ('approved', 'excluded')
+             AND (? IS NULL OR c.id = ?)""",
+        (candidate_id, candidate_id),
+    ).fetchall()
+    if not rows:
+        return 0
+    decisions = latest_manual_decisions(conn)
+    changed = 0
+    for row in rows:
+        cid = row["id"]
+        decision = decisions.get(cid)
+        if decision in MANUAL_MARKS:
+            continue
+        promoted = decision == "promoted_to_review"
+        if not promoted and not (row["has_client"] and participants_were_explicitly_saved(conn, row["session_id"])):
+            continue
+        updated = conn.execute(
+            """UPDATE calendar_event_candidates SET calendar_review_state = 'eligible', updated_at = ?
+               WHERE id = ? AND calendar_review_state = 'nonclient' AND review_status NOT IN ('approved', 'excluded')""",
+            (now_iso(), cid),
+        ).rowcount
+        if updated:
+            record_audit(conn, "calendar_event_candidate", cid, "historical_review_eligibility", {
+                "old_state": "nonclient", "new_state": "eligible",
+                "reason": "promoted_to_review" if promoted else "confirmed_client",
+            })
+            changed += updated
+    return changed
 
 
 def save_billing_section(conn: sqlite3.Connection, candidate_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1859,20 +1987,8 @@ def return_approved_session_to_review(
             reason=audit_reason,
             action_source=action_source,
         )
-    draft_invoice_ids = [
-        row["invoice_id"]
-        for row in conn.execute(
-            """
-            SELECT DISTINCT i.invoice_id
-            FROM invoice_line_items li
-            JOIN invoices i ON i.invoice_id = li.invoice_id
-            WHERE li.source_session_id = ?
-              AND i.status = 'draft'
-            """,
-            (session["id"],),
-        ).fetchall()
-    ]
     if session["review_status"] != "approved":
+        draft_invoice_ids = _draft_invoice_ids_for_session(conn, session["id"])
         if session["review_status"] in {"needs_review", "pending"} and draft_invoice_ids:
             return _cleanup_draft_invoice_lines_for_review(
                 conn,
@@ -1884,14 +2000,17 @@ def return_approved_session_to_review(
             )
         raise ValueError("Only approved sessions can be returned to Review with this action.")
 
-    blockers = approved_session_return_blockers(conn, session["id"])
-    if blockers:
-        raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
-
     now = now_iso()
     prior_status = session["review_status"]
     conn.execute("BEGIN IMMEDIATE")
     try:
+        current = conn.execute("SELECT review_status FROM sessions WHERE id = ?", (session["id"],)).fetchone()
+        if not current or current["review_status"] != "approved":
+            raise ValueError("Only approved sessions can be returned to Review with this action.")
+        blockers = approved_session_return_blockers(conn, session["id"])
+        if blockers:
+            raise ValueError("Return to Review is blocked: " + "; ".join(blockers))
+        draft_invoice_ids = _draft_invoice_ids_for_session(conn, session["id"])
         conn.execute(
             """
             DELETE FROM invoice_line_items
@@ -2266,6 +2385,15 @@ def approved_session_return_blockers(
     ).fetchone():
         blockers.append("a receipt is tied to the session or related payment")
     return blockers
+
+
+def _draft_invoice_ids_for_session(conn: sqlite3.Connection, session_id: str) -> list[str]:
+    return [row["invoice_id"] for row in conn.execute(
+        """SELECT DISTINCT i.invoice_id
+           FROM invoice_line_items li JOIN invoices i ON i.invoice_id = li.invoice_id
+           WHERE li.source_session_id = ? AND i.status = 'draft'""",
+        (session_id,),
+    )]
 
 
 def _recalculate_draft_invoice_totals(conn: sqlite3.Connection, invoice_id: str) -> None:
@@ -7276,10 +7404,11 @@ def _reparse_unapproved_candidates(
         FROM calendar_event_candidates c
         LEFT JOIN sessions s ON s.candidate_id = c.id
         WHERE COALESCE(s.review_status, c.review_status) NOT IN ('approved', 'excluded')
+          AND c.latest_raw_snapshot_id != ?
           {candidate_only_clause}
           {selected_clause}
         """,
-        tuple(candidate_ids or []),
+        (MANUAL_SESSION_SOURCE_ID, *(candidate_ids or [])),
     ).fetchall()
 
     reparsed = 0

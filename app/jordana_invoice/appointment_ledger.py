@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+from .db import MANUAL_SESSION_SOURCE_ID
 from .rates import cents_to_dollars
 from .session_types import get_user_facing_session_label
 from .util import text
@@ -85,6 +86,7 @@ def list_appointment_ledger_rows(
         {ledger_participant_cte()}
         SELECT
           c.id AS candidate_id,
+          c.latest_raw_snapshot_id = ? AS manually_entered,
           s.id AS session_id,
           COALESCE(s.session_date, substr(COALESCE(s.start_at, c.start_at), 1, 10)) AS appointment_date,
           COALESCE(s.start_at, c.start_at) AS appointment_start,
@@ -112,7 +114,7 @@ def list_appointment_ledger_rows(
         ORDER BY COALESCE(s.start_at, c.start_at) DESC, c.updated_at DESC, c.id DESC
         LIMIT ? OFFSET ?
         """,
-        (*params, filters.limit, filters.offset),
+        (MANUAL_SESSION_SOURCE_ID, *params, filters.limit, filters.offset),
     ).fetchall()
     return [ledger_row_to_dict(row) for row in rows]
 
@@ -159,7 +161,11 @@ def ledger_participant_cte() -> str:
 def ledger_where(filters: LedgerFilters) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
-    appointment_date_sql = "date(COALESCE(s.start_at, c.start_at))"
+    # Manual entries use the entered Eastern service date, including late evenings.
+    appointment_date_sql = (
+        f"CASE WHEN c.latest_raw_snapshot_id = '{MANUAL_SESSION_SOURCE_ID}' THEN s.session_date "
+        "ELSE date(COALESCE(s.start_at, c.start_at)) END"
+    )
 
     date_start, date_end = date_bounds(filters.date_range, filters.today)
     if date_start:
@@ -231,6 +237,7 @@ def ledger_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "date": row["appointment_date"] or "",
         "time": start_time(row["appointment_start"]),
         "calendar_title": row["calendar_title"] or "",
+        "manually_entered": bool(row["manually_entered"]),
         "client_participants": client_participants_text(row),
         "session_length": row["session_length"] or "",
         "session_type": session_type_text(
@@ -244,7 +251,7 @@ def ledger_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "review_status": row["review_status"] or "needs_review",
         "appointment_status": row["appointment_status"] or "unresolved",
         "classification": row["classification"] or "",
-        "calendar": row["calendar_name"] or "",
+        "calendar": "Manually entered" if row["manually_entered"] else row["calendar_name"] or "",
     }
 
 

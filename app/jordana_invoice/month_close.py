@@ -138,11 +138,12 @@ def _review_items(conn: sqlite3.Connection, month: str) -> list[dict[str, Any]]:
     items = list_review_candidates(conn, limit=limit)["items"]
     return [{"session_id": row["session_id"], "candidate_id": row["candidate_id"],
              "session_date": row["date"], "start_at": row["start_at"],
-             "title": row["raw_title"], "review_status": row["status"]}
+             "title": "Manually entered" if row.get("manually_entered") else row["raw_title"],
+             "review_status": row["status"]}
             for row in items
             if (local_date := _as_local_date(row["start_at"]))
             and local_date.strftime("%Y-%m") == month
-            and _candidate_has_past_evidence(conn, row["candidate_id"])]
+            and (row.get("manually_entered") or _candidate_has_past_evidence(conn, row["candidate_id"]))]
 
 
 def _candidate_has_past_evidence(conn: sqlite3.Connection, candidate_id: str) -> bool:

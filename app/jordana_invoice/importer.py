@@ -20,6 +20,7 @@ from .calendar_identity import (
 from .calendar_warnings import resolve_calendar_warning, upsert_calendar_warning
 from .capture_windows import completed_run_windows, is_past_capture_window, is_future_capture_window
 from .db import (
+    MANUAL_SESSION_SOURCE_ID,
     OperationalImportAuthorization,
     _create_backup,
     _get_db_path_from_conn,
@@ -285,18 +286,20 @@ def _replay_existing_raw_snapshots_inner(
             """
             SELECT *
             FROM raw_calendar_snapshots
-            WHERE substr(start_at, 1, 7) = ?
+            WHERE substr(start_at, 1, 7) = ? AND id != ?
             ORDER BY start_at, captured_at, ingested_at, source_row_number
             """,
-            (month,),
+            (month, MANUAL_SESSION_SOURCE_ID),
         ).fetchall()
     else:
         rows = conn.execute(
             """
             SELECT *
             FROM raw_calendar_snapshots
+            WHERE id != ?
             ORDER BY start_at, captured_at, ingested_at, source_row_number
-            """
+            """,
+            (MANUAL_SESSION_SOURCE_ID,),
         ).fetchall()
     before = _replay_counts(conn)
     import_run_id = new_id()
@@ -380,11 +383,11 @@ def _missing_reconciliation_rows(conn: sqlite3.Connection, month: str | None) ->
         f"""
         SELECT *
         FROM raw_calendar_snapshots r
-        WHERE 1 = 1 {where}
+        WHERE r.id != ? {where}
         ORDER BY r.start_at, r.captured_at, r.ingested_at
         LIMIT 250
         """,
-        params,
+        (MANUAL_SESSION_SOURCE_ID, *params),
     ).fetchall()
     missing: list[dict[str, object]] = []
     for row in rows:
@@ -1140,8 +1143,10 @@ def raw_snapshots_for_candidate_key(conn: sqlite3.Connection, key: str) -> list[
     rows = conn.execute(
         """
         SELECT * FROM raw_calendar_snapshots
+        WHERE id != ?
         ORDER BY start_at, captured_at, source_row_number
-        """
+        """,
+        (MANUAL_SESSION_SOURCE_ID,),
     ).fetchall()
     return [row for row in rows if candidate_key(row) == key]
 

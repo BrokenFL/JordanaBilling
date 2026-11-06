@@ -1315,7 +1315,7 @@ for (const [args, expected] of cases) {
         self.assertIn('await refreshDashboardStatus();', js)
         self.assertIn('if (location.hash === "#calendar-import") showCalendarImport();', js)
 
-    def test_sessions_screen_is_read_only_and_uses_shared_ledger_api(self):
+    def test_sessions_screen_uses_shared_ledger_api_and_can_add_sessions(self):
         html = Path("app/jordana_invoice/static/review.html").read_text()
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
@@ -1341,7 +1341,10 @@ for (const [args, expected] of cases) {
         self.assertIn('id="archiveSelectedSessionsBtn"', html)
         self.assertIn('id="restoreSelectedSessionsBtn"', html)
         self.assertIn('class="session-row-checkbox"', js)
-        self.assertIn('Read-only appointment ledger', js)
+        self.assertIn('id="addSessionBtn"', html)
+        self.assertIn('class="session-action-cell"', html)
+        self.assertIn('class="session-action-cell"', js)
+        self.assertIn('openSessionRowInReview(result.candidate_id)', js)
         self.assertNotIn('saveSessions', js)
 
     def test_review_overlay_resets_scroll_when_opening_candidate(self):
@@ -1359,7 +1362,7 @@ for (const [args, expected] of cases) {
         self.assertIn("sendToReview", js)
         self.assertIn("/send-to-review", js)
 
-    def test_sessions_table_always_offers_review_with_separate_recovery_actions(self):
+    def test_sessions_table_only_offers_status_specific_review_actions(self):
         js = Path("app/jordana_invoice/static/review.js").read_text()
 
         self.assertIn("send-session-to-review-btn", js)
@@ -1367,7 +1370,8 @@ for (const [args, expected] of cases) {
         self.assertIn('row.review_status?.startsWith("needs_")', js)
         self.assertIn('!row.session_id && needsReview && row.candidate_id', js)
         self.assertNotIn('const canOpenReview =', js)
-        self.assertIn('open-session-review-btn', js)
+        self.assertNotIn('open-session-review-btn', js)
+        self.assertIn('row.can_return_to_review', js)
         self.assertIn("/send-to-review", js)
         self.assertIn('const reviewLocked = ["approved", "excluded"].includes(s.review_status);', js)
         self.assertIn('<fieldset class="review-values" ${reviewLocked ? "disabled" : ""}>', js)

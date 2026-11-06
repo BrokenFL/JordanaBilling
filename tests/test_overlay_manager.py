@@ -239,7 +239,8 @@ class WorkflowStateObjectsTests(unittest.TestCase):
         start = self.js.index("async function save(approve)")
         end = self.js.index("function collectSessionDraftValues", start)
         save_fn = self.js[start:end]
-        self.assertIn("approvalState.candidateId = state.selected", save_fn)
+        self.assertIn("const candidateId = state.detail?.session?.candidate_id", save_fn)
+        self.assertIn("approvalState.candidateId = candidateId", save_fn)
 
     def test_approval_state_candidate_id_cleared_on_success(self):
         start = self.js.index("async function save(approve)")
@@ -441,7 +442,11 @@ class RestoreLifecycleTests(unittest.TestCase):
         self.restore_fn = self.js[start:end]
 
     def test_restore_success_refreshes(self):
-        self.assertIn("await loadSessions()", self.restore_fn)
+        self.assertIn("await openSessionRowInReview(candidateId)", self.restore_fn)
+        start = self.js.index("async function openSessionRowInReview")
+        end = self.js.index("function openAddSession", start)
+        open_review = self.js[start:end]
+        self.assertLess(open_review.index("await loadList()"), open_review.index("await selectCandidate(candidateId)"))
 
     def test_restore_success_with_warning_shows_warning(self):
         self.assertIn("result.warning", self.restore_fn)

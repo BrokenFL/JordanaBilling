@@ -535,10 +535,10 @@ async function loadList() {
   });
   await prepareReviewCalendar();
   const data = await api(`/api/review/candidates?${params}`);
+  // The open session can be outside the current page or filters.
   state.items = data.items;
   renderStatus(data.status);
   renderRows(data.items, data.total);
-  if (!data.items.some(item => item.candidate_id === state.selected)) state.selected = null;
 }
 
 function renderStatus(s) {
@@ -569,7 +569,7 @@ function renderRows(items, total) {
       <td class="date-cell">${fmt(item.date)}</td>
       <td class="day-cell">${escapeHtml(shortWeekday(item.date))}</td>
       <td class="time-cell">${fmt(item.time)}</td>
-      <td class="raw-client-cell">${fmt(item.raw_title || "Unspecified")}</td>
+      <td class="raw-client-cell">${item.manually_entered ? '<span class="manual-session-label">Manually entered</span>' : fmt(item.raw_title || "Unspecified")}</td>
       <td class="clients-cell"><span class="primary">${fmt(item.suggested_client || item.raw_title)}</span></td>
       <td class="duration-cell">${fmt(item.duration_minutes)}</td>
       <td class="rate-cell">${money(item.rate)}</td>
@@ -651,14 +651,14 @@ function renderInspector(data) {
   overlayContent.innerHTML = `
     <div class="inspector-header">
       <div>
-        <h2>${fmt(s.raw_calendar_title || s.title)}</h2>
-        <div class="meta"><span>${fmt(s.session_date)}</span><span>${fmt(startRange(s))}</span><span>${fmt(s.duration_minutes)} min</span><span>${calendarLabel(s)}</span><span>${appointmentBadge(s.appointment_status)}</span></div>
+        <h2>${s.manually_entered ? "Manually entered" : fmt(s.raw_calendar_title || s.title)}</h2>
+        <div class="meta"><span>${fmt(s.session_date)}</span><span>${fmt(startRange(s))}</span><span>${fmt(s.duration_minutes)} min</span>${s.manually_entered ? "" : `<span>${calendarLabel(s)}</span>`}<span>${appointmentBadge(s.appointment_status)}</span></div>
       </div>
       <div><span class="badge">${fmt(s.review_status).replaceAll("_", " ")}</span><div class="confidence ${s.authority_score >= 60 ? "good" : "low"}">Review confidence: ${s.authority_score || 0}%</div><div class="help">${(s.authority_reasons || []).map(escapeHtml).join(", ")}</div></div>
     </div>
     ${titleTimeWarning(s)}
 
-    <section class="section">
+    ${s.manually_entered ? "" : `<section class="section">
       <details>
       <summary class="section-summary">View Calendar Evidence</summary>
       <div class="kv">
@@ -674,7 +674,7 @@ function renderInspector(data) {
       </div>
       <details><summary>Raw payload</summary><pre class="evidence-raw">${escapeHtml(s.raw_json || "")}</pre></details>
       </details>
-    </section>
+    </section>`}
 
     <fieldset class="review-values" ${reviewLocked ? "disabled" : ""}>
     <section class="section">
@@ -1480,17 +1480,25 @@ async function saveSessionSection() {
 
 async function save(approve) {
   if (approve && approvalState.submitting) return;
+  const candidateId = state.detail?.session?.candidate_id;
+  if (!candidateId || state.selected !== candidateId) {
+    showReviewActionError("Reopen this session in Review and try again.");
+    return;
+  }
   if (approve) {
     approvalState.submitting = true;
-    approvalState.candidateId = state.selected;
+    approvalState.candidateId = candidateId;
     clearReviewActionError();
     if ($("approveBtn")) { $("approveBtn").disabled = true; $("approveBtn").textContent = "Approving…"; }
     if (reviewOverlayCtrl) reviewOverlayCtrl.beginPending(["approveBtn", "excludeBtn", "duplicateBtn"]);
   }
   try {
     await resolveTypedSelections();
+    if (state.selected !== candidateId || state.detail?.session?.candidate_id !== candidateId) {
+      throw new Error("The open session changed. Reopen it in Review and try again.");
+    }
     validateCancellationBillingChoice();
-    const updated = await api(`/api/review/candidates/${state.selected}/${approve ? "approve" : "save"}`, {
+    const updated = await api(`/api/review/candidates/${candidateId}/${approve ? "approve" : "save"}`, {
       method: "POST",
       body: JSON.stringify(collectPayload())
     });
@@ -2621,6 +2629,10 @@ function closePaymentOverlay() {
 async function openPaymentOverlay(invoiceId, focusReturnEl = null) {
   const data = await api(`/api/invoices/${invoiceId}/payments`);
   const invoice = data.invoice;
+  const dateParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const { year, month, day } = Object.fromEntries(dateParts.map(({ type, value }) => [type, value]));
   paymentOverlayReturnFocus = focusReturnEl;
   $("paymentOverlayContent").innerHTML = `
     <form id="paymentForm">
@@ -2628,12 +2640,12 @@ async function openPaymentOverlay(invoiceId, focusReturnEl = null) {
         <label class="field">Bill To<input value="${escapeAttr(invoice.bill_to_display_name || "")}" readonly /></label>
         <label class="field">Service Period<input value="${escapeAttr(invoice.invoice_period_display || invoiceServicePeriodLabel(invoice))}" readonly /></label>
         <label class="field">Outstanding Balance<input value="${escapeAttr(money(centString(invoice.balance_cents)))}" readonly /></label>
-        <label class="field">Payment Date<input id="paymentDateInput" type="date" value="${escapeAttr(new Date().toISOString().slice(0, 10))}" required /></label>
-        <label class="field">Amount Received<input id="paymentAmountInput" value="${escapeAttr(centString(invoice.balance_cents))}" required /></label>
-        <label class="field">Payment Method<select id="paymentMethodInput" required><option value="">Select a method</option><option value="zelle">Zelle</option><option value="check">Check</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="card">Card</option><option value="other">Other</option></select></label>
-        <label class="field">Reference Number<input id="paymentReferenceInput" value="" /></label>
-        <label class="field">Received From<input id="paymentReceivedFromInput" value="${escapeAttr(invoice.bill_to_display_name || "")}" /></label>
-        <label class="field wide">Administrative Note<input id="paymentAdministrativeNoteInput" value="" aria-describedby="paymentAdministrativeNoteHelp" /></label>
+        <label class="field">Payment Date<input name="payment_date" type="date" value="${escapeAttr(`${year}-${month}-${day}`)}" required /></label>
+        <label class="field">Amount Received<input name="amount_received" value="${escapeAttr(centString(invoice.balance_cents))}" required /></label>
+        <label class="field">Payment Method<select name="payment_method" required><option value="">Select a method</option><option value="zelle">Zelle</option><option value="check">Check</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="card">Card</option><option value="other">Other</option></select></label>
+        <label class="field">Reference Number<input name="reference_number" value="" /></label>
+        <label class="field">Received From<input name="received_from_name" value="${escapeAttr(invoice.bill_to_display_name || "")}" /></label>
+        <label class="field wide">Administrative Note<input name="administrative_note" value="" aria-describedby="paymentAdministrativeNoteHelp" /></label>
       </div>
       <div class="help" id="paymentAdministrativeNoteHelp">Administrative only. Do not include clinical information.</div>
       <div class="payment-form-note">The payment will be applied automatically to this invoice from the oldest service date forward.</div>
@@ -2648,14 +2660,15 @@ async function openPaymentOverlay(invoiceId, focusReturnEl = null) {
   overlay.hidden = false;
   $("paymentOverlayClose").onclick = closePaymentOverlay;
   $("paymentCancelBtn").onclick = closePaymentOverlay;
-  $("paymentForm").onsubmit = async (event) => {
+  const form = $("paymentForm");
+  form.onsubmit = async (event) => {
     event.preventDefault();
-    await submitInvoicePayment(invoice);
+    await submitInvoicePayment(invoice, event.currentTarget);
   };
-  requestAnimationFrame(() => $("paymentDateInput")?.focus());
+  requestAnimationFrame(() => form.elements.payment_date.focus());
 }
 
-async function submitInvoicePayment(invoice) {
+async function submitInvoicePayment(invoice, form) {
   if (state.unpaid.submitting) return;
   const submitBtn = $("paymentSubmitBtn");
   const cancelBtn = $("paymentCancelBtn");
@@ -2667,14 +2680,14 @@ async function submitInvoicePayment(invoice) {
   closeBtn.disabled = true;
   message.textContent = "";
 
-  const amountCents = parseMoneyToCents($("paymentAmountInput").value);
+  const fields = form.elements;
   const payload = {
-    payment_date: $("paymentDateInput").value,
-    amount_cents: amountCents,
-    payment_method: $("paymentMethodInput").value,
-    reference_number: $("paymentReferenceInput").value.trim() || null,
-    received_from_name: $("paymentReceivedFromInput").value.trim() || null,
-    administrative_note: $("paymentAdministrativeNoteInput").value.trim() || null
+    payment_date: fields.payment_date.value,
+    amount_cents: parseMoneyToCents(fields.amount_received.value),
+    payment_method: fields.payment_method.value,
+    reference_number: fields.reference_number.value.trim() || null,
+    received_from_name: fields.received_from_name.value.trim() || null,
+    administrative_note: fields.administrative_note.value.trim() || null
   };
 
   try {
@@ -2727,7 +2740,7 @@ function showReviewWorkbench() {
   document.getElementById("reviewWorkbench").hidden = false;
   document.getElementById("reviewNav").classList.add("active");
   $("pageTitle").textContent = "Session Review";
-  $("pageSubtitle").textContent = "Review calendar events and confirm details";
+  $("pageSubtitle").textContent = "Review sessions and confirm billing details";
   document.title = "Jordana Billing - Session Review";
   if (state.returnCandidate) {
     selectCandidate(state.returnCandidate);
@@ -2844,30 +2857,29 @@ function renderSessions(rows, total) {
   state.sessions.total = total;
   $("sessionsResultCount").textContent = `Showing ${rows.length ? state.sessions.offset + 1 : 0} to ${state.sessions.offset + rows.length} of ${total} results`;
   $("sessionsRows").innerHTML = rows.map(row => {
-    const canRestore = row.review_status === "excluded" && row.candidate_id;
-    const canReturnApproved = row.review_status === "approved" && row.candidate_id;
+    const canRestore = row.review_status === "excluded" && row.can_return_to_review;
+    const canReturnApproved = row.review_status === "approved" && row.can_return_to_review;
     const needsReview = row.review_status?.startsWith("needs_") || row.review_status === "ready_for_approval";
     const canPromote = !row.session_id && needsReview && row.candidate_id;
     let recoveryAction = "";
     if (canRestore)
-      recoveryAction = `<button class="restore-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button>`;
+      recoveryAction = `<button type="button" class="restore-session-btn save" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button>`;
     else if (canReturnApproved)
-      recoveryAction = `<button class="return-approved-session-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Edit Session</button>`;
+      recoveryAction = `<button type="button" class="return-approved-session-btn save" data-cid="${escapeAttr(row.candidate_id)}">Return to Review</button>`;
     else if (canPromote)
-      recoveryAction = `<button class="send-session-to-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button>`;
-    const actionCell = `<td><button class="open-session-review-btn link-btn" data-cid="${escapeAttr(row.candidate_id)}">Review</button>${recoveryAction}</td>`;
+      recoveryAction = `<button type="button" class="send-session-to-review-btn save" data-cid="${escapeAttr(row.candidate_id)}">Send to Review</button>`;
     return `
     <tr>
       <td><input type="checkbox" class="session-row-checkbox" data-cid="${escapeAttr(row.candidate_id)}" aria-label="Select ${escapeAttr(row.calendar_title || row.date || "session row")}" ${state.sessions.selectedIds.has(row.candidate_id) ? "checked" : ""}></td>
       <td>${fmt(row.date)}</td>
       <td>${fmt(row.time)}</td>
       <td><span class="primary">${fmt(row.client_participants)}</span></td>
-      <td>${fmt(row.calendar_title)}</td>
+      <td>${row.manually_entered ? '<span class="manual-session-label">Manually entered</span>' : fmt(row.calendar_title)}</td>
       <td>${fmt(row.session_length)}</td>
       <td>${money(row.rate)}</td>
       <td>${escapeHtml(paymentHandlingLabel(row.payment_status))}</td>
-      <td>${fmt(row.review_status)}</td>
-      ${actionCell}
+      <td>${fmt(row.review_status?.replaceAll("_", " "))}</td>
+      <td class="session-action-cell">${recoveryAction}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="10" class="readonly-note">No appointments found.</td></tr>`;
   $("sessionsRows").querySelectorAll(".session-row-checkbox").forEach(box => {
@@ -2880,13 +2892,10 @@ function renderSessions(rows, total) {
     btn.addEventListener("click", () => restoreSessionRow(btn.dataset.cid));
   });
   $("sessionsRows").querySelectorAll(".return-approved-session-btn").forEach(btn => {
-    btn.addEventListener("click", () => returnApprovedSessionToReview(btn.dataset.cid, { refresh: loadSessions }));
+    btn.addEventListener("click", () => returnApprovedSessionToReview(btn.dataset.cid));
   });
   $("sessionsRows").querySelectorAll(".send-session-to-review-btn").forEach(btn => {
     btn.addEventListener("click", () => sendSessionRowToReview(btn.dataset.cid));
-  });
-  $("sessionsRows").querySelectorAll(".open-session-review-btn").forEach(btn => {
-    btn.addEventListener("click", () => openSessionRowInReview(btn.dataset.cid));
   });
 }
 
@@ -2899,7 +2908,6 @@ async function restoreSessionRow(candidateId) {
   if (btn) btn.disabled = true;
   try {
     const result = await api(`/api/review/candidates/${candidateId}/restore`, { method: "POST", body: JSON.stringify({ reason: "Returned to review queue from Sessions view" }) });
-    await loadSessions();
     await openSessionRowInReview(candidateId);
     if (result && result.warning) {
       alert(result.warning);
@@ -2924,7 +2932,6 @@ async function sendSessionRowToReview(candidateId) {
   }
   try {
     await api(`/api/review/candidates/${candidateId}/send-to-review`, { method: "POST", body: JSON.stringify({ reason: "Promoted to review queue from Sessions view" }) });
-    await loadSessions();
     await openSessionRowInReview(candidateId);
   } catch (err) {
     alert(sanitizeUiErrorMessage(err.message, "Could not send this appointment to Review. Please try again."));
@@ -2942,10 +2949,45 @@ async function openSessionRowInReview(candidateId) {
   try {
     location.hash = "";
     await showReviewWorkbench();
+    try { await loadList(); }
+    catch { showReviewWarning("Session saved. Refresh Review to update the list."); }
     await selectCandidate(candidateId);
   } catch (err) {
-    alert(sanitizeUiErrorMessage(err.message, "Could not open this appointment in Review. Please try again."));
+    alert(sanitizeUiErrorMessage(err.message, "Could not open this appointment. Refresh the Review Queue and open it there."));
   }
+}
+
+function openAddSession() {
+  const form = $("addSessionForm");
+  form.reset();
+  form.dataset.requestId = crypto.randomUUID();
+  $("addSessionError").hidden = true;
+  $("addSessionDialog").showModal();
+}
+
+async function submitManualSession(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = $("saveManualSession");
+  if (submit.disabled) return;
+  const errorBox = $("addSessionError");
+  const controls = [...form.elements];
+  const payload = { ...Object.fromEntries(new FormData(form)), request_id: form.dataset.requestId };
+  controls.forEach(control => { control.disabled = true; });
+  errorBox.hidden = true;
+  let result;
+  try {
+    result = await api("/api/sessions", { method: "POST", body: JSON.stringify(payload) });
+  } catch (error) {
+    errorBox.textContent = sanitizeUiErrorMessage(error.message, "Could not save this session. Please try again.");
+    errorBox.hidden = false;
+    return;
+  } finally {
+    controls.forEach(control => { control.disabled = false; });
+  }
+  $("addSessionDialog").close();
+  await openSessionRowInReview(result.candidate_id);
+  if (result.report_warning) showReviewWarning(result.report_warning);
 }
 
 function persistInvoiceSessionReturnContext(context) {
@@ -2977,8 +3019,9 @@ async function returnApprovedSessionToReview(candidateId, { refresh = null, retu
   }
   returnApprovedState.submitting = true;
   returnApprovedState.candidateId = candidateId;
-  const buttons = document.querySelectorAll(`.return-approved-session-btn[data-cid="${CSS.escape(candidateId)}"]`);
-  buttons.forEach(btn => {
+  const buttons = [...document.querySelectorAll(`.return-approved-session-btn[data-cid="${CSS.escape(candidateId)}"]`)]
+    .map(button => ({ button, label: button.textContent }));
+  buttons.forEach(({ button: btn }) => {
     btn.disabled = true;
     btn.textContent = "Returning...";
   });
@@ -3007,10 +3050,10 @@ async function returnApprovedSessionToReview(candidateId, { refresh = null, retu
     const message = sanitizeUiErrorMessage(err.message, "Could not return this session to Review.");
     showReviewActionError(message);
     alert(message);
-    buttons.forEach(btn => {
+    buttons.forEach(({ button: btn, label }) => {
       if (!document.body.contains(btn)) return;
       btn.disabled = false;
-      btn.textContent = "Edit Session";
+      btn.textContent = label;
     });
   } finally {
     returnApprovedState.submitting = false;
@@ -3057,7 +3100,7 @@ async function showSessions() {
   $("sessionsView").hidden = false;
   $("sessionsNav").classList.add("active");
   $("pageTitle").textContent = "Sessions";
-  $("pageSubtitle").textContent = "Read-only appointment ledger";
+  $("pageSubtitle").textContent = "Appointment ledger";
   document.title = "Jordana Billing - Sessions";
   await loadSessions();
 }
@@ -5181,6 +5224,12 @@ $("invoiceNextPage").onclick = () => {
 $("sessionsPrevPage").onclick = () => {
   state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
   loadSessions();
+};
+$("addSessionBtn").onclick = openAddSession;
+$("addSessionForm").onsubmit = submitManualSession;
+$("cancelAddSession").onclick = () => $("addSessionDialog").close();
+$("addSessionDialog").oncancel = event => {
+  if ($("saveManualSession").disabled) event.preventDefault();
 };
 $("selectAllSessionsBtn").onclick = () => {
   state.sessions.items.forEach(row => state.sessions.selectedIds.add(row.candidate_id));

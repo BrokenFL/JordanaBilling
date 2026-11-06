@@ -280,7 +280,7 @@ For June 2026 recovery after installing the current test release:
 Unresolved recovered rows and excluded/non-client rows stay out of Client
 Sessions reports, Session Log, Client Summary, and invoice staging.
 
-The `Sessions` sidebar screen is a read-only ledger built from the same appointment query used for `Reports/Jordana_All_Appointments.csv`, including unresolved and non-session calendar records.
+The `Sessions` sidebar screen uses the same appointment ledger as `Reports/Jordana_All_Appointments.csv`. **Add Session** saves an off-calendar appointment as **Manually entered** and opens it for normal Review and approval.
 Its review-status filter intentionally contains only `All` and `Needs Classification`.
 
 The `Rate Card` sidebar screen supports global rates plus one-client, clients-together, and billing-relationship exceptions. Replace and End actions preserve rate-rule history, immediately refresh unapproved session suggestions, and never rewrite approved sessions or finalized invoices.

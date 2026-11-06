@@ -9,7 +9,8 @@ from jordana_invoice.importer import import_rows
 from jordana_invoice.historical_review import reconcile_historical_review
 from jordana_invoice.parser import parse_event
 from jordana_invoice.review_services import (list_review_candidates, mark_candidate,
-    restore_candidate, approve_candidate, create_person, save_person_alias)
+    restore_candidate, approve_candidate, create_billing_party, create_person,
+    promote_candidate_to_review, restore_explicit_nonclient_review, save_person_alias, save_relationship_section)
 
 
 def event(key, title='Alex Example 2', start='2026-08-10T14:00:00-04:00',
@@ -143,6 +144,34 @@ class HistoricalReviewTests(unittest.TestCase):
         reconcile_historical_review(self.conn)
         self.assertEqual(list_review_candidates(self.conn)['total'],0)
         self.assertEqual(self.conn.execute('SELECT count(*) FROM raw_calendar_snapshots').fetchone()[0],3)
+
+    def test_confirming_client_reopens_a_promoted_call_for_approval(self):
+        title = 'Alex call with Morgan Example'
+        self.load(event('call', title=title))
+        candidate_id = self.candidate(title)['id']
+        promote_candidate_to_review(self.conn, candidate_id)
+        reconcile_historical_review(self.conn)
+        self.assertEqual(self.candidate(title)['calendar_review_state'], 'eligible')
+        raw_before = tuple(self.conn.execute('SELECT * FROM raw_calendar_snapshots').fetchone())
+        # Reproduce the stale state written by an older build after promotion.
+        self.conn.execute("UPDATE calendar_event_candidates SET calendar_review_state = 'nonclient' WHERE id = ?", (candidate_id,))
+        self.assertEqual(restore_explicit_nonclient_review(self.conn), 1)
+        self.assertEqual(restore_explicit_nonclient_review(self.conn), 0)
+        self.assertIn(title, self.titles())
+        person = create_person(self.conn, 'Alex Example')
+        party = create_billing_party(self.conn, {'billing_name': 'Alex Example', 'person_id': person['person_id']})
+        participants = [{'person_id': person['person_id'], 'display_name': 'Alex Example'}]
+        save_relationship_section(self.conn, candidate_id, {
+            'participants': participants, 'billing_party_id': party['billing_party_id'],
+        })
+        self.assertIn(title, self.titles())
+        approved = approve_candidate(self.conn, candidate_id, {
+            'participants': participants, 'billing_party_id': party['billing_party_id'],
+            'approved_duration_minutes': 60, 'service_mode': 'office',
+            'approved_rate': '150.00', 'payment_status': 'unpaid',
+        })
+        self.assertEqual(approved['session']['review_status'], 'approved')
+        self.assertEqual(raw_before, tuple(self.conn.execute('SELECT * FROM raw_calendar_snapshots').fetchone()))
 
     def test_partial_capture_does_not_establish_absence(self):
         self.load(event('old'))

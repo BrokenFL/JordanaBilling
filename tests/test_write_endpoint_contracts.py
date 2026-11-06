@@ -10,15 +10,21 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from jordana_invoice.db import connect, migrate_database
-from jordana_invoice.importer import import_rows
-from jordana_invoice.invoice_services import save_business_profile, finalize_invoice
+from jordana_invoice.google_sync import count_raw_rows
+from jordana_invoice.importer import import_rows, calendar_reconciliation_report
+from jordana_invoice.invoice_services import save_business_profile, finalize_invoice, stage_approved_sessions_to_monthly_drafts
 from jordana_invoice.review_server import make_handler
 from jordana_invoice.review_services import (
     approve_candidate,
     create_billing_party,
     create_person,
+    get_review_candidate,
+    list_review_candidates,
+    list_sessions_ledger,
+    reparse_unapproved_candidates,
 )
 from jordana_invoice.util import stable_hash
 
@@ -150,6 +156,80 @@ class WriteEndpointContractTestBase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 1. Session Review and Approval
 # ---------------------------------------------------------------------------
+
+class TestCreateManualSessionContract(WriteEndpointContractTestBase):
+    def test_manual_session_stays_in_review_until_explicit_approval(self):
+        self._import_candidate("manual-control", "Avery Stone | 60 | Office", "2026-05-15T10:00:00-04:00")
+        body = {"request_id": str(uuid4()), "session_date": "2026-05-31", "start_time": "21:15", "duration_minutes": 45}
+        _, created = self._post("/api/sessions", body)
+        self.assertEqual(created["status"], 200, created["payload"])
+        candidate_id = created["payload"]["candidate_id"]
+        _, repeated = self._post("/api/sessions", body)
+        self.assertEqual(repeated, created)
+        self.assertEqual(count_raw_rows(self.conn), 1)
+
+        reparse_unapproved_candidates(self.conn)
+        reconciled = calendar_reconciliation_report(self.conn, apply=True)
+        self.assertEqual(reconciled["summary"]["raw_snapshots_seen"], 1)
+        self.assertEqual(reconciled["summary"]["sessions_created"], 0)
+        detail = get_review_candidate(self.conn, candidate_id)
+        session = detail["session"]
+        self.assertTrue(session["manually_entered"])
+        self.assertEqual(session["custom_duration_minutes"], 45)
+        self.assertEqual(session["time_category"], "weekend")
+        self.assertEqual(detail["participants"], [])
+        self.assertIsNone(session["approved_rate_cents"])
+        self.assertIn(candidate_id, {r["candidate_id"] for r in list_review_candidates(self.conn)["items"]})
+        ledger = list_sessions_ledger(self.conn, date_range="all")["items"]
+        manual = [r for r in ledger if r["manually_entered"]]
+        self.assertEqual([(r["candidate_id"], r["date"]) for r in manual], [(candidate_id, "2026-05-31")])
+        staging = stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session["id"]])
+        self.assertEqual(staging["sessions_staged"], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM invoice_line_items").fetchone()[0], 0)
+
+        _, approved = self._post(f"/api/review/candidates/{candidate_id}/approve", {
+            "participants": [{"person_id": self.person["person_id"], "display_name": "Avery Stone"}],
+            "billing_party_id": self.party["billing_party_id"],
+            "approved_duration_minutes": 45,
+            "duration_choice": "custom",
+            "custom_duration_minutes": 45,
+            "billing_session_type": "psychotherapy",
+            "service_mode": "office",
+            "approved_rate": "155.00",
+            "payment_status": "unpaid",
+            "billing_treatment": "billable",
+        })
+        self.assertEqual(approved["status"], 200, approved["payload"])
+        self.assertEqual(approved["payload"]["session"]["review_status"], "approved")
+        self.assertEqual(approved["payload"]["session"]["rate_cents_snapshot"], 15500)
+        self.assertEqual(approved["payload"]["invoice_staging"]["summary"]["sessions_staged"], 1)
+
+    def test_approved_sessions_can_return_only_while_financially_unlocked(self):
+        session_id, candidate_id = self._approved_session("return-action")
+        stage_approved_sessions_to_monthly_drafts(self.conn, session_ids=[session_id])
+        invoice_id = self.conn.execute(
+            "SELECT invoice_id FROM invoice_line_items WHERE source_session_id = ?", (session_id,)
+        ).fetchone()[0]
+        [draft_row] = list_sessions_ledger(self.conn, date_range="all")["items"]
+        self.assertTrue(draft_row["can_return_to_review"])
+
+        self._post(f"/api/invoices/{invoice_id}/filing-owner", {"person_id": self.person["person_id"]})
+        finalize_invoice(self.conn, invoice_id, pdf_root=self.root / "Invoices")
+        [finalized_row] = list_sessions_ledger(self.conn, date_range="all")["items"]
+        self.assertFalse(finalized_row["can_return_to_review"])
+        _, denied = self._post(f"/api/review/candidates/{candidate_id}/return-to-review", {})
+        self.assertEqual(denied["status"], 400)
+        self.assertIn("finalized invoice", denied["payload"]["error"])
+
+    def test_invalid_manual_session_creates_no_records(self):
+        body = {"request_id": str(uuid4()), "session_date": "2026-05-15", "start_time": "10:00", "duration_minutes": 60}
+        for invalid in ({"duration_minutes": True}, {"start_time": "25:00"}, {"session_date": "2099-01-01"}):
+            with self.subTest(invalid=invalid):
+                _, response = self._post("/api/sessions", {**body, **invalid})
+                self.assertEqual(response["status"], 400)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM raw_calendar_snapshots").fetchone()[0], 0)
+
 
 class TestSaveInterpretationContract(WriteEndpointContractTestBase):
     def test_save_returns_200_with_candidate_detail(self):
