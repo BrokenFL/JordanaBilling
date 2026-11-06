@@ -61,7 +61,18 @@ release payload remains present.
 
 ## Current verified offer
 
-Test.44 (`0.1.0.post44`) is promoted from clean source
+Test.45 (`0.1.0.post45`) is offered from clean source
+`03ba27284dfcc0743a1722d60d3f168b594cfb5a`. Its publicly downloaded DMG has
+SHA-256 `d3b2e921b1468a6fbff7efac2e65953abf6016157235250788193335b711a8f0`.
+The public image passed the updater's checksum, signature, and payload checks.
+An isolated Test.44-to-Test.45 upgrade preserved fictional billing history and
+configuration. Session approval, invoice PDFs, and payment posting passed on the
+installed build. On Jordana's Mac, choose **Check for Updates → Update and
+restart**. Installation on her Mac remains a separate confirmation.
+
+## Previous verified offer
+
+Test.44 (`0.1.0.post44`) was promoted from clean source
 `76f4a7c61d7b33452713d3b2de84206bd9362641`. Its publicly downloaded DMG has
 SHA-256 `e77c1ddab617afd65645dd0b2bb89697518fc53e30d4a0d7edd6d6d8d4d447a0`.
 Source CI and public artifact identity/signature/privacy verification passed.

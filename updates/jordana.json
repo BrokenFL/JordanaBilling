@@ -1,9 +1,9 @@
 {
   "enabled": true,
-  "version": "0.1.0.post44",
-  "release_label": "v0.1.0-test.44",
-  "commit": "76f4a7c61d7b33452713d3b2de84206bd9362641",
-  "sha256": "e77c1ddab617afd65645dd0b2bb89697518fc53e30d4a0d7edd6d6d8d4d447a0",
-  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.44/JordanaBilling-v0.1.0-test.44-76f4a7c61d7b-macos-arm64.dmg",
-  "notes": "Fixes PDF previews and invoice finalization failing after an in-app update even when all readiness checks pass. If PDFs are currently failing, use Quit in the app and reopen Jordana Billing from Applications before updating. After Test.44 opens, finalize the existing draft normally. Billing records and finalized history are preserved; no database replacement or session re-entry is required.\n"
+  "version": "0.1.0.post45",
+  "release_label": "v0.1.0-test.45",
+  "commit": "03ba27284dfcc0743a1722d60d3f168b594cfb5a",
+  "sha256": "d3b2e921b1468a6fbff7efac2e65953abf6016157235250788193335b711a8f0",
+  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.45/JordanaBilling-v0.1.0-test.45-03ba27284dfc-macos-arm64.dmg",
+  "notes": "Adds manual session entry and simplifies Sessions actions. Fixes Review approval after a refresh and restores eligible appointments sent to Review. Corrects payment entry and the default payment date.\n"
 }
