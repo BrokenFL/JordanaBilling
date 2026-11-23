@@ -1,9 +1,9 @@
 {
   "enabled": true,
-  "version": "0.1.0.post45",
-  "release_label": "v0.1.0-test.45",
-  "commit": "03ba27284dfcc0743a1722d60d3f168b594cfb5a",
-  "sha256": "d3b2e921b1468a6fbff7efac2e65953abf6016157235250788193335b711a8f0",
-  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.45/JordanaBilling-v0.1.0-test.45-03ba27284dfc-macos-arm64.dmg",
-  "notes": "Adds manual session entry and simplifies Sessions actions. Fixes Review approval after a refresh and restores eligible appointments sent to Review. Corrects payment entry and the default payment date.\n"
+  "version": "0.1.0.post46",
+  "release_label": "v0.1.0-test.46",
+  "commit": "5659229c7b30d534bea7dc0e93a66023414ef775",
+  "sha256": "ceb9b1e467046ff5ef0e487b2ea6970b6cbdd40d11ce13934c1159d7bc2b2005",
+  "url": "https://github.com/BrokenFL/JordanaBilling/releases/download/v0.1.0-test.46/JordanaBilling-v0.1.0-test.46-5659229c7b30-macos-arm64.dmg",
+  "notes": "## What\u2019s new\n\n- Faster startup and a quicker first page in Review.\n- Quit closes promptly while the app is waiting for Google Sheets. An in-progress database save finishes before shutdown.\n- Updates show download, verification, and installation progress. The replacement runtime is prepared before the app restarts.\n\nUse **Check for Updates \u2192 Update and restart** in the installed app.\n"
 }
