@@ -166,12 +166,12 @@ pid_looks_like_jordana() {
 
 wait_for_pid_to_exit() {
   local pid="$1"
-  local i
-  for i in $(seq 1 20); do
+  local deadline=$((SECONDS + 20))
+  while (( SECONDS < deadline )); do
     if ! pid_is_running "$pid"; then
       return 0
     fi
-    sleep 1
+    sleep 0.1
   done
   return 1
 }
@@ -346,7 +346,6 @@ replace_app_bundle() {
 }
 
 recover_interrupted_install
-stop_existing_app_for_install
 verify_release_payload_checksums || fail "Release payload checksums do not match the manifest."
 ditto --norsrc "$SOURCE_APP" "$TMP_APP"
 rm -rf "$TMP_APP/Contents/Resources/runtime/venv"
@@ -356,6 +355,7 @@ VENV_PYTHON="$TMP_APP/Contents/Resources/runtime/venv/bin/python"
 "$VENV_PYTHON" -m pip install --force-reinstall --no-index --find-links "$WHEELHOUSE" "$APP_WHEEL" >/dev/null
 "$VENV_PYTHON" -c 'import jordana_invoice, pypdf, reportlab; from PIL import Image' >/dev/null
 verify_installed_package_identity || fail "Staged package identity did not match the release manifest."
+stop_existing_app_for_install
 replace_app_bundle
 VENV_PYTHON="$APP_DEST/Contents/Resources/runtime/venv/bin/python"
 xattr -cr "$APP_DEST" 2>/dev/null || true

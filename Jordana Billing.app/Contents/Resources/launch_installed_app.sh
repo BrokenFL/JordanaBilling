@@ -270,13 +270,14 @@ handle_existing_server_or_port() {
 }
 
 wait_for_health_or_fail() {
-  local i
-  for i in $(seq 1 "$MAX_HEALTH_WAIT"); do
+  local deadline=$((SECONDS + MAX_HEALTH_WAIT))
+  while (( SECONDS < deadline )); do
+    pid_is_running "$SERVER_PID" || break
     if pid_is_app_owned "$SERVER_PID" && health_is_jordana; then
       log_message "Health check passed."
       return 0
     fi
-    sleep 1
+    sleep 0.1
   done
   if pid_is_app_owned "$SERVER_PID"; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
@@ -293,8 +294,7 @@ mkdir -p "$JORDANA_REPORTS_DIR" "$JORDANA_INVOICES_DIR" "$JORDANA_RECEIPTS_DIR" 
 
 log_message "Starting installed Jordana Billing."
 handle_existing_server_or_port
-"$VENV_PYTHON" -m jordana_invoice --db "$DB_PATH" init-db >> "$LOG_FILE" 2>&1
-handle_existing_server_or_port
+# serve-review checks and applies pending migrations before reporting healthy.
 nohup "$VENV_PYTHON" -m jordana_invoice --db "$DB_PATH" serve-review --host 127.0.0.1 --port "$PORT" >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 write_pid_metadata "$SERVER_PID"

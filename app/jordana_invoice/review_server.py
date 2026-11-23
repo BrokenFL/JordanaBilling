@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 from .build_info import current_build_info
 from .db import DatabaseBusyError, MigrationError, connect, migrate_database
 from .google_sync import (
+    SyncCancelled,
     default_transport,
     load_sync_config_for_database,
     next_sync_time_iso,
@@ -275,6 +276,8 @@ class CalendarSyncRuntime:
         self.transport = transport
         self.interval_minutes = interval_minutes or sync_interval_minutes_from_env()
         self._stop = threading.Event()
+        self._safe_to_stop = threading.Event()
+        self._safe_to_stop.set()
         self._thread: threading.Thread | None = None
         self._status_lock = threading.Lock()
         self._running = False
@@ -293,8 +296,20 @@ class CalendarSyncRuntime:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        self._safe_to_stop.wait()
+
+    def _fetch(self, url, payload, timeout):
+        # The worker holds no SQLite transaction while waiting for Sheets.
+        # Clearing this flag before checking for shutdown prevents a response
+        # that arrives during Quit from starting a write.
+        self._safe_to_stop.set()
+        try:
+            if not self._stop.is_set():
+                return self.transport(url, payload, timeout)
+        finally:
+            self._safe_to_stop.clear()
+            if self._stop.is_set():
+                raise SyncCancelled("Calendar sync stopped for shutdown.") from None
 
     def _set_running(self, running: bool) -> None:
         with self._status_lock:
@@ -314,16 +329,19 @@ class CalendarSyncRuntime:
             }
 
     def _run_once(self, *, startup: bool = False) -> None:
-        self._set_running(True)
+        self._safe_to_stop.clear()
         try:
+            if self._stop.is_set():
+                return
+            self._set_running(True)
             config = review_sync_config(self.database_path)
             if startup:
-                sync_calendar_automatically(config, transport=self.transport)
+                sync_calendar_automatically(config, transport=self._fetch)
             else:
                 sync_with_process_lock(
                     config,
                     full=False,
-                    transport=self.transport,
+                    transport=self._fetch,
                     skip_if_running=True,
                 )
             self._record_error("")
@@ -333,6 +351,8 @@ class CalendarSyncRuntime:
                 path="/api/sync/run",
                 status=200,
             )
+        except SyncCancelled:
+            pass
         except Exception as error:
             self._record_error(str(error))
             record_diagnostic_event(
@@ -345,6 +365,7 @@ class CalendarSyncRuntime:
             )
         finally:
             self._set_running(False)
+            self._safe_to_stop.set()
 
     def _run(self) -> None:
         self._run_once(startup=True)
@@ -570,7 +591,9 @@ def make_handler(
     shutdown_lock = threading.Lock()
     shutdown_started = False
 
-    def schedule_shutdown(handler: BaseHTTPRequestHandler) -> tuple[bool, bool, str]:
+    def schedule_shutdown(
+        handler: BaseHTTPRequestHandler, response_sent: threading.Event
+    ) -> tuple[bool, bool, str]:
         nonlocal shutdown_started
         server = getattr(handler, "server", None)
         if server is None or not hasattr(server, "shutdown"):
@@ -582,6 +605,7 @@ def make_handler(
 
         def shutdown_worker() -> None:
             try:
+                response_sent.wait()
                 if sync_runtime is not None:
                     sync_runtime.stop()
                 server.shutdown()
@@ -737,6 +761,10 @@ def make_handler(
                 if parsed.path == "/api/updates":
                     from .software_updates import check_updates
                     self.send_json(check_updates(current_build_info()["version"]))
+                    return
+                if parsed.path == "/api/updates/status":
+                    from .software_updates import install_status
+                    self.send_json({"ok": True, "installation": install_status()})
                     return
                 if parsed.path == "/api/build-info":
                     self.send_json({"ok": True, **current_build_info()})
@@ -1094,18 +1122,22 @@ def make_handler(
                         self.send_json({"ok": False, "error": str(error)}, status=400)
                     return
                 if parsed.path == "/api/app/quit":
-                    ok, already_started, message = schedule_shutdown(self)
+                    response_sent = threading.Event()
+                    ok, already_started, message = schedule_shutdown(self, response_sent)
                     if not ok:
                         self.send_json({"ok": False, "error": message}, status=503)
                         return
-                    self.send_json(
-                        {
-                            "ok": True,
-                            "shutting_down": True,
-                            "already_started": already_started,
-                            "message": message,
-                        }
-                    )
+                    try:
+                        self.send_json(
+                            {
+                                "ok": True,
+                                "shutting_down": True,
+                                "already_started": already_started,
+                                "message": message,
+                            }
+                        )
+                    finally:
+                        response_sent.set()
                     return
                 if parsed.path == "/api/diagnostics/report-issue":
                     result = create_issue_report(
@@ -1983,7 +2015,7 @@ def serve(database_path: str, host: str = "127.0.0.1", port: int = 8765) -> None
     print(f"Review UI running at http://{host}:{port}/review")
     sync_runtime.start()
     try:
-        server.serve_forever()
+        server.serve_forever(poll_interval=0.1)
     finally:
         if threading.current_thread() is threading.main_thread():
             for sig, handler in previous_handlers.items():

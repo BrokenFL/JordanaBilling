@@ -2185,6 +2185,16 @@ async function quitApplication() {
   try {
     const result = await api("/api/app/quit", { method: "POST", body: "{}" });
     showQuitStatus(result.message || "Jordana Billing is shutting down.");
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      try {
+        await fetch("/api/health", { cache: "no-store" });
+      } catch {
+        showQuitStatus("Jordana Billing has quit. You can close this tab.");
+        break;
+      }
+    }
   } catch (error) {
     state.quitting = false;
     if (button) button.disabled = false;

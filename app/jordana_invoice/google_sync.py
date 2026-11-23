@@ -44,6 +44,10 @@ class SyncAlreadyRunning(SyncError):
     pass
 
 
+class SyncCancelled(SyncError):
+    """Shutdown interrupted a fetch before any fetched rows were applied."""
+
+
 _SYNC_RUN_LOCK = threading.Lock()
 
 
@@ -454,6 +458,8 @@ def sync_with_connection(
             duplicate_rows_skipped=max(len(all_rows) - rows_imported, 0),
             review_items_changed=review_items_changed,
         )
+    except SyncCancelled:
+        raise
     except DatabaseBusyError as error:
         if not dry_run:
             record_sync_error(conn, attempt_at, error)

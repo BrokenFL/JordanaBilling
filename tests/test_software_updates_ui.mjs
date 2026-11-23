@@ -8,9 +8,11 @@ function setup({confirm=true, status='idle', failInstall=false}={}) {
  const nodes=new Map(), calls=[], storage=new Map(), timers=[];
  const document={getElementById(id){if(!nodes.has(id))nodes.set(id,{hidden:true,textContent:''});return nodes.get(id);}};
  const offer={version:'0.1.0.post37',release_label:'v0.1.0-test.37',notes:'<b>plain text only</b>'};
- const context={document,window:{JordanaAPI:{async api(path,options){calls.push({path,options});if(path.endsWith('/install')&&failInstall)throw Error('Update failed');return {offer,installation:{state:status}};}}},localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},confirm:()=>confirm,setInterval:()=>{},setTimeout:fn=>timers.push(fn),location:{reload(){}},Date,Promise};
+ const installation={state:status};
+ const location={reloaded:false,reload(){this.reloaded=true;}};
+ const context={document,window:{JordanaAPI:{async api(path,options){calls.push({path,options});if(path.endsWith('/install')&&failInstall)throw Error('Update failed');return {offer,installation};}}},localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},confirm:()=>confirm,setInterval:()=>{},setTimeout:fn=>timers.push(fn),location,Date,Promise};
  vm.runInNewContext(source,context);
- return {nodes,calls,storage};
+ return {nodes,calls,storage,timers,installation,location};
 }
 test('launch shows promoted update without installing',async()=>{
  const x=setup();await tick();assert.equal(x.nodes.get('softwareUpdateDetails').hidden,false);assert.equal(x.nodes.get('softwareUpdateNotes').textContent,'<b>plain text only</b>');assert.equal(x.calls.length,1);
@@ -22,4 +24,22 @@ test('cancel does not install; confirming posts only the version',async()=>{
 });
 test('failure permits retry and shows the message',async()=>{
  const x=setup({failInstall:true});await tick();await x.nodes.get('installSoftwareUpdate').onclick();assert.equal(x.nodes.get('installSoftwareUpdate').hidden,false);assert.equal(x.nodes.get('softwareUpdateMessage').textContent,'Update failed');
+});
+test('polling reads local installation progress and reloads on completion', async () => {
+ const x = setup();
+ await tick();
+ Object.assign(x.installation, {state: 'installing', message: 'Downloading update…'});
+ await x.nodes.get('installSoftwareUpdate').onclick();
+ assert.equal(x.nodes.get('softwareUpdateMessage').textContent, 'Downloading update…');
+
+ x.installation.message = 'Verifying update…';
+ x.timers.shift()();
+ await tick();
+ assert.equal(x.calls.at(-1).path, '/api/updates/status');
+ assert.equal(x.nodes.get('softwareUpdateMessage').textContent, 'Verifying update…');
+
+ x.installation.state = 'complete';
+ x.timers.shift()();
+ await tick();
+ assert.equal(x.location.reloaded, true);
 });

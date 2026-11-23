@@ -526,6 +526,9 @@ def list_review_candidates(
         """,
         params,
     ).fetchone()["count"]
+    # A page can contain both sessions and candidates without a session. Only
+    # the first offset + limit sessions can contribute to a nonnegative page.
+    session_limit = min(offset + limit, 2**63 - 1) if offset >= 0 and limit >= 0 else -1
     rows = conn.execute(
         f"""
         SELECT
@@ -564,23 +567,17 @@ def list_review_candidates(
         JOIN calendar_event_candidates c ON c.id = s.candidate_id
         LEFT JOIN client_accounts a ON a.account_id = s.account_id
         {where}
-        ORDER BY s.start_at DESC, s.raw_calendar_title
-        LIMIT ? OFFSET ?
+        ORDER BY s.start_at DESC, s.candidate_id DESC
+        LIMIT ?
         """,
-        (MANUAL_SESSION_SOURCE_ID, *params, -1, 0),
+        (MANUAL_SESSION_SOURCE_ID, *params, session_limit),
     ).fetchall()
-    items = [row_summary(conn, row) for row in rows]
-    include_candidate_only = True
-    candidate_only = (
-        list_candidate_only_rows(
-            conn,
-            query=query,
-            review_status=review_status,
-            calendar_filter=calendar_filter,
-            actionable_only=not bool(review_status),
-        )
-        if include_candidate_only
-        else []
+    candidate_only = list_candidate_only_rows(
+        conn,
+        query=query,
+        review_status=review_status,
+        calendar_filter=calendar_filter,
+        actionable_only=not bool(review_status),
     )
     if not review_status and calendar_filter not in {"personal_admin", "all", "hidden"}:
         from .parser import recognizable_appointment_title
@@ -589,12 +586,15 @@ def list_review_candidates(
                          ("time_category", time_category), ("payment_status", payment_status)):
         if value:
             candidate_only = [r for r in candidate_only if r.get(field) == value]
-    items.extend(candidate_only)
-    items.sort(key=lambda r: (r.get("start_at", ""), r.get("candidate_id", "")), reverse=True)
-    items = items[offset:offset + limit]
+    ordered = sorted(
+        [*rows, *candidate_only],
+        key=lambda row: (row["start_at"], row["candidate_id"]),
+        reverse=True,
+    )
+    page = ordered[offset:offset + limit]
     return {
         "total": int(session_total) + len(candidate_only),
-        "items": items,
+        "items": [row_summary(conn, row) if row["session_id"] is not None else row for row in page],
         "status": dashboard_status(conn),
     }
 
@@ -7393,6 +7393,8 @@ def _reparse_unapproved_candidates(
     (e.g., historical 'Sarah 5 cancelled' → client_session / cancelled / unresolved billing).
     Skips any candidate or session already approved or explicitly excluded.
     """
+    from .historical_review import historical_evidence, manually_excluded
+
     now = now_iso()
     candidate_only_clause = "AND s.id IS NULL" if candidate_only else ""
     selected_clause = "AND c.id IN (" + ",".join("?" for _ in candidate_ids) + ")" if candidate_ids else ""
@@ -7416,10 +7418,6 @@ def _reparse_unapproved_candidates(
     skipped = 0
 
     for row in rows:
-        from .historical_review import manually_excluded, historical_evidence
-        if manually_excluded(conn, row["id"]):
-            skipped += 1
-            continue
         snap = conn.execute(
             "SELECT * FROM raw_calendar_snapshots WHERE id = ?",
             (row["latest_raw_snapshot_id"],),
@@ -7439,6 +7437,11 @@ def _reparse_unapproved_candidates(
             continue
 
         if candidate_only and not historical_evidence(snap):
+            skipped += 1
+            continue
+        # Most candidate-only rows do not match the targeted repair. Check
+        # their audit history only after finding evidence worth reparsing.
+        if manually_excluded(conn, row["id"]):
             skipped += 1
             continue
         parse_row = {

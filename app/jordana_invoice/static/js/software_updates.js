@@ -15,7 +15,7 @@
       offer = result.offer;
       const status = result.installation || {};
       if (status.state === "installing") {
-        installing = true; display("Installing update. The app will restart automatically."); poll();
+        installing = true; display(status.message || "Installing update…"); poll();
       } else if (status.state === "failed") {
         installing = false; display(status.message);
       } else if (offer && (manual || localStorage.getItem("jordana-update-later") !== offer.version)) {
@@ -34,12 +34,13 @@
     polling = true;
     const started = Date.now();
     while (Date.now() - started < 20 * 60 * 1000) {
-      await new Promise(resolve => setTimeout(resolve, 4000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       try {
-        const result = await api("/api/updates");
-        if (result.installation?.state === "complete") { location.reload(); return; }
-        if (result.installation?.state === "failed") {
-          display(result.installation.message); installing = false; polling = false;
+        const { installation } = await api("/api/updates/status");
+        if (installation?.state === "complete") { location.reload(); return; }
+        if (installation?.state === "installing" && installation.message) display(installation.message);
+        if (installation?.state === "failed") {
+          display(installation.message); installing = false; polling = false;
           $("installSoftwareUpdate").hidden = !offer; return;
         }
       } catch { /* Installer temporarily stops the local server. */ }
@@ -59,8 +60,8 @@
     installing = true; $("installSoftwareUpdate").hidden = true;
     display("Preparing your backup and update…");
     try {
-      await api("/api/updates/install", {method: "POST", body: JSON.stringify({version: offer.version})});
-      display("Installing update. The app will restart automatically."); poll();
+      const { installation } = await api("/api/updates/install", {method: "POST", body: JSON.stringify({version: offer.version})});
+      display(installation?.message || "Installing update…"); poll();
     } catch (error) {
       installing = false; $("installSoftwareUpdate").hidden = false; display(error.message);
     }

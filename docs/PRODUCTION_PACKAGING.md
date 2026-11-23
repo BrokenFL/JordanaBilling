@@ -20,12 +20,12 @@ duplicate-launch result, reinstall result, and remaining failure scenarios must
 still be recorded in `docs/TEST_MAC_ACCEPTANCE.md` before final production
 handoff.
 
-### Current Test Build Target — v0.1.0-test.45
+### Current Test Build Target — v0.1.0-test.46
 
 This is a controlled pilot/test release, not a final production release.
 
-- **Release label:** v0.1.0-test.45
-- **Python package/application version:** 0.1.0.post45
+- **Release label:** v0.1.0-test.46
+- **Python package/application version:** 0.1.0.post46
 - **DMG:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **Manifest commit:** recorded in the GitHub release and the artifact `release_manifest.json`
 - **source_tree_dirty:** false
@@ -36,11 +36,14 @@ This is a controlled pilot/test release, not a final production release.
 - **hdiutil verify:** required before publication
 - **Private-file scan:** no `.env`, SQLite, or PDF files found
 - **contains_private_data:** false
-- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post45` wheel plus pinned production dependencies
+- **Wheelhouse includes:** exact `jordana_invoice-0.1.0.post46` wheel plus pinned production dependencies
 - **Local browser smoke:** required before publication
 - **Unit tests:** required before publication
 - **Temporary-DB acceptance test:** required before publication (operational database untouched)
 - **Privacy and Git safety checks:** required before publication
+
+Test.46 improves Review startup and Quit, stages the replacement runtime before
+an update restarts the app, and displays the current update step.
 
 Test.45 adds manual session entry, simplifies the Sessions actions, fixes Review
 approval after a queue refresh, and corrects payment entry. See

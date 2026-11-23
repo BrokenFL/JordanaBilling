@@ -1,3 +1,13 @@
+# Jordana Billing v0.1.0-test.46
+
+Controlled beta, package version `0.1.0.post46`.
+
+- Jordana Billing reaches Review faster. The queue prepares the visible page after calendar reconciliation, and the launcher checks for database migrations once.
+- Quit can close the app while it is waiting for Google Sheets. A sync that is already saving to SQLite finishes before shutdown.
+- Updates show download, verification, and installation progress. The installer prepares the replacement runtime before restarting the app.
+
+Use **Check for Updates → Update and restart**.
+
 # Jordana Billing v0.1.0-test.45
 
 Controlled beta, package version `0.1.0.post45`.

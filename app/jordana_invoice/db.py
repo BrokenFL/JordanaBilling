@@ -4,6 +4,7 @@ import fcntl
 import os
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1899,8 +1900,6 @@ def migrate_database(db_path: str | Path) -> dict:
 
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    is_new = not db_path.exists()
-
     lock = DatabaseLock(db_path)
     try:
         lock.acquire()
@@ -1908,22 +1907,24 @@ def migrate_database(db_path: str | Path) -> dict:
         raise MigrationError(str(error)) from error
 
     try:
+        is_new = not db_path.exists()
         backup_path: Path | None = None
+        applied: set[str] = set()
+        if not is_new:
+            uri = db_path.resolve().as_uri() + "?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True, timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000.0)) as conn:
+                conn.row_factory = sqlite3.Row
+                applied = _get_applied_migrations(conn)
+
+        pending = [(mid, fn) for mid, fn in MIGRATIONS if mid not in applied]
+        if not pending:
+            return {"migrated": False, "backup_path": None, "is_new": is_new}
+
         if not is_new:
             backup_path = _create_backup(db_path)
             _verify_backup(backup_path)
 
         conn = connect(db_path)
-
-        applied = _get_applied_migrations(conn)
-        pending = [(mid, fn) for mid, fn in MIGRATIONS if mid not in applied]
-
-        if not pending:
-            conn.close()
-            if backup_path:
-                backup_path.unlink()
-            return {"migrated": False, "backup_path": None, "is_new": is_new}
-
         try:
             conn.execute("BEGIN")
             for mid, migration_fn in pending:

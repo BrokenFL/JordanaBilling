@@ -123,7 +123,7 @@ def start_update(database_path, current_version, requested_version):
         job = Path(tempfile.mkdtemp(prefix='release-', dir=directory))
         shutil.copy2(__file__, job / 'worker.py')
         (job / 'offer.json').write_text(json.dumps(offer))
-        write_status(directory, state='installing', version=offer['version'], started_at=time.time(), message='Downloading and verifying update…')
+        write_status(directory, state='installing', version=offer['version'], started_at=time.time(), message='Downloading update…')
         try:
             with (job / 'install.log').open('wb') as log:
                 subprocess.Popen([sys._base_executable, str(job / 'worker.py'), str(job)],
@@ -156,6 +156,11 @@ def worker(job):
     attached = False
     try:
         offer = json.loads((job / 'offer.json').read_text())
+        started_at = install_status().get('started_at', time.time())
+
+        def progress(message):
+            write_status(directory, state='installing', version=offer['version'], started_at=started_at, message=message)
+
         image = job / 'release.dmg'
         digest = hashlib.sha256()
         download_started = time.monotonic()
@@ -170,6 +175,7 @@ def worker(job):
                 digest.update(chunk); output.write(chunk)
         if digest.hexdigest() != offer['sha256']:
             raise ValueError('Update checksum failed.')
+        progress('Verifying update…')
         subprocess.run(['hdiutil', 'verify', str(image)], check=True, timeout=120)
         subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(image)], check=True, timeout=120)
         attached = True
@@ -178,6 +184,7 @@ def worker(job):
         payload = app / 'Contents/Resources/ReleasePayload'
         verify_payload(payload, offer)
         env = {**os.environ, 'JORDANA_APP_SUPPORT_DIR': str(directory.parent), 'JORDANA_INSTALL_PYTHON': sys.executable}
+        progress('Installing update. Jordana Billing will restart automatically.')
         # Existing installer coordinates shutdown, verifies installed identity and
         # restarts the app, rolling back its runtime if installation fails.
         subprocess.run(['bash', str(payload / 'scripts/install_release.sh'), '--yes'], cwd=job, env=env, check=True, timeout=900)

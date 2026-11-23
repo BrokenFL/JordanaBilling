@@ -317,13 +317,14 @@ start_review_server() {
 }
 
 wait_for_health_or_fail() {
-  local i
-  for i in $(seq 1 "$JORDANA_MAX_HEALTH_WAIT"); do
+  local deadline=$((SECONDS + JORDANA_MAX_HEALTH_WAIT))
+  while (( SECONDS < deadline )); do
+    pid_is_running "$SERVER_PID" || break
     if pid_is_app_owned "$SERVER_PID" && health_is_jordana; then
       log_message "Health check passed."
       return 0
     fi
-    sleep 1
+    sleep 0.1
   done
   if pid_is_app_owned "$SERVER_PID"; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
@@ -340,8 +341,6 @@ launch_jordana_billing() {
   ensure_env_file
   resolve_project_placeholders
   validate_private_configuration
-  handle_existing_server_or_port
-  apply_pending_migrations
   handle_existing_server_or_port
   start_review_server
   wait_for_health_or_fail

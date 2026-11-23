@@ -51,6 +51,27 @@ class ZoomReviewTests(HistoricalReviewTests):
         self.assertEqual(first['items'][0]['raw_title'],'Casey Example 4')
         self.assertEqual(second['items'][0]['raw_title'],'Alex Example 2 mystery')
 
+    def test_pagination_preserves_candidate_id_tiebreaker(self):
+        from jordana_invoice import review_services
+
+        self.load(
+            event("a", "Alex Example 2 mystery"),
+            event("b", "Casey Example 2"),
+            event("c", "Drew Example 2"),
+        )
+        expected = sorted(
+            (self.candidate(title)["id"] for title in (
+                "Alex Example 2 mystery", "Casey Example 2", "Drew Example 2"
+            )),
+            reverse=True,
+        )
+        with patch.object(review_services, "row_summary", wraps=review_services.row_summary) as summarize:
+            pages = [list_review_candidates(self.conn, limit=1, offset=offset) for offset in range(3)]
+
+        self.assertEqual([page["total"] for page in pages], [3, 3, 3])
+        self.assertEqual([page["items"][0]["candidate_id"] for page in pages], expected)
+        self.assertEqual(summarize.call_count, 2)
+
     def test_reminder_with_year_and_party_are_not_appointments(self):
         self.load(event('a','Received 2026 package today'),event('b','Casey 11 birthday party'))
         self.assertEqual(list_review_candidates(self.conn)['total'],0)

@@ -89,10 +89,13 @@ class SoftwareUpdateTests(unittest.TestCase):
         commands=[]
         def run(command,**kwargs):
             commands.append(command)
+            if command[:2] == ['hdiutil', 'verify']:
+                self.assertEqual(updates.install_status()['message'], 'Verifying update…')
             if command[0]=='bash':
                 self.assertEqual(kwargs['cwd'],job)
                 self.assertEqual(kwargs['env']['JORDANA_APP_SUPPORT_DIR'],str(self.directory.parent))
                 self.assertIn('verified',commands)
+                self.assertIn('will restart automatically', updates.install_status()['message'])
         with patch.object(updates,'urlopen',return_value=response),patch.object(updates.subprocess,'run',side_effect=run),patch.object(updates,'verify_payload',side_effect=lambda *a:commands.append('verified')):
             updates.worker(job)
         self.assertEqual(commands[0][:2],['hdiutil','verify'])

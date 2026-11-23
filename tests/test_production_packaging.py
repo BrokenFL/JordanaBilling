@@ -31,11 +31,12 @@ class ProductionPackagingContractTest(unittest.TestCase):
             "git pull",
             "github.com",
             "wget ",
+            '"$DB_PATH" init-db',
         ]
         for text in forbidden:
             self.assertNotIn(text, launcher)
         self.assertIn("Application Support/Jordana Billing", launcher)
-        self.assertIn("init-db", launcher, "launch may apply application migrations to an existing DB")
+        self.assertIn('"$DB_PATH" serve-review --host 127.0.0.1', launcher)
 
     def test_installer_uses_offline_non_editable_wheel_install(self) -> None:
         installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
@@ -129,7 +130,7 @@ class ProductionPackagingContractTest(unittest.TestCase):
     def test_release_uses_unique_package_version_for_next_beta(self) -> None:
         installer = (PROJECT_DIR / "scripts" / "install_release.sh").read_text(encoding="utf-8")
         pyproject = (PROJECT_DIR / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('version = "0.1.0.post45"', pyproject)
+        self.assertIn('version = "0.1.0.post46"', pyproject)
         self.assertNotIn("jordana-invoice==0.1.0", installer)
         self.assertIn("PACKAGE_VERSION", installer)
 
@@ -156,6 +157,12 @@ class ProductionPackagingContractTest(unittest.TestCase):
         self.assertIn("pid_looks_like_jordana", installer)
         self.assertIn("No process was stopped", installer)
         self.assertIn("Port $PORT is in use by another application", installer)
+        self.assertIn(
+            'verify_installed_package_identity || fail "Staged package identity did not match the release manifest."\n'
+            "stop_existing_app_for_install\n"
+            "replace_app_bundle",
+            installer,
+        )
 
     def test_release_builder_keeps_launcher_and_rollback_payload_contracts(self) -> None:
         builder = (PROJECT_DIR / "scripts" / "build_release.sh").read_text(encoding="utf-8")

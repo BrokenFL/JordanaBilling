@@ -9,6 +9,7 @@ import urllib.request
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from jordana_invoice.db import connect, init_db
@@ -221,6 +222,67 @@ class ReviewServerSyncTests(unittest.TestCase):
         runtime = CalendarSyncRuntime(str(self.active_db_path), transport=transport, interval_minutes=60)
         runtime._run_once(startup=False)
         self.assertEqual(transport.calls[0]["after_ingested_at"], "2026-06-22T01:00:00.000Z")
+
+    def test_quit_during_fetch_discards_the_response_without_waiting(self):
+        fetching = threading.Event()
+        release_response = threading.Event()
+
+        def fetch(*args):
+            fetching.set()
+            release_response.wait(2)
+            return {"ok": True, "rows": [raw_row("after-quit")], "has_more": False}
+
+        runtime = CalendarSyncRuntime(str(self.active_db_path), transport=fetch)
+        runtime.start()
+        stopper = threading.Thread(target=runtime.stop)
+        try:
+            self.assertTrue(fetching.wait(2))
+            stopper.start()
+            stopper.join(0.5)
+            self.assertFalse(stopper.is_alive())
+        finally:
+            release_response.set()
+            if stopper.ident is not None:
+                stopper.join(2)
+            runtime._thread.join(2)
+
+        self.assertIsNone(self.active_conn.execute(
+            "SELECT id FROM raw_calendar_snapshots WHERE snapshot_key = 'after-quit'"
+        ).fetchone())
+        self.assertEqual(runtime.status_overlay()["runtime_error"], "")
+
+    def test_quit_waits_for_fetched_rows_to_finish_applying(self):
+        applying = threading.Event()
+        finish_apply = threading.Event()
+
+        def apply(*args, **kwargs):
+            applying.set()
+            finish_apply.wait(2)
+            return import_rows(*args, **kwargs)
+
+        transport = FakeTransport([
+            {"ok": True, "record_type": "sync_response", "rows": [raw_row("finish-apply")], "has_more": False}
+        ])
+        runtime = CalendarSyncRuntime(str(self.active_db_path), transport=transport)
+        stopper = threading.Thread(target=runtime.stop)
+        with patch("jordana_invoice.google_sync.import_rows", side_effect=apply):
+            runtime.start()
+            try:
+                self.assertTrue(applying.wait(2))
+                stopper.start()
+                self.assertTrue(runtime._stop.wait(0.5))
+                stopper.join(0.05)
+                self.assertTrue(stopper.is_alive())
+            finally:
+                finish_apply.set()
+                if stopper.ident is not None:
+                    stopper.join(2)
+                runtime._thread.join(2)
+
+        self.assertFalse(stopper.is_alive())
+        self.assertIsNotNone(self.active_conn.execute(
+            "SELECT id FROM raw_calendar_snapshots WHERE snapshot_key = 'finish-apply'"
+        ).fetchone())
 
     def test_get_requests_do_not_require_write_token(self):
         with self.server() as base_url:

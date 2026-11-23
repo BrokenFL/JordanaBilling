@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from jordana_invoice.db import (
     CURRENT_SCHEMA_VERSION,
@@ -156,10 +157,12 @@ class MigrationSafetyTests(unittest.TestCase):
         db_path = self.root / "test.sqlite3"
         migrate_database(db_path)
 
-        result = migrate_database(db_path)
+        with patch.object(db_module, "_create_backup", wraps=db_module._create_backup) as create_backup:
+            result = migrate_database(db_path)
 
         self.assertFalse(result["migrated"])
         self.assertIsNone(result["backup_path"])
+        create_backup.assert_not_called()
 
     # --- failed migration rolls back and leaves the original usable ---
 
